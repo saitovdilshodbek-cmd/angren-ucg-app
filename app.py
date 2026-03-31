@@ -102,12 +102,12 @@ with c1:
     st.plotly_chart(fig_strata, use_container_width=True)
 
 with c2:
-    st.subheader("🔥 Issiqlik va 🧱 Deformatsiya Maydoni (RS2 Style)")
+    st.subheader("🔥 Issiqlik va 🧱 Deformatsiya Maydoni")
     fig_tm = make_subplots(
         rows=2, cols=1, 
         shared_xaxes=True,
         vertical_spacing=0.1,
-        subplot_titles=("Harorat Maydoni (°C)", "Yoriqlanish Konturi va Yer yuzasi Deformatsiyasi")
+        subplot_titles=("Harorat Maydoni (°C)", "Yoriqlanish Konturi va Yer yuzasi Cho'kishi")
     )
     
     # 1. Harorat xaritasi
@@ -117,7 +117,7 @@ with c2:
         colorbar=dict(title="°C", x=1.02, y=0.78, len=0.45)
     ), row=1, col=1)
     
-    # 2. Yoriqlanish zichligi konturi
+    # 2. Yoriqlanish zichligi (RS2 Style Contour)
     fig_tm.add_trace(go.Contour(
         z=cracks_2d, 
         x=grid_x[0], 
@@ -131,14 +131,14 @@ with c2:
         name="Yoriqlanish"
     ), row=2, col=1)
 
-    # 3. YER YUZASI DEFORMATSIYASINI KONTUR USTIGA QO'SHISH (Yangilangan qism)
-    # Vizual ko'rinish uchun cho'kish qiymati masshtablashtirilgan (masalan, 15 barobar)
+    # 3. Yer yuzasi deformatsiyasini kontur ustiga qo'shish
+    # Subsidence grafigi (koordinatalari konturga moslashtirilgan)
     fig_tm.add_trace(go.Scatter(
         x=x_axis, 
-        y=subsidence * 15, 
+        y=subsidence * 15, # Vizual yaqqolroq ko'rinishi uchun masshtab koeffitsiyenti
         mode='lines',
         line=dict(color='white', width=4, dash='dash'),
-        name="Yer yuzasi cho'kishi (masshtabda)"
+        name="Yer yuzasi cho'kishi"
     ), row=2, col=1)
     
     fig_tm.update_layout(
