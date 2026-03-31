@@ -117,20 +117,20 @@ with c2:
         colorbar=dict(title="°C", x=1.02, y=0.78, len=0.45)
     ), row=1, col=1)
     
-    # 2. Yoriqlanish zichligi (RS2 dagi kabi ko'k-yashil-qizil kontur)
+    # 2. Yoriqlanish zichligi (Xatolik tuzatilgan qismi)
     fig_tm.add_trace(go.Contour(
         z=cracks_2d, 
         x=grid_x[0], 
         y=grid_z[:,0],
         colorscale='Jet', 
-        line_smoothing=0.85,
+        line_width=0, # Chiziqlarni silliq qilish uchun
         contours=dict(
             coloring='heatmap',
-            showlines=True,
-            project_z=True
+            showlines=False
         ),
         colorbar=dict(title="Zichlik", x=1.02, y=0.22, len=0.45),
-        zmin=0, zmax=1.1
+        zmin=0, zmax=1.1,
+        connectgaps=True
     ), row=2, col=1)
     
     fig_tm.update_layout(template="plotly_dark", height=800, margin=dict(l=20, r=80, t=40, b=20))
