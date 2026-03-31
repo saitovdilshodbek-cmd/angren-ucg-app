@@ -117,48 +117,25 @@ for key, val in sources.items():
         temp_2d += current_temp * np.exp(-dist_sq / (2 * radius**2))
         cracks_2d += np.exp(-dist_sq / (2 * (radius * 1.4)**2))
 
-# --- VIZUALIZATSIYA ---
-st.subheader(f"📊 {obj_name}: Monitoring Natijalari")
-col_g1, col_g2 = st.columns(2)
-
-with col_g1:
-    fig1 = go.Figure()
-    fig1.add_trace(go.Scatter(x=x_axis, y=uplift * 100, fill='tozeroy', line=dict(color='cyan', width=3)))
-    fig1.update_layout(title="🔥 Termal ko'tarilish (cm)", template="plotly_dark", height=250, margin=dict(l=20, r=20, t=40, b=20))
-    st.plotly_chart(fig1, use_container_width=True)
-
-with col_g2:
-    fig2 = go.Figure()
-    fig2.add_trace(go.Scatter(x=x_axis, y=subsidence_dynamic, fill='tozeroy', line=dict(color='magenta', width=3)))
-    fig2.update_layout(title="📉 Mexanik cho'kish (m)", template="plotly_dark", height=250, margin=dict(l=20, r=20, t=40, b=20))
-    st.plotly_chart(fig2, use_container_width=True)
-
-st.markdown("---")
-c1, c2 = st.columns([1, 2.5])
-
-with c1:
-    st.subheader("🧱 Geologik Kesim")
-    fig_strata = go.Figure()
-    for l in layers_data:
-        fig_strata.add_trace(go.Bar(x=['Kesim'], y=[l['t']], name=l['name'], marker_color=l['color'], width=0.4))
-    fig_strata.update_layout(barmode='stack', template="plotly_dark", yaxis=dict(title="Chuqurlik (m)", autorange='reversed'), height=700, showlegend=True)
-    st.plotly_chart(fig_strata, use_container_width=True)
+# --- VIZUALIZATSIYA QISMINI QUYIDAGI BILAN ALMASHTIRING ---
 
 with c2:
-    st.subheader("🔥 TM Maydoni va 🧱 Strukturaviy Deformatsiya")
+    st.subheader("🔥 TM Maydoni va 📉 Yer yuzasi Cho'kishi (RS2 Style)")
     fig_tm = make_subplots(
         rows=2, cols=1, 
         shared_xaxes=True,
         vertical_spacing=0.08,
-        subplot_titles=("Harorat Maydoni (°C)", "Yoriqlanish va Yer yuzasi Deformatsiyasi (RS2 Style)")
+        subplot_titles=("Harorat Maydoni (°C)", "Geomexanik Cho'kish Profili (Dinamik)")
     )
     
+    # 1-Grafik: Heatmap (O'zgarmadi)
     fig_tm.add_trace(go.Heatmap(
         z=temp_2d, x=grid_x[0], y=grid_z[:,0], 
         colorscale='Hot', zmin=25, zmax=1100,
         colorbar=dict(title="°C", x=1.02, y=0.78, len=0.45)
     ), row=1, col=1)
     
+    # 2-Grafik: Contour (Yoriqlar)
     fig_tm.add_trace(go.Contour(
         z=cracks_2d, x=grid_x[0], y=grid_z[:,0],
         colorscale='Jet', 
@@ -173,22 +150,35 @@ with c2:
         zmin=0, zmax=1.1, name="Yoriqlanish"
     ), row=2, col=1)
 
+    # --- 🟢 TO'G'IRLANGAN QISM: DINAMIK PROFIL ---
+    # subsidence_dynamic - manfiy qiymat, uni masshtablab (masalan * 30) 
+    # to'g'ridan-to'g'ri 0 chizig'idan pastga qaratamiz
+    total_displacement = (subsidence_dynamic + (uplift * 0.1)) * 40 # Ko'tarilish ta'sirini kamaytirdik
+    
     fig_tm.add_trace(go.Scatter(
-        x=x_axis, y=subsidence_dynamic * 15 - 30,
-        mode='lines', line=dict(color='white', width=4, dash='dash'),
-        name="Dinamik Profil"
+        x=x_axis, 
+        y=total_displacement, # Ssenariyga ko'ra 0 dan pastga qarab ketadi
+        mode='lines', 
+        line=dict(color='white', width=4, dash='dash'),
+        name="Cho'kish Profili"
     ), row=2, col=1)
 
+    # Qatlamlar chiziqlari
     for layer in layers_data:
         fig_tm.add_shape(type="line", x0=min(x_axis), y0=layer['z_start'], x1=max(x_axis), y1=layer['z_start'],
                          line=dict(color="rgba(255,255,255,0.3)", width=1, dash="dot"), row=2, col=1)
     
+    # Yer yuzasi (0 chizig'i)
+    fig_tm.add_shape(type="line", x0=min(x_axis), y0=0, x1=max(x_axis), y1=0,
+                     line=dict(color="yellow", width=2), row=2, col=1)
+    
     fig_tm.update_layout(template="plotly_dark", height=850, margin=dict(l=20, r=80, t=40, b=20))
     fig_tm.update_yaxes(title_text="Chuqurlik (m)", autorange='reversed', row=1, col=1)
-    fig_tm.update_yaxes(title_text="Chuqurlik (m)", autorange='reversed', range=[total_depth + 50, -80], row=2, col=1)
+    
+    # 2-grafik uchun Y o'qi diapazoni (Cho'kish ko'rinishi uchun yuqorini -100 qildik)
+    fig_tm.update_yaxes(title_text="Chuqurlik (m)", autorange='reversed', range=[total_depth + 50, -100], row=2, col=1)
     
     st.plotly_chart(fig_tm, use_container_width=True)
-
 # Natijalar jadvali
 st.divider()
 st.table({
