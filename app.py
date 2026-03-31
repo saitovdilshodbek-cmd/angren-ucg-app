@@ -102,12 +102,12 @@ with c1:
     st.plotly_chart(fig_strata, use_container_width=True)
 
 with c2:
-    st.subheader("🔥 Issiqlik va 🧱 Yoriqlanish Maydoni (RS2 Style)")
+    st.subheader("🔥 Issiqlik va 🧱 Deformatsiya Maydoni")
     fig_tm = make_subplots(
         rows=2, cols=1, 
         shared_xaxes=True,
         vertical_spacing=0.1,
-        subplot_titles=("Harorat Maydoni (°C)", "Jinslarning Yoriqlanish Zichligi (Kontur)")
+        subplot_titles=("Harorat Maydoni (°C)", "Yoriqlanish Konturi va Yer yuzasi Cho'kishi")
     )
     
     # 1. Harorat xaritasi
@@ -117,23 +117,37 @@ with c2:
         colorbar=dict(title="°C", x=1.02, y=0.78, len=0.45)
     ), row=1, col=1)
     
-    # 2. Yoriqlanish zichligi (Xatolik tuzatilgan qismi)
+    # 2. Yoriqlanish zichligi (RS2 Style Contour)
     fig_tm.add_trace(go.Contour(
         z=cracks_2d, 
         x=grid_x[0], 
         y=grid_z[:,0],
         colorscale='Jet', 
-        line_width=0, # Chiziqlarni silliq qilish uchun
-        contours=dict(
-            coloring='heatmap',
-            showlines=False
-        ),
+        line_width=0,
+        contours=dict(coloring='heatmap', showlines=False),
         colorbar=dict(title="Zichlik", x=1.02, y=0.22, len=0.45),
         zmin=0, zmax=1.1,
-        connectgaps=True
+        connectgaps=True,
+        name="Yoriqlanish"
+    ), row=2, col=1)
+
+    # 3. Yer yuzasi deformatsiyasini kontur ustiga qo'shish
+    # Subsidence grafigi (koordinatalari konturga moslashtirilgan)
+    fig_tm.add_trace(go.Scatter(
+        x=x_axis, 
+        y=subsidence * 15, # Vizual yaqqolroq ko'rinishi uchun masshtab koeffitsiyenti
+        mode='lines',
+        line=dict(color='white', width=4, dash='dash'),
+        name="Yer yuzasi cho'kishi"
     ), row=2, col=1)
     
-    fig_tm.update_layout(template="plotly_dark", height=800, margin=dict(l=20, r=80, t=40, b=20))
+    fig_tm.update_layout(
+        template="plotly_dark", 
+        height=850, 
+        margin=dict(l=20, r=80, t=40, b=20),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    
     fig_tm.update_yaxes(autorange='reversed')
     st.plotly_chart(fig_tm, use_container_width=True)
 
