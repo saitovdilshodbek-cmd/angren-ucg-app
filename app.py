@@ -1,7 +1,7 @@
 import streamlit as st
 import numpy as np
-import matplotlib.pyplot as plt
 from scipy.special import erf
+import plotly.graph_objects as go
 
 # Sahifa sozlamalari
 st.set_page_config(page_title="Angren UCG Monitor", layout="wide")
@@ -19,37 +19,51 @@ thickness = st.sidebar.number_input("Ko'mir qalinligi (m):", value=10)
 x = np.linspace(-400, 400, 200)
 
 # 1. Termal ko'tarilish (sm da)
-# Formula: chuqurlik * kengayish * harorat farqi
 uplift = (depth * 1e-5 * (1100 - 35)) * 0.1 * np.exp(-(x**2) / 20000)
 
 # 2. Mexanik cho'kish (m da)
-# Formula: S(x) = S_max * 0.5 * (1 + erf(sqrt(pi)*x/r))
 r = depth / np.tan(np.radians(45))
-s_max = thickness * 0.75  # Cho'kish koeffitsiyenti
+s_max = thickness * 0.75 
 subsidence = s_max * 0.5 * (1 + erf(np.sqrt(np.pi) * x / r)) - s_max
 
-# Grafiklarni chiqarish
+# --- Grafiklarni chiqarish (Interaktiv Plotly versiyasi) ---
 col1, col2 = st.columns(2)
 
 with col1:
-    st.subheader("🔥 Termal ko'tarilish (cm)")
-    fig1, ax1 = plt.subplots()
-    ax1.plot(x, uplift * 100, color='orange', linewidth=2, label="Ko'tarilish")
-    ax1.fill_between(x, uplift * 100, color='orange', alpha=0.2)
-    ax1.set_xlabel("Masofa (m)")
-    ax1.set_ylabel("Balandlik (cm)")
-    ax1.grid(True, linestyle=':')
-    st.pyplot(fig1)
+    fig_thermal = go.Figure()
+    fig_thermal.add_trace(go.Scatter(
+        x=x, 
+        y=uplift * 100, 
+        fill='tozeroy', 
+        line=dict(color='orange', width=3),
+        name="Ko'tarilish"
+    ))
+    fig_thermal.update_layout(
+        title="🔥 Termal ko'tarilish (cm)", 
+        template="plotly_dark",
+        xaxis_title="Masofa (m)",
+        yaxis_title="Balandlik (cm)",
+        hovermode="x unified"
+    )
+    st.plotly_chart(fig_thermal, use_container_width=True)
 
 with col2:
-    st.subheader("📉 Mexanik cho'kish (m)")
-    fig2, ax2 = plt.subplots()
-    ax2.plot(x, subsidence, color='red', linewidth=2, label="Cho'kish")
-    ax2.fill_between(x, subsidence, color='red', alpha=0.2)
-    ax2.set_xlabel("Masofa (m)")
-    ax2.set_ylabel("Chuqurlik (m)")
-    ax2.grid(True, linestyle=':')
-    st.pyplot(fig2)
+    fig_subsidence = go.Figure()
+    fig_subsidence.add_trace(go.Scatter(
+        x=x, 
+        y=subsidence, 
+        fill='tozeroy', 
+        line=dict(color='red', width=3),
+        name="Cho'kish"
+    ))
+    fig_subsidence.update_layout(
+        title="📉 Mexanik cho'kish (m)", 
+        template="plotly_dark",
+        xaxis_title="Masofa (m)",
+        yaxis_title="Chuqurlik (m)",
+        hovermode="x unified"
+    )
+    st.plotly_chart(fig_subsidence, use_container_width=True)
 
 # Xulosa qismi
 st.divider()
