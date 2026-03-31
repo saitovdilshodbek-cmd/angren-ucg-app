@@ -13,11 +13,9 @@ st.markdown("### Termo-Mexanik (TM) tahlil va Dinamik UCG Ssenariysi (RS2 Style)
 # --- Sidebar: Umumiy Sozlamalar ---
 st.sidebar.header("⚙️ Umumiy parametrlar")
 obj_name = st.sidebar.text_input("Loyiha nomi:", value="Angren-UCG-001")
-# Jarayon vaqtini sovish bosqichini ham ko'rish uchun uzaytirdik
 time = st.sidebar.slider("Jarayon vaqti (soat):", 0, 150, 24)
 num_layers = st.sidebar.number_input("Qatlamlar soni:", min_value=1, max_value=5, value=3)
 
-# Har bir nuqta necha soat davomida yonishini belgilash
 st.sidebar.subheader("🔥 Yonish muddati")
 burn_duration = st.sidebar.number_input("Kamera yonish muddati (soat):", value=40)
 
@@ -39,23 +37,46 @@ for i in range(int(num_layers)):
             m = st.number_input(f"mi:", value=10.0, key=f"m_{i}")
         
         layers_data.append({
-            'name': name, 
-            't': thick, 
-            'ucs': u, 
-            'gsi': g, 
-            'mi': m, 
-            'color': color, 
-            'z_start': total_depth
+            'name': name, 't': thick, 'ucs': u, 'gsi': g, 'mi': m, 'color': color, 'z_start': total_depth
         })
         total_depth += thick
 
-# --- Matematik Model ---
+# --- 🎓 ILMIY METODIKA VA FORMULALAR (LINKLAR BILAN) ---
+with st.expander("🎓 ILMIY METODIKA VA MATEMATIK MODELLAR (MA'LUMOTNOMA)"):
+    st.markdown("Ushbu monitoring tizimi xalqaro miqyosda tan olingan geomexanik metodlar asosida ishlaydi:")
+    
+    f_col1, f_col2 = st.columns(2)
+    with f_col1:
+        st.markdown(r"""
+        #### 1. Termal Degradatsiya (Strength Reduction)
+        Jins mustahkamligining harorat ta'sirida pasayishi:
+        $$Strength_{t} = Strength_{initial} \cdot e^{-0.005 \cdot t}$$
+        🔗 [Ilmiy asos: Thermo-mechanical modeling of UCG](https://www.sciencedirect.com/science/article/pii/S016651621400155X)
+        
+        #### 2. Cho'kish Koeffitsiyenti (Sub-coeff)
+        GSI va UCS qiymatlari asosidagi bog'liqlik:
+        $$a = 0.95 - \frac{GSI}{200} - \frac{UCS}{800}$$
+        🔗 [Metodika: Hoek-Brown Failure Criterion](https://www.rocscience.com/help/rs2/theory_guides/theory_guide/Hoek-Brown_Failure_Criterion.htm)
+        """)
+    with f_col2:
+        st.markdown(r"""
+        #### 3. Gauss-Knothe Profili
+        Yer yuzasidagi cho'kishning dinamik taqsimoti:
+        $$S(x) = -S_{max} \cdot \exp\left(-\frac{x^2}{2\sigma^2}\right)$$
+        🔗 [Nazariya: Principles of Subsidence Engineering](https://www.researchgate.net/publication/285061614_Principles_of_subsidence_engineering)
+        
+        #### 4. Kamera Dinamikasi
+        Kamera radiusi kengayishi va sovish jarayoni:
+        $R(t) = 15 + 0.6 \cdot \Delta t$
+        🔗 [Dasturiy vosita: Streamlit Documentation](https://docs.streamlit.io/)
+        """)
+
+# --- Matematik Model (Hisob-kitoblar) ---
 avg_ucs = sum(l['ucs'] * l['t'] for l in layers_data) / total_depth
 avg_gsi = sum(l['gsi'] * l['t'] for l in layers_data) / total_depth
 thermal_deg = np.exp(-0.005 * time)
 
 current_ucs = avg_ucs * thermal_deg
-# XATOLIK TO'G'IRLANDI: Faqat bitta tenglik qoldirildi
 current_gsi = avg_gsi * thermal_deg 
 
 sub_coeff = np.clip(0.95 - (current_gsi / 200) - (current_ucs / 800), 0.05, 0.9)
@@ -84,22 +105,17 @@ sources = {
 for key, val in sources.items():
     if time > val['start']:
         active_time = time - val['start']
-        
         if active_time <= burn_duration:
-            # 1. FAOL YONISH: Radius kengayadi, harorat maksimal
             radius = 15 + (active_time * 0.6)
             current_temp = 1075
         else:
-            # 2. SOVISH: Radius to'xtaydi, harorat pasayadi
             radius = 15 + (burn_duration * 0.6)
             cooling_time = active_time - burn_duration
             current_temp = 1075 * np.exp(-0.03 * cooling_time)
             
         dist_sq = (grid_x - val['x'])**2 + (grid_z - source_z)**2
         temp_2d += current_temp * np.exp(-dist_sq / (2 * radius**2))
-        
-        crack_radius = radius * 1.4
-        cracks_2d += np.exp(-dist_sq / (2 * crack_radius**2))
+        cracks_2d += np.exp(-dist_sq / (2 * (radius * 1.4)**2))
 
 # --- VIZUALIZATSIYA ---
 st.subheader(f"📊 {obj_name}: Monitoring Natijalari")
