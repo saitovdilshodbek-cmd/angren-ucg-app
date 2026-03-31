@@ -35,12 +35,15 @@ for i in range(int(num_layers)):
         layers_data.append({'name': name, 't': thick, 'ucs': u, 'gsi': g, 'mi': m, 'color': color})
         total_depth += thick
 
-# --- Matematik Model ---
+# --- Matematik Model (Xatolar tuzatilgan qismi) ---
 avg_ucs = sum(l['ucs'] * l['t'] for l in layers_data) / total_depth
 avg_gsi = sum(l['gsi'] * l['t'] for l in layers_data) / total_depth
 thermal_deg = np.exp(-0.005 * time)
+
+# Xato tuzatilgan qatorlar:
 current_ucs = avg_ucs * thermal_deg
-current_gsi = avg_gsi * thermal_depth = total_depth # Correction for logic
+current_gsi = avg_gsi * thermal_deg 
+
 sub_coeff = np.clip(0.95 - (current_gsi / 200) - (current_ucs / 800), 0.05, 0.9)
 
 # Deformatsiya grafiklari uchun X o'qi
@@ -50,18 +53,17 @@ s_max = layers_data[-1]['t'] * sub_coeff
 subsidence = s_max * 0.5 * (1 + erf(np.sqrt(np.pi) * x_axis / r)) - s_max
 uplift = (total_depth * 1e-4) * np.exp(-(x_axis**2) / (total_depth*20)) * (1 - np.exp(-0.05 * time))
 
-# --- 2D DINAMIK ISSIQLIK VA YORIQLAR MODELI (1 -> 3 -> 2 tartibida) ---
+# --- 2D DINAMIK ISSIQLIK VA YORIQLAR MODELI ---
 grid_x, grid_z = np.meshgrid(np.linspace(-total_depth*1.2, total_depth*1.2, 120), np.linspace(0, total_depth + 50, 100))
 source_z = total_depth - (layers_data[-1]['t'] / 2)
 
 temp_2d = np.ones_like(grid_x) * 25 
 cracks_2d = np.zeros_like(grid_x)
 
-# Manbalar koordinatalari (X-o'qi bo'yicha)
 sources = {
-    '1': {'x': -total_depth/2, 'start': 0},   # Birinchi yonadi
-    '3': {'x': total_depth/2, 'start': 30},  # 30-soatdan keyin
-    '2': {'x': 0, 'start': 60}               # 60-soatdan keyin
+    '1': {'x': -total_depth/2, 'start': 0},
+    '3': {'x': total_depth/2, 'start': 30},
+    '2': {'x': 0, 'start': 60}
 }
 
 for key, val in sources.items():
@@ -69,11 +71,7 @@ for key, val in sources.items():
         dt = time - val['start']
         radius = 15 + (dt * 0.6)
         dist_sq = (grid_x - val['x'])**2 + (grid_z - source_z)**2
-        
-        # Harorat (Gauss taqsimoti)
         temp_2d += 1075 * np.exp(-dist_sq / (2 * radius**2))
-        
-        # Yoriqlar zonasi (Termal zonadan 1.4 marta kengroq hududda jinslar parchalanadi)
         crack_radius = radius * 1.4
         cracks_2d += np.exp(-dist_sq / (2 * crack_radius**2))
 
@@ -97,33 +95,28 @@ st.markdown("---")
 c1, c2 = st.columns([1, 2])
 
 with c1:
-    st.subheader("🧱 Struktura va Legenda")
+    st.subheader("🧱 Struktura")
     fig_strata = go.Figure()
     for l in layers_data:
         fig_strata.add_trace(go.Bar(x=['Kesim'], y=[l['t']], name=l['name'], marker_color=l['color'], width=0.4))
-    fig_strata.update_layout(barmode='stack', template="plotly_dark", yaxis=dict(title="Chuqurlik (m)", autorange='reversed'), height=500)
+    fig_strata.update_layout(barmode='stack', template="plotly_dark", yaxis=dict(title="Chuqurlik (m)", autorange='reversed'), height=500, showlegend=False)
     st.plotly_chart(fig_strata, use_container_width=True)
 
 with c2:
-    st.subheader("🔥 Issiqlik va 🧱 Yoriqlanish Maydoni (Dinamik)")
+    st.subheader("🔥 Issiqlik va 🧱 Yoriqlanish Maydoni")
     fig_tm = make_subplots(rows=2, cols=1, subplot_titles=("Harorat Maydoni (°C)", "Jinslarning Yoriqlanish Zichligi"))
-    
-    # Harorat xaritasi
-    fig_tm.add_trace(go.Heatmap(z=temp_2d, x=grid_x[0], y=grid_z[:,0], colorscale='Hot', zmin=25, zmax=1100, colorbar=dict(len=0.45, y=0.78)), row=1, col=1)
-    
-    # Yoriqlar xaritasi (Yongandan keyingi holat)
-    fig_tm.add_trace(go.Heatmap(z=cracks_2d, x=grid_x[0], y=grid_z[:,0], colorscale='Greys', zmin=0, zmax=1.2, colorbar=dict(len=0.45, y=0.22)), row=2, col=1)
-    
-    fig_tm.update_layout(template="plotly_dark", height=700, showlegend=False)
+    fig_tm.add_trace(go.Heatmap(z=temp_2d, x=grid_x[0], y=grid_z[:,0], colorscale='Hot', zmin=25, zmax=1100), row=1, col=1)
+    fig_tm.add_trace(go.Heatmap(z=cracks_2d, x=grid_x[0], y=grid_z[:,0], colorscale='Greys', zmin=0, zmax=1.2), row=2, col=1)
+    fig_tm.update_layout(template="plotly_dark", height=700)
     fig_tm.update_yaxes(autorange='reversed')
     st.plotly_chart(fig_tm, use_container_width=True)
 
 # Natijalar jadvali
 st.divider()
 st.table({
-    "Parametr": ["Umumiy chuqurlik (m)", "O'rtacha joriy UCS (MPa)", "Cho'kish koeffitsiyenti", "Faol yonish nuqtalari"],
+    "Parametr": ["Umumiy chuqurlik (m)", "O'rtacha joriy UCS (MPa)", "Cho'kish koeffitsiyenti", "Ssenariya holati"],
     "Qiymat": [f"{total_depth:.1f}", f"{current_ucs:.2f}", f"{sub_coeff:.3f}", 
-               f"{'1' if time<=30 else '1 va 3' if time<=60 else '1, 3 va 2'}"]
+               f"{'Faqat 1-nuqta' if time<=30 else '1 va 3-nuqtalar' if time<=60 else 'Hamma nuqtalar faol'}"]
 })
 
 st.sidebar.markdown("---")
