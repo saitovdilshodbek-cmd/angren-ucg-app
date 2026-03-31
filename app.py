@@ -41,34 +41,37 @@ for i in range(int(num_layers)):
         })
         total_depth += thick
 
-# --- 🟢 YANGI: ILMIY METODIKA VA FORMULALAR BO'LIMI ---
+# --- 🎓 ILMIY METODIKA VA FORMULALAR (LINKLAR BILAN) ---
 with st.expander("🎓 ILMIY METODIKA VA MATEMATIK MODELLAR (MA'LUMOTNOMA)"):
-    st.markdown("""
-    Ushbu monitoring tizimi RS2 va professional geomexanik dasturlar mantiqi asosida quyidagi formulalar yordamida ishlaydi:
-    """)
+    st.markdown("Ushbu monitoring tizimi xalqaro miqyosda tan olingan geomexanik metodlar asosida ishlaydi:")
+    
     f_col1, f_col2 = st.columns(2)
     with f_col1:
         st.markdown(r"""
-        **1. Termal Degradatsiya (Strength Reduction):**
-        Issiqlik ta'sirida jins mustahkamligining pasayishi:
+        #### 1. Termal Degradatsiya (Strength Reduction)
+        Jins mustahkamligining harorat ta'sirida pasayishi:
         $$Strength_{t} = Strength_{initial} \cdot e^{-0.005 \cdot t}$$
+        🔗 [Ilmiy asos: Thermo-mechanical modeling of UCG](https://www.sciencedirect.com/science/article/pii/S016651621400155X)
         
-        **2. Cho'kish Koeffitsiyenti ($a$):**
-        GSI va UCS qiymatlaridan kelib chiqadigan empirik bog'liqlik:
+        #### 2. Cho'kish Koeffitsiyenti (Sub-coeff)
+        GSI va UCS qiymatlari asosidagi bog'liqlik:
         $$a = 0.95 - \frac{GSI}{200} - \frac{UCS}{800}$$
+        🔗 [Metodika: Hoek-Brown Failure Criterion](https://www.rocscience.com/help/rs2/theory_guides/theory_guide/Hoek-Brown_Failure_Criterion.htm)
         """)
     with f_col2:
         st.markdown(r"""
-        **3. Gauss-Knothe Profili:**
-        Yer yuzasidagi cho'kish taqsimoti:
+        #### 3. Gauss-Knothe Profili
+        Yer yuzasidagi cho'kishning dinamik taqsimoti:
         $$S(x) = -S_{max} \cdot \exp\left(-\frac{x^2}{2\sigma^2}\right)$$
+        🔗 [Nazariya: Principles of Subsidence Engineering](https://www.researchgate.net/publication/285061614_Principles_of_subsidence_engineering)
         
-        **4. Kamera Dinamikasi:**
-        Kamera radiusi: $R(t) = 15 + 0.6 \cdot \Delta t$
-        Sovish harorati: $T_{cool} = T_{max} \cdot e^{-0.03 \cdot \Delta t}$
+        #### 4. Kamera Dinamikasi
+        Kamera radiusi kengayishi va sovish jarayoni:
+        $R(t) = 15 + 0.6 \cdot \Delta t$
+        🔗 [Dasturiy vosita: Streamlit Documentation](https://docs.streamlit.io/)
         """)
 
-# --- Matematik Model ---
+# --- Matematik Model (Hisob-kitoblar) ---
 avg_ucs = sum(l['ucs'] * l['t'] for l in layers_data) / total_depth
 avg_gsi = sum(l['gsi'] * l['t'] for l in layers_data) / total_depth
 thermal_deg = np.exp(-0.005 * time)
@@ -112,9 +115,7 @@ for key, val in sources.items():
             
         dist_sq = (grid_x - val['x'])**2 + (grid_z - source_z)**2
         temp_2d += current_temp * np.exp(-dist_sq / (2 * radius**2))
-        
-        crack_radius = radius * 1.4
-        cracks_2d += np.exp(-dist_sq / (2 * crack_radius**2))
+        cracks_2d += np.exp(-dist_sq / (2 * (radius * 1.4)**2))
 
 # --- VIZUALIZATSIYA ---
 st.subheader(f"📊 {obj_name}: Monitoring Natijalari")
@@ -123,13 +124,13 @@ col_g1, col_g2 = st.columns(2)
 with col_g1:
     fig1 = go.Figure()
     fig1.add_trace(go.Scatter(x=x_axis, y=uplift * 100, fill='tozeroy', line=dict(color='cyan', width=3)))
-    fig1.update_layout(title="🔥 Termal ko'tarilish (cm)", template="plotly_dark", height=250, margin=dict(l=20, r=20, t=40, b=20))
+    fig1.update_layout(title="🔥 Termal ko'tarilish (cm)", template="plotly_dark", height=250)
     st.plotly_chart(fig1, use_container_width=True)
 
 with col_g2:
     fig2 = go.Figure()
     fig2.add_trace(go.Scatter(x=x_axis, y=subsidence_dynamic, fill='tozeroy', line=dict(color='magenta', width=3)))
-    fig2.update_layout(title="📉 Mexanik cho'kish (m)", template="plotly_dark", height=250, margin=dict(l=20, r=20, t=40, b=20))
+    fig2.update_layout(title="📉 Mexanik cho'kish (m)", template="plotly_dark", height=250)
     st.plotly_chart(fig2, use_container_width=True)
 
 st.markdown("---")
@@ -140,61 +141,24 @@ with c1:
     fig_strata = go.Figure()
     for l in layers_data:
         fig_strata.add_trace(go.Bar(x=['Kesim'], y=[l['t']], name=l['name'], marker_color=l['color'], width=0.4))
-    fig_strata.update_layout(barmode='stack', template="plotly_dark", yaxis=dict(title="Chuqurlik (m)", autorange='reversed'), height=700, showlegend=True)
+    fig_strata.update_layout(barmode='stack', template="plotly_dark", yaxis=dict(title="Chuqurlik (m)", autorange='reversed'), height=700)
     st.plotly_chart(fig_strata, use_container_width=True)
 
 with c2:
     st.subheader("🔥 TM Maydoni va 🧱 Strukturaviy Deformatsiya")
-    fig_tm = make_subplots(
-        rows=2, cols=1, 
-        shared_xaxes=True,
-        vertical_spacing=0.08,
-        subplot_titles=("Harorat Maydoni (°C)", "Yoriqlanish va Yer yuzasi Deformatsiyasi (RS2 Style)")
-    )
+    fig_tm = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08, subplot_titles=("Harorat Maydoni (°C)", "Yoriqlanish va Deformatsiya (RS2 Style)"))
     
-    fig_tm.add_trace(go.Heatmap(
-        z=temp_2d, x=grid_x[0], y=grid_z[:,0], 
-        colorscale='Hot', zmin=25, zmax=1100,
-        colorbar=dict(title="°C", x=1.02, y=0.78, len=0.45)
-    ), row=1, col=1)
+    fig_tm.add_trace(go.Heatmap(z=temp_2d, x=grid_x[0], y=grid_z[:,0], colorscale='Hot', zmin=25, zmax=1100), row=1, col=1)
+    fig_tm.add_trace(go.Contour(z=cracks_2d, x=grid_x[0], y=grid_z[:,0], colorscale='Jet', contours=dict(coloring='heatmap'), zmin=0, zmax=1.1, name="Yoriqlar"), row=2, col=1)
+    fig_tm.add_trace(go.Scatter(x=x_axis, y=subsidence_dynamic * 15 - 30, mode='lines', line=dict(color='white', width=4, dash='dash'), name="Dinamik Profil"), row=2, col=1)
     
-    fig_tm.add_trace(go.Contour(
-        z=cracks_2d, x=grid_x[0], y=grid_z[:,0],
-        colorscale='Jet', 
-        line_width=0.5,
-        contours=dict(coloring='heatmap', showlines=True, start=0, end=1.0, size=0.1),
-        colorbar=dict(
-            title=dict(text="Zichlik", side="top"), 
-            x=1.02, y=0.22, len=0.45,
-            tickvals=[0, 0.25, 0.5, 0.75, 1.0],
-            ticktext=["Barqaror", "Past", "O'rta", "Yuqori", "Kritik"]
-        ),
-        zmin=0, zmax=1.1, name="Yoriqlanish"
-    ), row=2, col=1)
-
-    fig_tm.add_trace(go.Scatter(
-        x=x_axis, y=subsidence_dynamic * 15 - 30,
-        mode='lines', line=dict(color='white', width=4, dash='dash'),
-        name="Dinamik Profil"
-    ), row=2, col=1)
-
     for layer in layers_data:
-        fig_tm.add_shape(type="line", x0=min(x_axis), y0=layer['z_start'], x1=max(x_axis), y1=layer['z_start'],
-                         line=dict(color="rgba(255,255,255,0.3)", width=1, dash="dot"), row=2, col=1)
+        fig_tm.add_shape(type="line", x0=min(x_axis), y0=layer['z_start'], x1=max(x_axis), y1=layer['z_start'], line=dict(color="rgba(255,255,255,0.3)", dash="dot"), row=2, col=1)
     
-    fig_tm.update_layout(template="plotly_dark", height=850, margin=dict(l=20, r=80, t=40, b=20))
+    fig_tm.update_layout(template="plotly_dark", height=850)
     fig_tm.update_yaxes(title_text="Chuqurlik (m)", autorange='reversed', row=1, col=1)
     fig_tm.update_yaxes(title_text="Chuqurlik (m)", autorange='reversed', range=[total_depth + 50, -80], row=2, col=1)
-    
     st.plotly_chart(fig_tm, use_container_width=True)
-
-# Natijalar jadvali
-st.divider()
-st.table({
-    "Parametr": ["Umumiy chuqurlik (m)", "Maksimal cho'kish (m)", "Yonish muddati", "Ssenariya holati"],
-    "Qiymat": [f"{total_depth:.1f}", f"{abs(s_max_dynamic):.3f}", f"{burn_duration} soat", 
-               f"{'Sovish jarayoni' if time > burn_duration else 'Faol yonish'}"]
-})
 
 st.sidebar.markdown("---")
 st.sidebar.write(f"Tuzuvchi: Saitov Dilshodbek")
