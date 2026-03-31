@@ -10,15 +10,14 @@ st.set_page_config(page_title="Universal Geomechanical Monitor", layout="wide")
 st.title("🌐 Universal Yer yuzasi Deformatsiyasi Monitoringi")
 st.markdown("### Termo-Mexanik (TM) tahlil va Dinamik UCG Ssenariysi (RS2 Style)")
 
-# --- Sidebar: Umumiy Sozlamalar ---
+# --- Sidebar: Parametrlar ---
 st.sidebar.header("⚙️ Umumiy parametrlar")
 obj_name = st.sidebar.text_input("Loyiha nomi:", value="Angren-UCG-001")
-time = st.sidebar.slider("Jarayon vaqti (soat):", 0, 100, 24)
+time = st.sidebar.slider("Jarayon vaqti (soat):", 0, 100, 45)
 num_layers = st.sidebar.number_input("Qatlamlar soni:", min_value=1, max_value=5, value=3)
 
 strata_colors = ['#87CEEB', '#F4A460', '#D3D3D3', '#F5DEB3', '#000000', '#800080']
 
-# --- Qatlamlar parametrlarini kiritish ---
 layers_data = []
 total_depth = 0
 for i in range(int(num_layers)):
@@ -31,136 +30,84 @@ for i in range(int(num_layers)):
         with col2:
             color = st.color_picker(f"Rangi:", strata_colors[i % len(strata_colors)], key=f"color_{i}")
             g = st.slider(f"GSI:", 0, 100, 60, key=f"g_{i}")
-            m = st.number_input(f"mi:", value=10.0, key=f"m_{i}")
         
         layers_data.append({
-            'name': name, 
-            't': thick, 
-            'ucs': u, 
-            'gsi': g, 
-            'mi': m, 
-            'color': color, 
-            'z_start': total_depth
+            'name': name, 't': thick, 'ucs': u, 'gsi': g, 
+            'color': color, 'z_start': total_depth
         })
         total_depth += thick
 
 # --- Matematik Model ---
 avg_ucs = sum(l['ucs'] * l['t'] for l in layers_data) / total_depth
-avg_gsi = sum(l['gsi'] * l['t'] for l in layers_data) / total_depth
 thermal_deg = np.exp(-0.005 * time)
-
 current_ucs = avg_ucs * thermal_deg
-current_gsi = avg_gsi * thermal_deg 
+sub_coeff = np.clip(0.95 - (avg_ucs / 800), 0.1, 0.8)
 
-sub_coeff = np.clip(0.95 - (current_gsi / 200) - (current_ucs / 800), 0.05, 0.9)
-
-# Deformatsiya uchun X o'qi
+# Deformatsiya profili (Oq chiziq formulasi)
 x_axis = np.linspace(-total_depth*1.5, total_depth*1.5, 300)
-r = total_depth / np.tan(np.radians(45))
-s_max = layers_data[-1]['t'] * sub_coeff 
-subsidence = s_max * 0.5 * (1 + erf(np.sqrt(np.pi) * x_axis / r)) - s_max
-uplift = (total_depth * 1e-4) * np.exp(-(x_axis**2) / (total_depth*20)) * (1 - np.exp(-0.05 * time))
+r = total_depth / np.tan(np.radians(35)) # Ta'sir radiusi
+s_max = layers_data[-1]['t'] * sub_coeff * (time/100) # Maksimal cho'kish
+# Silliq cho'kish profili
+subsidence_profile = -s_max * np.exp(-(x_axis**2) / (2 * (r/2)**2)) 
 
-# --- 2D DINAMIK ISSIQLIK VA YORIQLAR MODELI ---
-grid_x, grid_z = np.meshgrid(np.linspace(-total_depth*1.2, total_depth*1.2, 120), np.linspace(0, total_depth + 50, 100))
+# --- 2D Model ---
+grid_x, grid_z = np.meshgrid(np.linspace(-total_depth*1.2, total_depth*1.2, 150), np.linspace(0, total_depth + 20, 100))
+cracks_2d = np.zeros_like(grid_x)
 source_z = total_depth - (layers_data[-1]['t'] / 2)
 
-temp_2d = np.ones_like(grid_x) * 25 
-cracks_2d = np.zeros_like(grid_x)
+sources = {'1': -total_depth/2, '2': 0, '3': total_depth/2}
+active_sources = [sources['1']]
+if time > 30: active_sources.append(sources['3'])
+if time > 60: active_sources.append(sources['2'])
 
-sources = {
-    '1': {'x': -total_depth/2, 'start': 0},
-    '3': {'x': total_depth/2, 'start': 30},
-    '2': {'x': 0, 'start': 60}
-}
+for sx in active_sources:
+    dist_sq = (grid_x - sx)**2 + (grid_z - source_z)**2
+    radius = 15 + (time * 0.4)
+    cracks_2d += np.exp(-dist_sq / (2 * radius**2))
 
-for key, val in sources.items():
-    if time > val['start']:
-        dt = time - val['start']
-        radius = 15 + (dt * 0.6)
-        dist_sq = (grid_x - val['x'])**2 + (grid_z - source_z)**2
-        temp_2d += 1075 * np.exp(-dist_sq / (2 * radius**2))
-        crack_radius = radius * 1.4
-        cracks_2d += np.exp(-dist_sq / (2 * crack_radius**2))
-
-# --- VIZUALIZATSIYA ---
-st.subheader(f"📊 {obj_name}: Monitoring Natijalari")
-col_g1, col_g2 = st.columns(2)
-
-with col_g1:
-    fig1 = go.Figure()
-    fig1.add_trace(go.Scatter(x=x_axis, y=uplift * 100, fill='tozeroy', line=dict(color='cyan', width=3)))
-    fig1.update_layout(title="🔥 Termal ko'tarilish (cm)", template="plotly_dark", height=250, margin=dict(l=20, r=20, t=40, b=20))
-    st.plotly_chart(fig1, use_container_width=True)
-
-with col_g2:
-    fig2 = go.Figure()
-    fig2.add_trace(go.Scatter(x=x_axis, y=subsidence, fill='tozeroy', line=dict(color='magenta', width=3)))
-    fig2.update_layout(title="📉 Mexanik cho'kish (m)", template="plotly_dark", height=250, margin=dict(l=20, r=20, t=40, b=20))
-    st.plotly_chart(fig2, use_container_width=True)
-
-st.markdown("---")
-c1, c2 = st.columns([1, 2.5])
+# --- VIZUALIZATSIYA (RS2 STYLE) ---
+c1, c2 = st.columns([1, 3])
 
 with c1:
-    st.subheader("🧱 Geologik Kesim")
+    st.subheader("🧱 Kesim")
     fig_strata = go.Figure()
     for l in layers_data:
-        fig_strata.add_trace(go.Bar(x=['Kesim'], y=[l['t']], name=l['name'], marker_color=l['color'], width=0.4))
-    fig_strata.update_layout(barmode='stack', template="plotly_dark", yaxis=dict(title="Chuqurlik (m)", autorange='reversed'), height=700, showlegend=True)
+        fig_strata.add_trace(go.Bar(x=[''], y=[l['t']], name=l['name'], marker_color=l['color']))
+    fig_strata.update_layout(barmode='stack', template="plotly_dark", yaxis=dict(autorange='reversed'), height=600, showlegend=False)
     st.plotly_chart(fig_strata, use_container_width=True)
 
 with c2:
-    st.subheader("🔥 TM Maydoni va 🧱 Strukturaviy Deformatsiya")
-    fig_tm = make_subplots(
-        rows=2, cols=1, 
-        shared_xaxes=True,
-        vertical_spacing=0.08,
-        subplot_titles=("Harorat Maydoni (°C)", "Yoriqlanish va Yer yuzasi Deformatsiyasi (RS2 Style)")
-    )
-    
-    # 1. Harorat xaritasi
-    fig_tm.add_trace(go.Heatmap(
-        z=temp_2d, x=grid_x[0], y=grid_z[:,0], 
-        colorscale='Hot', zmin=25, zmax=1100,
-        colorbar=dict(title="°C", x=1.02, y=0.78, len=0.45)
-    ), row=1, col=1)
-    
-    # 2. Yoriqlanish zichligi (RS2 Style Contour)
-    fig_tm.add_trace(go.Contour(
+    st.subheader("🏗️ RS2 Interpret: Vertical Displacement")
+    fig_rs2 = go.Figure()
+
+    # 1. Kontur maydoni (Jinslar deformatsiyasi)
+    fig_rs2.add_trace(go.Contour(
         z=cracks_2d, x=grid_x[0], y=grid_z[:,0],
-        colorscale='Jet', 
+        colorscale='Jet',
+        contours=dict(start=0, end=1.2, size=0.1, coloring='heatmap', showlines=True),
         line_width=0.5,
-        contours=dict(coloring='heatmap', showlines=True),
-        colorbar=dict(title="Zichlik", x=1.02, y=0.22, len=0.45),
-        zmin=0, zmax=1.1, connectgaps=True, name="Yoriqlanish"
-    ), row=2, col=1)
+        colorbar=dict(title="Displacement (m)", x=1.02)
+    ))
 
-    # 3. Yer yuzasi cho'kish chizig'i
-    fig_tm.add_trace(go.Scatter(
-        x=x_axis, y=subsidence * 10, # Vizual ko'rinish uchun masshtab
-        mode='lines', line=dict(color='white', width=4, dash='dash'),
-        name="Yer yuzasi cho'kishi"
-    ), row=2, col=1)
+    # 2. YER YUZASI DEFORMATSIYA CHIZIG'I (Oq punktir chiziq)
+    # y=0 sathidan yuqoriga/pastga deformatsiyani ko'rsatish
+    fig_rs2.add_trace(go.Scatter(
+        x=x_axis, 
+        y=subsidence_profile * 20 - 10, # Masshtab ko'rinishi uchun
+        mode='lines',
+        line=dict(color='white', width=4, dash='dash'),
+        name="Surface Profile"
+    ))
 
-    # 4. Qatlamlar chegaralarini chizish
-    for layer in layers_data:
-        fig_tm.add_shape(type="line", x0=min(x_axis), y0=layer['z_start'], x1=max(x_axis), y1=layer['z_start'],
-                         line=dict(color="rgba(255,255,255,0.3)", width=1, dash="dot"), row=2, col=1)
-        fig_tm.add_annotation(x=max(x_axis)*0.8, y=layer['z_start']+5, text=layer['name'], 
-                              showarrow=False, font=dict(color="rgba(255,255,255,0.6)", size=10), row=2, col=1)
-    
-    fig_tm.update_layout(template="plotly_dark", height=850, margin=dict(l=20, r=80, t=40, b=20))
-    fig_tm.update_yaxes(autorange='reversed')
-    st.plotly_chart(fig_tm, use_container_width=True)
+    # 3. Strukturaviy chegaralar
+    for l in layers_data:
+        fig_rs2.add_shape(type="line", x0=min(x_axis), y0=l['z_start'], x1=max(x_axis), y1=l['z_start'],
+                          line=dict(color="rgba(255,255,255,0.5)", width=1.5))
 
-# Natijalar jadvali
-st.divider()
-st.table({
-    "Parametr": ["Umumiy chuqurlik (m)", "O'rtacha joriy UCS (MPa)", "Cho'kish koeffitsiyenti", "Ssenariya holati"],
-    "Qiymat": [f"{total_depth:.1f}", f"{current_ucs:.2f}", f"{sub_coeff:.3f}", 
-               f"{'Faqat 1-nuqta faol' if time<=30 else '1 va 3-nuqtalar faol' if time<=60 else 'Hamma nuqtalar faol'}"]
-})
-
-st.sidebar.markdown("---")
-st.sidebar.write(f"Tuzuvchi: Saitov Dilshodbek")
+    fig_rs2.update_layout(
+        template="plotly_dark", height=700,
+        xaxis=dict(title="Distance (m)", range=[min(x_axis), max(x_axis)]),
+        yaxis=dict(title="Depth (m)", autorange='reversed', range=[total_depth+20, -50]),
+        margin=dict(l=10, r=10, t=10, b=10)
+    )
+    st.plotly_chart(fig_rs2, use_container_width=True)
