@@ -102,29 +102,38 @@ with c1:
     st.plotly_chart(fig_strata, use_container_width=True)
 
 with c2:
-    st.subheader("🔥 Issiqlik va 🧱 Yoriqlanish Maydoni")
+    st.subheader("🔥 Issiqlik va 🧱 Yoriqlanish Maydoni (RS2 Style)")
     fig_tm = make_subplots(
         rows=2, cols=1, 
         shared_xaxes=True,
-        vertical_spacing=0.08,
-        subplot_titles=("Harorat Maydoni (°C)", "Jinslarning Yoriqlanish Zichligi")
+        vertical_spacing=0.1,
+        subplot_titles=("Harorat Maydoni (°C)", "Jinslarning Yoriqlanish Zichligi (Kontur)")
     )
     
-    # Harorat xaritasi va uning shkalasi
+    # 1. Harorat xaritasi
     fig_tm.add_trace(go.Heatmap(
         z=temp_2d, x=grid_x[0], y=grid_z[:,0], 
         colorscale='Hot', zmin=25, zmax=1100,
         colorbar=dict(title="°C", x=1.02, y=0.78, len=0.45)
     ), row=1, col=1)
     
-    # Yoriqlar xaritasi va uning shkalasi
-    fig_tm.add_trace(go.Heatmap(
-        z=cracks_2d, x=grid_x[0], y=grid_z[:,0], 
-        colorscale='Greys', zmin=0, zmax=1.2,
-        colorbar=dict(title="Zichlik", x=1.02, y=0.22, len=0.45)
+    # 2. Yoriqlanish zichligi (RS2 dagi kabi ko'k-yashil-qizil kontur)
+    fig_tm.add_trace(go.Contour(
+        z=cracks_2d, 
+        x=grid_x[0], 
+        y=grid_z[:,0],
+        colorscale='Jet', 
+        line_smoothing=0.85,
+        contours=dict(
+            coloring='heatmap',
+            showlines=True,
+            project_z=True
+        ),
+        colorbar=dict(title="Zichlik", x=1.02, y=0.22, len=0.45),
+        zmin=0, zmax=1.1
     ), row=2, col=1)
     
-    fig_tm.update_layout(template="plotly_dark", height=750, margin=dict(l=20, r=80, t=40, b=20))
+    fig_tm.update_layout(template="plotly_dark", height=800, margin=dict(l=20, r=80, t=40, b=20))
     fig_tm.update_yaxes(autorange='reversed')
     st.plotly_chart(fig_tm, use_container_width=True)
 
