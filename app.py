@@ -54,17 +54,12 @@ current_gsi = avg_gsi * thermal_deg
 
 sub_coeff = np.clip(0.95 - (current_gsi / 200) - (current_ucs / 800), 0.05, 0.9)
 
-# --- VAQTGA BOG'LIQ DINAMIK DEFORMATSIYA (OQ CHIZIQ) ---
+# --- VAQTGA BOG'LIQ DINAMIK DEFORMATSIYA ---
 x_axis = np.linspace(-total_depth*1.5, total_depth*1.5, 300)
-# Vaqt ortishi bilan ta'sir radiusi biroz kengayadi
 r_dynamic = (total_depth / np.tan(np.radians(35))) * (0.8 + 0.2 * time / 100)
-# Vaqtga bog'liq maksimal cho'kish (time=0 da 0 bo'ladi)
 s_max_dynamic = (layers_data[-1]['t'] * sub_coeff) * (time / 100)
-
-# Silliq Gauss profili (Siz yuborgan rasmdagidek)
 subsidence_dynamic = -s_max_dynamic * np.exp(-(x_axis**2) / (2 * (r_dynamic/2.5)**2))
 
-# Termal ko'tarilish (Eski modeldan)
 uplift = (total_depth * 1e-4) * np.exp(-(x_axis**2) / (total_depth*20)) * (1 - np.exp(-0.05 * time))
 
 # --- 2D DINAMIK ISSIQLIK VA YORIQLAR MODELI ---
@@ -132,36 +127,43 @@ with c2:
         colorbar=dict(title="°C", x=1.02, y=0.78, len=0.45)
     ), row=1, col=1)
     
-    # 2. Yoriqlanish zichligi (RS2 Style Contour)
+    # 2. Yangilangan Zichlik Shkalasi (Tushunarliroq variant)
     fig_tm.add_trace(go.Contour(
         z=cracks_2d, x=grid_x[0], y=grid_z[:,0],
         colorscale='Jet', 
         line_width=0.5,
-        contours=dict(coloring='heatmap', showlines=True),
-        colorbar=dict(title="Zichlik", x=1.02, y=0.22, len=0.45),
-        zmin=0, zmax=1.1, connectgaps=True, name="Yoriqlanish"
+        contours=dict(
+            coloring='heatmap', 
+            showlines=True,
+            start=0, end=1.0, size=0.1 # RS2 dagi kabi 10 ta daraja
+        ),
+        colorbar=dict(
+            title=dict(text="Zichlik (Yoriqlanish)", side="top"), 
+            x=1.02, y=0.22, len=0.45,
+            tickvals=[0, 0.25, 0.5, 0.75, 1.0],
+            ticktext=["Barqaror", "Past", "O'rta", "Yuqori", "Kritik"]
+        ),
+        zmin=0, zmax=1.1, name="Yoriqlanish"
     ), row=2, col=1)
 
-    # 3. YER YUZASI DINAMIK CHO'KISH CHIZIG'I (RS2 STYLE)
+    # 3. YER YUZASI DINAMIK CHO'KISH CHIZIG'I
     fig_tm.add_trace(go.Scatter(
         x=x_axis, 
-        y=subsidence_dynamic * 15 - 20, # Vizual ko'rinish uchun masshtab va ofset
+        y=subsidence_dynamic * 15 - 30, # Masshtab va ofsetni to'g'irlash
         mode='lines', 
         line=dict(color='white', width=4, dash='dash'),
-        name="Vaqtga bog'liq profil"
+        name="Dinamik Profil"
     ), row=2, col=1)
 
-    # 4. Qatlamlar chegaralarini chizish
+    # 4. Qatlamlar va Annotatsiyalar
     for layer in layers_data:
         fig_tm.add_shape(type="line", x0=min(x_axis), y0=layer['z_start'], x1=max(x_axis), y1=layer['z_start'],
                          line=dict(color="rgba(255,255,255,0.3)", width=1, dash="dot"), row=2, col=1)
-        fig_tm.add_annotation(x=max(x_axis)*0.8, y=layer['z_start']+5, text=layer['name'], 
-                              showarrow=False, font=dict(color="rgba(255,255,255,0.6)", size=10), row=2, col=1)
     
     fig_tm.update_layout(template="plotly_dark", height=850, margin=dict(l=20, r=80, t=40, b=20))
-    # Y-o'qini chuqurlik uchun sozlash
     fig_tm.update_yaxes(title_text="Chuqurlik (m)", autorange='reversed', row=1, col=1)
-    fig_tm.update_yaxes(title_text="Chuqurlik (m)", autorange='reversed', range=[total_depth + 20, -60], row=2, col=1)
+    # Deformatsiya chizig'i yaxshi ko'rinishi uchun y-o'qi chegarasi
+    fig_tm.update_yaxes(title_text="Chuqurlik (m)", autorange='reversed', range=[total_depth + 50, -80], row=2, col=1)
     
     st.plotly_chart(fig_tm, use_container_width=True)
 
