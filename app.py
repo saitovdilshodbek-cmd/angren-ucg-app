@@ -8,11 +8,11 @@ from plotly.subplots import make_subplots
 st.set_page_config(page_title="Universal Geomechanical Monitor", layout="wide")
 
 st.title("🌐 Universal Yer yuzasi Deformatsiyasi Monitoringi")
-st.markdown("### Termo-Mexanik (TM) tahlil va Dinamik UCG Ssenariysi")
+st.markdown("### Termo-Mexanik (TM) tahlil va Dinamik UCG Ssenariysi (RS2 Style)")
 
 # --- Sidebar: Umumiy Sozlamalar ---
 st.sidebar.header("⚙️ Umumiy parametrlar")
-obj_name = st.sidebar.text_input("Loyiha nomi:", value="Obyekt-001")
+obj_name = st.sidebar.text_input("Loyiha nomi:", value="Angren-UCG-001")
 time = st.sidebar.slider("Jarayon vaqti (soat):", 0, 100, 24)
 num_layers = st.sidebar.number_input("Qatlamlar soni:", min_value=1, max_value=5, value=3)
 
@@ -32,7 +32,16 @@ for i in range(int(num_layers)):
             color = st.color_picker(f"Rangi:", strata_colors[i % len(strata_colors)], key=f"color_{i}")
             g = st.slider(f"GSI:", 0, 100, 60, key=f"g_{i}")
             m = st.number_input(f"mi:", value=10.0, key=f"m_{i}")
-        layers_data.append({'name': name, 't': thick, 'ucs': u, 'gsi': g, 'mi': m, 'color': color})
+        
+        layers_data.append({
+            'name': name, 
+            't': thick, 
+            'ucs': u, 
+            'gsi': g, 
+            'mi': m, 
+            'color': color, 
+            'z_start': total_depth
+        })
         total_depth += thick
 
 # --- Matematik Model ---
@@ -45,7 +54,7 @@ current_gsi = avg_gsi * thermal_deg
 
 sub_coeff = np.clip(0.95 - (current_gsi / 200) - (current_ucs / 800), 0.05, 0.9)
 
-# Deformatsiya grafiklari uchun X o'qi
+# Deformatsiya uchun X o'qi
 x_axis = np.linspace(-total_depth*1.5, total_depth*1.5, 300)
 r = total_depth / np.tan(np.radians(45))
 s_max = layers_data[-1]['t'] * sub_coeff 
@@ -81,33 +90,33 @@ col_g1, col_g2 = st.columns(2)
 with col_g1:
     fig1 = go.Figure()
     fig1.add_trace(go.Scatter(x=x_axis, y=uplift * 100, fill='tozeroy', line=dict(color='cyan', width=3)))
-    fig1.update_layout(title="🔥 Termal ko'tarilish (cm)", template="plotly_dark", height=300, margin=dict(l=20, r=20, t=40, b=20))
+    fig1.update_layout(title="🔥 Termal ko'tarilish (cm)", template="plotly_dark", height=250, margin=dict(l=20, r=20, t=40, b=20))
     st.plotly_chart(fig1, use_container_width=True)
 
 with col_g2:
     fig2 = go.Figure()
     fig2.add_trace(go.Scatter(x=x_axis, y=subsidence, fill='tozeroy', line=dict(color='magenta', width=3)))
-    fig2.update_layout(title="📉 Mexanik cho'kish (m)", template="plotly_dark", height=300, margin=dict(l=20, r=20, t=40, b=20))
+    fig2.update_layout(title="📉 Mexanik cho'kish (m)", template="plotly_dark", height=250, margin=dict(l=20, r=20, t=40, b=20))
     st.plotly_chart(fig2, use_container_width=True)
 
 st.markdown("---")
-c1, c2 = st.columns([1, 2])
+c1, c2 = st.columns([1, 2.5])
 
 with c1:
-    st.subheader("🧱 Struktura")
+    st.subheader("🧱 Geologik Kesim")
     fig_strata = go.Figure()
     for l in layers_data:
         fig_strata.add_trace(go.Bar(x=['Kesim'], y=[l['t']], name=l['name'], marker_color=l['color'], width=0.4))
-    fig_strata.update_layout(barmode='stack', template="plotly_dark", yaxis=dict(title="Chuqurlik (m)", autorange='reversed'), height=650, showlegend=False)
+    fig_strata.update_layout(barmode='stack', template="plotly_dark", yaxis=dict(title="Chuqurlik (m)", autorange='reversed'), height=700, showlegend=True)
     st.plotly_chart(fig_strata, use_container_width=True)
 
 with c2:
-    st.subheader("🔥 Issiqlik va 🧱 Yoriqlanish Maydoni (RS2 Style)")
+    st.subheader("🔥 TM Maydoni va 🧱 Strukturaviy Deformatsiya")
     fig_tm = make_subplots(
         rows=2, cols=1, 
         shared_xaxes=True,
-        vertical_spacing=0.1,
-        subplot_titles=("Harorat Maydoni (°C)", "Jinslarning Yoriqlanish Zichligi (Kontur)")
+        vertical_spacing=0.08,
+        subplot_titles=("Harorat Maydoni (°C)", "Yoriqlanish va Yer yuzasi Deformatsiyasi (RS2 Style)")
     )
     
     # 1. Harorat xaritasi
@@ -117,23 +126,31 @@ with c2:
         colorbar=dict(title="°C", x=1.02, y=0.78, len=0.45)
     ), row=1, col=1)
     
-    # 2. Yoriqlanish zichligi (Xatolik tuzatilgan qismi)
+    # 2. Yoriqlanish zichligi (RS2 Style Contour)
     fig_tm.add_trace(go.Contour(
-        z=cracks_2d, 
-        x=grid_x[0], 
-        y=grid_z[:,0],
+        z=cracks_2d, x=grid_x[0], y=grid_z[:,0],
         colorscale='Jet', 
-        line_width=0, # Chiziqlarni silliq qilish uchun
-        contours=dict(
-            coloring='heatmap',
-            showlines=False
-        ),
+        line_width=0.5,
+        contours=dict(coloring='heatmap', showlines=True),
         colorbar=dict(title="Zichlik", x=1.02, y=0.22, len=0.45),
-        zmin=0, zmax=1.1,
-        connectgaps=True
+        zmin=0, zmax=1.1, connectgaps=True, name="Yoriqlanish"
     ), row=2, col=1)
+
+    # 3. Yer yuzasi cho'kish chizig'i
+    fig_tm.add_trace(go.Scatter(
+        x=x_axis, y=subsidence * 10, # Vizual ko'rinish uchun masshtab
+        mode='lines', line=dict(color='white', width=4, dash='dash'),
+        name="Yer yuzasi cho'kishi"
+    ), row=2, col=1)
+
+    # 4. Qatlamlar chegaralarini chizish
+    for layer in layers_data:
+        fig_tm.add_shape(type="line", x0=min(x_axis), y0=layer['z_start'], x1=max(x_axis), y1=layer['z_start'],
+                         line=dict(color="rgba(255,255,255,0.3)", width=1, dash="dot"), row=2, col=1)
+        fig_tm.add_annotation(x=max(x_axis)*0.8, y=layer['z_start']+5, text=layer['name'], 
+                              showarrow=False, font=dict(color="rgba(255,255,255,0.6)", size=10), row=2, col=1)
     
-    fig_tm.update_layout(template="plotly_dark", height=800, margin=dict(l=20, r=80, t=40, b=20))
+    fig_tm.update_layout(template="plotly_dark", height=850, margin=dict(l=20, r=80, t=40, b=20))
     fig_tm.update_yaxes(autorange='reversed')
     st.plotly_chart(fig_tm, use_container_width=True)
 
