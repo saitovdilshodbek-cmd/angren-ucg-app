@@ -13,11 +13,11 @@ st.markdown("### Termo-Mexanik (TM) tahlil va Dinamik UCG Ssenariysi (RS2 Style)
 # --- Sidebar: Umumiy Sozlamalar ---
 st.sidebar.header("⚙️ Umumiy parametrlar")
 obj_name = st.sidebar.text_input("Loyiha nomi:", value="Angren-UCG-001")
-# Jarayon vaqtini sovish bosqichini ham ko'rish uchun 150 gacha uzaytirdik
+# Jarayon vaqtini sovish bosqichini ham ko'rish uchun uzaytirdik
 time = st.sidebar.slider("Jarayon vaqti (soat):", 0, 150, 24)
 num_layers = st.sidebar.number_input("Qatlamlar soni:", min_value=1, max_value=5, value=3)
 
-# Yangi: Har bir nuqta necha soat davomida yonishini belgilash
+# Har bir nuqta necha soat davomida yonishini belgilash
 st.sidebar.subheader("🔥 Yonish muddati")
 burn_duration = st.sidebar.number_input("Kamera yonish muddati (soat):", value=40)
 
@@ -55,13 +55,13 @@ avg_gsi = sum(l['gsi'] * l['t'] for l in layers_data) / total_depth
 thermal_deg = np.exp(-0.005 * time)
 
 current_ucs = avg_ucs * thermal_deg
-current_gsi = avg_gsi * thermal_depth = avg_gsi * thermal_deg 
+# XATOLIK TO'G'IRLANDI: Faqat bitta tenglik qoldirildi
+current_gsi = avg_gsi * thermal_deg 
 
 sub_coeff = np.clip(0.95 - (current_gsi / 200) - (current_ucs / 800), 0.05, 0.9)
 
 # --- VAQTGA BOG'LIQ DINAMIK DEFORMATSIYA ---
 x_axis = np.linspace(-total_depth*1.5, total_depth*1.5, 300)
-# Cho'kish faqat yonish davom etayotgan vaqtda (max 100 soat) rivojlanadi deb hisoblaymiz
 r_dynamic = (total_depth / np.tan(np.radians(35))) * (0.8 + 0.2 * min(time, 100) / 100)
 s_max_dynamic = (layers_data[-1]['t'] * sub_coeff) * (min(time, 100) / 100)
 subsidence_dynamic = -s_max_dynamic * np.exp(-(x_axis**2) / (2 * (r_dynamic/2.5)**2))
@@ -85,7 +85,6 @@ for key, val in sources.items():
     if time > val['start']:
         active_time = time - val['start']
         
-        # Yonish yoki Sovish bosqichini aniqlash
         if active_time <= burn_duration:
             # 1. FAOL YONISH: Radius kengayadi, harorat maksimal
             radius = 15 + (active_time * 0.6)
@@ -93,19 +92,16 @@ for key, val in sources.items():
         else:
             # 2. SOVISH: Radius to'xtaydi, harorat pasayadi
             radius = 15 + (burn_duration * 0.6)
-            # Eksponentsial sovish formulasi
             cooling_time = active_time - burn_duration
             current_temp = 1075 * np.exp(-0.03 * cooling_time)
             
         dist_sq = (grid_x - val['x'])**2 + (grid_z - source_z)**2
         temp_2d += current_temp * np.exp(-dist_sq / (2 * radius**2))
         
-        # Yoriqlar radiusi har doim issiqlik radiusidan kengroq
         crack_radius = radius * 1.4
-        # Yoriqlar hatto soviganda ham saqlanib qoladi (shuning uchun active_time ishlatilmadi)
         cracks_2d += np.exp(-dist_sq / (2 * crack_radius**2))
 
-# --- VIZUALIZATSIYA (O'zgarmadi) ---
+# --- VIZUALIZATSIYA ---
 st.subheader(f"📊 {obj_name}: Monitoring Natijalari")
 col_g1, col_g2 = st.columns(2)
 
@@ -141,14 +137,12 @@ with c2:
         subplot_titles=("Harorat Maydoni (°C)", "Yoriqlanish va Yer yuzasi Deformatsiyasi (RS2 Style)")
     )
     
-    # 1. Harorat
     fig_tm.add_trace(go.Heatmap(
         z=temp_2d, x=grid_x[0], y=grid_z[:,0], 
         colorscale='Hot', zmin=25, zmax=1100,
         colorbar=dict(title="°C", x=1.02, y=0.78, len=0.45)
     ), row=1, col=1)
     
-    # 2. Zichlik (Yoriqlar)
     fig_tm.add_trace(go.Contour(
         z=cracks_2d, x=grid_x[0], y=grid_z[:,0],
         colorscale='Jet', 
@@ -163,12 +157,9 @@ with c2:
         zmin=0, zmax=1.1, name="Yoriqlanish"
     ), row=2, col=1)
 
-    # 3. Cho'kish chizig'i
     fig_tm.add_trace(go.Scatter(
-        x=x_axis, 
-        y=subsidence_dynamic * 15 - 30,
-        mode='lines', 
-        line=dict(color='white', width=4, dash='dash'),
+        x=x_axis, y=subsidence_dynamic * 15 - 30,
+        mode='lines', line=dict(color='white', width=4, dash='dash'),
         name="Dinamik Profil"
     ), row=2, col=1)
 
@@ -185,9 +176,9 @@ with c2:
 # Natijalar jadvali
 st.divider()
 st.table({
-    "Parametr": ["Umumiy chuqurlik (m)", "Maksimal cho'kish (m)", "Belgilangan yonish muddati", "Ssenariya holati"],
+    "Parametr": ["Umumiy chuqurlik (m)", "Maksimal cho'kish (m)", "Yonish muddati", "Ssenariya holati"],
     "Qiymat": [f"{total_depth:.1f}", f"{abs(s_max_dynamic):.3f}", f"{burn_duration} soat", 
-               f"{'Sovish jarayoni boshlangan' if time > burn_duration else 'Faol gazifikatsiya'}"]
+               f"{'Sovish jarayoni' if time > burn_duration else 'Faol yonish'}"]
 })
 
 st.sidebar.markdown("---")
