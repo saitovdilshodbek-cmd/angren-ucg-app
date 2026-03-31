@@ -173,8 +173,10 @@ with c2:
         zmin=0, zmax=1.1, name="Yoriqlanish"
     ), row=2, col=1)
 
+    # --- TO'G'IRLANGAN DEFORMATSIYA CHIZIG'I ---
+    # Koeffitsiyentni o'zgartirib, chiziqni pastga (0 dan chuqurlik tomonga) yo'naltirdik
     fig_tm.add_trace(go.Scatter(
-        x=x_axis, y=subsidence_dynamic * 15 - 30,
+        x=x_axis, y=subsidence_dynamic * -30, # -30 vizualizatsiya uchun masshtab
         mode='lines', line=dict(color='white', width=4, dash='dash'),
         name="Dinamik Profil"
     ), row=2, col=1)
@@ -185,7 +187,8 @@ with c2:
     
     fig_tm.update_layout(template="plotly_dark", height=850, margin=dict(l=20, r=80, t=40, b=20))
     fig_tm.update_yaxes(title_text="Chuqurlik (m)", autorange='reversed', row=1, col=1)
-    fig_tm.update_yaxes(title_text="Chuqurlik (m)", autorange='reversed', range=[total_depth + 50, -80], row=2, col=1)
+    # Range ni -50 dan boshladik, shunda profil yer yuzasidan (0 dan) pastga tushadi
+    fig_tm.update_yaxes(title_text="Chuqurlik (m)", autorange='reversed', range=[total_depth + 50, -50], row=2, col=1)
     
     st.plotly_chart(fig_tm, use_container_width=True)
 
