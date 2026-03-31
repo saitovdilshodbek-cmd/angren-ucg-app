@@ -13,8 +13,13 @@ st.markdown("### Termo-Mexanik (TM) tahlil va Dinamik UCG Ssenariysi (RS2 Style)
 # --- Sidebar: Umumiy Sozlamalar ---
 st.sidebar.header("⚙️ Umumiy parametrlar")
 obj_name = st.sidebar.text_input("Loyiha nomi:", value="Angren-UCG-001")
-time = st.sidebar.slider("Jarayon vaqti (soat):", 0, 100, 24)
+# Jarayon vaqtini sovish bosqichini ham ko'rish uchun 150 gacha uzaytirdik
+time = st.sidebar.slider("Jarayon vaqti (soat):", 0, 150, 24)
 num_layers = st.sidebar.number_input("Qatlamlar soni:", min_value=1, max_value=5, value=3)
+
+# Yangi: Har bir nuqta necha soat davomida yonishini belgilash
+st.sidebar.subheader("🔥 Yonish muddati")
+burn_duration = st.sidebar.number_input("Kamera yonish muddati (soat):", value=40)
 
 strata_colors = ['#87CEEB', '#F4A460', '#D3D3D3', '#F5DEB3', '#000000', '#800080']
 
@@ -50,14 +55,15 @@ avg_gsi = sum(l['gsi'] * l['t'] for l in layers_data) / total_depth
 thermal_deg = np.exp(-0.005 * time)
 
 current_ucs = avg_ucs * thermal_deg
-current_gsi = avg_gsi * thermal_deg 
+current_gsi = avg_gsi * thermal_depth = avg_gsi * thermal_deg 
 
 sub_coeff = np.clip(0.95 - (current_gsi / 200) - (current_ucs / 800), 0.05, 0.9)
 
 # --- VAQTGA BOG'LIQ DINAMIK DEFORMATSIYA ---
 x_axis = np.linspace(-total_depth*1.5, total_depth*1.5, 300)
-r_dynamic = (total_depth / np.tan(np.radians(35))) * (0.8 + 0.2 * time / 100)
-s_max_dynamic = (layers_data[-1]['t'] * sub_coeff) * (time / 100)
+# Cho'kish faqat yonish davom etayotgan vaqtda (max 100 soat) rivojlanadi deb hisoblaymiz
+r_dynamic = (total_depth / np.tan(np.radians(35))) * (0.8 + 0.2 * min(time, 100) / 100)
+s_max_dynamic = (layers_data[-1]['t'] * sub_coeff) * (min(time, 100) / 100)
 subsidence_dynamic = -s_max_dynamic * np.exp(-(x_axis**2) / (2 * (r_dynamic/2.5)**2))
 
 uplift = (total_depth * 1e-4) * np.exp(-(x_axis**2) / (total_depth*20)) * (1 - np.exp(-0.05 * time))
@@ -77,14 +83,29 @@ sources = {
 
 for key, val in sources.items():
     if time > val['start']:
-        dt = time - val['start']
-        radius = 15 + (dt * 0.6)
+        active_time = time - val['start']
+        
+        # Yonish yoki Sovish bosqichini aniqlash
+        if active_time <= burn_duration:
+            # 1. FAOL YONISH: Radius kengayadi, harorat maksimal
+            radius = 15 + (active_time * 0.6)
+            current_temp = 1075
+        else:
+            # 2. SOVISH: Radius to'xtaydi, harorat pasayadi
+            radius = 15 + (burn_duration * 0.6)
+            # Eksponentsial sovish formulasi
+            cooling_time = active_time - burn_duration
+            current_temp = 1075 * np.exp(-0.03 * cooling_time)
+            
         dist_sq = (grid_x - val['x'])**2 + (grid_z - source_z)**2
-        temp_2d += 1075 * np.exp(-dist_sq / (2 * radius**2))
+        temp_2d += current_temp * np.exp(-dist_sq / (2 * radius**2))
+        
+        # Yoriqlar radiusi har doim issiqlik radiusidan kengroq
         crack_radius = radius * 1.4
+        # Yoriqlar hatto soviganda ham saqlanib qoladi (shuning uchun active_time ishlatilmadi)
         cracks_2d += np.exp(-dist_sq / (2 * crack_radius**2))
 
-# --- VIZUALIZATSIYA ---
+# --- VIZUALIZATSIYA (O'zgarmadi) ---
 st.subheader(f"📊 {obj_name}: Monitoring Natijalari")
 col_g1, col_g2 = st.columns(2)
 
@@ -120,25 +141,21 @@ with c2:
         subplot_titles=("Harorat Maydoni (°C)", "Yoriqlanish va Yer yuzasi Deformatsiyasi (RS2 Style)")
     )
     
-    # 1. Harorat xaritasi
+    # 1. Harorat
     fig_tm.add_trace(go.Heatmap(
         z=temp_2d, x=grid_x[0], y=grid_z[:,0], 
         colorscale='Hot', zmin=25, zmax=1100,
         colorbar=dict(title="°C", x=1.02, y=0.78, len=0.45)
     ), row=1, col=1)
     
-    # 2. Yangilangan Zichlik Shkalasi (Tushunarliroq variant)
+    # 2. Zichlik (Yoriqlar)
     fig_tm.add_trace(go.Contour(
         z=cracks_2d, x=grid_x[0], y=grid_z[:,0],
         colorscale='Jet', 
         line_width=0.5,
-        contours=dict(
-            coloring='heatmap', 
-            showlines=True,
-            start=0, end=1.0, size=0.1 # RS2 dagi kabi 10 ta daraja
-        ),
+        contours=dict(coloring='heatmap', showlines=True, start=0, end=1.0, size=0.1),
         colorbar=dict(
-            title=dict(text="Zichlik (Yoriqlanish)", side="top"), 
+            title=dict(text="Zichlik", side="top"), 
             x=1.02, y=0.22, len=0.45,
             tickvals=[0, 0.25, 0.5, 0.75, 1.0],
             ticktext=["Barqaror", "Past", "O'rta", "Yuqori", "Kritik"]
@@ -146,23 +163,21 @@ with c2:
         zmin=0, zmax=1.1, name="Yoriqlanish"
     ), row=2, col=1)
 
-    # 3. YER YUZASI DINAMIK CHO'KISH CHIZIG'I
+    # 3. Cho'kish chizig'i
     fig_tm.add_trace(go.Scatter(
         x=x_axis, 
-        y=subsidence_dynamic * 15 - 30, # Masshtab va ofsetni to'g'irlash
+        y=subsidence_dynamic * 15 - 30,
         mode='lines', 
         line=dict(color='white', width=4, dash='dash'),
         name="Dinamik Profil"
     ), row=2, col=1)
 
-    # 4. Qatlamlar va Annotatsiyalar
     for layer in layers_data:
         fig_tm.add_shape(type="line", x0=min(x_axis), y0=layer['z_start'], x1=max(x_axis), y1=layer['z_start'],
                          line=dict(color="rgba(255,255,255,0.3)", width=1, dash="dot"), row=2, col=1)
     
     fig_tm.update_layout(template="plotly_dark", height=850, margin=dict(l=20, r=80, t=40, b=20))
     fig_tm.update_yaxes(title_text="Chuqurlik (m)", autorange='reversed', row=1, col=1)
-    # Deformatsiya chizig'i yaxshi ko'rinishi uchun y-o'qi chegarasi
     fig_tm.update_yaxes(title_text="Chuqurlik (m)", autorange='reversed', range=[total_depth + 50, -80], row=2, col=1)
     
     st.plotly_chart(fig_tm, use_container_width=True)
@@ -170,9 +185,9 @@ with c2:
 # Natijalar jadvali
 st.divider()
 st.table({
-    "Parametr": ["Umumiy chuqurlik (m)", "O'rtacha joriy UCS (MPa)", "Maksimal cho'kish (m)", "Ssenariya holati"],
-    "Qiymat": [f"{total_depth:.1f}", f"{current_ucs:.2f}", f"{abs(s_max_dynamic):.3f}", 
-               f"{'Faqat 1-nuqta faol' if time<=30 else '1 va 3-nuqtalar faol' if time<=60 else 'Hamma nuqtalar faol'}"]
+    "Parametr": ["Umumiy chuqurlik (m)", "Maksimal cho'kish (m)", "Belgilangan yonish muddati", "Ssenariya holati"],
+    "Qiymat": [f"{total_depth:.1f}", f"{abs(s_max_dynamic):.3f}", f"{burn_duration} soat", 
+               f"{'Sovish jarayoni boshlangan' if time > burn_duration else 'Faol gazifikatsiya'}"]
 })
 
 st.sidebar.markdown("---")
