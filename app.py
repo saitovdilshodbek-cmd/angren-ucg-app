@@ -54,11 +54,17 @@ current_gsi = avg_gsi * thermal_deg
 
 sub_coeff = np.clip(0.95 - (current_gsi / 200) - (current_ucs / 800), 0.05, 0.9)
 
-# Deformatsiya uchun X o'qi
+# --- VAQTGA BOG'LIQ DINAMIK DEFORMATSIYA (OQ CHIZIQ) ---
 x_axis = np.linspace(-total_depth*1.5, total_depth*1.5, 300)
-r = total_depth / np.tan(np.radians(45))
-s_max = layers_data[-1]['t'] * sub_coeff 
-subsidence = s_max * 0.5 * (1 + erf(np.sqrt(np.pi) * x_axis / r)) - s_max
+# Vaqt ortishi bilan ta'sir radiusi biroz kengayadi
+r_dynamic = (total_depth / np.tan(np.radians(35))) * (0.8 + 0.2 * time / 100)
+# Vaqtga bog'liq maksimal cho'kish (time=0 da 0 bo'ladi)
+s_max_dynamic = (layers_data[-1]['t'] * sub_coeff) * (time / 100)
+
+# Silliq Gauss profili (Siz yuborgan rasmdagidek)
+subsidence_dynamic = -s_max_dynamic * np.exp(-(x_axis**2) / (2 * (r_dynamic/2.5)**2))
+
+# Termal ko'tarilish (Eski modeldan)
 uplift = (total_depth * 1e-4) * np.exp(-(x_axis**2) / (total_depth*20)) * (1 - np.exp(-0.05 * time))
 
 # --- 2D DINAMIK ISSIQLIK VA YORIQLAR MODELI ---
@@ -95,7 +101,7 @@ with col_g1:
 
 with col_g2:
     fig2 = go.Figure()
-    fig2.add_trace(go.Scatter(x=x_axis, y=subsidence, fill='tozeroy', line=dict(color='magenta', width=3)))
+    fig2.add_trace(go.Scatter(x=x_axis, y=subsidence_dynamic, fill='tozeroy', line=dict(color='magenta', width=3)))
     fig2.update_layout(title="📉 Mexanik cho'kish (m)", template="plotly_dark", height=250, margin=dict(l=20, r=20, t=40, b=20))
     st.plotly_chart(fig2, use_container_width=True)
 
@@ -136,11 +142,13 @@ with c2:
         zmin=0, zmax=1.1, connectgaps=True, name="Yoriqlanish"
     ), row=2, col=1)
 
-    # 3. Yer yuzasi cho'kish chizig'i
+    # 3. YER YUZASI DINAMIK CHO'KISH CHIZIG'I (RS2 STYLE)
     fig_tm.add_trace(go.Scatter(
-        x=x_axis, y=subsidence * 10, # Vizual ko'rinish uchun masshtab
-        mode='lines', line=dict(color='white', width=4, dash='dash'),
-        name="Yer yuzasi cho'kishi"
+        x=x_axis, 
+        y=subsidence_dynamic * 15 - 20, # Vizual ko'rinish uchun masshtab va ofset
+        mode='lines', 
+        line=dict(color='white', width=4, dash='dash'),
+        name="Vaqtga bog'liq profil"
     ), row=2, col=1)
 
     # 4. Qatlamlar chegaralarini chizish
@@ -151,14 +159,17 @@ with c2:
                               showarrow=False, font=dict(color="rgba(255,255,255,0.6)", size=10), row=2, col=1)
     
     fig_tm.update_layout(template="plotly_dark", height=850, margin=dict(l=20, r=80, t=40, b=20))
-    fig_tm.update_yaxes(autorange='reversed')
+    # Y-o'qini chuqurlik uchun sozlash
+    fig_tm.update_yaxes(title_text="Chuqurlik (m)", autorange='reversed', row=1, col=1)
+    fig_tm.update_yaxes(title_text="Chuqurlik (m)", autorange='reversed', range=[total_depth + 20, -60], row=2, col=1)
+    
     st.plotly_chart(fig_tm, use_container_width=True)
 
 # Natijalar jadvali
 st.divider()
 st.table({
-    "Parametr": ["Umumiy chuqurlik (m)", "O'rtacha joriy UCS (MPa)", "Cho'kish koeffitsiyenti", "Ssenariya holati"],
-    "Qiymat": [f"{total_depth:.1f}", f"{current_ucs:.2f}", f"{sub_coeff:.3f}", 
+    "Parametr": ["Umumiy chuqurlik (m)", "O'rtacha joriy UCS (MPa)", "Maksimal cho'kish (m)", "Ssenariya holati"],
+    "Qiymat": [f"{total_depth:.1f}", f"{current_ucs:.2f}", f"{abs(s_max_dynamic):.3f}", 
                f"{'Faqat 1-nuqta faol' if time<=30 else '1 va 3-nuqtalar faol' if time<=60 else 'Hamma nuqtalar faol'}"]
 })
 
