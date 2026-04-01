@@ -42,12 +42,12 @@ for i in range(int(num_layers)):
         })
         total_depth += thick
 
-# --- ILMIY HISOB-KITOBLAR (YANGILANGAN FAILURE MODEL) ---
+# --- ILMIY HISOB-KITOBLAR ---
 avg_ucs = sum(l['ucs'] * l['t'] for l in layers_data) / total_depth
 avg_gsi = sum(l['gsi'] * l['t'] for l in layers_data) / total_depth
 avg_mi = sum(l['mi'] * l['t'] for l in layers_data) / total_depth
 
-# Hoek-Brown parametrlari
+# Hoek-Brown parametrlari (Boshlang'ich holat uchun)
 mb = avg_mi * np.exp((avg_gsi - 100) / 28)
 s_hb = np.exp((avg_gsi - 100) / 9)
 a_hb = 0.5 + (1/6)*(np.exp(-avg_gsi/15) - np.exp(-20/3))
@@ -78,11 +78,32 @@ for key, val in sources.items():
         dist_sq = (grid_x - val['x'])**2 + (grid_z - source_z)**2
         temp_2d += (curr_T - 25) * np.exp(-dist_sq / (2 * radius**2))
 
-# --- YANGILANGAN FAILURE MODEL MATEMATIKASI ---
+# --- FAILURE MODEL (Siz bergan formula) ---
 sigma_v = 0.027 * grid_z
 strength = avg_ucs * np.exp(-0.002 * (temp_2d - 20))
 failure_2d = sigma_v / (strength + 1e-6)
 # ----------------------------------------------
+
+# --- YANGI GRAFIK UCHUN MATEMATIKA: HOEK-BROWN ENVELOPES ---
+# Sigma_3 (yon bosim) o'qi uchun diapazon
+sigma3_axis = np.linspace(0, avg_ucs * 0.5, 100) # UCS ning yarmigacha yon bosim
+
+# 1. Yonishdan oldin (20°C) - To'liq UCS
+ucs_initial = avg_ucs
+sigma1_initial = sigma3_axis + ucs_initial * (mb * sigma3_axis / ucs_initial + s_hb)**a_hb
+
+# 2. Yonayotgan paytda (T_source_max) - Kuchli kuchsizlanish
+# Termal kuchsizlanish koeffitsiyenti (sizning strength formulangizdan olingan mantiq)
+reduction_hot = np.exp(-0.002 * (T_source_max - 20))
+ucs_hot = avg_ucs * reduction_hot
+sigma1_hot = sigma3_axis + ucs_hot * (mb * sigma3_axis / ucs_hot + s_hb)**a_hb
+
+# 3. Sovugandan keyin (20°C, lekin zarar ko'rgan)
+# Jins termal sikldan keyin qoldiq mustahkamlikka ega bo'ladi (taxminan 50% termal zarar saqlanib qoladi)
+reduction_cooled = reduction_hot + (1 - reduction_hot) * 0.5 
+ucs_cooled = avg_ucs * reduction_cooled
+sigma1_cooled = sigma3_axis + ucs_cooled * (mb * sigma3_axis / ucs_cooled + s_hb)**a_hb
+# -------------------------------------------------------------
 
 # Subsidence (Gauss-Knothe profili)
 angle_sub = 35
@@ -93,20 +114,52 @@ subsidence_profile = -s_max * np.exp(-(x_axis**2) / (2 * (r_sub/2.5)**2))
 
 # --- VIZUALIZATSIYA ---
 st.subheader(f"📊 {obj_name}: Monitoring Natijalari")
-col_g1, col_g2 = st.columns(2)
+col_g1, col_g2, col_g3 = st.columns([1.5, 1.5, 2]) # Uchinchi ustun kengroq
 
 with col_g1:
     fig1 = go.Figure()
     fig1.add_trace(go.Scatter(x=x_axis, y=subsidence_profile * 100, fill='tozeroy', line=dict(color='magenta', width=3)))
-    fig1.update_layout(title="📉 Yer yuzasi cho'kishi (cm)", template="plotly_dark", height=250)
+    fig1.update_layout(title="📉 Yer yuzasi cho'kishi (cm)", template="plotly_dark", height=300)
     st.plotly_chart(fig1, use_container_width=True)
 
 with col_g2:
     fig2 = go.Figure()
     uplift = (total_depth * 1e-4) * np.exp(-(x_axis**2) / (total_depth*10)) * (time_h/150)
     fig2.add_trace(go.Scatter(x=x_axis, y=uplift * 100, fill='tozeroy', line=dict(color='cyan', width=3)))
-    fig2.update_layout(title="🔥 Termal deformatsiya (cm)", template="plotly_dark", height=250)
+    fig2.update_layout(title="🔥 Termal deformatsiya (cm)", template="plotly_dark", height=300)
     st.plotly_chart(fig2, use_container_width=True)
+
+# --- YANGI GRAFIK: HOEK-BROWN ENVELOPE MONITORING ---
+with col_g3:
+    fig_hb = go.Figure()
+    
+    # 1. Yonishdan oldin (Qizil)
+    fig_hb.add_trace(go.Scatter(x=sigma3_axis, y=sigma1_initial, name='Yonishdan oldin (20°C)', 
+                                 line=dict(color='#FF4B4B', width=3)))
+    
+    # 2. Sovugandan keyin (Ko'k - termal zarar ko'rgan)
+    fig_hb.add_trace(go.Scatter(x=sigma3_axis, y=sigma1_cooled, name='Sovugandan keyin (20°C, zarar)', 
+                                 line=dict(color='#0068C9', width=3, dash='dash')))
+    
+    # 3. Yonayotgan paytda (Olovrang - eng kuchsiz)
+    fig_hb.add_trace(go.Scatter(x=sigma3_axis, y=sigma1_hot, name=f'Yonayotgan paytda ({T_source_max}°C)', 
+                                 line=dict(color='#FFA500', width=4)))
+    
+    # Grafik bezaklari
+    fig_hb.update_layout(
+        title="🛡️ Jins Mustahkamligi Chegarasi (Hoek-Brown Envelopes)",
+        xaxis_title="Minor Principal Stress σ₃ (MPa)",
+        yaxis_title="Major Principal Stress σ₁ (MPa)",
+        template="plotly_dark",
+        height=300,
+        legend=dict(yanchor="top", y=0.98, xanchor="left", x=0.02, bgcolor="rgba(0,0,0,0.5)")
+    )
+    # Tasvir kabi setka qo'shish
+    fig_hb.update_xaxes(showgrid=True, gridwidth=1, gridcolor='rgba(255,255,255,0.1)')
+    fig_hb.update_yaxes(showgrid=True, gridwidth=1, gridcolor='rgba(255,255,255,0.1)')
+    
+    st.plotly_chart(fig_hb, use_container_width=True)
+# --------------------------------------------------------
 
 st.markdown("---")
 c1, c2 = st.columns([1, 2.5])
