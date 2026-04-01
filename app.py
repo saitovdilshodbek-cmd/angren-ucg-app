@@ -139,4 +139,33 @@ with c2:
         colorscale='Jet', 
         zmin=0, 
         zmax=2,
-        contours=dict(coloring='heatmap', showlines=True),
+        contours=dict(coloring='heatmap', showlines=True), # Qora izochiziqlar qo'shildi
+        colorbar=dict(title="F.I.", x=1.02, y=0.22, len=0.45)
+    ), row=2, col=1)
+    
+    # Yer yuzasi profili chizig'i
+    fig_tm.add_trace(go.Scatter(x=x_axis, y=subsidence_profile * 50, mode='lines', 
+                                line=dict(color='white', width=3, dash='dash'), name="Deformatsiya"), row=2, col=1)
+
+    for layer in layers_data:
+        fig_tm.add_shape(type="line", x0=min(x_axis), y0=layer['z_start'], x1=max(x_axis), y1=layer['z_start'],
+                         line=dict(color="rgba(255,255,255,0.2)", width=1, dash="dot"), row=2, col=1)
+
+    fig_tm.update_layout(template="plotly_dark", height=850)
+    fig_tm.update_yaxes(title_text="Chuqurlik (m)", autorange='reversed', row=1, col=1)
+    fig_tm.update_yaxes(title_text="Chuqurlik (m)", autorange='reversed', row=2, col=1)
+    
+    # O'q o'lchamlarini namuna kabi qilish
+    fig_tm.update_xaxes(range=[-650, 650], row=2, col=1) 
+    
+    st.plotly_chart(fig_tm, use_container_width=True)
+
+# Natijalar jadvali
+st.divider()
+st.table({
+    "Ko'rsatkich": ["Hoek-Brown mb", "Vertikal Stress (Max MPa)", "Max Failure Index", "Maksimal Cho'kish (m)"],
+    "Qiymat": [f"{mb:.3f}", f"{np.max(sigma_v):.2f}", f"{np.max(failure_index_2d):.2f}", f"{abs(np.min(subsidence_profile)):.4f}"]
+})
+
+st.sidebar.markdown("---")
+st.sidebar.write(f"Tuzuvchi: Saitov Dilshodbek")
