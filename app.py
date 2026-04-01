@@ -42,27 +42,24 @@ for i in range(int(num_layers)):
         })
         total_depth += thick
 
-# --- ILMIY HISOB-KITOBLAR (YAXSHILANGAN) ---
-# Og'irlik bo'yicha o'rtacha ko'rsatkichlar
+# --- ILMIY HISOB-KITOBLAR (YANGILANGAN FAILURE MODEL) ---
 avg_ucs = sum(l['ucs'] * l['t'] for l in layers_data) / total_depth
 avg_gsi = sum(l['gsi'] * l['t'] for l in layers_data) / total_depth
 avg_mi = sum(l['mi'] * l['t'] for l in layers_data) / total_depth
 
-# 1. Hoek-Brown Parametrlari (Rocscience standarti bo'yicha)
-D = 0  # Disturbance factor (UCG da odatda 0 olinadi)
-mb = avg_mi * np.exp((avg_gsi - 100) / (28 - 14 * D))
-s_hb = np.exp((avg_gsi - 100) / (9 - 3 * D))
-a_hb = 0.5 + (1/6) * (np.exp(-avg_gsi/15) - np.exp(-20/3))
+# Hoek-Brown parametrlari
+mb = avg_mi * np.exp((avg_gsi - 100) / 28)
+s_hb = np.exp((avg_gsi - 100) / 9)
+a_hb = 0.5 + (1/6)*(np.exp(-avg_gsi/15) - np.exp(-20/3))
 
-# 2. Grid yaratish
+# Grid yaratish
 x_axis = np.linspace(-total_depth*1.5, total_depth*1.5, 150)
 z_axis = np.linspace(0, total_depth + 50, 120)
 grid_x, grid_z = np.meshgrid(x_axis, z_axis)
 
-# 3. 2D Termal va Mexanik model
+# 2D Termal model
 source_z = total_depth - (layers_data[-1]['t'] / 2)
-temp_2d = np.ones_like(grid_x) * 20  # Boshlang'ich yer harorati
-failure_2d = np.zeros_like(grid_x)
+temp_2d = np.ones_like(grid_x) * 25 
 
 sources = {'1': {'x': -total_depth/3, 'start': 0}, 
            '2': {'x': 0, 'start': 30}, 
@@ -71,31 +68,28 @@ sources = {'1': {'x': -total_depth/3, 'start': 0},
 for key, val in sources.items():
     if time_h > val['start']:
         dt = time_h - val['start']
-        # Kamera radiusi dinamikasi
         if dt <= burn_duration:
-            radius = 10 + (dt * 0.4)
+            radius = 15 + (dt * 0.5)
             curr_T = T_source_max
         else:
-            radius = 10 + (burn_duration * 0.4)
-            curr_T = 20 + (T_source_max - 20) * np.exp(-0.02 * (dt - burn_duration))
+            radius = 15 + (burn_duration * 0.5)
+            curr_T = 25 + (T_source_max - 25) * np.exp(-0.03 * (dt - burn_duration))
             
         dist_sq = (grid_x - val['x'])**2 + (grid_z - source_z)**2
-        # Termal diffuziya simulyatsiyasi (Gaussian approximation)
-        temp_2d += (curr_T - 20) * np.exp(-dist_sq / (3 * radius**2))
-        
-        # Failure Index (UCS va GSI ga bog'liq holda kuchlanish zonasi)
-        stress_factor = (101 - avg_gsi) / 50
-        failure_2d += stress_factor * np.exp(-dist_sq / (2 * (radius * 1.8)**2))
+        temp_2d += (curr_T - 25) * np.exp(-dist_sq / (2 * radius**2))
 
-# 4. Subsidence (Gauss-Knothe profili)
-# r = H / tan(beta), beta - cho'kish burchagi
-beta = 35 + (avg_gsi / 5) # Tosh jinsi mustahkam bo'lsa burchak kattalashadi
-r_sub = total_depth / np.tan(np.radians(beta))
-# Cho'kish koeffitsiyenti (Maksimal cho'kish qatlam qalinligining % da)
-q_coeff = 0.15 * (1 - (avg_gsi/120)) # Mustahkam jins kamroq cho'kadi
-s_max = (layers_data[-1]['t'] * q_coeff) * (1 - np.exp(-0.05 * time_h))
+# --- YANGILANGAN FAILURE MODEL MATEMATIKASI ---
+sigma_v = 0.027 * grid_z
+strength = avg_ucs * np.exp(-0.002 * (temp_2d - 20))
+failure_2d = sigma_v / (strength + 1e-6)
+# ----------------------------------------------
 
-subsidence_profile = -s_max * np.exp(-np.pi * (x_axis**2) / (r_sub**2))
+# Subsidence (Gauss-Knothe profili)
+angle_sub = 35
+r_sub = total_depth / np.tan(np.radians(angle_sub))
+sub_coeff = np.clip(0.1 - (avg_gsi/1000), 0.01, 0.05) 
+s_max = (layers_data[-1]['t'] * sub_coeff) * (min(time_h, 100) / 100)
+subsidence_profile = -s_max * np.exp(-(x_axis**2) / (2 * (r_sub/2.5)**2))
 
 # --- VIZUALIZATSIYA ---
 st.subheader(f"📊 {obj_name}: Monitoring Natijalari")
@@ -109,12 +103,9 @@ with col_g1:
 
 with col_g2:
     fig2 = go.Figure()
-    # Termal uplift (Kengayish koeffitsiyenti mantiqi: alpha * deltaT * H)
-    alpha = 1e-5 # Tosh jinslarining termal kengayish koeffitsiyenti
-    max_uplift = alpha * (T_source_max - 20) * total_depth * (min(time_h, burn_duration)/burn_duration)
-    uplift = max_uplift * np.exp(-(x_axis**2) / (r_sub**2))
+    uplift = (total_depth * 1e-4) * np.exp(-(x_axis**2) / (total_depth*10)) * (time_h/150)
     fig2.add_trace(go.Scatter(x=x_axis, y=uplift * 100, fill='tozeroy', line=dict(color='cyan', width=3)))
-    fig2.update_layout(title="🔥 Termal deformatsiya (uplift) (cm)", template="plotly_dark", height=250)
+    fig2.update_layout(title="🔥 Termal deformatsiya (cm)", template="plotly_dark", height=250)
     st.plotly_chart(fig2, use_container_width=True)
 
 st.markdown("---")
@@ -131,17 +122,16 @@ with c1:
 with c2:
     st.subheader("🔥 TM Maydoni va Strukturaviy Holat")
     fig_tm = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08,
-                           subplot_titles=("Harorat Maydoni (°C)", "Buzilish va Yoriqlanish Zonasi (Failure Index)"))
+                           subplot_titles=("Harorat Maydoni (°C)", "Buzilish koeffitsiyenti (Stress/Strength)"))
     
-    fig_tm.add_trace(go.Heatmap(z=temp_2d, x=x_axis, y=z_axis, colorscale='Hot', zmin=20, zmax=T_source_max,
+    fig_tm.add_trace(go.Heatmap(z=temp_2d, x=x_axis, y=z_axis, colorscale='Hot', zmin=25, zmax=T_source_max,
                                 colorbar=dict(title="°C", x=1.02, y=0.78, len=0.45)), row=1, col=1)
     
     fig_tm.add_trace(go.Contour(z=failure_2d, x=x_axis, y=z_axis, colorscale='Jet',
                                 contours=dict(coloring='heatmap', showlines=True),
                                 colorbar=dict(title="Index", x=1.02, y=0.22, len=0.45)), row=2, col=1)
     
-    # Yer yuzasi profili
-    fig_tm.add_trace(go.Scatter(x=x_axis, y=subsidence_profile * 10, mode='lines', 
+    fig_tm.add_trace(go.Scatter(x=x_axis, y=subsidence_profile * 50, mode='lines', 
                                 line=dict(color='white', width=3, dash='dash'), name="Deformatsiya"), row=2, col=1)
 
     for layer in layers_data:
@@ -157,7 +147,7 @@ st.divider()
 st.table({
     "Ko'rsatkich": ["Hoek-Brown mb", "Hoek-Brown s", "Maksimal Cho'kish (m)", "Ssenariya holati"],
     "Qiymat": [f"{mb:.3f}", f"{s_hb:.5f}", f"{abs(np.min(subsidence_profile)):.4f}", 
-               f"{'Sovish jarayoni' if time_h > burn_duration else 'Aktiv gazifikatsiya'}"]
+               f"{'Sovish' if time_h > burn_duration else 'Faol Yonish'}"]
 })
 
 st.sidebar.markdown("---")
