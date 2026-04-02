@@ -18,7 +18,7 @@ num_layers = st.sidebar.number_input("Qatlamlar soni:", min_value=1, max_value=5
 # --- Tensile Modeli Selektori ---
 tensile_mode = st.sidebar.selectbox(
     "Tensile modeli:",
-    ["UCS-based", "Layer-based"]
+    ["Empirical (UCS)", "HB-based (auto)", "Manual"]
 )
 
 # --- Geomexanik Koeffitsiyentlar ---
@@ -52,13 +52,17 @@ for i in range(int(num_layers)):
             g = st.slider(f"GSI:", 10, 100, 60, key=f"g_{i}")
             m = st.number_input(f"mi:", value=10.0, key=f"m_{i}")
             
-        # Layer-based uchun sigma_t0 kiritish
-        if tensile_mode == "Layer-based":
-            s_t0 = st.number_input(f"σt0 (MPa):", value=3.0, key=f"st_{i}")
+        # Manual rejim uchun sigma_t0
+        if tensile_mode == "Manual":
+            s_t0_val = st.number_input(f"σt0 (MPa):", value=3.0, key=f"st_{i}")
         else:
-            s_t0 = 0.0 # UCS-based bo'lsa shunchaki saqlab qo'yamiz
+            s_t0_val = 0.0
         
-        layers_data.append({'name': name, 't': thick, 'ucs': u, 'rho': rho, 'gsi': g, 'mi': m, 'color': color, 'z_start': total_depth, 'sigma_t0': s_t0})
+        layers_data.append({
+            'name': name, 't': thick, 'ucs': u, 'rho': rho, 
+            'gsi': g, 'mi': m, 'color': color, 'z_start': total_depth,
+            'sigma_t0_manual': s_t0_val
+        })
         total_depth += thick
 
 # --- HISOB-KITOBLAR ---
@@ -68,7 +72,7 @@ grid_x, grid_z = np.meshgrid(x_axis, z_axis)
 source_z = total_depth - (layers_data[-1]['t'] / 2)
 H_seam = layers_data[-1]['t']
 
-grid_sigma_v, grid_ucs, grid_mb, grid_s_hb, grid_a_hb, grid_sigma_t0 = [np.zeros_like(grid_z) for _ in range(6)]
+grid_sigma_v, grid_ucs, grid_mb, grid_s_hb, grid_a_hb, grid_sigma_t0_manual = [np.zeros_like(grid_z) for _ in range(6)]
 
 for i, layer in enumerate(layers_data):
     mask = (grid_z >= layer['z_start']) & (grid_z < (layer['z_start'] + layer['t']))
@@ -79,7 +83,7 @@ for i, layer in enumerate(layers_data):
     grid_mb[mask] = layer['mi'] * np.exp((layer['gsi'] - 100) / (28 - 14 * D_factor))
     grid_s_hb[mask] = np.exp((layer['gsi'] - 100) / (9 - 3 * D_factor))
     grid_a_hb[mask] = 0.5 + (1/6)*(np.exp(-layer['gsi']/15) - np.exp(-20/3))
-    grid_sigma_t0[mask] = layer['sigma_t0'] # Qatlamli tensile kuchi
+    grid_sigma_t0_manual[mask] = layer['sigma_t0_manual']
 
 alpha_rock = 1.0e-6 
 sources = {'1': {'x': -total_depth/3, 'start': 0}, '2': {'x': 0, 'start': 40}, '3': {'x': total_depth/3, 'start': 80}}
@@ -98,11 +102,15 @@ grid_sigma_h = (k_ratio * grid_sigma_v) - sigma_thermal
 sigma1_act = np.maximum(grid_sigma_v, grid_sigma_h)
 sigma3_act = np.minimum(grid_sigma_v, grid_sigma_h)
 
-# --- Tensile Mantiqi ---
-if tensile_mode == "UCS-based":
-    sigma_t_field = (tensile_ratio * grid_ucs) * np.exp(-beta_thermal * (temp_2d - 20))
-else:
-    sigma_t_field = grid_sigma_t0 * np.exp(-beta_thermal * (temp_2d - 20))
+# --- Yangi Tensile mantiqi ---
+if tensile_mode == "Empirical (UCS)":
+    grid_sigma_t0_base = tensile_ratio * grid_ucs
+elif tensile_mode == "HB-based (auto)":
+    grid_sigma_t0_base = grid_ucs * np.sqrt(grid_s_hb)
+else: # Manual
+    grid_sigma_t0_base = grid_sigma_t0_manual
+
+sigma_t_field = grid_sigma_t0_base * np.exp(-beta_thermal * (temp_2d - 20))
 
 sigma_ci = grid_ucs * np.exp(-0.0025 * (temp_2d - 20))
 sigma3_safe = np.maximum(sigma3_act, 0.01)
