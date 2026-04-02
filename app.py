@@ -196,4 +196,4 @@ with c2:
     st.plotly_chart(fig_tm, use_container_width=True)
 
 st.sidebar.markdown("---")
-st.sidebar.write(f"Tuzuvchi: Diana/ Saitov Dilshodbek")
+st.sidebar.write(f"Tuzuvchi: Diana Meiram/ Saitov Dilshodbek")
