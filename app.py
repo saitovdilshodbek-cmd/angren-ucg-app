@@ -6,45 +6,45 @@ from plotly.subplots import make_subplots
 # --- Sahifa sozlamalari ---
 st.set_page_config(page_title="Universal Geomechanical Monitor", layout="wide")
 
+# CSS orqali interfeysni biroz jozibador qilish
+st.markdown("""
+    <style>
+    .main { background-color: #0e1117; }
+    .stMetric { background-color: #1e2130; padding: 15px; border-radius: 10px; border: 1px solid #3e4253; }
+    </style>
+    """, unsafe_allow_html=True)
+
 st.title("🌐 Universal Yer yuzasi Deformatsiyasi Monitoringi")
-st.markdown("### Termo-Mexanik (TM) tahlil: Seleklar Barqarorligi va O'zaro Ta'sir")
+st.markdown("### Termo-Mexanik (TM) tahlil: Seleklar Barqarorligi")
 
 # --- Sidebar: Parametrlar ---
-st.sidebar.header("⚙️ Umumiy parametrlar")
-obj_name = st.sidebar.text_input("Loyiha nomi:", value="Angren-UCG-001")
-time_h = st.sidebar.slider("Jarayon vaqti (soat):", 1, 150, 24)
-num_layers = st.sidebar.number_input("Qatlamlar soni:", min_value=1, max_value=5, value=3)
+with st.sidebar:
+    st.header("⚙️ Umumiy parametrlar")
+    obj_name = st.text_input("Loyiha nomi:", value="Angren-UCG-001")
+    time_h = st.slider("Jarayon vaqti (soat):", 1, 150, 24)
+    num_layers = st.number_input("Qatlamlar soni:", min_value=1, max_value=5, value=3)
 
-st.sidebar.subheader("🔥 Yonish va Termal")
-burn_duration = st.sidebar.number_input("Kamera yonish muddati (soat):", value=40)
-T_source_max = st.sidebar.slider("Maksimal harorat (°C)", 600, 1200, 1075)
+    st.subheader("🔥 Yonish va Termal")
+    burn_duration = st.number_input("Kamera yonish muddati (soat):", value=40)
+    T_source_max = st.sidebar.slider("Maksimal harorat (°C)", 600, 1200, 1075)
 
-strata_colors = ['#87CEEB', '#F4A460', '#D3D3D3', '#F5DEB3', '#555555']
+    strata_colors = ['#87CEEB', '#F4A460', '#D3D3D3', '#F5DEB3', '#555555']
+    layers_data = []
+    total_depth = 0
+    for i in range(int(num_layers)):
+        with st.expander(f"{i+1}-qatlam", expanded=(i == int(num_layers)-1)):
+            c1, c2 = st.columns(2)
+            name = c1.text_input(f"Nomi:", value=f"Qatlam-{i+1}", key=f"n_{i}")
+            thick = c2.number_input(f"Qalinlik:", value=50.0, key=f"t_{i}")
+            u = c1.number_input(f"UCS (MPa):", value=40.0, key=f"u_{i}")
+            g = c2.slider(f"GSI:", 10, 100, 60, key=f"g_{i}")
+            layers_data.append({'name': name, 't': thick, 'ucs': u, 'gsi': g, 'z_start': total_depth, 'color': strata_colors[i%5]})
+            total_depth += thick
 
-# --- Qatlamlar ma'lumotlarini yig'ish ---
-layers_data = []
-total_depth = 0
-for i in range(int(num_layers)):
-    with st.sidebar.expander(f"{i+1}-qatlam parametrlari", expanded=(i == int(num_layers)-1)):
-        col1, col2 = st.columns([2, 1])
-        with col1:
-            name = st.text_input(f"Nomi:", value=f"Qatlam-{i+1}", key=f"name_{i}")
-            thick = st.number_input(f"Qalinlik (m):", value=50.0, key=f"t_{i}")
-            u = st.number_input(f"UCS (MPa):", value=40.0, key=f"u_{i}")
-        with col2:
-            color = st.color_picker(f"Rangi:", strata_colors[i % len(strata_colors)], key=f"color_{i}")
-            g = st.slider(f"GSI:", 10, 100, 60, key=f"g_{i}")
-            m = st.number_input(f"mi:", value=10.0, key=f"m_{i}")
-        
-        layers_data.append({'name': name, 't': thick, 'ucs': u, 'gsi': g, 'mi': m, 'color': color, 'z_start': total_depth})
-        total_depth += thick
-
-# --- ILMIY HISOB-KITOBLAR ---
+# --- HISOB-KITOBLAR (Faqat mantiq) ---
 avg_ucs = sum(l['ucs'] * l['t'] for l in layers_data) / total_depth
 avg_gsi = sum(l['gsi'] * l['t'] for l in layers_data) / total_depth
-avg_mi = sum(l['mi'] * l['t'] for l in layers_data) / total_depth
-
-mb = avg_mi * np.exp((avg_gsi - 100) / 28)
+mb = 10 * np.exp((avg_gsi - 100) / 28)
 s_hb = np.exp((avg_gsi - 100) / 9)
 a_hb = 0.5 + (1/6)*(np.exp(-avg_gsi/15) - np.exp(-20/3))
 
@@ -53,120 +53,69 @@ z_axis = np.linspace(0, total_depth + 50, 120)
 grid_x, grid_z = np.meshgrid(x_axis, z_axis)
 source_z = total_depth - (layers_data[-1]['t'] / 2)
 
-# Seleklar (Pillars) mantiqi uchun manbalar
-sources = {'1': {'x': -total_depth/2.5, 'start': 0}, 
-           '2': {'x': 0, 'start': 40}, 
-           '3': {'x': total_depth/2.5, 'start': 80}}
-
+sources = {'1': {'x': -total_depth/2.5, 'start': 0}, '2': {'x': 0, 'start': 40}, '3': {'x': total_depth/2.5, 'start': 80}}
 temp_2d = np.ones_like(grid_x) * 25 
-plastic_zone_mask = np.zeros_like(grid_x)
+plastic_mask = np.zeros_like(grid_x)
 
-for key, val in sources.items():
-    if time_h > val['start']:
-        dt = time_h - val['start']
-        radius = 15 + (min(dt, burn_duration) * 0.5)
-        curr_T = T_source_max if dt <= burn_duration else 25 + (T_source_max - 25) * np.exp(-0.03 * (dt - burn_duration))
-            
-        dist_sq = (grid_x - val['x'])**2 + (grid_z - source_z)**2
-        # Termal ta'sir qo'shilishi (Superpozitsiya prinsipi)
-        temp_2d += (curr_T - 25) * np.exp(-dist_sq / (2 * radius**2))
-        
-        # RS2 simulyatsiyasi uchun plastik zona (Interferensiya bilan)
-        plastic_influence = np.exp(-dist_sq / (2 * (radius * 1.3)**2))
-        plastic_zone_mask = np.maximum(plastic_zone_mask, plastic_influence)
+for k, v in sources.items():
+    if time_h > v['start']:
+        dt = time_h - v['start']
+        r = 15 + (min(dt, burn_duration) * 0.5)
+        curr_T = T_source_max if dt <= burn_duration else 25 + (T_source_max-25)*np.exp(-0.03*(dt-burn_duration))
+        dist_sq = (grid_x - v['x'])**2 + (grid_z - source_z)**2
+        temp_2d += (curr_T - 25) * np.exp(-dist_sq / (2 * r**2))
+        plastic_mask = np.maximum(plastic_mask, np.exp(-dist_sq / (2 * (r*1.3)**2)))
 
-# Stress va Strength
-sigma_v = 0.027 * grid_z
-strength = avg_ucs * np.exp(-0.002 * (temp_2d - 20)) # Harorat ortishi bilan strength kamayadi
-failure_2d = sigma_v / (strength + 1e-6)
+failure_2d = (0.027 * grid_z) / (avg_ucs * np.exp(-0.002 * (temp_2d - 20)) + 1e-6)
 
-# Hoek-Brown Envelopes
-sigma3_axis = np.linspace(0, avg_ucs * 0.5, 100)
-reduction_hot = np.exp(-0.002 * (T_source_max - 20))
-sigma1_initial = sigma3_axis + avg_ucs * (mb * sigma3_axis / avg_ucs + s_hb)**a_hb
-sigma1_hot = sigma3_axis + (avg_ucs * reduction_hot) * (mb * sigma3_axis / (avg_ucs * reduction_hot) + s_hb)**a_hb
-reduction_cooled = reduction_hot + (1 - reduction_hot) * 0.5 
-sigma1_cooled = sigma3_axis + (avg_ucs * reduction_cooled) * (mb * sigma3_axis / (avg_ucs * reduction_cooled) + s_hb)**a_hb
+# --- ASOSIY INTERFEYS (TARTIBLANGAN) ---
+top_col1, top_col2, top_col3 = st.columns([1, 1, 1.5])
 
-# --- SELEK MONITORINGI (Pillar Analysis) ---
-pillar_x_coords = [(sources['1']['x'] + sources['2']['x'])/2, (sources['2']['x'] + sources['3']['x'])/2]
-pillar_status = []
-for px in pillar_x_coords:
-    # Selek o'rtasidagi haroratni grid'dan topish
-    idx_x = np.abs(x_axis - px).argmin()
-    idx_z = np.abs(z_axis - source_z).argmin()
-    t_pillar = temp_2d[idx_z, idx_x]
-    strength_reduct = np.exp(-0.002 * (t_pillar - 20))
-    pillar_status.append({'x': px, 'temp': t_pillar, 'safety': strength_reduct})
-
-# --- VIZUALIZATSIYA ---
-st.subheader(f"📊 {obj_name}: Monitoring Natijalari")
-col_g1, col_g2, col_g3 = st.columns([1.5, 1.5, 2])
-
-s_max = (layers_data[-1]['t'] * 0.04) * (min(time_h, 120) / 120)
-subsidence_profile = -s_max * np.exp(-(x_axis**2) / (2 * (total_depth/2)**2))
-
-with col_g1:
-    fig1 = go.Figure()
-    fig1.add_trace(go.Scatter(x=x_axis, y=subsidence_profile * 100, fill='tozeroy', line=dict(color='magenta', width=3)))
-    fig1.update_layout(title="📉 Yer yuzasi cho'kishi (cm)", template="plotly_dark", height=300)
+with top_col1:
+    st.subheader("📉 Cho'kish (cm)")
+    s_max = (layers_data[-1]['t'] * 0.04) * (min(time_h, 120) / 120)
+    sub_y = -s_max * np.exp(-(x_axis**2) / (2 * (total_depth/2)**2))
+    fig1 = go.Figure(go.Scatter(x=x_axis, y=sub_y*100, fill='tozeroy', line=dict(color='magenta')))
+    fig1.update_layout(template="plotly_dark", height=250, margin=dict(l=10, r=10, t=30, b=10))
     st.plotly_chart(fig1, use_container_width=True)
 
-with col_g2:
-    fig2 = go.Figure()
-    uplift = (total_depth * 1e-4) * np.exp(-(x_axis**2) / (total_depth*10)) * (time_h/150)
-    fig2.add_trace(go.Scatter(x=x_axis, y=uplift * 100, fill='tozeroy', line=dict(color='cyan', width=3)))
-    fig2.update_layout(title="🔥 Termal deformatsiya (cm)", template="plotly_dark", height=300)
+with top_col2:
+    st.subheader("🛡️ Mustahkamlik")
+    s3 = np.linspace(0, avg_ucs*0.4, 100)
+    s1 = s3 + avg_ucs * (mb * s3 / avg_ucs + s_hb)**a_hb
+    fig2 = go.Figure(go.Scatter(x=s3, y=s1, name='HB Envelope', line=dict(color='red')))
+    fig2.update_layout(template="plotly_dark", height=250, margin=dict(l=10, r=10, t=30, b=10))
     st.plotly_chart(fig2, use_container_width=True)
 
-with col_g3:
-    fig_hb = go.Figure()
-    fig_hb.add_trace(go.Scatter(x=sigma3_axis, y=sigma1_initial, name='Boshlang\'ich', line=dict(color='#FF4B4B', width=3)))
-    fig_hb.add_trace(go.Scatter(x=sigma3_axis, y=sigma1_cooled, name='Sovigan (zarar)', line=dict(color='#0068C9', width=3, dash='dash')))
-    fig_hb.add_trace(go.Scatter(x=sigma3_axis, y=sigma1_hot, name='Issiq (Kameralar)', line=dict(color='#FFA500', width=4)))
-    fig_hb.update_layout(title="🛡️ Hoek-Brown Envelopes", template="plotly_dark", height=300, legend=dict(orientation="h", y=-0.2))
-    st.plotly_chart(fig_hb, use_container_width=True)
+with top_col3:
+    st.subheader("🏗️ Seleklar Holati")
+    m_col1, m_col2 = st.columns(2)
+    # Selek nuqtalarini tekshirish
+    for i, px in enumerate([ -total_depth/5, total_depth/5 ]):
+        idx_x = np.abs(x_axis - px).argmin()
+        t_p = temp_2d[np.abs(z_axis - source_z).argmin(), idx_x]
+        safety = np.exp(-0.002 * (t_p - 20))
+        target_col = m_col1 if i == 0 else m_col2
+        target_col.metric(f"{i+1}-Selek", f"{t_p:.0f} °C", f"{safety*100:.1f}%")
 
-st.markdown("---")
-c1, c2 = st.columns([1, 2.5])
+st.divider()
 
-with c1:
-    st.subheader("🧱 Seleklar Holati")
-    for i, ps in enumerate(pillar_status):
-        st.metric(f"{i+1}-Selek Harorati", f"{ps['temp']:.1f} °C")
-        st.write(f"Mustahkamlik: {ps['safety']*100:.1f}%")
-        if ps['safety'] < 0.7:
-            st.error(f"⚠️ {i+1}-selekda kritik kuchsizlanish!")
-        else:
-            st.success(f"✅ {i+1}-selek barqaror.")
-    
-    fig_strata = go.Figure()
-    for l in layers_data:
-        fig_strata.add_trace(go.Bar(x=['Kesim'], y=[l['t']], name=l['name'], marker_color=l['color'], width=0.4))
-    fig_strata.update_layout(barmode='stack', template="plotly_dark", yaxis=dict(autorange='reversed'), height=450)
-    st.plotly_chart(fig_strata, use_container_width=True)
+# Markaziy Grafik: RS2 Interpret uslubida
+st.subheader("🔍 Geomexanik Kesim va TM Maydoni (RS2 Interpret Simulation)")
+fig_main = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, 
+                         subplot_titles=("Harorat Distributsiyasi", "Buzilish zonalari (Failure)"))
 
-with c2:
-    st.subheader("🔥 TM Maydoni va Selek Interferensiyasi (RS2)")
-    fig_tm = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08,
-                           subplot_titles=("Termal Interferensiya (°C)", "Plastik Zonalar va Seleklar Buzilishi"))
-    
-    fig_tm.add_trace(go.Heatmap(z=temp_2d, x=x_axis, y=z_axis, colorscale='Hot', zmin=25, zmax=T_source_max), row=1, col=1)
-    fig_tm.add_trace(go.Contour(z=failure_2d, x=x_axis, y=z_axis, colorscale='Jet', contours=dict(showlines=False)), row=2, col=1)
-    
-    # Seleklar o'rtasida buzilish nuqtalari (Red X)
-    mask = plastic_zone_mask > 0.65
-    fig_tm.add_trace(go.Scatter(x=grid_x[mask], y=grid_z[mask], mode='markers', 
-                                marker=dict(symbol='x', color='red', size=3, opacity=0.3)), row=2, col=1)
+fig_main.add_trace(go.Heatmap(z=temp_2d, x=x_axis, y=z_axis, colorscale='Hot', zmin=25, zmax=T_source_max), row=1, col=1)
+fig_main.add_trace(go.Contour(z=failure_2d, x=x_axis, y=z_axis, colorscale='Jet', contours_showlines=False), row=2, col=1)
 
-    # Selek markazlarini belgilash
-    for ps in pillar_status:
-        fig_tm.add_vline(x=ps['x'], line_width=2, line_dash="dash", line_color="rgba(255,255,255,0.5)", row=2, col=1)
+# Plastik nuqtalar (Shear Failure)
+m = plastic_mask > 0.65
+fig_main.add_trace(go.Scatter(x=grid_x[m], y=grid_z[m], mode='markers', 
+                             marker=dict(symbol='x', color='red', size=3, opacity=0.4)), row=2, col=1)
 
-    fig_tm.update_layout(template="plotly_dark", height=850, showlegend=False)
-    fig_tm.update_yaxes(autorange='reversed', row=1, col=1)
-    fig_tm.update_yaxes(autorange='reversed', row=2, col=1)
-    st.plotly_chart(fig_tm, use_container_width=True)
+fig_main.update_layout(template="plotly_dark", height=700, margin=dict(t=50, b=50))
+fig_main.update_yaxes(autorange='reversed', title="Chuqurlik (m)")
+st.plotly_chart(fig_main, use_container_width=True)
 
 st.sidebar.markdown("---")
 st.sidebar.write(f"Tuzuvchi: Saitov Dilshodbek")
