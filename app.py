@@ -53,6 +53,7 @@ z_axis = np.linspace(0, total_depth + 50, 120)
 grid_x, grid_z = np.meshgrid(x_axis, z_axis)
 source_z = total_depth - (layers_data[-1]['t'] / 2)
 
+# Kameralar koordinatalari (Interferensiya uchun masofa sozlangan)
 sources = {'1': {'x': -total_depth/2.5, 'start': 0}, 
            '2': {'x': 0, 'start': 40}, 
            '3': {'x': total_depth/2.5, 'start': 80}}
@@ -63,24 +64,43 @@ plastic_zone_mask = np.zeros_like(grid_x)
 for key, val in sources.items():
     if time_h > val['start']:
         dt = time_h - val['start']
-        radius = 15 + (min(dt, burn_duration) * 0.5)
-        curr_T = T_source_max if dt <= burn_duration else 25 + (T_source_max-25)*np.exp(-0.03*(dt-burn_duration))
+        if dt <= burn_duration:
+            radius = 15 + (dt * 0.5)
+            curr_T = T_source_max
+        else:
+            radius = 15 + (burn_duration * 0.5)
+            curr_T = 25 + (T_source_max - 25) * np.exp(-0.03 * (dt - burn_duration))
+            
         dist_sq = (grid_x - val['x'])**2 + (grid_z - source_z)**2
+        # Termal interferensiya (superpozitsiya)
         temp_2d += (curr_T - 25) * np.exp(-dist_sq / (2 * radius**2))
-        plastic_zone_mask = np.maximum(plastic_zone_mask, np.exp(-dist_sq / (2 * (radius * 1.3)**2)))
+        
+        # Plastik zona mantiqi
+        plastic_influence = np.exp(-dist_sq / (2 * (radius * 1.3)**2))
+        plastic_zone_mask = np.maximum(plastic_zone_mask, plastic_influence)
 
 # Stress va Strength
 sigma_v = 0.027 * grid_z
 strength = avg_ucs * np.exp(-0.002 * (temp_2d - 20))
 failure_2d = sigma_v / (strength + 1e-6)
 
-# Hoek-Brown Envelopes
+# --- HOEK-BROWN ENVELOPES ---
 sigma3_axis = np.linspace(0, avg_ucs * 0.5, 100)
 reduction_hot = np.exp(-0.002 * (T_source_max - 20))
 sigma1_initial = sigma3_axis + avg_ucs * (mb * sigma3_axis / avg_ucs + s_hb)**a_hb
-sigma1_hot = sigma3_axis + (avg_ucs * reduction_hot) * (mb * sigma3_axis / (avg_ucs * reduction_hot) + s_hb)**a_hb
+ucs_hot = avg_ucs * reduction_hot
+sigma1_hot = sigma3_axis + ucs_hot * (mb * sigma3_axis / ucs_hot + s_hb)**a_hb
 reduction_cooled = reduction_hot + (1 - reduction_hot) * 0.5 
-sigma1_cooled = sigma3_axis + (avg_ucs * reduction_cooled) * (mb * sigma3_axis / (avg_ucs * reduction_cooled) + s_hb)**a_hb
+ucs_cooled = avg_ucs * reduction_cooled
+sigma1_cooled = sigma3_axis + ucs_cooled * (mb * sigma3_axis / ucs_cooled + s_hb)**a_hb
+
+# --- SELEK STATUSI HISOBI ---
+pillar_x1 = (sources['1']['x'] + sources['2']['x']) / 2
+pillar_x2 = (sources['2']['x'] + sources['3']['x']) / 2
+def get_p_temp(px):
+    idx_x = np.abs(x_axis - px).argmin()
+    idx_z = np.abs(z_axis - source_z).argmin()
+    return temp_2d[idx_z, idx_x]
 
 # --- VIZUALIZATSIYA ---
 st.subheader(f"📊 {obj_name}: Monitoring Natijalari")
@@ -90,7 +110,8 @@ s_max = (layers_data[-1]['t'] * 0.04) * (min(time_h, 120) / 120)
 subsidence_profile = -s_max * np.exp(-(x_axis**2) / (2 * (total_depth/2)**2))
 
 with col_g1:
-    fig1 = go.Figure(go.Scatter(x=x_axis, y=subsidence_profile * 100, fill='tozeroy', line=dict(color='magenta', width=3)))
+    fig1 = go.Figure()
+    fig1.add_trace(go.Scatter(x=x_axis, y=subsidence_profile * 100, fill='tozeroy', line=dict(color='magenta', width=3)))
     fig1.update_layout(title="📉 Yer yuzasi cho'kishi (cm)", template="plotly_dark", height=300)
     st.plotly_chart(fig1, use_container_width=True)
 
@@ -106,39 +127,33 @@ with col_g3:
     fig_hb.add_trace(go.Scatter(x=sigma3_axis, y=sigma1_initial, name='Normal (20°C)', line=dict(color='#FF4B4B', width=3)))
     fig_hb.add_trace(go.Scatter(x=sigma3_axis, y=sigma1_cooled, name='Sovigan (Zarar)', line=dict(color='#0068C9', width=3, dash='dash')))
     fig_hb.add_trace(go.Scatter(x=sigma3_axis, y=sigma1_hot, name=f'Issiq ({T_source_max}°C)', line=dict(color='#FFA500', width=4)))
-    fig_hb.update_layout(title="🛡️ Hoek-Brown Envelopes", template="plotly_dark", height=300, legend=dict(orientation="h", y=-0.2))
+    fig_hb.update_layout(title="🛡️ Hoek-Brown Envelopes", template="plotly_dark", height=300, legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01, bgcolor="rgba(0,0,0,0.5)"))
     st.plotly_chart(fig_hb, use_container_width=True)
 
 st.markdown("---")
-
-# --- PASTI PARAMETRLAR VA GRAFIKLAR QISMI ---
 c1, c2 = st.columns([1, 2.5])
 
 with c1:
-    st.subheader("🧱 Seleklar & Kesim")
-    # Seleklar monitoringi metriclari
-    p_x1, p_x2 = -total_depth/5, total_depth/5
-    t1 = temp_2d[np.abs(z_axis - source_z).argmin(), np.abs(x_axis - p_x1).argmin()]
-    t2 = temp_2d[np.abs(z_axis - source_z).argmin(), np.abs(x_axis - p_x2).argmin()]
+    st.subheader("🧱 Seleklar Monitoringi")
+    t1 = get_p_temp(pillar_x1)
+    t2 = get_p_temp(pillar_x2)
     
-    st.metric("1-Selek Harorati", f"{t1:.1f} °C")
-    st.metric("2-Selek Harorati", f"{t2:.1f} °C")
+    st.metric("1-Selek Harorati", f"{t1:.1f} °C", f"{-(t1-25):.1f} °C", delta_color="inverse")
+    st.progress(min(max((t1-25)/T_source_max, 0.0), 1.0), text="1-Selek Termal yuklanishi")
     
-    if t1 > 300 or t2 > 300:
-        st.error("⚠️ Selekda termal yuklanish yuqori!")
-    
-    st.markdown("---")
-    # Geologik bar chart
+    st.metric("2-Selek Harorati", f"{t2:.1f} °C", f"{-(t2-25):.1f} °C", delta_color="inverse")
+    st.progress(min(max((t2-25)/T_source_max, 0.0), 1.0), text="2-Selek Termal yuklanishi")
+
     fig_strata = go.Figure()
     for l in layers_data:
         fig_strata.add_trace(go.Bar(x=['Kesim'], y=[l['t']], name=l['name'], marker_color=l['color'], width=0.4))
-    fig_strata.update_layout(barmode='stack', template="plotly_dark", yaxis=dict(title="Chuqurlik (m)", autorange='reversed'), height=500)
+    fig_strata.update_layout(barmode='stack', template="plotly_dark", yaxis=dict(title="Chuqurlik (m)", autorange='reversed'), height=400, showlegend=False)
     st.plotly_chart(fig_strata, use_container_width=True)
 
 with c2:
-    st.subheader("🔥 TM Maydoni va Strukturaviy Holat (RS2)")
+    st.subheader("🔥 TM Maydoni va Selek Interferensiyasi (RS2)")
     fig_tm = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08,
-                           subplot_titles=("Harorat Maydoni (°C)", "Buzilish va Plastik zonalar (Shear Failure)"))
+                           subplot_titles=("Harorat Maydoni (°C)", "Buzilish va Seleklar holati (Shear Failure)"))
     
     fig_tm.add_trace(go.Heatmap(z=temp_2d, x=x_axis, y=z_axis, colorscale='Hot', zmin=25, zmax=T_source_max,
                                 colorbar=dict(title="°C", x=1.02, y=0.78, len=0.45)), row=1, col=1)
@@ -149,7 +164,11 @@ with c2:
     # Shear Failure nuqtalari
     mask = plastic_zone_mask > 0.7
     fig_tm.add_trace(go.Scatter(x=grid_x[mask], y=grid_z[mask], mode='markers', 
-                                marker=dict(symbol='x', color='red', size=4, opacity=0.4)), row=2, col=1)
+                                marker=dict(symbol='x', color='red', size=4, opacity=0.4), name="Failure"), row=2, col=1)
+
+    # Selek o'qlarini chizish
+    for px in [pillar_x1, pillar_x2]:
+        fig_tm.add_vline(x=px, line_width=2, line_dash="dash", line_color="rgba(255,255,255,0.5)", row=2, col=1)
 
     fig_tm.update_layout(template="plotly_dark", height=850, showlegend=False)
     fig_tm.update_yaxes(autorange='reversed', row=1, col=1)
