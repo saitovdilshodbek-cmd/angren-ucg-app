@@ -2,7 +2,7 @@ import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from scipy.ndimage import gaussian_filter # Silliqlash uchun kerak
+from scipy.ndimage import gaussian_filter # Silliqlash uchun zarur
 
 # --- Sahifa sozlamalari ---
 st.set_page_config(page_title="Universal Geomechanical Monitor", layout="wide")
@@ -100,7 +100,7 @@ for key, val in sources.items():
 st.session_state.max_temp_map = np.maximum(st.session_state.max_temp_map, temp_2d)
 delta_T = temp_2d - 25
 
-# --- YANGI: Gradient va Termal Kuchlanish ---
+# --- YANGI: Harorat Gradienti va Termal Kuchlanish ---
 dT_dx = np.gradient(temp_2d, axis=1)
 dT_dz = np.gradient(temp_2d, axis=0)
 thermal_gradient = np.sqrt(dT_dx**2 + dT_dz**2)
@@ -108,7 +108,7 @@ thermal_gradient = np.sqrt(dT_dx**2 + dT_dz**2)
 E = 5000 
 alpha_T = 1e-5
 constraint_factor = 0.7 
-# Termal kuchlanish endi gradientga bog'liq
+# Termal kuchlanish endi harorat gradientiga bog'liq
 sigma_thermal = constraint_factor * E * alpha_T * thermal_gradient
 
 temp_eff = np.maximum(st.session_state.max_temp_map - 100, 0)
@@ -120,25 +120,7 @@ grid_sigma_h = (k_ratio * grid_sigma_v) - sigma_thermal
 sigma1_act = np.maximum(grid_sigma_v, grid_sigma_h)
 sigma3_act = np.minimum(grid_sigma_v, grid_sigma_h)
 
-# --- YANGI: Bo'shliqni silliqlash va Stress Neutralization ---
-local_collapse = np.clip((st.session_state.max_temp_map - 600) / 300, 0, 1)
-time_factor = np.clip((time_h - 40) / 60, 0, 1)
-current_collapse_factor = local_collapse * time_factor
-
-# Dastlabki mantiqiy xatolar
-spalling_raw = (sigma3_act <= -0.5) & (temp_2d > 400) # Soddalashtirilgan spalling
-crushing_raw = (sigma1_act >= 10.0) & (temp_2d > 600) # Soddalashtirilgan crushing
-
-void_mask_raw = (spalling_raw | crushing_raw | (st.session_state.max_temp_map > 900)) * current_collapse_factor
-void_smooth = gaussian_filter(void_mask_raw.astype(float), sigma=1.5)
-void_mask_permanent = void_smooth > 0.3
-
-# Bo'shliqda kuchlanishlarni nolga tushirish
-sigma1_act = np.where(void_mask_permanent, 0, sigma1_act)
-sigma3_act = np.where(void_mask_permanent, 0, sigma3_act)
-sigma_ci = np.where(void_mask_permanent, 0.01, sigma_ci)
-
-# --- Tensile va Shear Failure (Yaxshilangan) ---
+# --- Tensile Failure Shartlari ---
 if tensile_mode == "Empirical (UCS)":
     grid_sigma_t0_base = tensile_ratio * sigma_ci
 elif tensile_mode == "HB-based (auto)":
@@ -150,10 +132,28 @@ sigma_t_field = grid_sigma_t0_base * np.exp(-beta_thermal * (temp_2d - 20))
 thermal_tension_boost = 1 + 0.6 * (1 - np.exp(-delta_T / 200))
 sigma_t_field_eff = sigma_t_field / thermal_tension_boost
 
-tensile_failure = (sigma3_act <= -sigma_t_field_eff) & (delta_T > 50) & (sigma1_act > sigma3_act)
-
+# --- YANGI: Dinamik Collapse va Stress Neutralization ---
+tensile_failure_pre = (sigma3_act <= -sigma_t_field_eff) & (sigma1_act > 0)
 sigma3_safe = np.maximum(sigma3_act, 0.01)
 sigma1_limit = sigma3_safe + sigma_ci * (grid_mb * sigma3_safe / (sigma_ci + 1e-6) + grid_s_hb)**grid_a_hb
+shear_failure_pre = sigma1_act >= sigma1_limit
+
+local_collapse = np.clip((st.session_state.max_temp_map - 600) / 300, 0, 1)
+time_factor = np.clip((time_h - 40) / 60, 0, 1)
+collapse_mult = local_collapse * time_factor
+
+# Bo'shliq maskasini Gaussian silliqlash bilan yaratish
+void_raw = (tensile_failure_pre | shear_failure_pre | (st.session_state.max_temp_map > 900)) * collapse_mult
+void_smooth = gaussian_filter(void_raw.astype(float), sigma=1.5)
+void_mask_permanent = void_smooth > 0.3
+
+# Kuchlanishlarni bo'shliqda nolga tushirish (Stress Neutralization)
+sigma1_act = np.where(void_mask_permanent, 0, sigma1_act)
+sigma3_act = np.where(void_mask_permanent, 0, sigma3_act)
+sigma_ci   = np.where(void_mask_permanent, 0.01, sigma_ci)
+
+# Failure maydonlarini qayta hisoblash (vizualizatsiya uchun)
+tensile_failure = (sigma3_act <= -sigma_t_field_eff) & (delta_T > 50) & (sigma1_act > sigma3_act)
 shear_failure = (sigma1_act >= sigma1_limit) & (~void_mask_permanent)
 
 # --- QOLGAN HISOB-KITOBLAR ---
@@ -199,14 +199,12 @@ with col_g3:
     fig_hb = go.Figure()
     fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_20, name='20°C', line=dict(color='red', width=2)))
     fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_burning, name='Yonayotgan payt', line=dict(color='orange', width=4)))
-    st.plotly_chart(fig_hb.update_layout(title="🛡️ Hoek-Brown Envelopes", template="plotly_dark", height=300, legend=dict(orientation="h", y=-0.3)), use_container_width=True)
+    st.plotly_chart(fig_hb.update_layout(title="🛡️ Hoek-Brown Envelopes", template="plotly_dark", height=300, legend=dict(orientation="h", y=-0.3, x=0.5, xanchor="center")), use_container_width=True)
 
 st.markdown("---")
 c1, c2 = st.columns([1, 2.5])
 with c1:
     st.subheader("📋 Ilmiy Tahlil")
-    st.error("🔴 FOS < 1.0: Failure")
-    st.success("🟢 FOS > 1.5: Stable")
     fig_s = go.Figure()
     for l in layers_data: fig_s.add_trace(go.Bar(x=['Kesim'], y=[l['t']], name=l['name'], marker_color=l['color'], width=0.4))
     st.plotly_chart(fig_s.update_layout(barmode='stack', template="plotly_dark", yaxis=dict(autorange='reversed'), height=450, showlegend=False), use_container_width=True)
@@ -223,24 +221,20 @@ with c2:
         zmin=0, zmax=3.0, contours_showlines=False
     ), row=2, col=1)
 
-    # YANGI: Oq konturli bo'shliqlar
+    # YANGI: Oq konturli o'pirilish zonalari
     fig_tm.add_trace(go.Contour(
-        z=void_mask_permanent.astype(int),
-        x=x_axis, y=z_axis,
-        showscale=False,
-        contours=dict(coloring='lines'),
-        line=dict(color='white', width=2),
-        hoverinfo='skip'
+        z=void_mask_permanent.astype(int), x=x_axis, y=z_axis,
+        showscale=False, contours=dict(coloring='lines'),
+        line=dict(color='white', width=2), hoverinfo='skip'
     ), row=2, col=1)
     
     fig_tm.add_trace(go.Scatter(x=grid_x[shear_failure][::2], y=grid_z[shear_failure][::2], mode='markers', marker=dict(color='red', size=3, symbol='x'), name='Shear'), row=2, col=1)
     fig_tm.add_trace(go.Scatter(x=grid_x[tensile_failure][::2], y=grid_z[tensile_failure][::2], mode='markers', marker=dict(color='blue', size=3, symbol='cross'), name='Tensile'), row=2, col=1)
     
-    # Selek (Pillar) chizmalari
     for px in [(sources['1']['x']+sources['2']['x'])/2, (sources['2']['x']+sources['3']['x'])/2]:
         fig_tm.add_shape(type="rect", x0=px-rec_width/2, x1=px+rec_width/2, y0=source_z-H_seam/2, y1=source_z+H_seam/2, line=dict(color="lime", width=3), row=2, col=1)
     
-    fig_tm.update_layout(template="plotly_dark", height=850, showlegend=True)
+    fig_tm.update_layout(template="plotly_dark", height=850, showlegend=True, legend=dict(orientation="h", y=-0.12, x=0.5, xanchor="center"))
     fig_tm.update_yaxes(autorange='reversed', row=1, col=1); fig_tm.update_yaxes(autorange='reversed', row=2, col=1)
     st.plotly_chart(fig_tm, use_container_width=True)
 
