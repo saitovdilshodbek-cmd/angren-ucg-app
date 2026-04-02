@@ -15,7 +15,7 @@ obj_name = st.sidebar.text_input("Loyiha nomi:", value="Angren-UCG-001")
 time_h = st.sidebar.slider("Jarayon vaqti (soat):", 1, 150, 24)
 num_layers = st.sidebar.number_input("Qatlamlar soni:", min_value=1, max_value=5, value=3)
 
-# --- YANGI: Geomexanik Koeffitsiyentlar ---
+# --- Geomexanik Koeffitsiyentlar ---
 st.sidebar.subheader("💎 Jins Xususiyatlari")
 D_factor = st.sidebar.slider("Disturbance Factor (D):", 0.0, 1.0, 0.7)
 nu_poisson = st.sidebar.slider("Poisson koeffitsiyenti (ν):", 0.1, 0.4, 0.25)
@@ -37,7 +37,7 @@ for i in range(int(num_layers)):
             name = st.text_input(f"Nomi:", value=f"Qatlam-{i+1}", key=f"name_{i}")
             thick = st.number_input(f"Qalinlik (m):", value=50.0, key=f"t_{i}")
             u = st.number_input(f"UCS (MPa):", value=40.0, key=f"u_{i}")
-            rho = st.number_input(f"Zichlik (kg/m³):", value=2500, key=f"rho_{i}") # Zichlik qo'shildi
+            rho = st.number_input(f"Zichlik (kg/m³):", value=2500, key=f"rho_{i}")
         with col2:
             color = st.color_picker(f"Rangi:", strata_colors[i % len(strata_colors)], key=f"color_{i}")
             g = st.slider(f"GSI:", 10, 100, 60, key=f"g_{i}")
@@ -52,7 +52,6 @@ avg_gsi = sum(l['gsi'] * l['t'] for l in layers_data) / (total_depth + 1e-6)
 avg_mi = sum(l['mi'] * l['t'] for l in layers_data) / (total_depth + 1e-6)
 avg_rho = sum(l['rho'] * l['t'] for l in layers_data) / (total_depth + 1e-6)
 
-# D-factor bilan mb, s va a koeffitsiyentlari
 mb = avg_mi * np.exp((avg_gsi - 100) / (28 - 14 * D_factor))
 s_hb = np.exp((avg_gsi - 100) / (9 - 3 * D_factor))
 a_hb = 0.5 + (1/6)*(np.exp(-avg_gsi/15) - np.exp(-20/3))
@@ -74,38 +73,42 @@ for key, val in sources.items():
         dist_sq = (grid_x - val['x'])**2 + (grid_z - source_z)**2
         temp_2d += (curr_T - 25) * np.exp(-dist_sq / (2 * radius**2))
 
-# --- STRESS FIELD & RS2 FAILURE LOGIC (ENHANCED) ---
+# --- STRESS FIELD (PRINCIPAL STRESS LOGIC) ---
 E_modulus = 5000  
 alpha_thermal = 1e-5  
 delta_T = temp_2d - 25
 
-# σv zichlik orqali (MPa)
 sigma_v = (avg_rho * 9.81 * grid_z) / 1e6
-# σ_thermal Poisson effekti bilan
 sigma_thermal = (E_modulus * alpha_thermal * delta_T) / (1 - nu_poisson)
 bending_effect = 2.0 * np.exp(-((grid_x / (total_depth + 1e-6))**2)) 
-
-# σh k-ratio va termal kuchlanish bilan
 sigma_h = (k_ratio * sigma_v) - sigma_thermal - bending_effect
 
+# Asosiy kuchlanishlar: sigma1 (maksimal) va sigma3 (minimal)
+sigma1_act = np.maximum(sigma_v, sigma_h)
+sigma3_act = np.minimum(sigma_v, sigma_h)
+
 sigma_ci = avg_ucs * np.exp(-0.0025 * (temp_2d - 20))
-sigma3_safe = np.maximum(sigma_h, 0.01)
+sigma3_safe = np.maximum(sigma3_act, 0.01)
 sigma1_limit = sigma3_safe + sigma_ci * (mb * sigma3_safe / (sigma_ci + 1e-6) + s_hb)**a_hb
 
-shear_failure = sigma_v >= sigma1_limit
-sigma_t_limit = 0.05 * sigma_ci  
-tensile_failure = sigma_h <= -sigma_t_limit
+shear_failure = sigma1_act >= sigma1_limit
+tensile_failure = sigma3_act <= -(0.05 * sigma_ci)
 
-# --- WILSON PILLAR STRENGTH ---
+# --- PILLAR STRENGTH (EMPIRICAL w/H APPROACH) ---
 avg_t_at_pillar = np.mean(temp_2d[np.abs(z_axis - source_z).argmin(), :])
 strength_red_factor = np.exp(-0.0025 * (avg_t_at_pillar - 20))
-pillar_strength = 0.6 * (avg_ucs * strength_red_factor)
-# Selek eni (w/h hisobi uchun asos)
-y_zone = max((H / 2) * (np.sqrt(sigma_v.max() / (pillar_strength + 1e-6)) - 1), 1.5)
+
+# Dastlabki tavsiya qilingan en (w) hisobi uchun vaqtinchalik rec_width
+temp_w = 20.0 
+pillar_strength = (avg_ucs * strength_red_factor) * (temp_w / (H + 1e-6))**0.5
+y_zone = max((H / 2) * (np.sqrt(sigma1_act.max() / (pillar_strength + 1e-6)) - 1), 1.5)
 stable_core = 0.5 * H
 rec_width = np.round(2 * y_zone + stable_core, 1)
 
-fos_2d = sigma1_limit / (sigma_v + 1e-6)
+# Selek mustahkamligini yangilangan rec_width bilan qayta aniqlash
+pillar_strength = (avg_ucs * strength_red_factor) * (rec_width / (H + 1e-6))**0.5
+
+fos_2d = sigma1_limit / (sigma1_act + 1e-6)
 fos_2d = np.clip(fos_2d, 0, 3.0)
 
 # --- VIZUALIZATSIYA ---
