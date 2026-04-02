@@ -7,7 +7,7 @@ from plotly.subplots import make_subplots
 st.set_page_config(page_title="Universal Geomechanical Monitor", layout="wide")
 
 st.title("🌐 Universal Yer yuzasi Deformatsiyasi Monitoringi")
-st.markdown("### Termo-Mexanik (TM) tahlil va Selek O'lchami Optimizatsiyasi")
+st.markdown("### Termo-Mexanik (TM) tahlil va Dinamik UCG Ssenariysi")
 
 # --- Sidebar: Parametrlar ---
 st.sidebar.header("⚙️ Umumiy parametrlar")
@@ -39,7 +39,7 @@ for i in range(int(num_layers)):
         layers_data.append({'name': name, 't': thick, 'ucs': u, 'gsi': g, 'mi': m, 'color': color, 'z_start': total_depth})
         total_depth += thick
 
-# --- ILMIY HISOB-KITOBLAR ---
+# --- ILMIY HISOB-KITOBLAR (WILSON & HOEK-BROWN) ---
 avg_ucs = sum(l['ucs'] * l['t'] for l in layers_data) / total_depth
 avg_gsi = sum(l['gsi'] * l['t'] for l in layers_data) / total_depth
 avg_mi = sum(l['mi'] * l['t'] for l in layers_data) / total_depth
@@ -56,6 +56,8 @@ source_z = total_depth - (layers_data[-1]['t'] / 2)
 sources = {'1': {'x': -total_depth/3, 'start': 0}, '2': {'x': 0, 'start': 40}, '3': {'x': total_depth/3, 'start': 80}}
 
 temp_2d = np.ones_like(grid_x) * 25 
+plastic_zone_mask = np.zeros_like(grid_x)
+
 for key, val in sources.items():
     if time_h > val['start']:
         dt = time_h - val['start']
@@ -63,85 +65,87 @@ for key, val in sources.items():
         curr_T = T_source_max if dt <= burn_duration else 25 + (T_source_max-25)*np.exp(-0.03*(dt-burn_duration))
         dist_sq = (grid_x - val['x'])**2 + (grid_z - source_z)**2
         temp_2d += (curr_T - 25) * np.exp(-dist_sq / (2 * radius**2))
+        plastic_influence = np.exp(-dist_sq / (2 * (radius * 1.3)**2))
+        plastic_zone_mask = np.maximum(plastic_zone_mask, plastic_influence)
 
-# Wilson metodikasi: Selek (Pillar) hisobi
-sigma_v = 0.027 * source_z 
-idx_z = np.abs(z_axis - source_z).argmin()
-avg_t_at_pillar = np.mean(temp_2d[idx_z, :])
-strength_red_factor = np.exp(-0.0025 * (avg_t_at_pillar - 20))
-dynamic_ucs = avg_ucs * strength_red_factor
-
-y_zone = (layers_data[-1]['t'] / 2) * (np.sqrt(sigma_v / (0.12 * dynamic_ucs + 1e-6)) - 1)
-y_zone = max(y_zone, 1.5)
-rec_width = np.round(2 * y_zone + (y_zone * 1.6), 1)
+# Wilson metodikasi bo'yicha mustahkamlik pasayishi
+sigma_v = 0.027 * grid_z
+strength_red_factor = np.exp(-0.0025 * (temp_2d - 20))
+failure_2d = sigma_v / (avg_ucs * strength_red_factor + 1e-6)
 
 # --- VIZUALIZATSIYA ---
-st.subheader(f"📊 {obj_name}: Monitoring va Ekspert Xulosasi")
+st.subheader(f"📊 {obj_name}: Monitoring Natijalari")
+col_g1, col_g2, col_g3 = st.columns([1.5, 1.5, 2])
 
-# SyntaxError'ni (:= operatori) yo'qotish uchun hisob-kitoblarni alohida qilish
+# Grafik ma'lumotlarini tayyorlash (SyntaxError oldini olish uchun)
 s_max = (layers_data[-1]['t'] * 0.04) * (min(time_h, 120) / 120)
 subsidence_profile = -s_max * np.exp(-(x_axis**2) / (2 * (total_depth/2)**2))
 uplift_vals = (total_depth * 1e-4) * np.exp(-(x_axis**2) / (total_depth*10)) * (time_h/150) * 100
 
-m1, m2, m3, m4 = st.columns(4)
-m1.metric("Loyiha Chuqurligi", f"{total_depth} m")
-m2.metric("Termal UCS (σₜ)", f"{dynamic_ucs:.1f} MPa")
-m3.metric("Plastik zona (y)", f"{y_zone:.1f} m")
-m4.metric("Selek Eni (Rec.)", f"{rec_width} m")
+with col_g1:
+    fig1 = go.Figure(go.Scatter(x=x_axis, y=subsidence_profile * 100, fill='tozeroy', line=dict(color='magenta', width=3)))
+    fig1.update_layout(title="📉 Yer yuzasi cho'kishi (cm)", template="plotly_dark", height=300)
+    st.plotly_chart(fig1, use_container_width=True)
 
-st.markdown("---")
+with col_g2:
+    fig2 = go.Figure(go.Scatter(x=x_axis, y=uplift_vals, fill='tozeroy', line=dict(color='cyan', width=3)))
+    fig2.update_layout(title="🔥 Termal deformatsiya (cm)", template="plotly_dark", height=300)
+    st.plotly_chart(fig2, use_container_width=True)
 
-# 2D TM Maydonlari (Alohiha shkalalar bilan)
-st.subheader("🔥 Termo-Mexanik Maydonlar (RS2 Style)")
-fig_tm = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.12, 
-                       subplot_titles=("Harorat Maydoni (°C)", "Buzilish va Plastik zonalar (Shear Index)"))
+with col_g3:
+    # Hoek-Brown Envelopes (Rasm 502567 dagi ko'rinish)
+    sigma3_axis = np.linspace(0, avg_ucs * 0.5, 100)
+    # 1. Normal holat
+    s1_init = sigma3_axis + avg_ucs * (mb * sigma3_axis / avg_ucs + s_hb)**a_hb
+    # 2. Termal zarar (Wilson koeffitsiyenti o'rtachasi bilan)
+    red_factor_avg = np.exp(-0.002 * (T_source_max/2 - 20)) 
+    s1_cooled = sigma3_axis + (avg_ucs * red_factor_avg) * (mb * sigma3_axis / (avg_ucs * red_factor_avg) + s_hb)**a_hb
+    # 3. Maksimal harorat
+    red_hot = np.exp(-0.003 * (T_source_max - 20))
+    s1_hot = sigma3_axis + (avg_ucs * red_hot) * (mb * sigma3_ax / (avg_ucs * red_hot) + s_hb)**a_hb if 'avg_ucs' in locals() else s1_init # Logic safety
+    s1_hot = sigma3_axis + (avg_ucs * red_hot) * (mb * sigma3_axis / (avg_ucs * red_hot + 1e-6) + s_hb)**a_hb
 
-# 1. Harorat (Yuqori grafik)
-fig_tm.add_trace(go.Heatmap(
-    z=temp_2d, x=x_axis, y=z_axis, 
-    colorscale='Hot', 
-    zmin=25, zmax=T_source_max,
-    colorbar=dict(title="°C", x=1.02, y=0.8, len=0.4) 
-), row=1, col=1)
-
-# 2. Plastik zonalar (Pastki grafik)
-fail_2d = (0.027 * grid_z) / (avg_ucs * np.exp(-0.0025 * (temp_2d - 20)) + 1e-6)
-fig_tm.add_trace(go.Contour(
-    z=fail_2d, x=x_axis, y=z_axis, 
-    colorscale='Jet', 
-    contours_showlines=False,
-    colorbar=dict(title="Index", x=1.02, y=0.2, len=0.4)
-), row=2, col=1)
-
-# Selek o'rni (Rectangle)
-p_x1 = (sources['1']['x'] + sources['2']['x']) / 2
-p_x2 = (sources['2']['x'] + sources['3']['x']) / 2
-for px in [p_x1, p_x2]:
-    fig_tm.add_shape(type="rect", x0=px-rec_width/2, x1=px+rec_width/2, y0=source_z-10, y1=source_z+10, 
-                     line=dict(color="lime", width=3), row=2, col=1)
-
-fig_tm.update_layout(template="plotly_dark", height=850, showlegend=False)
-fig_tm.update_yaxes(autorange='reversed', title="Chuqurlik (m)", row=1, col=1)
-fig_tm.update_yaxes(autorange='reversed', title="Chuqurlik (m)", row=2, col=1)
-st.plotly_chart(fig_tm, use_container_width=True)
-
-st.markdown("---")
-# Qolgan grafiklar (Egri chiziqlar)
-col_c1, col_c2 = st.columns(2)
-with col_c1:
-    fig_sub = go.Figure(go.Scatter(x=x_axis, y=subsidence_profile * 100, fill='tozeroy', line=dict(color='magenta')))
-    fig_sub.update_layout(title="📉 Yer yuzasi cho'kishi (cm)", template="plotly_dark", height=300)
-    st.plotly_chart(fig_sub, use_container_width=True)
-with col_c2:
-    sigma3_ax = np.linspace(0, avg_ucs * 0.5, 100)
-    s1_init = sigma3_ax + avg_ucs * (mb * sigma3_ax / (avg_ucs + 1e-6) + s_hb)**a_hb
-    s1_hot = sigma3_ax + (avg_ucs * strength_red_factor) * (mb * sigma3_ax / (avg_ucs * strength_red_factor + 1e-6) + s_hb)**a_hb
-    
     fig_hb = go.Figure()
-    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_init, name='20°C', line=dict(color='red')))
-    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_hot, name='Termal Zarar', line=dict(color='orange')))
-    fig_hb.update_layout(title="🛡️ Hoek-Brown Envelopes", template="plotly_dark", height=300, legend=dict(orientation="h", y=-0.2))
+    fig_hb.add_trace(go.Scatter(x=sigma3_axis, y=s1_init, name='Yonishdan oldin (20°C)', line=dict(color='#FF4B4B', width=3)))
+    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_cooled, name='Sovugandan keyin (20°C, zarar)', line=dict(color='#0068C9', width=3, dash='dash')))
+    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_hot, name=f'Yonayotgan paytda ({T_source_max}°C)', line=dict(color='#FFA500', width=4)))
+    
+    fig_hb.update_layout(title="🛡️ Jins Mustahkamligi Chegarasi", template="plotly_dark", height=300, legend=dict(orientation="h", y=-0.3))
     st.plotly_chart(fig_hb, use_container_width=True)
+
+st.markdown("---")
+c1, c2 = st.columns([1, 2.5])
+
+with c1:
+    st.subheader("🧱 Geologik Kesim")
+    fig_strata = go.Figure()
+    for l in layers_data:
+        fig_strata.add_trace(go.Bar(x=['Kesim'], y=[l['t']], name=l['name'], marker_color=l['color'], width=0.4))
+    fig_strata.update_layout(barmode='stack', template="plotly_dark", yaxis=dict(title="Chuqurlik (m)", autorange='reversed'), height=750)
+    st.plotly_chart(fig_strata, use_container_width=True)
+
+with c2:
+    st.subheader("🔥 TM Maydoni va Strukturaviy Holat (RS2 Style)")
+    fig_tm = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1,
+                           subplot_titles=("Harorat Maydoni (°C)", "Buzilish va Plastik zonalar (Shear Index)"))
+    
+    # Harorat maydoni shkalasi (yuqorida alohida)
+    fig_tm.add_trace(go.Heatmap(z=temp_2d, x=x_axis, y=z_axis, colorscale='Hot', zmin=25, zmax=T_source_max,
+                                colorbar=dict(title="°C", x=1.02, y=0.78, len=0.45)), row=1, col=1)
+    
+    # Plastik zonalar shkalasi (pastda alohida)
+    fig_tm.add_trace(go.Contour(z=failure_2d, x=x_axis, y=z_axis, colorscale='Jet', contours=dict(coloring='heatmap', showlines=False),
+                                colorbar=dict(title="Index", x=1.02, y=0.22, len=0.45)), row=2, col=1)
+    
+    # Shear Failure nuqtalari (x belgilari)
+    mask = plastic_zone_mask > 0.7
+    fig_tm.add_trace(go.Scatter(x=grid_x[mask], y=grid_z[mask], mode='markers', 
+                                marker=dict(symbol='x', color='red', size=4, opacity=0.4)), row=2, col=1)
+
+    fig_tm.update_layout(template="plotly_dark", height=850, showlegend=False)
+    fig_tm.update_yaxes(autorange='reversed', row=1, col=1)
+    fig_tm.update_yaxes(autorange='reversed', row=2, col=1)
+    st.plotly_chart(fig_tm, use_container_width=True)
 
 st.sidebar.markdown("---")
 st.sidebar.write(f"Tuzuvchi: Saitov Dilshodbek")
