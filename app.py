@@ -15,6 +15,7 @@ obj_name = st.sidebar.text_input("Loyiha nomi:", value="Angren-UCG-001")
 time_h = st.sidebar.slider("Jarayon vaqti (soat):", 1, 150, 24)
 num_layers = st.sidebar.number_input("Qatlamlar soni:", min_value=1, max_value=5, value=3)
 
+# --- Geomexanik Koeffitsiyentlar ---
 st.sidebar.subheader("💎 Jins Xususiyatlari")
 D_factor = st.sidebar.slider("Disturbance Factor (D):", 0.0, 1.0, 0.7)
 nu_poisson = st.sidebar.slider("Poisson koeffitsiyenti (ν):", 0.1, 0.4, 0.25)
@@ -52,23 +53,20 @@ grid_x, grid_z = np.meshgrid(x_axis, z_axis)
 source_z = total_depth - (layers_data[-1]['t'] / 2)
 H_seam = layers_data[-1]['t']
 
-# --- 3. HEAT PDE LOGIC (COMSOL STYLE DIFFUSION) ---
-alpha_rock = 1.0e-6 # Thermal diffusivity (m2/s)
+# --- HEAT PDE LOGIC (Diffuziya yondashuvi) ---
+alpha_rock = 1.0e-6 
 time_seconds = time_h * 3600
-# Penetration depth: d = sqrt(4*alpha*t)
-pen_depth = np.sqrt(4 * alpha_rock * time_seconds) + 1e-6
-
 sources = {'1': {'x': -total_depth/3, 'start': 0}, '2': {'x': 0, 'start': 40}, '3': {'x': total_depth/3, 'start': 80}}
 temp_2d = np.ones_like(grid_x) * 25 
 for key, val in sources.items():
     if time_h > val['start']:
         dt_local = (time_h - val['start']) * 3600
-        local_pen = np.sqrt(4 * alpha_rock * dt_local)
+        pen_depth = np.sqrt(4 * alpha_rock * dt_local) # PDE penetratsiya chuqurligi
         curr_T = T_source_max if (time_h - val['start']) <= burn_duration else 25 + (T_source_max-25)*np.exp(-0.03*((time_h-val['start'])-burn_duration))
         dist_sq = (grid_x - val['x'])**2 + (grid_z - source_z)**2
-        temp_2d += (curr_T - 25) * np.exp(-dist_sq / (local_pen**2 + 15**2))
+        temp_2d += (curr_T - 25) * np.exp(-dist_sq / (pen_depth**2 + 15**2))
 
-# --- 2. LAYER-BY-LAYER STRESS FIELD ---
+# --- LAYER-BY-LAYER STRESS FIELD ---
 grid_sigma_v = np.zeros_like(grid_z)
 grid_ucs = np.zeros_like(grid_z)
 grid_mb = np.zeros_like(grid_z)
@@ -102,19 +100,17 @@ sigma1_limit = sigma3_safe + sigma_ci * (grid_mb * sigma3_safe / (sigma_ci + 1e-
 shear_failure = sigma1_act >= sigma1_limit
 tensile_failure = sigma3_act <= -(0.05 * sigma_ci)
 
-# --- 1. ITERATIVE PILLAR SOLVER ---
+# --- ITERATIVE PILLAR SOLVER ---
 avg_t_at_pillar = np.mean(temp_2d[np.abs(z_axis - source_z).argmin(), :])
 reduction = np.exp(-0.0025 * (avg_t_at_pillar - 20))
 ucs_seam = layers_data[-1]['ucs']
 sigma_v_seam = grid_sigma_v[np.abs(z_axis - source_z).argmin(), :].max()
 
-w_sol = 20.0 # Initial guess
-for _ in range(15):
-    # Obert-Duvall + Thermal Reduction
+w_sol = 20.0 
+for _ in range(15): # Iteratsiya
     p_strength = (ucs_seam * reduction) * (w_sol / H_seam)**0.5
     y_z = (H_seam / 2) * (np.sqrt(sigma_v_seam / (p_strength + 1e-6)) - 1)
-    y_z = max(y_z, 1.5)
-    new_w = 2 * y_z + 0.5 * H_seam
+    new_w = 2 * max(y_z, 1.5) + 0.5 * H_seam
     if abs(new_w - w_sol) < 0.1: break
     w_sol = new_w
 
@@ -127,7 +123,7 @@ st.subheader(f"📊 {obj_name}: Monitoring va Ekspert Xulosasi")
 
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("Pillar Strength (σp)", f"{pillar_strength:.1f} MPa")
-m2.metric("Plastik zona (y)", f"{y_z:.1f} m")
+m2.metric("Plastik zona (y)", f"{max(y_z, 1.5):.1f} m")
 m3.metric("Stress Ratio (k)", f"{k_ratio}")
 m4.metric("TAVSIYA: Selek Eni", f"{rec_width} m")
 
@@ -150,14 +146,13 @@ with col_g2:
 
 with col_g3:
     sigma3_ax = np.linspace(0, ucs_seam * 0.5, 100)
-    # Hoek-Brown visualization for seam layer
     mb_s, s_s, a_s = grid_mb.max(), grid_s.max(), grid_a.max()
     s1_init = sigma3_ax + ucs_seam * (mb_s * sigma3_ax / (ucs_seam + 1e-6) + s_s)**a_s
     s1_fire = sigma3_ax + (ucs_seam * reduction) * (mb_s * sigma3_ax / (ucs_seam * reduction + 1e-6) + s_s)**a_s
     
     fig_hb = go.Figure()
-    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_init, name='20°C (Dastlabki)', line=dict(color='red', width=2)))
-    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_fire, name='TM Zararlangan', line=dict(color='orange', width=4)))
+    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_init, name='20°C (Original)', line=dict(color='red', width=2)))
+    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_fire, name='Zararlangan', line=dict(color='orange', width=4)))
     fig_hb.update_layout(title="🛡️ Hoek-Brown Envelope (Ko'mir)", template="plotly_dark", height=300, legend=dict(orientation="h", y=-0.3))
     st.plotly_chart(fig_hb, use_container_width=True)
 
@@ -166,26 +161,27 @@ c1, c2 = st.columns([1, 2.5])
 
 with c1:
     st.subheader("📋 Ilmiy Tahlil")
-    st.info(f"**Iterativ Selek Solver:**")
-    st.write(f"Konvergentsiya 15 qadamda yakunlandi. Wilson (1972) yondashuvi bo'yicha barqaror yadro (core) saqlab qolindi.")
+    st.info(f"**Iterativ Solver:**")
+    st.write("Wilson (1972) modeli asosida selek o'lchami plastik zona va barqaror yadro (stable core) muvozanatiga keltirildi.")
     
     fig_strata = go.Figure()
     for l in layers_data:
         fig_strata.add_trace(go.Bar(x=['Kesim'], y=[l['t']], name=l['name'], marker_color=l['color'], width=0.4))
-    fig_strata.update_layout(barmode='stack', template="plotly_dark", yaxis=dict(autorange='reversed', title="Chuqurlik (m)"), height=450, showlegend=False)
+    fig_strata.update_layout(barmode='stack', template="plotly_dark", yaxis=dict(autorange='reversed', title="M"), height=450, showlegend=False)
     st.plotly_chart(fig_strata, use_container_width=True)
 
 with c2:
-    st.subheader("🔥 TM Maydoni va Selek Interferensiyasi (Layer-by-Layer)")
+    st.subheader("🔥 TM Maydoni va Selek Interferensiyasi")
     fig_tm = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.15, 
-                           subplot_titles=("PDE Issiqlik Diffuziyasi (°C)", "FOS va Plastik Zonalar (Principal Stress)"))
+                           subplot_titles=("Issiqlik Diffuziyasi (°C)", "FOS va Yielded Zones"))
     
-    fig_tm.add_trace(go.Heatmap(z=temp_2d, x=x_axis, y=z_axis, colorscale='Hot', zmin=25, zmax=T_source_max, colorbar=dict(title="T (°C)", x=1.08, y=0.78, len=0.42)), row=1, col=1)
+    fig_tm.add_trace(go.Heatmap(z=temp_2d, x=x_axis, y=z_axis, colorscale='Hot', colorbar=dict(title="T (°C)", x=1.08, y=0.78, len=0.42)), row=1, col=1)
     fig_tm.add_trace(go.Contour(z=fos_2d, x=x_axis, y=z_axis, colorscale=[[0, 'red'], [0.33, 'yellow'], [0.5, 'green'], [1, 'darkgreen']], zmin=0, zmax=3.0, contours_showlines=False, colorbar=dict(title="FOS", x=1.08, y=0.22, len=0.42)), row=2, col=1)
 
     fig_tm.add_trace(go.Scatter(x=grid_x[shear_failure][::3], y=grid_z[shear_failure][::3], mode='markers', marker=dict(color='red', size=2, opacity=0.4), name='Shear Yield'), row=2, col=1)
     fig_tm.add_trace(go.Scatter(x=grid_x[tensile_failure][::3], y=grid_z[tensile_failure][::3], mode='markers', marker=dict(color='blue', size=2, opacity=0.4), name='Tensile Yield'), row=2, col=1)
     
+    # Selek o'rnini chizish
     for px in [(sources['1']['x']+sources['2']['x'])/2, (sources['2']['x']+sources['3']['x'])/2]:
         fig_tm.add_shape(type="rect", x0=px-rec_width/2, x1=px+rec_width/2, y0=source_z-H_seam/2, y1=source_z+H_seam/2, line=dict(color="lime", width=3), row=2, col=1)
 
