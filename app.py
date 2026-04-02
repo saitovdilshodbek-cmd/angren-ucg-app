@@ -15,6 +15,12 @@ obj_name = st.sidebar.text_input("Loyiha nomi:", value="Angren-UCG-001")
 time_h = st.sidebar.slider("Jarayon vaqti (soat):", 1, 150, 24)
 num_layers = st.sidebar.number_input("Qatlamlar soni:", min_value=1, max_value=5, value=3)
 
+# --- Tensile Modeli Selektori ---
+tensile_mode = st.sidebar.selectbox(
+    "Tensile modeli:",
+    ["UCS-based", "Layer-based"]
+)
+
 # --- Geomexanik Koeffitsiyentlar ---
 st.sidebar.subheader("💎 Jins Xususiyatlari")
 D_factor = st.sidebar.slider("Disturbance Factor (D):", 0.0, 1.0, 0.7)
@@ -45,8 +51,14 @@ for i in range(int(num_layers)):
             color = st.color_picker(f"Rangi:", strata_colors[i % len(strata_colors)], key=f"color_{i}")
             g = st.slider(f"GSI:", 10, 100, 60, key=f"g_{i}")
             m = st.number_input(f"mi:", value=10.0, key=f"m_{i}")
+            
+        # Layer-based uchun sigma_t0 kiritish
+        if tensile_mode == "Layer-based":
+            s_t0 = st.number_input(f"σt0 (MPa):", value=3.0, key=f"st_{i}")
+        else:
+            s_t0 = 0.0 # UCS-based bo'lsa shunchaki saqlab qo'yamiz
         
-        layers_data.append({'name': name, 't': thick, 'ucs': u, 'rho': rho, 'gsi': g, 'mi': m, 'color': color, 'z_start': total_depth})
+        layers_data.append({'name': name, 't': thick, 'ucs': u, 'rho': rho, 'gsi': g, 'mi': m, 'color': color, 'z_start': total_depth, 'sigma_t0': s_t0})
         total_depth += thick
 
 # --- HISOB-KITOBLAR ---
@@ -56,7 +68,7 @@ grid_x, grid_z = np.meshgrid(x_axis, z_axis)
 source_z = total_depth - (layers_data[-1]['t'] / 2)
 H_seam = layers_data[-1]['t']
 
-grid_sigma_v, grid_ucs, grid_mb, grid_s_hb, grid_a_hb = [np.zeros_like(grid_z) for _ in range(5)]
+grid_sigma_v, grid_ucs, grid_mb, grid_s_hb, grid_a_hb, grid_sigma_t0 = [np.zeros_like(grid_z) for _ in range(6)]
 
 for i, layer in enumerate(layers_data):
     mask = (grid_z >= layer['z_start']) & (grid_z < (layer['z_start'] + layer['t']))
@@ -67,6 +79,7 @@ for i, layer in enumerate(layers_data):
     grid_mb[mask] = layer['mi'] * np.exp((layer['gsi'] - 100) / (28 - 14 * D_factor))
     grid_s_hb[mask] = np.exp((layer['gsi'] - 100) / (9 - 3 * D_factor))
     grid_a_hb[mask] = 0.5 + (1/6)*(np.exp(-layer['gsi']/15) - np.exp(-20/3))
+    grid_sigma_t0[mask] = layer['sigma_t0'] # Qatlamli tensile kuchi
 
 alpha_rock = 1.0e-6 
 sources = {'1': {'x': -total_depth/3, 'start': 0}, '2': {'x': 0, 'start': 40}, '3': {'x': total_depth/3, 'start': 80}}
@@ -85,7 +98,12 @@ grid_sigma_h = (k_ratio * grid_sigma_v) - sigma_thermal
 sigma1_act = np.maximum(grid_sigma_v, grid_sigma_h)
 sigma3_act = np.minimum(grid_sigma_v, grid_sigma_h)
 
-sigma_t_field = (tensile_ratio * grid_ucs) * np.exp(-beta_thermal * (temp_2d - 20))
+# --- Tensile Mantiqi ---
+if tensile_mode == "UCS-based":
+    sigma_t_field = (tensile_ratio * grid_ucs) * np.exp(-beta_thermal * (temp_2d - 20))
+else:
+    sigma_t_field = grid_sigma_t0 * np.exp(-beta_thermal * (temp_2d - 20))
+
 sigma_ci = grid_ucs * np.exp(-0.0025 * (temp_2d - 20))
 sigma3_safe = np.maximum(sigma3_act, 0.01)
 sigma1_limit = sigma3_safe + sigma_ci * (grid_mb * sigma3_safe / (sigma_ci + 1e-6) + grid_s_hb)**grid_a_hb
@@ -131,15 +149,10 @@ with col_g3:
     sigma3_ax = np.linspace(0, ucs_seam * 0.5, 100)
     mb_s, s_s, a_s = grid_mb.max(), grid_s_hb.max(), grid_a_hb.max()
     
-    # 1. 20°C (Normal)
     s1_20 = sigma3_ax + ucs_seam * (mb_s * sigma3_ax / (ucs_seam + 1e-6) + s_s)**a_s
-    
-    # 2. Yonayotgan payt (Max T dagi pasayish)
     strength_red_burning = np.exp(-0.0025 * (T_source_max - 20))
     ucs_burning = ucs_seam * strength_red_burning
     s1_burning = sigma3_ax + ucs_burning * (mb_s * sigma3_ax / (ucs_burning + 1e-6) + s_s)**a_s
-    
-    # 3. Sovugandagi Zarar (Post-burn)
     s1_sov = sigma3_ax + (ucs_seam * strength_red) * (mb_s * sigma3_ax / (ucs_seam * strength_red + 1e-6) + s_s)**a_s
     
     fig_hb = go.Figure()
@@ -165,13 +178,11 @@ with c2:
     st.subheader("🔥 TM Maydoni va Selek Interferensiyasi (RS2)")
     fig_tm = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.15, subplot_titles=("Harorat Maydoni (°C)", "Xavfsizlik Koeffitsiyenti (FOS) & Yielded Zones"))
     
-    # Heatmap - Harorat
     fig_tm.add_trace(go.Heatmap(
         z=temp_2d, x=x_axis, y=z_axis, colorscale='Hot', zmin=25, zmax=T_source_max, 
         colorbar=dict(title="T (°C)", title_side="top", x=1.05, y=0.78, len=0.42, thickness=15)
     ), row=1, col=1)
     
-    # Contour - FOS
     fig_tm.add_trace(go.Contour(
         z=fos_2d, x=x_axis, y=z_axis, 
         colorscale=[[0, 'red'], [0.33, 'yellow'], [0.5, 'green'], [1, 'darkgreen']], 
@@ -179,7 +190,6 @@ with c2:
         colorbar=dict(title="FOS", title_side="top", x=1.05, y=0.22, len=0.42, thickness=15)
     ), row=2, col=1)
     
-    # Nuqtalar (Shear va Tensile)
     fig_tm.add_trace(go.Scatter(x=grid_x[shear_failure][::2], y=grid_z[shear_failure][::2], mode='markers', marker=dict(color='red', size=3, symbol='x'), name='Shear'), row=2, col=1)
     fig_tm.add_trace(go.Scatter(x=grid_x[tensile_failure][::2], y=grid_z[tensile_failure][::2], mode='markers', marker=dict(color='blue', size=3, symbol='cross'), name='Tensile'), row=2, col=1)
     
