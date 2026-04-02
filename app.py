@@ -67,37 +67,34 @@ for key, val in sources.items():
         temp_2d += (curr_T - 25) * np.exp(-dist_sq / (2 * radius**2))
         plastic_zone_mask = np.maximum(plastic_zone_mask, np.exp(-dist_sq / (2 * (radius * 1.3)**2)))
 
-# --- ILMIY SELEK O'LCHAMI (WILSON'S THEORY) ---
-# 1. Vertikal stress (MPa)
-sigma_v = 0.027 * source_z 
-
-# 2. Termal UCS (Harorat ta'sirida pasaygan mustahkamlik)
+# --- SELEK O'LCHAMI TAVSIYASI MANTIQI ---
+# 1. Vertikal stress (overburden pressure)
+sigma_v = 0.027 * source_z # MPa
+# 2. Termal ta'sir ostida mustahkamlik pasayishi
 avg_t_at_pillar = np.mean(temp_2d[np.abs(z_axis - source_z).argmin(), :])
 strength_red_factor = np.exp(-0.0025 * (avg_t_at_pillar - 20))
 dynamic_ucs = avg_ucs * strength_red_factor
 
-# 3. Wilson bo'yicha plastik zona kengligi (y)
-# Formula: y = (M/2) * [(sigma_v / (p_k * UCS_t))^0.5 - 1]
-m_thick = layers_data[-1]['t']
-p_k = 0.12  # Lateral confinement koeffitsiyenti
-y_zone = (m_thick / 2) * (np.sqrt(sigma_v / (p_k * dynamic_ucs + 1e-6)) - 1)
-y_zone = max(y_zone, 1.5)
-
-# 4. Barqaror o'zak va umumiy kenglik (SF=1.6 xavfsizlik bilan)
-rec_width = np.round(2 * y_zone + (y_zone * 1.6), 1)
+# 3. Tavsiya etilgan kenglik (Empirik muhandislik formulasi)
+safe_sf = 1.6 # Xavfsizlik koeffitsiyenti
+# W/H nisbati va stress/strength munosabati
+rec_width = (sigma_v * safe_sf / (dynamic_ucs * 0.15)) * (layers_data[-1]['t'] / 8)
+rec_width = max(rec_width, 15.0) # Minimal 15 metr
 
 # --- VIZUALIZATSIYA ---
 st.subheader(f"📊 {obj_name}: Monitoring va Ekspert Xulosasi")
 
+# Yuqori ko'rsatkichlar paneli
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("Loyiha Chuqurligi", f"{total_depth} m")
-m2.metric("Termal UCS (σₜ)", f"{dynamic_ucs:.1f} MPa")
-m3.metric("Plastik zona (y)", f"{y_zone:.1f} m")
-m4.metric("TAVSIYA: Selek Eni", f"{rec_width} m", delta=f"{strength_red_factor*100:.1f}% mustahkamlik", delta_color="inverse")
+m2.metric("O'rtacha UCS (Termal)", f"{dynamic_ucs:.1f} MPa")
+m3.metric("Stress (σᵥ)", f"{sigma_v:.2f} MPa")
+m4.metric("TAVSIYA: Selek Eni", f"{rec_width:.1f} m", delta=f"{strength_red_factor*100:.1f}% mustahkamlik", delta_color="inverse")
 
 st.markdown("---")
 col_g1, col_g2, col_g3 = st.columns([1.5, 1.5, 2])
 
+# Grafiklar (SyntaxError'siz variant)
 s_max = (layers_data[-1]['t'] * 0.04) * (min(time_h, 120) / 120)
 subsidence_profile = -s_max * np.exp(-(x_axis**2) / (2 * (total_depth/2)**2))
 uplift_vals = (total_depth * 1e-4) * np.exp(-(x_axis**2) / (total_depth*10)) * (time_h/150) * 100
@@ -117,6 +114,7 @@ with col_g3:
     red_h = np.exp(-0.002 * (T_source_max - 20))
     s1_init = sigma3_ax + avg_ucs * (mb * sigma3_ax / avg_ucs + s_hb)**a_hb
     s1_hot = sigma3_ax + (avg_ucs * red_h) * (mb * sigma3_ax / (avg_ucs * red_h) + s_hb)**a_hb
+    
     fig_hb = go.Figure()
     fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_init, name='Normal', line=dict(color='#FF4B4B', width=2)))
     fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_hot, name='Termal (Zarar)', line=dict(color='#FFA500', width=4)))
@@ -127,13 +125,12 @@ st.markdown("---")
 c1, c2 = st.columns([1, 2.5])
 
 with c1:
-    st.subheader("📋 Ilmiy Tahlil")
+    st.subheader("📋 Tahliliy Tavsiya")
     st.info(f"""
-    **Wilson (1972) metodikasi:**
-    * **σᵥ (Vertikal yuk):** {sigma_v:.2f} MPa
-    * **y (Plastik qatlam):** {y_zone:.1f} m
-    * **Harorat:** {avg_t_at_pillar:.0f}°C
-    * **Xulosa:** Plastik zonalar birlashib ketmasligi uchun selek kengligi **{rec_width} m** bo'lishi shart.
+    **Geomekanik holat:**
+    * Tanlangan chuqurlikda tog' jinsi bosimi {sigma_v:.2f} MPa ni tashkil etadi.
+    * Harorat {avg_t_at_pillar:.0f}°C ga ko'tarilishi natijasida jins mustahkamligi {100-(strength_red_factor*100):.1f}% ga kamaygan.
+    * **Xulosa:** Kameralar barqarorligini ta'minlash uchun kamida **{rec_width:.1f} metr** kenglikdagi selek qoldirish tavsiya etiladi.
     """)
     
     fig_strata = go.Figure()
@@ -145,10 +142,13 @@ with c1:
 with c2:
     st.subheader("🔥 TM Maydoni va Selek Interferensiyasi (RS2)")
     fig_tm = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08, subplot_titles=("Harorat (°C)", "Plastik zonalar"))
+    
     fig_tm.add_trace(go.Heatmap(z=temp_2d, x=x_axis, y=z_axis, colorscale='Hot', zmin=25, zmax=T_source_max), row=1, col=1)
+    
     fail_2d = (0.027 * grid_z) / (avg_ucs * np.exp(-0.002 * (temp_2d - 20)) + 1e-6)
     fig_tm.add_trace(go.Contour(z=fail_2d, x=x_axis, y=z_axis, colorscale='Jet', contours_showlines=False), row=2, col=1)
     
+    # Selek o'rnini vizual ko'rsatish
     p_x1 = (sources['1']['x'] + sources['2']['x']) / 2
     p_x2 = (sources['2']['x'] + sources['3']['x']) / 2
     for px in [p_x1, p_x2]:
