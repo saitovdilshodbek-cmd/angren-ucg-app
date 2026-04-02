@@ -39,10 +39,14 @@ for i in range(int(num_layers)):
         layers_data.append({'name': name, 't': thick, 'ucs': u, 'gsi': g, 'mi': m, 'color': color, 'z_start': total_depth})
         total_depth += thick
 
-# --- ILMIY HISOB-KITOBLAR ---
+# --- ILMIY HISOB-KITOBLAR (HOEK-BROWN) ---
 avg_ucs = sum(l['ucs'] * l['t'] for l in layers_data) / total_depth
 avg_gsi = sum(l['gsi'] * l['t'] for l in layers_data) / total_depth
 avg_mi = sum(l['mi'] * l['t'] for l in layers_data) / total_depth
+
+mb = avg_mi * np.exp((avg_gsi - 100) / 28)
+s_hb = np.exp((avg_gsi - 100) / 9)
+a_hb = 0.5 + (1/6)*(np.exp(-avg_gsi/15) - np.exp(-20/3))
 
 x_axis = np.linspace(-total_depth*1.5, total_depth*1.5, 150)
 z_axis = np.linspace(0, total_depth + 50, 120)
@@ -50,7 +54,7 @@ grid_x, grid_z = np.meshgrid(x_axis, z_axis)
 source_z = total_depth - (layers_data[-1]['t'] / 2)
 H = layers_data[-1]['t'] # Ko'mir qatlami qalinligi
 
-# Issiqlik maydoni
+# Issiqlik manbalari
 sources = {'1': {'x': -total_depth/3, 'start': 0}, '2': {'x': 0, 'start': 40}, '3': {'x': total_depth/3, 'start': 80}}
 temp_2d = np.ones_like(grid_x) * 25 
 for key, val in sources.items():
@@ -61,80 +65,106 @@ for key, val in sources.items():
         dist_sq = (grid_x - val['x'])**2 + (grid_z - source_z)**2
         temp_2d += (curr_T - 25) * np.exp(-dist_sq / (2 * radius**2))
 
-# --- TAKOMILLASHTIRILGAN WILSON VA FOS MODELI ---
-
-# 1. Stress holati (Lateral confinement K0=0.5 deb olindi)
+# --- TAKOMILLASHTIRILGAN WILSON VA FOS HISOBI ---
 sigma_v = 0.027 * source_z 
-sigma_h = 0.5 * sigma_v 
+sigma_h = 0.5 * sigma_v # Lateral confinement (K0=0.5)
 
-# 2. Termal ta'sir ostidagi mustahkamlik (Pillar Core Strength)
 avg_t_at_pillar = np.mean(temp_2d[np.abs(z_axis - source_z).argmin(), :])
 strength_red_factor = np.exp(-0.0025 * (avg_t_at_pillar - 20))
-pillar_strength_insitu = 0.6 * (avg_ucs * strength_red_factor)
 
-# 3. Wilson y-zone (Plastik zona kengligi)
-# Lateral confinement hisobga olingan holda
-y_zone = (H / 2) * (np.sqrt(sigma_v / (pillar_strength_insitu + 1e-6)) - 1)
+# Wilson Pillar Strength (0.6 * UCS in-situ)
+pillar_strength = 0.6 * (avg_ucs * strength_red_factor)
+
+# Plastik zona (y) - Lateral confinement hisobga olingan
+y_zone = (H / 2) * (np.sqrt(sigma_v / (pillar_strength + 1e-6)) - 1)
 y_zone = max(y_zone, 1.5)
 
-# 4. Stable Core (Empirik: 0.5 * H)
+# Stable core (Empirik: 0.5 * H)
 stable_core = 0.5 * H
 rec_width = np.round(2 * y_zone + stable_core, 1)
 
-# 5. FOS Interpretatsiyasi (Strength / Stress)
+# FOS = Strength / Stress
+# FOS klassifikatsiyasi: <1 failure, 1-1.5 unstable, >1.5 stable
 current_strength = (avg_ucs * np.exp(-0.0025 * (temp_2d - 20))) * 0.6
 current_stress = 0.027 * grid_z
 fos_2d = current_strength / (current_stress + 1e-6)
 
 # --- VIZUALIZATSIYA ---
-st.subheader(f"📊 {obj_name}: Wilson Modeli va Selek Barqarorligi")
+st.subheader(f"📊 {obj_name}: Monitoring va Ekspert Xulosasi")
 
 m1, m2, m3, m4 = st.columns(4)
-m1.metric("Pillar Strength (σp)", f"{pillar_strength_insitu:.1f} MPa")
+m1.metric("Pillar Strength (σp)", f"{pillar_strength:.1f} MPa")
 m2.metric("Plastik zona (y)", f"{y_zone:.1f} m")
 m3.metric("Stable Core (0.5H)", f"{stable_core:.1f} m")
-m4.metric("Tavsiya etilgan W", f"{rec_width} m")
+m4.metric("TAVSIYA: Selek Eni", f"{rec_width} m")
 
 st.markdown("---")
+col_g1, col_g2, col_g3 = st.columns([1.5, 1.5, 2])
 
+s_max = (layers_data[-1]['t'] * 0.04) * (min(time_h, 120) / 120)
+subsidence_profile = -s_max * np.exp(-(x_axis**2) / (2 * (total_depth/2)**2))
+uplift_vals = (total_depth * 1e-4) * np.exp(-(x_axis**2) / (total_depth*10)) * (time_h/150) * 100
+
+with col_g1:
+    fig1 = go.Figure(go.Scatter(x=x_axis, y=subsidence_profile * 100, fill='tozeroy', line=dict(color='magenta', width=3)))
+    fig1.update_layout(title="📉 Yer yuzasi cho'kishi (cm)", template="plotly_dark", height=300)
+    st.plotly_chart(fig1, use_container_width=True)
+
+with col_g2:
+    fig2 = go.Figure(go.Scatter(x=x_axis, y=uplift_vals, fill='tozeroy', line=dict(color='cyan', width=3)))
+    fig2.update_layout(title="🔥 Termal deformatsiya (cm)", template="plotly_dark", height=300)
+    st.plotly_chart(fig2, use_container_width=True)
+
+with col_g3:
+    sigma3_ax = np.linspace(0, avg_ucs * 0.5, 100)
+    red_h = strength_red_factor 
+    red_fire = np.exp(-0.0035 * (T_source_max - 20)) 
+    
+    s1_init = sigma3_ax + avg_ucs * (mb * sigma3_ax / (avg_ucs + 1e-6) + s_hb)**a_hb
+    s1_hot = sigma3_ax + (avg_ucs * red_h) * (mb * sigma3_ax / (avg_ucs * red_h + 1e-6) + s_hb)**a_hb
+    s1_fire = sigma3_ax + (avg_ucs * red_fire) * (mb * sigma3_ax / (avg_ucs * red_fire + 1e-6) + s_hb)**a_hb
+    
+    fig_hb = go.Figure()
+    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_init, name='20°C', line=dict(color='red', width=2)))
+    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_hot, name='Sovugandagi Zarar', line=dict(color='cyan', dash='dash')))
+    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_fire, name=f'Yonayotgan payt', line=dict(color='orange', width=4)))
+    fig_hb.update_layout(title="🛡️ Hoek-Brown Envelopes", template="plotly_dark", height=300, legend=dict(orientation="h", y=-0.3))
+    st.plotly_chart(fig_hb, use_container_width=True)
+
+st.markdown("---")
 c1, c2 = st.columns([1, 2.5])
 
 with c1:
-    st.info("**FOS Interpretatsiyasi:**")
-    st.error("🔴 FOS < 1.0: Buzilish (Failure)")
-    st.warning("🟡 FOS 1.0 - 1.5: Xavfli (Unstable)")
-    st.success("🟢 FOS > 1.5: Xavfsiz (Stable)")
+    st.subheader("📋 Ilmiy Tahlil")
+    st.info(f"**Wilson (1972) & FOS talablari:**")
+    st.error("🔴 FOS < 1.0: Failure")
+    st.warning("🟡 FOS 1.0 - 1.5: Unstable")
+    st.success("🟢 FOS > 1.5: Stable")
     
-    # Selek holati xulosasi
-    current_fos_avg = np.mean(fos_2d[np.abs(z_axis - source_z).argmin(), :])
-    if current_fos_avg < 1:
-        st.error(f"Holat: BUZILISH (FOS: {current_fos_avg:.2f})")
-    elif current_fos_avg < 1.5:
-        st.warning(f"Holat: XAVFLI (FOS: {current_fos_avg:.2f})")
-    else:
-        st.success(f"Holat: XAVFSIZ (FOS: {current_fos_avg:.2f})")
+    fig_strata = go.Figure()
+    for l in layers_data:
+        fig_strata.add_trace(go.Bar(x=['Kesim'], y=[l['t']], name=l['name'], marker_color=l['color'], width=0.4))
+    fig_strata.update_layout(barmode='stack', template="plotly_dark", yaxis=dict(autorange='reversed'), height=450, showlegend=False)
+    st.plotly_chart(fig_strata, use_container_width=True)
 
 with c2:
-    fig_tm = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1, 
-                           subplot_titles=("Harorat Maydoni (°C)", "Xavfsizlik Koeffitsiyenti (FOS)"))
+    st.subheader("🔥 TM Maydoni va Selek Interferensiyasi (RS2)")
+    fig_tm = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08, subplot_titles=("Harorat (°C)", "Xavfsizlik Koeffitsiyenti (FOS)"))
     
-    # Heatmap Harorat
-    fig_tm.add_trace(go.Heatmap(z=temp_2d, x=x_axis, y=z_axis, colorscale='Hot', zmin=25, zmax=T_source_max, 
-                                colorbar=dict(title="°C", x=1.02, y=0.78, len=0.45)), row=1, col=1)
+    # Harorat maydoni
+    fig_tm.add_trace(go.Heatmap(z=temp_2d, x=x_axis, y=z_axis, colorscale='Hot', zmin=25, zmax=T_source_max), row=1, col=1)
     
-    # FOS Kontur (Siz aytgan rangli klassifikatsiya bilan)
+    # FOS maydoni (Interpretatsiya asosida ranglar: RdYlGn)
     fig_tm.add_trace(go.Contour(z=fos_2d, x=x_axis, y=z_axis, 
                                 colorscale=[[0, 'red'], [0.33, 'yellow'], [0.5, 'green'], [1, 'darkgreen']],
-                                zmin=0, zmax=3.0, 
-                                colorbar=dict(title="FOS", x=1.02, y=0.22, len=0.45),
-                                contours=dict(start=0, end=3, size=0.5, showlines=False)), row=2, col=1)
+                                zmin=0, zmax=3.0, contours_showlines=False), row=2, col=1)
     
-    # Selek chizmasi
+    # Wilson bo'yicha selek o'rnini ko'rsatish
     p_x1 = (sources['1']['x'] + sources['2']['x']) / 2
     p_x2 = (sources['2']['x'] + sources['3']['x']) / 2
     for px in [p_x1, p_x2]:
         fig_tm.add_shape(type="rect", x0=px-rec_width/2, x1=px+rec_width/2, y0=source_z-H/2, y1=source_z+H/2, 
-                         line=dict(color="lime", width=3), row=2, col=1)
+                         line=dict(color="lime", width=3, dash='dot'), row=2, col=1)
 
     fig_tm.update_layout(template="plotly_dark", height=800, showlegend=False)
     fig_tm.update_yaxes(autorange='reversed', row=1, col=1)
