@@ -21,7 +21,7 @@ D_factor = st.sidebar.slider("Disturbance Factor (D):", 0.0, 1.0, 0.7)
 nu_poisson = st.sidebar.slider("Poisson koeffitsiyenti (ν):", 0.1, 0.4, 0.25)
 k_ratio = st.sidebar.slider("Stress Ratio (k = σh/σv):", 0.1, 2.0, 0.5)
 
-# Yangi kiritilgan Tensile va Beta koeffitsiyentlari
+# Siz aytgan Tensile Ratio va Beta (interfeysda ixcham ko'rinishda)
 st.sidebar.subheader("📐 Cho'zilish va Selek")
 tensile_ratio = st.sidebar.slider("Tensile Ratio (σt0/UCS):", 0.03, 0.15, 0.08)
 beta_thermal = st.sidebar.number_input("Thermal Decay (β):", value=0.0035, format="%.4f")
@@ -58,7 +58,6 @@ grid_x, grid_z = np.meshgrid(x_axis, z_axis)
 source_z = total_depth - (layers_data[-1]['t'] / 2)
 H_seam = layers_data[-1]['t']
 
-# Qatlam xususiyatlari xaritasi
 grid_sigma_v = np.zeros_like(grid_z)
 grid_ucs = np.zeros_like(grid_z)
 grid_mb = np.zeros_like(grid_z)
@@ -68,7 +67,6 @@ grid_a_hb = np.zeros_like(grid_z)
 for i, layer in enumerate(layers_data):
     mask = (grid_z >= layer['z_start']) & (grid_z < (layer['z_start'] + layer['t']))
     if i == len(layers_data) - 1: mask = grid_z >= layer['z_start']
-    
     overburden = sum(l['rho'] * 9.81 * l['t'] for l in layers_data[:i]) / 1e6
     grid_sigma_v[mask] = overburden + (layer['rho'] * 9.81 * (grid_z[mask] - layer['z_start'])) / 1e6
     grid_ucs[mask] = layer['ucs']
@@ -76,7 +74,7 @@ for i, layer in enumerate(layers_data):
     grid_s_hb[mask] = np.exp((layer['gsi'] - 100) / (9 - 3 * D_factor))
     grid_a_hb[mask] = 0.5 + (1/6)*(np.exp(-layer['gsi']/15) - np.exp(-20/3))
 
-# Issiqlik diffuziyasi
+# Termal Diffuziya
 alpha_rock = 1.0e-6 
 sources = {'1': {'x': -total_depth/3, 'start': 0}, '2': {'x': 0, 'start': 40}, '3': {'x': total_depth/3, 'start': 80}}
 temp_2d = np.ones_like(grid_x) * 25 
@@ -88,20 +86,16 @@ for key, val in sources.items():
         dist_sq = (grid_x - val['x'])**2 + (grid_z - source_z)**2
         temp_2d += (curr_T - 25) * np.exp(-dist_sq / (pen_depth**2 + 15**2))
 
-# Kuchlanishlar maydoni
-E_modulus = 5000  
-alpha_thermal = 1e-5  
+# Kuchlanishlar va Failure (Siz aytgan yangi mantiqlar bilan)
 delta_T = temp_2d - 25
-sigma_thermal = (E_modulus * alpha_thermal * delta_T) / (1 - nu_poisson)
+sigma_thermal = (5000 * 1e-5 * delta_T) / (1 - nu_poisson)
 grid_sigma_h = (k_ratio * grid_sigma_v) - sigma_thermal
-
 sigma1_act = np.maximum(grid_sigma_v, grid_sigma_h)
 sigma3_act = np.minimum(grid_sigma_v, grid_sigma_h)
 
-# Yangi Tensile mantiqi: sigma_t = sigma_t0 * exp(-beta * (T - 20))
-sigma_t0 = tensile_ratio * grid_ucs
-sigma_t_field = sigma_t0 * np.exp(-beta_thermal * (temp_2d - 20))
-
+# 1. Cho'zilish mustahkamligi yangi formula
+sigma_t_field = (tensile_ratio * grid_ucs) * np.exp(-beta_thermal * (temp_2d - 20))
+# 2. Siqilish (Hoek-Brown) pasayishi
 sigma_ci = grid_ucs * np.exp(-0.0025 * (temp_2d - 20))
 sigma3_safe = np.maximum(sigma3_act, 0.01)
 sigma1_limit = sigma3_safe + sigma_ci * (grid_mb * sigma3_safe / (sigma_ci + 1e-6) + grid_s_hb)**grid_a_hb
@@ -109,7 +103,7 @@ sigma1_limit = sigma3_safe + sigma_ci * (grid_mb * sigma3_safe / (sigma_ci + 1e-
 shear_failure = sigma1_act >= sigma1_limit
 tensile_failure = sigma3_act <= -sigma_t_field
 
-# --- ITERATIVE PILLAR SOLVER (O'lcham koeffitsiyenti bilan) ---
+# --- SELEK SOLVER (O'lcham koeffitsiyenti bilan) ---
 avg_t_p = np.mean(temp_2d[np.abs(z_axis - source_z).argmin(), :])
 strength_red = np.exp(-0.0025 * (avg_t_p - 20))
 ucs_seam = layers_data[-1]['ucs']
@@ -117,21 +111,18 @@ sv_seam = grid_sigma_v[np.abs(z_axis - source_z).argmin(), :].max()
 
 w_sol = 20.0
 for _ in range(15):
-    # Siz aytgan o'lchamga bog'liq formula kiritildi
+    # 3. Selek mustahkamligi yangi formula: (W/H)^0.5
     p_strength = (ucs_seam * strength_red) * (w_sol / H_seam)**0.5
     y_zone_calc = (H_seam / 2) * (np.sqrt(sv_seam / (p_strength + 1e-6)) - 1)
     new_w = 2 * max(y_zone_calc, 1.5) + 0.5 * H_seam
     if abs(new_w - w_sol) < 0.1: break
     w_sol = new_w
 
-rec_width = np.round(w_sol, 1)
-pillar_strength = p_strength
-y_zone = max(y_zone_calc, 1.5)
+rec_width, pillar_strength, y_zone = np.round(w_sol, 1), p_strength, max(y_zone_calc, 1.5)
 fos_2d = np.clip(sigma1_limit / (sigma1_act + 1e-6), 0, 3.0)
 
-# --- VIZUALIZATSIYA (Interfeys o'zgarishsiz qoldi) ---
+# --- VIZUALIZATSIYA (O'zgarishsiz interfeys) ---
 st.subheader(f"📊 {obj_name}: Monitoring va Ekspert Xulosasi")
-
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("Pillar Strength (σp)", f"{pillar_strength:.1f} MPa")
 m2.metric("Plastik zona (y)", f"{y_zone:.1f} m")
@@ -140,72 +131,46 @@ m4.metric("TAVSIYA: Selek Eni", f"{rec_width} m")
 
 st.markdown("---")
 col_g1, col_g2, col_g3 = st.columns([1.5, 1.5, 2])
-
-s_max = (layers_data[-1]['t'] * 0.04) * (min(time_h, 120) / 120)
-subsidence_profile = -s_max * np.exp(-(x_axis**2) / (2 * (total_depth/2)**2))
-uplift_vals = (total_depth * 1e-4) * np.exp(-(x_axis**2) / (total_depth*10)) * (time_h/150) * 100
+s_max = (H_seam * 0.04) * (min(time_h, 120) / 120)
+sub_p = -s_max * np.exp(-(x_axis**2) / (2 * (total_depth/2)**2))
+uplift = (total_depth * 1e-4) * np.exp(-(x_axis**2) / (total_depth*10)) * (time_h/150) * 100
 
 with col_g1:
-    fig1 = go.Figure(go.Scatter(x=x_axis, y=subsidence_profile * 100, fill='tozeroy', line=dict(color='magenta', width=3)))
-    fig1.update_layout(title="📉 Yer yuzasi cho'kishi (cm)", template="plotly_dark", height=300)
-    st.plotly_chart(fig1, use_container_width=True)
-
+    st.plotly_chart(go.Figure(go.Scatter(x=x_axis, y=sub_p*100, fill='tozeroy', line=dict(color='magenta', width=3))).update_layout(title="📉 Yer yuzasi cho'kishi (cm)", template="plotly_dark", height=300), use_container_width=True)
 with col_g2:
-    fig2 = go.Figure(go.Scatter(x=x_axis, y=uplift_vals, fill='tozeroy', line=dict(color='cyan', width=3)))
-    fig2.update_layout(title="🔥 Termal deformatsiya (cm)", template="plotly_dark", height=300)
-    st.plotly_chart(fig2, use_container_width=True)
-
+    st.plotly_chart(go.Figure(go.Scatter(x=x_axis, y=uplift, fill='tozeroy', line=dict(color='cyan', width=3))).update_layout(title="🔥 Termal deformatsiya (cm)", template="plotly_dark", height=300), use_container_width=True)
 with col_g3:
     sigma3_ax = np.linspace(0, ucs_seam * 0.5, 100)
     mb_s, s_s, a_s = grid_mb.max(), grid_s_hb.max(), grid_a_hb.max()
-    red_fire = np.exp(-0.0035 * (T_source_max - 20)) 
-    
     s1_20 = sigma3_ax + ucs_seam * (mb_s * sigma3_ax / (ucs_seam + 1e-6) + s_s)**a_s
     s1_sov = sigma3_ax + (ucs_seam * strength_red) * (mb_s * sigma3_ax / (ucs_seam * strength_red + 1e-6) + s_s)**a_s
-    s1_yon = sigma3_ax + (ucs_seam * red_fire) * (mb_s * sigma3_ax / (ucs_seam * red_fire + 1e-6) + s_s)**a_s
-    
     fig_hb = go.Figure()
-    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_20, name='20°C', line=dict(color='red', width=2)))
-    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_sov, name='Sovugandagi Zarar', line=dict(color='cyan', dash='dash')))
-    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_yon, name='Yonayotgan payt', line=dict(color='orange', width=4)))
-    fig_hb.update_layout(title="🛡️ Hoek-Brown Envelopes", template="plotly_dark", height=300, legend=dict(orientation="h", y=-0.3))
-    st.plotly_chart(fig_hb, use_container_width=True)
+    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_20, name='20°C', line=dict(color='red')))
+    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_sov, name='Post-burn', line=dict(color='cyan', dash='dash')))
+    st.plotly_chart(fig_hb.update_layout(title="🛡️ Hoek-Brown Envelopes", template="plotly_dark", height=300, legend=dict(orientation="h", y=-0.3)), use_container_width=True)
 
 st.markdown("---")
 c1, c2 = st.columns([1, 2.5])
-
 with c1:
     st.subheader("📋 Ilmiy Tahlil")
-    st.info(f"**Wilson (1972) & FOS talablari:**")
     st.error("🔴 FOS < 1.0: Failure")
     st.warning("🟡 FOS 1.0 - 1.5: Unstable")
     st.success("🟢 FOS > 1.5: Stable")
-    
-    fig_strata = go.Figure()
-    for l in layers_data:
-        fig_strata.add_trace(go.Bar(x=['Kesim'], y=[l['t']], name=l['name'], marker_color=l['color'], width=0.4))
-    fig_strata.update_layout(barmode='stack', template="plotly_dark", yaxis=dict(autorange='reversed'), height=450, showlegend=False)
-    st.plotly_chart(fig_strata, use_container_width=True)
+    fig_s = go.Figure()
+    for l in layers_data: fig_s.add_trace(go.Bar(x=['Kesim'], y=[l['t']], name=l['name'], marker_color=l['color'], width=0.4))
+    st.plotly_chart(fig_s.update_layout(barmode='stack', template="plotly_dark", yaxis=dict(autorange='reversed'), height=450, showlegend=False), use_container_width=True)
 
 with c2:
     st.subheader("🔥 TM Maydoni va Selek Interferensiyasi (RS2)")
-    fig_tm = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.15, 
-                           subplot_titles=("Harorat Maydoni (°C)", "Xavfsizlik Koeffitsiyenti (FOS) & Yielded Zones"))
-    
-    fig_tm.add_trace(go.Heatmap(z=temp_2d, x=x_axis, y=z_axis, colorscale='Hot', zmin=25, zmax=T_source_max, colorbar=dict(title="T (°C)", x=1.08, y=0.78, len=0.42, thickness=15)), row=1, col=1)
-    fig_tm.add_trace(go.Contour(z=fos_2d, x=x_axis, y=z_axis, colorscale=[[0, 'red'], [0.33, 'yellow'], [0.5, 'green'], [1, 'darkgreen']], zmin=0, zmax=3.0, contours_showlines=False, colorbar=dict(title="FOS", x=1.08, y=0.22, len=0.42, thickness=15)), row=2, col=1)
-
-    fig_tm.add_trace(go.Scatter(x=grid_x[shear_failure][::2], y=grid_z[shear_failure][::2], mode='markers', marker=dict(color='red', size=3, symbol='x', opacity=0.5), name='Shear Failure'), row=2, col=1)
-    fig_tm.add_trace(go.Scatter(x=grid_x[tensile_failure][::2], y=grid_z[tensile_failure][::2], mode='markers', marker=dict(color='blue', size=3, symbol='cross', opacity=0.5), name='Tensile Failure'), row=2, col=1)
-    
-    p_x1 = (sources['1']['x'] + sources['2']['x']) / 2
-    p_x2 = (sources['2']['x'] + sources['3']['x']) / 2
-    for px in [p_x1, p_x2]:
-        fig_tm.add_shape(type="rect", x0=px-rec_width/2, x1=px+rec_width/2, y0=source_z-H_seam/2, y1=source_z+H_seam/2, line=dict(color="lime", width=3, dash='dot'), row=2, col=1)
-
-    fig_tm.update_layout(template="plotly_dark", height=850, showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=-0.12, xanchor="center", x=0.5), margin=dict(r=150, t=80, b=100))
-    fig_tm.update_yaxes(autorange='reversed', row=1, col=1)
-    fig_tm.update_yaxes(autorange='reversed', row=2, col=1)
+    fig_tm = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.15, subplot_titles=("Harorat Maydoni (°C)", "Xavfsizlik Koeffitsiyenti (FOS) & Yielded Zones"))
+    fig_tm.add_trace(go.Heatmap(z=temp_2d, x=x_axis, y=z_axis, colorscale='Hot', zmin=25, zmax=T_source_max, colorbar=dict(title="T (°C)", x=1.08, y=0.78, len=0.42)), row=1, col=1)
+    fig_tm.add_trace(go.Contour(z=fos_2d, x=x_axis, y=z_axis, colorscale=[[0, 'red'], [0.33, 'yellow'], [0.5, 'green'], [1, 'darkgreen']], zmin=0, zmax=3.0, contours_showlines=False, colorbar=dict(title="FOS", x=1.08, y=0.22, len=0.42)), row=2, col=1)
+    fig_tm.add_trace(go.Scatter(x=grid_x[shear_failure][::2], y=grid_z[shear_failure][::2], mode='markers', marker=dict(color='red', size=3, symbol='x'), name='Shear'), row=2, col=1)
+    fig_tm.add_trace(go.Scatter(x=grid_x[tensile_failure][::2], y=grid_z[tensile_failure][::2], mode='markers', marker=dict(color='blue', size=3, symbol='cross'), name='Tensile'), row=2, col=1)
+    for px in [(sources['1']['x']+sources['2']['x'])/2, (sources['2']['x']+sources['3']['x'])/2]:
+        fig_tm.add_shape(type="rect", x0=px-rec_width/2, x1=px+rec_width/2, y0=source_z-H_seam/2, y1=source_z+H_seam/2, line=dict(color="lime", width=3), row=2, col=1)
+    fig_tm.update_layout(template="plotly_dark", height=850, margin=dict(r=150))
+    fig_tm.update_yaxes(autorange='reversed', row=1, col=1); fig_tm.update_yaxes(autorange='reversed', row=2, col=1)
     st.plotly_chart(fig_tm, use_container_width=True)
 
 st.sidebar.markdown("---")
