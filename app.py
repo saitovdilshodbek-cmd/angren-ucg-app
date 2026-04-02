@@ -15,11 +15,13 @@ obj_name = st.sidebar.text_input("Loyiha nomi:", value="Angren-UCG-001")
 time_h = st.sidebar.slider("Jarayon vaqti (soat):", 1, 150, 24)
 num_layers = st.sidebar.number_input("Qatlamlar soni:", min_value=1, max_value=5, value=3)
 
+# --- Tensile Modeli Selektori ---
 tensile_mode = st.sidebar.selectbox(
     "Tensile modeli:",
     ["Empirical (UCS)", "HB-based (auto)", "Manual"]
 )
 
+# --- Geomexanik Koeffitsiyentlar ---
 st.sidebar.subheader("💎 Jins Xususiyatlari")
 D_factor = st.sidebar.slider("Disturbance Factor (D):", 0.0, 1.0, 0.7)
 nu_poisson = st.sidebar.slider("Poisson koeffitsiyenti (ν):", 0.1, 0.4, 0.25)
@@ -50,9 +52,10 @@ for i in range(int(num_layers)):
             g = st.slider(f"GSI:", 10, 100, 60, key=f"g_{i}")
             m = st.number_input(f"mi:", value=10.0, key=f"m_{i}")
             
-        s_t0_val = 0.0
         if tensile_mode == "Manual":
             s_t0_val = st.number_input(f"σt0 (MPa):", value=3.0, key=f"st_{i}")
+        else:
+            s_t0_val = 0.0
         
         layers_data.append({
             'name': name, 't': thick, 'ucs': u, 'rho': rho, 
@@ -68,14 +71,11 @@ grid_x, grid_z = np.meshgrid(x_axis, z_axis)
 source_z = total_depth - (layers_data[-1]['t'] / 2)
 H_seam = layers_data[-1]['t']
 
-# Gridlarni yaratish
 grid_sigma_v, grid_ucs, grid_mb, grid_s_hb, grid_a_hb, grid_sigma_t0_manual = [np.zeros_like(grid_z) for _ in range(6)]
 
-# Session State'da maksimal harorat xaritasini saqlash
+# BO'SHLIQ XOTIRASI UCHUN SESSION STATE (YANGI)
 if 'max_temp_map' not in st.session_state or st.session_state.max_temp_map.shape != grid_z.shape:
     st.session_state.max_temp_map = np.zeros_like(grid_z)
-
-# Loyiha nomi o'zgarsa, xotirani tozalash
 if 'last_obj_name' not in st.session_state or st.session_state.last_obj_name != obj_name:
     st.session_state.max_temp_map = np.zeros_like(grid_z)
     st.session_state.last_obj_name = obj_name
@@ -102,17 +102,16 @@ for key, val in sources.items():
         dist_sq = (grid_x - val['x'])**2 + (grid_z - source_z)**2
         temp_2d += (curr_T - 25) * np.exp(-dist_sq / (pen_depth**2 + 15**2))
 
-# Maksimal haroratni yangilash ("xotira")
+# MAKSIMAL HARORATNI YANGILASH (YANGI)
 st.session_state.max_temp_map = np.maximum(st.session_state.max_temp_map, temp_2d)
 
 delta_T = temp_2d - 25
-E_modulus = 5000  # Standart qiymat
-alpha_thermal = 1e-5  # Standart qiymat
-sigma_thermal = (E_modulus * alpha_thermal * delta_T) / (1 - nu_poisson)
+sigma_thermal = (5000 * 1e-5 * delta_T) / (1 - nu_poisson)
 grid_sigma_h = (k_ratio * grid_sigma_v) - sigma_thermal
 sigma1_act = np.maximum(grid_sigma_v, grid_sigma_h)
 sigma3_act = np.minimum(grid_sigma_v, grid_sigma_h)
 
+# --- Yangi Tensile va Termal Boost Mantiqi ---
 if tensile_mode == "Empirical (UCS)":
     grid_sigma_t0_base = tensile_ratio * grid_ucs
 elif tensile_mode == "HB-based (auto)":
@@ -134,10 +133,11 @@ sigma3_safe = np.maximum(sigma3_act, 0.01)
 sigma1_limit = sigma3_safe + sigma_ci * (grid_mb * sigma3_safe / (sigma_ci + 1e-6) + grid_s_hb)**grid_a_hb
 
 shear_failure = sigma1_act >= sigma1_limit
-# DOIMIY bo'shliq: faqat maksimal haroratga bog'liq
-void_mask = st.session_state.max_temp_map > 800
 
-# Selek va mustahkamlik degradatsiyasi (interfeysda metric ko'rinishi uchun)
+# DOIMIY BO'SHLIQ MASKASI (YANGI)
+void_mask_permanent = st.session_state.max_temp_map > 800
+
+# --- QOLGAN HISOB-KITOBLAR ---
 avg_t_p = np.mean(temp_2d[np.abs(z_axis - source_z).argmin(), :])
 strength_red = np.exp(-0.0025 * (avg_t_p - 20))
 ucs_seam = layers_data[-1]['ucs']
@@ -151,14 +151,14 @@ for _ in range(15):
     if abs(new_w - w_sol) < 0.1: break
     w_sol = new_w
 
-rec_width = np.round(w_sol, 1)
+rec_width, pillar_strength, y_zone = np.round(w_sol, 1), p_strength, max(y_zone_calc, 1.5)
 fos_2d = np.clip(sigma1_limit / (sigma1_act + 1e-6), 0, 3.0)
 
 # --- VIZUALIZATSIYA ---
 st.subheader(f"📊 {obj_name}: Monitoring va Ekspert Xulosasi")
 m1, m2, m3, m4 = st.columns(4)
-m1.metric("Pillar Strength (σp)", f"{p_strength:.1f} MPa")
-m2.metric("Plastik zona (y)", f"{max(y_zone_calc, 1.5):.1f} m")
+m1.metric("Pillar Strength (σp)", f"{pillar_strength:.1f} MPa")
+m2.metric("Plastik zona (y)", f"{y_zone:.1f} m")
 m3.metric("Stress Ratio (k)", f"{k_ratio}")
 m4.metric("TAVSIYA: Selek Eni", f"{rec_width} m")
 
@@ -176,16 +176,24 @@ with col_g3:
     sigma3_ax = np.linspace(0, ucs_seam * 0.5, 100)
     mb_s, s_s, a_s = grid_mb.max(), grid_s_hb.max(), grid_a_hb.max()
     s1_20 = sigma3_ax + ucs_seam * (mb_s * sigma3_ax / (ucs_seam + 1e-6) + s_s)**a_s
-    s1_burning = sigma3_ax + ucs_seam * np.exp(-0.0025*(T_source_max-20)) * (mb_s * sigma3_ax / (ucs_seam + 1e-6) + s_s)**a_s
+    strength_red_burning = np.exp(-0.0025 * (T_source_max - 20))
+    ucs_burning = ucs_seam * strength_red_burning
+    s1_burning = sigma3_ax + ucs_burning * (mb_s * sigma3_ax / (ucs_burning + 1e-6) + s_s)**a_s
+    s1_sov = sigma3_ax + (ucs_seam * strength_red) * (mb_s * sigma3_ax / (ucs_seam * strength_red + 1e-6) + s_s)**a_s
     fig_hb = go.Figure()
-    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_20, name='20°C', line=dict(color='red')))
-    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_burning, name='Max T', line=dict(color='orange', dash='dot')))
-    st.plotly_chart(fig_hb.update_layout(title="🛡️ Hoek-Brown Envelopes", template="plotly_dark", height=300), use_container_width=True)
+    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_20, name='20°C', line=dict(color='red', width=2)))
+    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_sov, name='Sovugandagi Zarar', line=dict(color='cyan', dash='dash', width=2)))
+    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_burning, name='Yonayotgan payt', line=dict(color='orange', width=4)))
+    st.plotly_chart(fig_hb.update_layout(title="🛡️ Hoek-Brown Envelopes", template="plotly_dark", height=300, 
+                                        legend=dict(orientation="h", y=-0.3, x=0.5, xanchor="center")), use_container_width=True)
 
 st.markdown("---")
 c1, c2 = st.columns([1, 2.5])
 with c1:
     st.subheader("📋 Ilmiy Tahlil")
+    st.error("🔴 FOS < 1.0: Failure")
+    st.warning("🟡 FOS 1.0 - 1.5: Unstable")
+    st.success("🟢 FOS > 1.5: Stable")
     fig_s = go.Figure()
     for l in layers_data: fig_s.add_trace(go.Bar(x=['Kesim'], y=[l['t']], name=l['name'], marker_color=l['color'], width=0.4))
     st.plotly_chart(fig_s.update_layout(barmode='stack', template="plotly_dark", yaxis=dict(autorange='reversed'), height=450, showlegend=False), use_container_width=True)
@@ -194,31 +202,36 @@ with c2:
     st.subheader("🔥 TM Maydoni va Selek Interferensiyasi (RS2)")
     fig_tm = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.15, subplot_titles=("Harorat Maydoni (°C)", "Xavfsizlik Koeffitsiyenti (FOS) & Yielded Zones"))
     
-    # Row 1: Harorat (Termal grafik o'z holida qoldi)
-    fig_tm.add_trace(go.Heatmap(z=temp_2d, x=x_axis, y=z_axis, colorscale='Hot', zmin=25, zmax=T_source_max), row=1, col=1)
+    fig_tm.add_trace(go.Heatmap(
+        z=temp_2d, x=x_axis, y=z_axis, colorscale='Hot', zmin=25, zmax=T_source_max, 
+        colorbar=dict(title="T (°C)", title_side="top", x=1.05, y=0.78, len=0.42, thickness=15)
+    ), row=1, col=1)
     
-    # Row 2: FOS va DOIMIY Bo'shliq (Pastki grafik to'g'rilandi)
-    fig_tm.add_trace(go.Contour(z=fos_2d, x=x_axis, y=z_axis, colorscale=[[0, 'red'], [0.5, 'green'], [1, 'darkgreen']], zmin=0, zmax=3.0), row=2, col=1)
-    
-    # Bo'shliq (Void) maskasi - DOIMIY va Qora rangda
-    # Faqat bo'shliq bor joyda 1, qolgan joyda shaffof qilib chizamiz (NaN yordamida)
-    void_visual = np.where(void_mask, 1.0, np.nan)
+    fig_tm.add_trace(go.Contour(
+        z=fos_2d, x=x_axis, y=z_axis, 
+        colorscale=[[0, 'red'], [0.33, 'yellow'], [0.5, 'green'], [1, 'darkgreen']], 
+        zmin=0, zmax=3.0, contours_showlines=False, 
+        colorbar=dict(title="FOS", title_side="top", x=1.05, y=0.22, len=0.42, thickness=15)
+    ), row=2, col=1)
+
+    # DOIMIY BO'SHLIQNI QORA RANGDA KO'RSATISH (YANGI)
+    void_visual = np.where(void_mask_permanent, 1.0, np.nan)
     fig_tm.add_trace(go.Heatmap(
         z=void_visual, x=x_axis, y=z_axis,
-        colorscale=[[0, 'black'], [1, 'black']], # Faqat qora rang
-        showscale=False,
-        opacity=0.8, # Aniq ko'rinishi uchun
-        hoverinfo='skip'
+        colorscale=[[0, 'black'], [1, 'black']], 
+        showscale=False, opacity=0.8, hoverinfo='skip'
     ), row=2, col=1)
     
-    # Yielded nuqtalarni chizamiz
     fig_tm.add_trace(go.Scatter(x=grid_x[shear_failure][::2], y=grid_z[shear_failure][::2], mode='markers', marker=dict(color='red', size=3, symbol='x'), name='Shear'), row=2, col=1)
     fig_tm.add_trace(go.Scatter(x=grid_x[tensile_failure][::2], y=grid_z[tensile_failure][::2], mode='markers', marker=dict(color='blue', size=3, symbol='cross'), name='Tensile'), row=2, col=1)
     
     for px in [(sources['1']['x']+sources['2']['x'])/2, (sources['2']['x']+sources['3']['x'])/2]:
         fig_tm.add_shape(type="rect", x0=px-rec_width/2, x1=px+rec_width/2, y0=source_z-H_seam/2, y1=source_z+H_seam/2, line=dict(color="lime", width=3), row=2, col=1)
     
-    fig_tm.update_layout(template="plotly_dark", height=850)
+    fig_tm.update_layout(
+        template="plotly_dark", height=850, margin=dict(r=150, t=80, b=100),
+        showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=-0.12, xanchor="center", x=0.5)
+    )
     fig_tm.update_yaxes(autorange='reversed', row=1, col=1); fig_tm.update_yaxes(autorange='reversed', row=2, col=1)
     st.plotly_chart(fig_tm, use_container_width=True)
 
