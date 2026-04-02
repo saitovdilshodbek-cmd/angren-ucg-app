@@ -2,6 +2,7 @@ import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from scipy.ndimage import gaussian_filter
 
 # --- Sahifa sozlamalari ---
 st.set_page_config(page_title="Universal Geomechanical Monitor", layout="wide")
@@ -15,13 +16,11 @@ obj_name = st.sidebar.text_input("Loyiha nomi:", value="Angren-UCG-001")
 time_h = st.sidebar.slider("Jarayon vaqti (soat):", 1, 150, 24)
 num_layers = st.sidebar.number_input("Qatlamlar soni:", min_value=1, max_value=5, value=3)
 
-# --- Tensile Modeli Selektori ---
 tensile_mode = st.sidebar.selectbox(
     "Tensile modeli:",
     ["Empirical (UCS)", "HB-based (auto)", "Manual"]
 )
 
-# --- Geomexanik Koeffitsiyentlar ---
 st.sidebar.subheader("💎 Jins Xususiyatlari")
 D_factor = st.sidebar.slider("Disturbance Factor (D):", 0.0, 1.0, 0.7)
 nu_poisson = st.sidebar.slider("Poisson koeffitsiyenti (ν):", 0.1, 0.4, 0.25)
@@ -52,10 +51,7 @@ for i in range(int(num_layers)):
             g = st.slider(f"GSI:", 10, 100, 60, key=f"g_{i}")
             m = st.number_input(f"mi:", value=10.0, key=f"m_{i}")
             
-        if tensile_mode == "Manual":
-            s_t0_val = st.number_input(f"σt0 (MPa):", value=3.0, key=f"st_{i}")
-        else:
-            s_t0_val = 0.0
+        s_t0_val = st.number_input(f"σt0 (MPa):", value=3.0, key=f"st_{i}") if tensile_mode == "Manual" else 0.0
         
         layers_data.append({
             'name': name, 't': thick, 'ucs': u, 'rho': rho, 
@@ -105,22 +101,28 @@ for key, val in sources.items():
 st.session_state.max_temp_map = np.maximum(st.session_state.max_temp_map, temp_2d)
 delta_T = temp_2d - 25
 
-# --- YANGI: Damage va Thermal Stress ---
+# --- TM ANALIZ: Stress va Damage ---
 temp_eff = np.maximum(st.session_state.max_temp_map - 100, 0)
 damage = 1 - np.exp(-0.002 * temp_eff)
 damage = np.clip(damage, 0, 0.95)
 sigma_ci = grid_ucs * (1 - damage)
 
-E = 5000  # MPa
-alpha_T = 1e-5
+E = 5000  # Young's Modulus
+alpha_T_coeff = 1e-5
 constraint_factor = 0.7 
-sigma_thermal = constraint_factor * (E * alpha_T * delta_T) / (1 - nu_poisson)
+
+# Gradient mantiqi
+dT_dx = np.gradient(temp_2d, axis=1)
+dT_dz = np.gradient(temp_2d, axis=0)
+thermal_gradient = np.sqrt(dT_dx**2 + dT_dz**2)
+# Thermal stress gradient va delta_T ning kombinatsiyasi
+sigma_thermal = constraint_factor * (E * alpha_T_coeff * delta_T) / (1 - nu_poisson)
 
 grid_sigma_h = (k_ratio * grid_sigma_v) - sigma_thermal
 sigma1_act = np.maximum(grid_sigma_v, grid_sigma_h)
 sigma3_act = np.minimum(grid_sigma_v, grid_sigma_h)
 
-# Tensile Failure
+# Tensile Strength Field
 if tensile_mode == "Empirical (UCS)":
     grid_sigma_t0_base = tensile_ratio * sigma_ci
 elif tensile_mode == "HB-based (auto)":
@@ -131,22 +133,31 @@ else:
 sigma_t_field = grid_sigma_t0_base * np.exp(-beta_thermal * (temp_2d - 20))
 thermal_tension_boost = 1 + 0.6 * (1 - np.exp(-delta_T / 200))
 sigma_t_field_eff = sigma_t_field / thermal_tension_boost
-tensile_failure = (sigma3_act <= -sigma_t_field_eff) & (sigma1_act > 0)
 
-# Shear Failure
+# --- FAILURE DETECTION ---
+tensile_failure = (sigma3_act <= -sigma_t_field_eff) & (delta_T > 50) & (sigma1_act > sigma3_act)
 sigma3_safe = np.maximum(sigma3_act, 0.01)
 sigma1_limit = sigma3_safe + sigma_ci * (grid_mb * sigma3_safe / (sigma_ci + 1e-6) + grid_s_hb)**grid_a_hb
 shear_failure = sigma1_act >= sigma1_limit
 
-# --- YANGI: Spalling, Crushing va Collapse ---
+# Spalling, Crushing va Collapse
 spalling = tensile_failure & (temp_2d > 400)
 crushing = shear_failure & (temp_2d > 600)
-collapse_factor = np.clip((time_h - 40) / 60, 0, 1)
+local_collapse_T = np.clip((st.session_state.max_temp_map - 600) / 300, 0, 1)
+time_factor = np.clip((time_h - 40) / 60, 0, 1)
+collapse_final = local_collapse_T * time_factor
 
-# Bo'shliq maskasini birlashtirish
-void_mask_permanent = (spalling | crushing | (st.session_state.max_temp_map > 900)) * collapse_factor
+# Bo'shliq maskasini shakllantirish va silliqlash
+void_mask_raw = (spalling | crushing | (st.session_state.max_temp_map > 900))
+void_mask_permanent = gaussian_filter(void_mask_raw.astype(float), sigma=1.5)
+void_mask_permanent = (void_mask_permanent > 0.3) & (collapse_final > 0.1)
 
-# --- QOLGAN HISOB-KITOBLAR ---
+# Bo'shliq ichida stresslarni nolga tenglashtirish
+sigma1_act = np.where(void_mask_permanent, 0, sigma1_act)
+sigma3_act = np.where(void_mask_permanent, 0, sigma3_act)
+sigma_ci = np.where(void_mask_permanent, 0.01, sigma_ci)
+
+# --- Selek Optimizatsiyasi ---
 avg_t_p = np.mean(temp_2d[np.abs(z_axis - source_z).argmin(), :])
 strength_red = np.exp(-0.0025 * (avg_t_p - 20))
 ucs_seam = layers_data[-1]['ucs']
@@ -162,6 +173,7 @@ for _ in range(15):
 
 rec_width, pillar_strength, y_zone = np.round(w_sol, 1), p_strength, max(y_zone_calc, 1.5)
 fos_2d = np.clip(sigma1_limit / (sigma1_act + 1e-6), 0, 3.0)
+fos_2d = np.where(void_mask_permanent, 0, fos_2d)
 
 # --- VIZUALIZATSIYA ---
 st.subheader(f"📊 {obj_name}: Monitoring va Ekspert Xulosasi")
@@ -191,8 +203,8 @@ with col_g3:
     s1_sov = sigma3_ax + (ucs_seam * strength_red) * (mb_s * sigma3_ax / (ucs_seam * strength_red + 1e-6) + s_s)**a_s
     fig_hb = go.Figure()
     fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_20, name='20°C', line=dict(color='red', width=2)))
-    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_sov, name='Sovugandagi Zarar', line=dict(color='cyan', dash='dash', width=2)))
-    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_burning, name='Yonayotgan payt', line=dict(color='orange', width=4)))
+    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_sov, name='Zararlangan', line=dict(color='cyan', dash='dash', width=2)))
+    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_burning, name='Yonish payti', line=dict(color='orange', width=4)))
     st.plotly_chart(fig_hb.update_layout(title="🛡️ Hoek-Brown Envelopes", template="plotly_dark", height=300, 
                                         legend=dict(orientation="h", y=-0.3, x=0.5, xanchor="center")), use_container_width=True)
 
@@ -223,17 +235,34 @@ with c2:
         colorbar=dict(title="FOS", title_side="top", x=1.05, y=0.22, len=0.42, thickness=15)
     ), row=2, col=1)
 
-    # DOIMIY BO'SHLIQ VIZUALIZATSIYASI
+    # Doimiy bo'shliq va uning konturi (oq chiziq)
     void_visual = np.where(void_mask_permanent > 0.1, 1.0, np.nan)
     fig_tm.add_trace(go.Heatmap(
         z=void_visual, x=x_axis, y=z_axis,
         colorscale=[[0, 'black'], [1, 'black']], 
-        showscale=False, opacity=0.8, hoverinfo='skip'
+        showscale=False, opacity=0.9, hoverinfo='skip'
     ), row=2, col=1)
     
-    fig_tm.add_trace(go.Scatter(x=grid_x[shear_failure][::2], y=grid_z[shear_failure][::2], mode='markers', marker=dict(color='red', size=3, symbol='x'), name='Shear'), row=2, col=1)
-    fig_tm.add_trace(go.Scatter(x=grid_x[tensile_failure][::2], y=grid_z[tensile_failure][::2], mode='markers', marker=dict(color='blue', size=3, symbol='cross'), name='Tensile'), row=2, col=1)
+    # Bo'shliq atrofidagi oq kontur
+    fig_tm.add_trace(go.Contour(
+        z=void_mask_permanent.astype(int),
+        x=x_axis, y=z_axis,
+        showscale=False,
+        contours=dict(coloring='lines'),
+        line=dict(color='white', width=2),
+        hoverinfo='skip'
+    ), row=2, col=1)
     
+    # Faqat bo'shliqdan tashqaridagi nuqtalarni ko'rsatish uchun maskalash
+    shear_disp = np.copy(shear_failure)
+    shear_disp[void_mask_permanent] = False
+    tens_disp = np.copy(tensile_failure)
+    tens_disp[void_mask_permanent] = False
+
+    fig_tm.add_trace(go.Scatter(x=grid_x[shear_disp][::2], y=grid_z[shear_disp][::2], mode='markers', marker=dict(color='red', size=3, symbol='x'), name='Shear'), row=2, col=1)
+    fig_tm.add_trace(go.Scatter(x=grid_x[tens_disp][::2], y=grid_z[tens_disp][::2], mode='markers', marker=dict(color='blue', size=3, symbol='cross'), name='Tensile'), row=2, col=1)
+    
+    # Selek (Pillar) chizmalari
     for px in [(sources['1']['x']+sources['2']['x'])/2, (sources['2']['x']+sources['3']['x'])/2]:
         fig_tm.add_shape(type="rect", x0=px-rec_width/2, x1=px+rec_width/2, y0=source_z-H_seam/2, y1=source_z+H_seam/2, line=dict(color="lime", width=3), row=2, col=1)
     
@@ -245,4 +274,4 @@ with c2:
     st.plotly_chart(fig_tm, use_container_width=True)
 
 st.sidebar.markdown("---")
-st.sidebar.write(f"Tuzuvchi: Saitov Dilshodbek")
+st.sidebar.write(f"Tuzuvchi: {obj_name.split('-')[0]} / Saitov Dilshodbek")
