@@ -40,9 +40,9 @@ for i in range(int(num_layers)):
         total_depth += thick
 
 # --- ILMIY HISOB-KITOBLAR (HOEK-BROWN) ---
-avg_ucs = sum(l['ucs'] * l['t'] for l in layers_data) / total_depth
-avg_gsi = sum(l['gsi'] * l['t'] for l in layers_data) / total_depth
-avg_mi = sum(l['mi'] * l['t'] for l in layers_data) / total_depth
+avg_ucs = sum(l['ucs'] * l['t'] for l in layers_data) / (total_depth + 1e-6)
+avg_gsi = sum(l['gsi'] * l['t'] for l in layers_data) / (total_depth + 1e-6)
+avg_mi = sum(l['mi'] * l['t'] for l in layers_data) / (total_depth + 1e-6)
 
 mb = avg_mi * np.exp((avg_gsi - 100) / 28)
 s_hb = np.exp((avg_gsi - 100) / 9)
@@ -65,21 +65,31 @@ for key, val in sources.items():
         dist_sq = (grid_x - val['x'])**2 + (grid_z - source_z)**2
         temp_2d += (curr_T - 25) * np.exp(-dist_sq / (2 * radius**2))
 
-# --- TAKOMILLASHTIRILGAN WILSON VA FOS HISOBI ---
-sigma_v = 0.027 * source_z 
-sigma_h = 0.5 * sigma_v 
+# --- STRESS FIELD & RS2 FAILURE LOGIC ---
+sigma_v = 0.027 * grid_z
+sigma_h = 0.5 * sigma_v  # Lateral stress (K0=0.5)
 
+# Termal UCS va Hoek-Brown chegarasi
+sigma_ci = avg_ucs * np.exp(-0.0025 * (temp_2d - 20))
+sigma3_safe = np.maximum(sigma_h, 0.01)
+sigma1_limit = sigma3_safe + sigma_ci * (mb * sigma3_safe / (sigma_ci + 1e-6) + s_hb)**a_hb
+
+# Failure aniqlash
+shear_failure = sigma_v >= sigma1_limit
+sigma_t = 0.05 * sigma_ci  # Cho'zilish mustahkamligi
+tensile_failure = sigma_h < -sigma_t
+
+# --- WILSON PILLAR STRENGTH ---
 avg_t_at_pillar = np.mean(temp_2d[np.abs(z_axis - source_z).argmin(), :])
 strength_red_factor = np.exp(-0.0025 * (avg_t_at_pillar - 20))
-
 pillar_strength = 0.6 * (avg_ucs * strength_red_factor)
-y_zone = max((H / 2) * (np.sqrt(sigma_v / (pillar_strength + 1e-6)) - 1), 1.5)
+y_zone = max((H / 2) * (np.sqrt((0.027 * source_z) / (pillar_strength + 1e-6)) - 1), 1.5)
 stable_core = 0.5 * H
 rec_width = np.round(2 * y_zone + stable_core, 1)
 
-current_strength = (avg_ucs * np.exp(-0.0025 * (temp_2d - 20))) * 0.6
-current_stress = 0.027 * grid_z
-fos_2d = current_strength / (current_stress + 1e-6)
+# FOS maydoni
+fos_2d = sigma1_limit / (sigma_v + 1e-6)
+fos_2d = np.clip(fos_2d, 0, 3.0)
 
 # --- VIZUALIZATSIYA ---
 st.subheader(f"📊 {obj_name}: Monitoring va Ekspert Xulosasi")
@@ -140,20 +150,34 @@ with c1:
 
 with c2:
     st.subheader("🔥 TM Maydoni va Selek Interferensiyasi (RS2)")
-    fig_tm = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1, subplot_titles=("Harorat (°C)", "Xavfsizlik Koeffitsiyenti (FOS)"))
+    fig_tm = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1, subplot_titles=("Harorat (°C)", "Xavfsizlik Koeffitsiyenti (FOS) & Yielded Zones"))
     
-    # Harorat maydoni + Alohida Colorbar
+    # 1. Harorat maydoni
     fig_tm.add_trace(go.Heatmap(
         z=temp_2d, x=x_axis, y=z_axis, colorscale='Hot', zmin=25, zmax=T_source_max,
-        colorbar=dict(title="T (°C)", x=1.05, y=0.78, len=0.4) # Pozitsiya to'g'rilandi
+        colorbar=dict(title="T (°C)", x=1.05, y=0.78, len=0.4)
     ), row=1, col=1)
     
-    # FOS maydoni + Alohida Colorbar
+    # 2. FOS maydoni (Contour)
     fig_tm.add_trace(go.Contour(
         z=fos_2d, x=x_axis, y=z_axis, 
         colorscale=[[0, 'red'], [0.33, 'yellow'], [0.5, 'green'], [1, 'darkgreen']],
         zmin=0, zmax=3.0, contours_showlines=False,
-        colorbar=dict(title="FOS", x=1.05, y=0.22, len=0.4) # Pozitsiya to'g'rilandi
+        colorbar=dict(title="FOS", x=1.05, y=0.22, len=0.4)
+    ), row=2, col=1)
+
+    # 3. RS2 Style: Shear Failure nuqtalari
+    fig_tm.add_trace(go.Scatter(
+        x=grid_x[shear_failure][::2], y=grid_z[shear_failure][::2], # Tezlik uchun har ikkinchi nuqta
+        mode='markers', marker=dict(color='red', size=2, symbol='x', opacity=0.4),
+        name='Shear Failure'
+    ), row=2, col=1)
+
+    # 4. RS2 Style: Tensile Failure nuqtalari
+    fig_tm.add_trace(go.Scatter(
+        x=grid_x[tensile_failure][::2], y=grid_z[tensile_failure][::2],
+        mode='markers', marker=dict(color='blue', size=2, symbol='cross', opacity=0.4),
+        name='Tensile Failure'
     ), row=2, col=1)
     
     # Wilson selek o'rni
@@ -163,7 +187,7 @@ with c2:
         fig_tm.add_shape(type="rect", x0=px-rec_width/2, x1=px+rec_width/2, y0=source_z-H/2, y1=source_z+H/2, 
                          line=dict(color="lime", width=3, dash='dot'), row=2, col=1)
 
-    fig_tm.update_layout(template="plotly_dark", height=800, showlegend=False, margin=dict(r=100))
+    fig_tm.update_layout(template="plotly_dark", height=800, showlegend=True, margin=dict(r=100))
     fig_tm.update_yaxes(autorange='reversed', row=1, col=1)
     fig_tm.update_yaxes(autorange='reversed', row=2, col=1)
     st.plotly_chart(fig_tm, use_container_width=True)
