@@ -39,7 +39,7 @@ for i in range(int(num_layers)):
         layers_data.append({'name': name, 't': thick, 'ucs': u, 'gsi': g, 'mi': m, 'color': color, 'z_start': total_depth})
         total_depth += thick
 
-# --- ILMIY HISOB-KITOBLAR (WILSON & HOEK-BROWN) ---
+# --- ILMIY HISOB-KITOBLAR ---
 avg_ucs = sum(l['ucs'] * l['t'] for l in layers_data) / total_depth
 avg_gsi = sum(l['gsi'] * l['t'] for l in layers_data) / total_depth
 avg_mi = sum(l['mi'] * l['t'] for l in layers_data) / total_depth
@@ -68,47 +68,41 @@ for key, val in sources.items():
         plastic_influence = np.exp(-dist_sq / (2 * (radius * 1.3)**2))
         plastic_zone_mask = np.maximum(plastic_zone_mask, plastic_influence)
 
-# Wilson metodikasi bo'yicha mustahkamlik pasayishi
-sigma_v = 0.027 * grid_z
-strength_red_factor = np.exp(-0.0025 * (temp_2d - 20))
-failure_2d = sigma_v / (avg_ucs * strength_red_factor + 1e-6)
+failure_2d = (0.027 * grid_z) / (avg_ucs * np.exp(-0.002 * (temp_2d - 20)) + 1e-6)
 
 # --- VIZUALIZATSIYA ---
 st.subheader(f"📊 {obj_name}: Monitoring Natijalari")
 col_g1, col_g2, col_g3 = st.columns([1.5, 1.5, 2])
 
-# Grafik ma'lumotlarini tayyorlash (SyntaxError oldini olish uchun)
+# 1. Subsidence (Cho'kish)
 s_max = (layers_data[-1]['t'] * 0.04) * (min(time_h, 120) / 120)
 subsidence_profile = -s_max * np.exp(-(x_axis**2) / (2 * (total_depth/2)**2))
-uplift_vals = (total_depth * 1e-4) * np.exp(-(x_axis**2) / (total_depth*10)) * (time_h/150) * 100
-
 with col_g1:
     fig1 = go.Figure(go.Scatter(x=x_axis, y=subsidence_profile * 100, fill='tozeroy', line=dict(color='magenta', width=3)))
     fig1.update_layout(title="📉 Yer yuzasi cho'kishi (cm)", template="plotly_dark", height=300)
     st.plotly_chart(fig1, use_container_width=True)
 
+# 2. Termal deformatsiya (Uplift) - SyntaxError tuzatildi
+uplift_vals = (total_depth * 1e-4) * np.exp(-(x_axis**2) / (total_depth*10)) * (time_h/150) * 100
 with col_g2:
     fig2 = go.Figure(go.Scatter(x=x_axis, y=uplift_vals, fill='tozeroy', line=dict(color='cyan', width=3)))
     fig2.update_layout(title="🔥 Termal deformatsiya (cm)", template="plotly_dark", height=300)
     st.plotly_chart(fig2, use_container_width=True)
 
+# 3. Hoek-Brown Envelopes - NameError tuzatildi
 with col_g3:
-    # Hoek-Brown Envelopes (Rasm 502567 dagi ko'rinish)
     sigma3_axis = np.linspace(0, avg_ucs * 0.5, 100)
-    # 1. Normal holat
-    s1_init = sigma3_axis + avg_ucs * (mb * sigma3_axis / avg_ucs + s_hb)**a_hb
-    # 2. Termal zarar (Wilson koeffitsiyenti o'rtachasi bilan)
-    red_factor_avg = np.exp(-0.002 * (T_source_max/2 - 20)) 
-    s1_cooled = sigma3_axis + (avg_ucs * red_factor_avg) * (mb * sigma3_axis / (avg_ucs * red_factor_avg) + s_hb)**a_hb
-    # 3. Maksimal harorat
     red_hot = np.exp(-0.003 * (T_source_max - 20))
-    s1_hot = sigma3_axis + (avg_ucs * red_hot) * (mb * sigma3_ax / (avg_ucs * red_hot) + s_hb)**a_hb if 'avg_ucs' in locals() else s1_init # Logic safety
+    red_cooled = np.exp(-0.0015 * (T_source_max - 20)) # O'rtacha zarar
+    
+    s1_init = sigma3_axis + avg_ucs * (mb * sigma3_axis / avg_ucs + s_hb)**a_hb
     s1_hot = sigma3_axis + (avg_ucs * red_hot) * (mb * sigma3_axis / (avg_ucs * red_hot + 1e-6) + s_hb)**a_hb
+    s1_cooled = sigma3_axis + (avg_ucs * red_cooled) * (mb * sigma3_axis / (avg_ucs * red_cooled + 1e-6) + s_hb)**a_hb
 
     fig_hb = go.Figure()
     fig_hb.add_trace(go.Scatter(x=sigma3_axis, y=s1_init, name='Yonishdan oldin (20°C)', line=dict(color='#FF4B4B', width=3)))
-    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_cooled, name='Sovugandan keyin (20°C, zarar)', line=dict(color='#0068C9', width=3, dash='dash')))
-    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_hot, name=f'Yonayotgan paytda ({T_source_max}°C)', line=dict(color='#FFA500', width=4)))
+    fig_hb.add_trace(go.Scatter(x=sigma3_axis, y=s1_cooled, name='Sovugandan keyin (20°C, zarar)', line=dict(color='#0068C9', width=3, dash='dash')))
+    fig_hb.add_trace(go.Scatter(x=sigma3_axis, y=s1_hot, name=f'Yonayotgan paytda ({T_source_max}°C)', line=dict(color='#FFA500', width=4)))
     
     fig_hb.update_layout(title="🛡️ Jins Mustahkamligi Chegarasi", template="plotly_dark", height=300, legend=dict(orientation="h", y=-0.3))
     st.plotly_chart(fig_hb, use_container_width=True)
@@ -129,15 +123,15 @@ with c2:
     fig_tm = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1,
                            subplot_titles=("Harorat Maydoni (°C)", "Buzilish va Plastik zonalar (Shear Index)"))
     
-    # Harorat maydoni shkalasi (yuqorida alohida)
+    # 1-shkala (Harorat)
     fig_tm.add_trace(go.Heatmap(z=temp_2d, x=x_axis, y=z_axis, colorscale='Hot', zmin=25, zmax=T_source_max,
                                 colorbar=dict(title="°C", x=1.02, y=0.78, len=0.45)), row=1, col=1)
     
-    # Plastik zonalar shkalasi (pastda alohida)
+    # 2-shkala (Plastik zona)
     fig_tm.add_trace(go.Contour(z=failure_2d, x=x_axis, y=z_axis, colorscale='Jet', contours=dict(coloring='heatmap', showlines=False),
                                 colorbar=dict(title="Index", x=1.02, y=0.22, len=0.45)), row=2, col=1)
     
-    # Shear Failure nuqtalari (x belgilari)
+    # Shear Failure nuqtalari
     mask = plastic_zone_mask > 0.7
     fig_tm.add_trace(go.Scatter(x=grid_x[mask], y=grid_z[mask], mode='markers', 
                                 marker=dict(symbol='x', color='red', size=4, opacity=0.4)), row=2, col=1)
