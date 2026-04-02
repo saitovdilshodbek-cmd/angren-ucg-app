@@ -100,22 +100,20 @@ for key, val in sources.items():
 st.session_state.max_temp_map = np.maximum(st.session_state.max_temp_map, temp_2d)
 delta_T = temp_2d - 25
 
-# --- TM ANALIZ: Stress va Damage (YANGILANGAN) ---
+# --- TM ANALIZ: Stress va Damage ---
 temp_eff = np.maximum(st.session_state.max_temp_map - 100, 0)
 damage = 1 - np.exp(-0.002 * temp_eff)
 damage = np.clip(damage, 0, 0.95)
 sigma_ci = grid_ucs * (1 - damage)
 
-E = 5000  # Young's Modulus
+E = 5000 
 alpha_T_coeff = 1e-5
 constraint_factor = 0.7 
 
-# Gradient mantiqi
 dT_dx = np.gradient(temp_2d, axis=1)
 dT_dz = np.gradient(temp_2d, axis=0)
 thermal_gradient = np.sqrt(dT_dx**2 + dT_dz**2)
 
-# Thermal stressga Gradient ta'sirini qo'shish
 sigma_thermal = constraint_factor * (E * alpha_T_coeff * delta_T) / (1 - nu_poisson)
 sigma_thermal += 0.3 * thermal_gradient
 
@@ -123,7 +121,6 @@ grid_sigma_h = (k_ratio * grid_sigma_v) - sigma_thermal
 sigma1_act = np.maximum(grid_sigma_v, grid_sigma_h)
 sigma3_act = np.minimum(grid_sigma_v, grid_sigma_h)
 
-# Tensile Strength Field
 if tensile_mode == "Empirical (UCS)":
     grid_sigma_t0_base = tensile_ratio * sigma_ci
 elif tensile_mode == "HB-based (auto)":
@@ -135,28 +132,30 @@ sigma_t_field = grid_sigma_t0_base * np.exp(-beta_thermal * (temp_2d - 20))
 thermal_tension_boost = 1 + 0.6 * (1 - np.exp(-delta_T / 200))
 sigma_t_field_eff = sigma_t_field / thermal_tension_boost
 
-# --- FAILURE DETECTION (YANGILANGAN) ---
+# --- FAILURE DETECTION & VOID ---
 tensile_failure = (sigma3_act <= -sigma_t_field_eff) & (delta_T > 50) & (sigma1_act > sigma3_act)
 sigma3_safe = np.maximum(sigma3_act, 0.01)
 sigma1_limit = sigma3_safe + sigma_ci * (grid_mb * sigma3_safe / (sigma_ci + 1e-6) + grid_s_hb)**grid_a_hb
 shear_failure = sigma1_act >= sigma1_limit
 
-# Spalling, Crushing va Collapse mantiqi
 spalling = tensile_failure & (temp_2d > 400)
 crushing = shear_failure & (temp_2d > 600)
 
-# Depth factor va Collapse final formulasi
 depth_factor = np.exp(-grid_z / total_depth)
 local_collapse_T = np.clip((st.session_state.max_temp_map - 600) / 300, 0, 1)
 time_factor = np.clip((time_h - 40) / 60, 0, 1)
 collapse_final = local_collapse_T * time_factor * (1 - depth_factor)
 
-# Bo'shliq maskasini shakllantirish
 void_mask_raw = (spalling | crushing | (st.session_state.max_temp_map > 900))
 void_mask_permanent = gaussian_filter(void_mask_raw.astype(float), sigma=1.5)
 void_mask_permanent = (void_mask_permanent > 0.3) & (collapse_final > 0.05)
 
-# Stresslarni reset qilish
+# --- YANGI QO'SHIMCHA: Permeability va Void Volume ---
+perm = 1e-15 * (1 + 20 * damage + 50 * void_mask_permanent)
+# Element maydoni bo'yicha integrallash (dx * dz)
+void_volume = np.sum(void_mask_permanent) * (x_axis[1]-x_axis[0]) * (z_axis[1]-z_axis[0])
+
+# Stress reset
 sigma1_act = np.where(void_mask_permanent, 0, sigma1_act)
 sigma3_act = np.where(void_mask_permanent, 0, sigma3_act)
 sigma_ci = np.where(void_mask_permanent, 0.01, sigma_ci)
@@ -181,11 +180,13 @@ fos_2d = np.where(void_mask_permanent, 0, fos_2d)
 
 # --- VIZUALIZATSIYA ---
 st.subheader(f"📊 {obj_name}: Monitoring va Ekspert Xulosasi")
-m1, m2, m3, m4 = st.columns(4)
+# Metrikalar sonini 5 taga ko'paytirdik
+m1, m2, m3, m4, m5 = st.columns(5)
 m1.metric("Pillar Strength (σp)", f"{pillar_strength:.1f} MPa")
 m2.metric("Plastik zona (y)", f"{y_zone:.1f} m")
-m3.metric("Stress Ratio (k)", f"{k_ratio}")
-m4.metric("TAVSIYA: Selek Eni", f"{rec_width} m")
+m3.metric("Kamera Hajmi", f"{void_volume:.1f} m³")
+m4.metric("Maks. O'tkazuvchanlik", f"{np.max(perm):.1e} m²")
+m5.metric("TAVSIYA: Selek Eni", f"{rec_width} m")
 
 st.markdown("---")
 col_g1, col_g2, col_g3 = st.columns([1.5, 1.5, 2])
