@@ -73,7 +73,7 @@ H_seam = layers_data[-1]['t']
 
 grid_sigma_v, grid_ucs, grid_mb, grid_s_hb, grid_a_hb, grid_sigma_t0_manual = [np.zeros_like(grid_z) for _ in range(6)]
 
-# BO'SHLIQ XOTIRASI UCHUN SESSION STATE (YANGI)
+# BO'SHLIQ XOTIRASI UCHUN SESSION STATE
 if 'max_temp_map' not in st.session_state or st.session_state.max_temp_map.shape != grid_z.shape:
     st.session_state.max_temp_map = np.zeros_like(grid_z)
 if 'last_obj_name' not in st.session_state or st.session_state.last_obj_name != obj_name:
@@ -102,20 +102,29 @@ for key, val in sources.items():
         dist_sq = (grid_x - val['x'])**2 + (grid_z - source_z)**2
         temp_2d += (curr_T - 25) * np.exp(-dist_sq / (pen_depth**2 + 15**2))
 
-# MAKSIMAL HARORATNI YANGILASH (YANGI)
+# MAKSIMAL HARORATNI YANGILASH
 st.session_state.max_temp_map = np.maximum(st.session_state.max_temp_map, temp_2d)
 
 delta_T = temp_2d - 25
-sigma_thermal = (5000 * 1e-5 * delta_T) / (1 - nu_poisson)
+
+# --- YANGI: Termal va Zarar (Damage) Mantiqi ---
+damage = 1 - np.exp(-0.002 * (st.session_state.max_temp_map - 100))
+damage = np.clip(damage, 0, 0.95)
+sigma_ci = grid_ucs * (1 - damage)
+
+E = 5000  # MPa
+alpha_T = 1e-5
+sigma_thermal = (E * alpha_T * delta_T) / (1 - nu_poisson)
+
 grid_sigma_h = (k_ratio * grid_sigma_v) - sigma_thermal
 sigma1_act = np.maximum(grid_sigma_v, grid_sigma_h)
 sigma3_act = np.minimum(grid_sigma_v, grid_sigma_h)
 
-# --- Yangi Tensile va Termal Boost Mantiqi ---
+# --- Yangi Tensile (Hoek-Brown asosida) ---
 if tensile_mode == "Empirical (UCS)":
-    grid_sigma_t0_base = tensile_ratio * grid_ucs
+    grid_sigma_t0_base = tensile_ratio * sigma_ci
 elif tensile_mode == "HB-based (auto)":
-    grid_sigma_t0_base = (grid_ucs * grid_s_hb) / (1 + grid_mb)
+    grid_sigma_t0_base = (sigma_ci * grid_s_hb) / (1 + grid_mb)
 else: # Manual
     grid_sigma_t0_base = grid_sigma_t0_manual
 
@@ -124,18 +133,16 @@ thermal_tension_boost = 1 + 0.6 * (1 - np.exp(-delta_T / 200))
 sigma_t_field_eff = sigma_t_field / thermal_tension_boost
 
 tensile_failure = (sigma3_act <= -sigma_t_field_eff) & (sigma1_act > 0)
-damage = tensile_failure * 0.01
 
-sigma_ci = grid_ucs * np.exp(-0.0025 * (temp_2d - 20))
-sigma_ci *= (1 - damage)
-
+# Shear Failure hisobi (Sigma_ci va HB koeffitsiyentlari bilan)
 sigma3_safe = np.maximum(sigma3_act, 0.01)
 sigma1_limit = sigma3_safe + sigma_ci * (grid_mb * sigma3_safe / (sigma_ci + 1e-6) + grid_s_hb)**grid_a_hb
-
 shear_failure = sigma1_act >= sigma1_limit
 
-# DOIMIY BO'SHLIQ MASKASI (YANGI)
-void_mask_permanent = st.session_state.max_temp_map > 800
+# --- YANGI: Spalling va Crushing asosida Bo'shliq ---
+spalling = tensile_failure & (temp_2d > 400)
+crushing = shear_failure & (temp_2d > 600)
+void_mask_permanent = spalling | crushing | (st.session_state.max_temp_map > 900)
 
 # --- QOLGAN HISOB-KITOBLAR ---
 avg_t_p = np.mean(temp_2d[np.abs(z_axis - source_z).argmin(), :])
@@ -214,7 +221,7 @@ with c2:
         colorbar=dict(title="FOS", title_side="top", x=1.05, y=0.22, len=0.42, thickness=15)
     ), row=2, col=1)
 
-    # DOIMIY BO'SHLIQNI QORA RANGDA KO'RSATISH (YANGI)
+    # DOIMIY BO'SHLIQ (Spalling & Crushing asosida)
     void_visual = np.where(void_mask_permanent, 1.0, np.nan)
     fig_tm.add_trace(go.Heatmap(
         z=void_visual, x=x_axis, y=z_axis,
