@@ -52,7 +52,6 @@ for i in range(int(num_layers)):
             g = st.slider(f"GSI:", 10, 100, 60, key=f"g_{i}")
             m = st.number_input(f"mi:", value=10.0, key=f"m_{i}")
             
-        # Manual rejim uchun sigma_t0
         if tensile_mode == "Manual":
             s_t0_val = st.number_input(f"σt0 (MPa):", value=3.0, key=f"st_{i}")
         else:
@@ -102,22 +101,28 @@ grid_sigma_h = (k_ratio * grid_sigma_v) - sigma_thermal
 sigma1_act = np.maximum(grid_sigma_v, grid_sigma_h)
 sigma3_act = np.minimum(grid_sigma_v, grid_sigma_h)
 
-# --- Yangi Tensile mantiqi ---
+# --- Yangi Tensile va Termal Boost Mantiqi ---
 if tensile_mode == "Empirical (UCS)":
     grid_sigma_t0_base = tensile_ratio * grid_ucs
 elif tensile_mode == "HB-based (auto)":
-    grid_sigma_t0_base = grid_ucs * np.sqrt(grid_s_hb)
+    # Siz kiritgan yangi HB formulasi:
+    grid_sigma_t0_base = (grid_ucs * grid_s_hb) / (1 + grid_mb)
 else: # Manual
     grid_sigma_t0_base = grid_sigma_t0_manual
 
+# 1. Boshlang'ich tensile kuchi (haroratdagi degradatsiya bilan)
 sigma_t_field = grid_sigma_t0_base * np.exp(-beta_thermal * (temp_2d - 20))
+
+# 2. Thermal tension boost (tortishish kuchlanishining harorat ortishi bilan kuchayishi)
+thermal_tension_boost = 1 + 0.3 * (delta_T / T_source_max)
+sigma_t_field_eff = sigma_t_field / thermal_tension_boost
 
 sigma_ci = grid_ucs * np.exp(-0.0025 * (temp_2d - 20))
 sigma3_safe = np.maximum(sigma3_act, 0.01)
 sigma1_limit = sigma3_safe + sigma_ci * (grid_mb * sigma3_safe / (sigma_ci + 1e-6) + grid_s_hb)**grid_a_hb
 
 shear_failure = sigma1_act >= sigma1_limit
-tensile_failure = sigma3_act <= -sigma_t_field
+tensile_failure = sigma3_act <= -sigma_t_field_eff # Yangi effektive tensile kuchi ishlatildi
 
 avg_t_p = np.mean(temp_2d[np.abs(z_axis - source_z).argmin(), :])
 strength_red = np.exp(-0.0025 * (avg_t_p - 20))
