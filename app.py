@@ -15,6 +15,12 @@ obj_name = st.sidebar.text_input("Loyiha nomi:", value="Angren-UCG-001")
 time_h = st.sidebar.slider("Jarayon vaqti (soat):", 1, 150, 24)
 num_layers = st.sidebar.number_input("Qatlamlar soni:", min_value=1, max_value=5, value=3)
 
+# --- YANGI: Geomexanik Koeffitsiyentlar ---
+st.sidebar.subheader("💎 Jins Xususiyatlari")
+D_factor = st.sidebar.slider("Disturbance Factor (D):", 0.0, 1.0, 0.7)
+nu_poisson = st.sidebar.slider("Poisson koeffitsiyenti (ν):", 0.1, 0.4, 0.25)
+k_ratio = st.sidebar.slider("Stress Ratio (k = σh/σv):", 0.1, 2.0, 0.5)
+
 st.sidebar.subheader("🔥 Yonish va Termal")
 burn_duration = st.sidebar.number_input("Kamera yonish muddati (soat):", value=40)
 T_source_max = st.sidebar.slider("Maksimal harorat (°C)", 600, 1200, 1075)
@@ -31,21 +37,24 @@ for i in range(int(num_layers)):
             name = st.text_input(f"Nomi:", value=f"Qatlam-{i+1}", key=f"name_{i}")
             thick = st.number_input(f"Qalinlik (m):", value=50.0, key=f"t_{i}")
             u = st.number_input(f"UCS (MPa):", value=40.0, key=f"u_{i}")
+            rho = st.number_input(f"Zichlik (kg/m³):", value=2500, key=f"rho_{i}") # Zichlik qo'shildi
         with col2:
             color = st.color_picker(f"Rangi:", strata_colors[i % len(strata_colors)], key=f"color_{i}")
             g = st.slider(f"GSI:", 10, 100, 60, key=f"g_{i}")
             m = st.number_input(f"mi:", value=10.0, key=f"m_{i}")
         
-        layers_data.append({'name': name, 't': thick, 'ucs': u, 'gsi': g, 'mi': m, 'color': color, 'z_start': total_depth})
+        layers_data.append({'name': name, 't': thick, 'ucs': u, 'rho': rho, 'gsi': g, 'mi': m, 'color': color, 'z_start': total_depth})
         total_depth += thick
 
-# --- ILMIY HISOB-KITOBLAR (HOEK-BROWN) ---
+# --- ILMIY HISOB-KITOBLAR (ENHANCED HOEK-BROWN) ---
 avg_ucs = sum(l['ucs'] * l['t'] for l in layers_data) / (total_depth + 1e-6)
 avg_gsi = sum(l['gsi'] * l['t'] for l in layers_data) / (total_depth + 1e-6)
 avg_mi = sum(l['mi'] * l['t'] for l in layers_data) / (total_depth + 1e-6)
+avg_rho = sum(l['rho'] * l['t'] for l in layers_data) / (total_depth + 1e-6)
 
-mb = avg_mi * np.exp((avg_gsi - 100) / 28)
-s_hb = np.exp((avg_gsi - 100) / 9)
+# D-factor bilan mb, s va a koeffitsiyentlari
+mb = avg_mi * np.exp((avg_gsi - 100) / (28 - 14 * D_factor))
+s_hb = np.exp((avg_gsi - 100) / (9 - 3 * D_factor))
 a_hb = 0.5 + (1/6)*(np.exp(-avg_gsi/15) - np.exp(-20/3))
 
 x_axis = np.linspace(-total_depth*1.5, total_depth*1.5, 150)
@@ -70,11 +79,15 @@ E_modulus = 5000
 alpha_thermal = 1e-5  
 delta_T = temp_2d - 25
 
-sigma_v = 0.027 * grid_z
-sigma_thermal = E_modulus * alpha_thermal * delta_T
+# σv zichlik orqali (MPa)
+sigma_v = (avg_rho * 9.81 * grid_z) / 1e6
+# σ_thermal Poisson effekti bilan
+sigma_thermal = (E_modulus * alpha_thermal * delta_T) / (1 - nu_poisson)
 bending_effect = 2.0 * np.exp(-((grid_x / (total_depth + 1e-6))**2)) 
 
-sigma_h = (0.5 * sigma_v) - sigma_thermal - bending_effect
+# σh k-ratio va termal kuchlanish bilan
+sigma_h = (k_ratio * sigma_v) - sigma_thermal - bending_effect
+
 sigma_ci = avg_ucs * np.exp(-0.0025 * (temp_2d - 20))
 sigma3_safe = np.maximum(sigma_h, 0.01)
 sigma1_limit = sigma3_safe + sigma_ci * (mb * sigma3_safe / (sigma_ci + 1e-6) + s_hb)**a_hb
@@ -85,9 +98,10 @@ tensile_failure = sigma_h <= -sigma_t_limit
 
 # --- WILSON PILLAR STRENGTH ---
 avg_t_at_pillar = np.mean(temp_2d[np.abs(z_axis - source_z).argmin(), :])
-strength_red_factor = np.exp(-0.0025 * (avg_t_at_pillar - 20)) # Bu o'sha red_hot parametri
+strength_red_factor = np.exp(-0.0025 * (avg_t_at_pillar - 20))
 pillar_strength = 0.6 * (avg_ucs * strength_red_factor)
-y_zone = max((H / 2) * (np.sqrt((0.027 * source_z) / (pillar_strength + 1e-6)) - 1), 1.5)
+# Selek eni (w/h hisobi uchun asos)
+y_zone = max((H / 2) * (np.sqrt(sigma_v.max() / (pillar_strength + 1e-6)) - 1), 1.5)
 stable_core = 0.5 * H
 rec_width = np.round(2 * y_zone + stable_core, 1)
 
@@ -100,7 +114,7 @@ st.subheader(f"📊 {obj_name}: Monitoring va Ekspert Xulosasi")
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("Pillar Strength (σp)", f"{pillar_strength:.1f} MPa")
 m2.metric("Plastik zona (y)", f"{y_zone:.1f} m")
-m3.metric("Stable Core (0.5H)", f"{stable_core:.1f} m")
+m3.metric("Stress Ratio (k)", f"{k_ratio}")
 m4.metric("TAVSIYA: Selek Eni", f"{rec_width} m")
 
 st.markdown("---")
@@ -156,13 +170,11 @@ with c2:
     fig_tm = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.15, 
                            subplot_titles=("Harorat Maydoni (°C)", "Xavfsizlik Koeffitsiyenti (FOS) & Yielded Zones"))
     
-    # 1. Harorat
     fig_tm.add_trace(go.Heatmap(
         z=temp_2d, x=x_axis, y=z_axis, colorscale='Hot', zmin=25, zmax=T_source_max,
         colorbar=dict(title="T (°C)", x=1.08, y=0.78, len=0.42, thickness=15)
     ), row=1, col=1)
     
-    # 2. FOS
     fig_tm.add_trace(go.Contour(
         z=fos_2d, x=x_axis, y=z_axis, 
         colorscale=[[0, 'red'], [0.33, 'yellow'], [0.5, 'green'], [1, 'darkgreen']],
@@ -170,21 +182,18 @@ with c2:
         colorbar=dict(title="FOS", x=1.08, y=0.22, len=0.42, thickness=15)
     ), row=2, col=1)
 
-    # 3. Shear Failure
     fig_tm.add_trace(go.Scatter(
         x=grid_x[shear_failure][::2], y=grid_z[shear_failure][::2], 
         mode='markers', marker=dict(color='red', size=3, symbol='x', opacity=0.5),
         name='Shear Failure'
     ), row=2, col=1)
 
-    # 4. Tensile Failure
     fig_tm.add_trace(go.Scatter(
         x=grid_x[tensile_failure][::2], y=grid_z[tensile_failure][::2],
         mode='markers', marker=dict(color='blue', size=3, symbol='cross', opacity=0.5),
         name='Tensile Failure'
     ), row=2, col=1)
     
-    # Wilson selek o'rni
     p_x1 = (sources['1']['x'] + sources['2']['x']) / 2
     p_x2 = (sources['2']['x'] + sources['3']['x']) / 2
     for px in [p_x1, p_x2]:
