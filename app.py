@@ -52,7 +52,7 @@ x_axis = np.linspace(-total_depth*1.5, total_depth*1.5, 150)
 z_axis = np.linspace(0, total_depth + 50, 120)
 grid_x, grid_z = np.meshgrid(x_axis, z_axis)
 source_z = total_depth - (layers_data[-1]['t'] / 2)
-H = layers_data[-1]['t'] # Ko'mir qatlami qalinligi
+H = layers_data[-1]['t']
 
 # Issiqlik manbalari
 sources = {'1': {'x': -total_depth/3, 'start': 0}, '2': {'x': 0, 'start': 40}, '3': {'x': total_depth/3, 'start': 80}}
@@ -67,24 +67,16 @@ for key, val in sources.items():
 
 # --- TAKOMILLASHTIRILGAN WILSON VA FOS HISOBI ---
 sigma_v = 0.027 * source_z 
-sigma_h = 0.5 * sigma_v # Lateral confinement (K0=0.5)
+sigma_h = 0.5 * sigma_v 
 
 avg_t_at_pillar = np.mean(temp_2d[np.abs(z_axis - source_z).argmin(), :])
 strength_red_factor = np.exp(-0.0025 * (avg_t_at_pillar - 20))
 
-# Wilson Pillar Strength (0.6 * UCS in-situ)
 pillar_strength = 0.6 * (avg_ucs * strength_red_factor)
-
-# Plastik zona (y) - Lateral confinement hisobga olingan
-y_zone = (H / 2) * (np.sqrt(sigma_v / (pillar_strength + 1e-6)) - 1)
-y_zone = max(y_zone, 1.5)
-
-# Stable core (Empirik: 0.5 * H)
+y_zone = max((H / 2) * (np.sqrt(sigma_v / (pillar_strength + 1e-6)) - 1), 1.5)
 stable_core = 0.5 * H
 rec_width = np.round(2 * y_zone + stable_core, 1)
 
-# FOS = Strength / Stress
-# FOS klassifikatsiyasi: <1 failure, 1-1.5 unstable, >1.5 stable
 current_strength = (avg_ucs * np.exp(-0.0025 * (temp_2d - 20))) * 0.6
 current_stress = 0.027 * grid_z
 fos_2d = current_strength / (current_stress + 1e-6)
@@ -119,7 +111,6 @@ with col_g3:
     sigma3_ax = np.linspace(0, avg_ucs * 0.5, 100)
     red_h = strength_red_factor 
     red_fire = np.exp(-0.0035 * (T_source_max - 20)) 
-    
     s1_init = sigma3_ax + avg_ucs * (mb * sigma3_ax / (avg_ucs + 1e-6) + s_hb)**a_hb
     s1_hot = sigma3_ax + (avg_ucs * red_h) * (mb * sigma3_ax / (avg_ucs * red_h + 1e-6) + s_hb)**a_hb
     s1_fire = sigma3_ax + (avg_ucs * red_fire) * (mb * sigma3_ax / (avg_ucs * red_fire + 1e-6) + s_hb)**a_hb
@@ -127,7 +118,7 @@ with col_g3:
     fig_hb = go.Figure()
     fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_init, name='20°C', line=dict(color='red', width=2)))
     fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_hot, name='Sovugandagi Zarar', line=dict(color='cyan', dash='dash')))
-    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_fire, name=f'Yonayotgan payt', line=dict(color='orange', width=4)))
+    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_fire, name='Yonayotgan payt', line=dict(color='orange', width=4)))
     fig_hb.update_layout(title="🛡️ Hoek-Brown Envelopes", template="plotly_dark", height=300, legend=dict(orientation="h", y=-0.3))
     st.plotly_chart(fig_hb, use_container_width=True)
 
@@ -149,24 +140,30 @@ with c1:
 
 with c2:
     st.subheader("🔥 TM Maydoni va Selek Interferensiyasi (RS2)")
-    fig_tm = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08, subplot_titles=("Harorat (°C)", "Xavfsizlik Koeffitsiyenti (FOS)"))
+    fig_tm = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1, subplot_titles=("Harorat (°C)", "Xavfsizlik Koeffitsiyenti (FOS)"))
     
-    # Harorat maydoni
-    fig_tm.add_trace(go.Heatmap(z=temp_2d, x=x_axis, y=z_axis, colorscale='Hot', zmin=25, zmax=T_source_max), row=1, col=1)
+    # Harorat maydoni + Alohida Colorbar
+    fig_tm.add_trace(go.Heatmap(
+        z=temp_2d, x=x_axis, y=z_axis, colorscale='Hot', zmin=25, zmax=T_source_max,
+        colorbar=dict(title="T (°C)", x=1.05, y=0.78, len=0.4) # Pozitsiya to'g'rilandi
+    ), row=1, col=1)
     
-    # FOS maydoni (Interpretatsiya asosida ranglar: RdYlGn)
-    fig_tm.add_trace(go.Contour(z=fos_2d, x=x_axis, y=z_axis, 
-                                colorscale=[[0, 'red'], [0.33, 'yellow'], [0.5, 'green'], [1, 'darkgreen']],
-                                zmin=0, zmax=3.0, contours_showlines=False), row=2, col=1)
+    # FOS maydoni + Alohida Colorbar
+    fig_tm.add_trace(go.Contour(
+        z=fos_2d, x=x_axis, y=z_axis, 
+        colorscale=[[0, 'red'], [0.33, 'yellow'], [0.5, 'green'], [1, 'darkgreen']],
+        zmin=0, zmax=3.0, contours_showlines=False,
+        colorbar=dict(title="FOS", x=1.05, y=0.22, len=0.4) # Pozitsiya to'g'rilandi
+    ), row=2, col=1)
     
-    # Wilson bo'yicha selek o'rnini ko'rsatish
+    # Wilson selek o'rni
     p_x1 = (sources['1']['x'] + sources['2']['x']) / 2
     p_x2 = (sources['2']['x'] + sources['3']['x']) / 2
     for px in [p_x1, p_x2]:
         fig_tm.add_shape(type="rect", x0=px-rec_width/2, x1=px+rec_width/2, y0=source_z-H/2, y1=source_z+H/2, 
                          line=dict(color="lime", width=3, dash='dot'), row=2, col=1)
 
-    fig_tm.update_layout(template="plotly_dark", height=800, showlegend=False)
+    fig_tm.update_layout(template="plotly_dark", height=800, showlegend=False, margin=dict(r=100))
     fig_tm.update_yaxes(autorange='reversed', row=1, col=1)
     fig_tm.update_yaxes(autorange='reversed', row=2, col=1)
     st.plotly_chart(fig_tm, use_container_width=True)
