@@ -64,22 +64,20 @@ for key, val in sources.items():
         dist_sq = (grid_x - val['x'])**2 + (grid_z - source_z)**2
         temp_2d += (curr_T - 25) * np.exp(-dist_sq / (2 * radius**2))
 
-# --- ILMIY SELEK O'LCHAMI (WILSON'S CONFINED CORE THEORY - TUZATILGAN) ---
+# --- ILMIY SELEK O'LCHAMI (WILSON'S CONFINED CORE THEORY) ---
 sigma_v = 0.027 * source_z 
 avg_t_at_pillar = np.mean(temp_2d[np.abs(z_axis - source_z).argmin(), :])
+# Termal mustahkamlik pasayishi (Wilson formulasida qo'llash uchun)
 strength_red_factor = np.exp(-0.0025 * (avg_t_at_pillar - 20))
+dynamic_ucs = avg_ucs * strength_red_factor
 
-# Wilson bo'yicha Pillar Strength (0.6 * UCS)
-pillar_strength = 0.6 * (avg_ucs * strength_red_factor)
-
-# Wilson plastik zona (y) kengligi formulasi tuzatildi
-H = layers_data[-1]['t']
-y_zone = (H / 2) * (np.sqrt(sigma_v / (pillar_strength + 1e-6)) - 1)
+# Wilson plastik zona (y) kengligi
+m_thick = layers_data[-1]['t']
+y_zone = (m_thick / 2) * (np.sqrt(sigma_v / (0.12 * dynamic_ucs + 1e-6)) - 1)
 y_zone = max(y_zone, 1.5)
 
-# Stable core (barqaror o'zak) kengligi - o'rtacha 0.8*y deb olindi
-stable_core = y_zone * 0.8
-rec_width = np.round(2 * y_zone + stable_core, 1)
+# Jami selek kengligi (2*y + core)
+rec_width = np.round(2 * y_zone + (y_zone * 1.6), 1)
 
 # --- VIZUALIZATSIYA ---
 st.subheader(f"📊 {obj_name}: Monitoring va Ekspert Xulosasi")
@@ -87,9 +85,9 @@ st.subheader(f"📊 {obj_name}: Monitoring va Ekspert Xulosasi")
 # Yuqori ko'rsatkichlar paneli
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("Loyiha Chuqurligi", f"{total_depth} m")
-m2.metric("In-situ Pillar Str.", f"{pillar_strength:.1f} MPa")
+m2.metric("Termal UCS (σₜ)", f"{dynamic_ucs:.1f} MPa")
 m3.metric("Plastik zona (y)", f"{y_zone:.1f} m")
-m4.metric("TAVSIYA: Selek Eni", f"{rec_width} m", delta=f"{strength_red_factor*100:.1f}% termal qoldiq")
+m4.metric("TAVSIYA: Selek Eni", f"{rec_width} m", delta=f"{strength_red_factor*100:.1f}% mustahkamlik", delta_color="inverse")
 
 st.markdown("---")
 col_g1, col_g2, col_g3 = st.columns([1.5, 1.5, 2])
@@ -109,8 +107,11 @@ with col_g2:
     st.plotly_chart(fig2, use_container_width=True)
 
 with col_g3:
+    # Wilson mantiqiga moslashtirilgan Hoek-Brown egri chiziqlari
     sigma3_ax = np.linspace(0, avg_ucs * 0.5, 100)
+    # Sovugandagi zarar (Wilson koeffitsiyentiga bog'landi)
     red_h = strength_red_factor 
+    # Yonayotgan paytdagi keskin pasayish
     red_fire = np.exp(-0.0035 * (T_source_max - 20)) 
     
     s1_init = sigma3_ax + avg_ucs * (mb * sigma3_ax / (avg_ucs + 1e-6) + s_hb)**a_hb
@@ -118,9 +119,9 @@ with col_g3:
     s1_fire = sigma3_ax + (avg_ucs * red_fire) * (mb * sigma3_ax / (avg_ucs * red_fire + 1e-6) + s_hb)**a_hb
     
     fig_hb = go.Figure()
-    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_init, name='20°C', line=dict(color='red', width=2)))
-    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_hot, name='Sovugandagi Zarar', line=dict(color='cyan', dash='dash')))
-    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_fire, name=f'Yonayotgan payt', line=dict(color='orange', width=4)))
+    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_init, name='Yonishdan oldin (20°C)', line=dict(color='red', width=2)))
+    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_hot, name='Sovugandan keyin (Zarar)', line=dict(color='cyan', dash='dash')))
+    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_fire, name=f'Yonayotgan payt ({T_source_max}°C)', line=dict(color='orange', width=4)))
     fig_hb.update_layout(title="🛡️ Hoek-Brown Envelopes", template="plotly_dark", height=300, legend=dict(orientation="h", y=-0.3))
     st.plotly_chart(fig_hb, use_container_width=True)
 
@@ -130,11 +131,11 @@ c1, c2 = st.columns([1, 2.5])
 with c1:
     st.subheader("📋 Ilmiy Tahlil")
     st.info(f"""
-    **Wilson (1972) hisobi:**
-    * **σᵥ (Vertikal):** {sigma_v:.2f} MPa
-    * **y (Plastik):** {y_zone:.1f} m
-    * **Pillar Strength:** {pillar_strength:.1f} MPa
-    * **Xulosa:** Plastik zonalar (y) birlashmasligi uchun o'zak kengligini hisobga olgan holda **{rec_width} m** tavsiya etiladi.
+    **Wilson (1972) metodikasi:**
+    * **σᵥ (Vertikal yuk):** {sigma_v:.2f} MPa
+    * **y (Plastik qatlam):** {y_zone:.1f} m
+    * **Termal UCS (σₜ):** {dynamic_ucs:.1f} MPa
+    * **Xulosa:** Plastik zonalar birlashib ketmasligi uchun selek kengligi **{rec_width} m** bo'lishi shart.
     """)
     
     fig_strata = go.Figure()
@@ -145,23 +146,20 @@ with c1:
 
 with c2:
     st.subheader("🔥 TM Maydoni va Selek Interferensiyasi (RS2)")
-    fig_tm = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08, subplot_titles=("Harorat (°C)", "Xavfsizlik Koeffitsiyenti (FOS = Strength / Stress)"))
+    fig_tm = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08, subplot_titles=("Harorat (°C)", "Xavfsizlik Koeffitsiyenti (FOS)"))
     
     fig_tm.add_trace(go.Heatmap(z=temp_2d, x=x_axis, y=z_axis, colorscale='Hot', zmin=25, zmax=T_source_max), row=1, col=1)
     
-    # FOS = Strength / Stress (Tuzatildi)
-    current_strength = (avg_ucs * np.exp(-0.0025 * (temp_2d - 20))) * 0.6
-    current_stress = 0.027 * grid_z
-    fos_2d = current_strength / (current_stress + 1e-6)
+    # Stress/Strength nisbati orqali xavfsizlik konturini chizish
+    fail_2d = (0.027 * grid_z) / (avg_ucs * np.exp(-0.0025 * (temp_2d - 20)) + 1e-6)
+    fig_tm.add_trace(go.Contour(z=fail_2d, x=x_axis, y=z_axis, colorscale='Jet', contours_showlines=False), row=2, col=1)
     
-    fig_tm.add_trace(go.Contour(z=fos_2d, x=x_axis, y=z_axis, colorscale='RdYlGn', zmin=0.5, zmax=3.0, contours_showlines=False), row=2, col=1)
-    
-    # Wilson bo'yicha hisoblangan selek o'rnini ko'rsatish
+    # Wilson bo'yicha hisoblangan selek o'rnini vizual ko'rsatish
     p_x1 = (sources['1']['x'] + sources['2']['x']) / 2
     p_x2 = (sources['2']['x'] + sources['3']['x']) / 2
     for px in [p_x1, p_x2]:
         fig_tm.add_shape(type="rect", x0=px-rec_width/2, x1=px+rec_width/2, y0=source_z-10, y1=source_z+10, 
-                         line=dict(color="lime", width=3, dash='dot'), row=2, col=1)
+                         line=dict(color="lime", width=3), row=2, col=1)
 
     fig_tm.update_layout(template="plotly_dark", height=800, showlegend=False)
     fig_tm.update_yaxes(autorange='reversed', row=1, col=1)
