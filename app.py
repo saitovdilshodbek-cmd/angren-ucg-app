@@ -46,70 +46,78 @@ for i in range(int(num_layers)):
         layers_data.append({'name': name, 't': thick, 'ucs': u, 'rho': rho, 'gsi': g, 'mi': m, 'color': color, 'z_start': total_depth})
         total_depth += thick
 
-# --- ILMIY HISOB-KITOBLAR (ENHANCED HOEK-BROWN) ---
-avg_ucs = sum(l['ucs'] * l['t'] for l in layers_data) / (total_depth + 1e-6)
-avg_gsi = sum(l['gsi'] * l['t'] for l in layers_data) / (total_depth + 1e-6)
-avg_mi = sum(l['mi'] * l['t'] for l in layers_data) / (total_depth + 1e-6)
-avg_rho = sum(l['rho'] * l['t'] for l in layers_data) / (total_depth + 1e-6)
-
-mb = avg_mi * np.exp((avg_gsi - 100) / (28 - 14 * D_factor))
-s_hb = np.exp((avg_gsi - 100) / (9 - 3 * D_factor))
-a_hb = 0.5 + (1/6)*(np.exp(-avg_gsi/15) - np.exp(-20/3))
-
+# --- ILMIY HISOB-KITOBLAR (Qatlamli va Iterativ) ---
 x_axis = np.linspace(-total_depth*1.5, total_depth*1.5, 150)
 z_axis = np.linspace(0, total_depth + 50, 120)
 grid_x, grid_z = np.meshgrid(x_axis, z_axis)
 source_z = total_depth - (layers_data[-1]['t'] / 2)
 H = layers_data[-1]['t']
 
-# Issiqlik manbalari
+# Qatlam bo'yicha kuchlanish va xususiyatlar xaritasi
+grid_sigma_v = np.zeros_like(grid_z)
+grid_ucs = np.zeros_like(grid_z)
+grid_mb = np.zeros_like(grid_z)
+grid_s_hb = np.zeros_like(grid_z)
+grid_a_hb = np.zeros_like(grid_z)
+
+for i, layer in enumerate(layers_data):
+    mask = (grid_z >= layer['z_start']) & (grid_z < (layer['z_start'] + layer['t']))
+    if i == len(layers_data) - 1: mask = grid_z >= layer['z_start']
+    
+    overburden = sum(l['rho'] * 9.81 * l['t'] for l in layers_data[:i]) / 1e6
+    grid_sigma_v[mask] = overburden + (layer['rho'] * 9.81 * (grid_z[mask] - layer['z_start'])) / 1e6
+    grid_ucs[mask] = layer['ucs']
+    grid_mb[mask] = layer['mi'] * np.exp((layer['gsi'] - 100) / (28 - 14 * D_factor))
+    grid_s_hb[mask] = np.exp((layer['gsi'] - 100) / (9 - 3 * D_factor))
+    grid_a_hb[mask] = 0.5 + (1/6)*(np.exp(-layer['gsi']/15) - np.exp(-20/3))
+
+# Issiqlik diffuziyasi (PDE mantiqi)
+alpha_rock = 1.0e-6 
 sources = {'1': {'x': -total_depth/3, 'start': 0}, '2': {'x': 0, 'start': 40}, '3': {'x': total_depth/3, 'start': 80}}
 temp_2d = np.ones_like(grid_x) * 25 
 for key, val in sources.items():
     if time_h > val['start']:
-        dt = time_h - val['start']
-        radius = 15 + (min(dt, burn_duration) * 0.5)
-        curr_T = T_source_max if dt <= burn_duration else 25 + (T_source_max-25)*np.exp(-0.03*(dt-burn_duration))
+        dt_sec = (time_h - val['start']) * 3600
+        pen_depth = np.sqrt(4 * alpha_rock * dt_sec) 
+        curr_T = T_source_max if (time_h - val['start']) <= burn_duration else 25 + (T_source_max-25)*np.exp(-0.03*((time_h-val['start'])-burn_duration))
         dist_sq = (grid_x - val['x'])**2 + (grid_z - source_z)**2
-        temp_2d += (curr_T - 25) * np.exp(-dist_sq / (2 * radius**2))
+        temp_2d += (curr_T - 25) * np.exp(-dist_sq / (pen_depth**2 + 15**2))
 
-# --- STRESS FIELD (PRINCIPAL STRESS LOGIC) ---
+# Kuchlanishlar maydoni
 E_modulus = 5000  
 alpha_thermal = 1e-5  
 delta_T = temp_2d - 25
-
-sigma_v = (avg_rho * 9.81 * grid_z) / 1e6
 sigma_thermal = (E_modulus * alpha_thermal * delta_T) / (1 - nu_poisson)
-bending_effect = 2.0 * np.exp(-((grid_x / (total_depth + 1e-6))**2)) 
-sigma_h = (k_ratio * sigma_v) - sigma_thermal - bending_effect
+grid_sigma_h = (k_ratio * grid_sigma_v) - sigma_thermal
 
-# Asosiy kuchlanishlar: sigma1 (maksimal) va sigma3 (minimal)
-sigma1_act = np.maximum(sigma_v, sigma_h)
-sigma3_act = np.minimum(sigma_v, sigma_h)
+sigma1_act = np.maximum(grid_sigma_v, grid_sigma_h)
+sigma3_act = np.minimum(grid_sigma_v, grid_sigma_h)
 
-sigma_ci = avg_ucs * np.exp(-0.0025 * (temp_2d - 20))
+sigma_ci = grid_ucs * np.exp(-0.0025 * (temp_2d - 20))
 sigma3_safe = np.maximum(sigma3_act, 0.01)
-sigma1_limit = sigma3_safe + sigma_ci * (mb * sigma3_safe / (sigma_ci + 1e-6) + s_hb)**a_hb
+sigma1_limit = sigma3_safe + sigma_ci * (grid_mb * sigma3_safe / (sigma_ci + 1e-6) + grid_s_hb)**grid_a_hb
 
 shear_failure = sigma1_act >= sigma1_limit
 tensile_failure = sigma3_act <= -(0.05 * sigma_ci)
 
-# --- PILLAR STRENGTH (EMPIRICAL w/H APPROACH) ---
-avg_t_at_pillar = np.mean(temp_2d[np.abs(z_axis - source_z).argmin(), :])
-strength_red_factor = np.exp(-0.0025 * (avg_t_at_pillar - 20))
+# --- ITERATIVE PILLAR SOLVER ---
+avg_t_p = np.mean(temp_2d[np.abs(z_axis - source_z).argmin(), :])
+strength_red = np.exp(-0.0025 * (avg_t_p - 20))
+ucs_seam = layers_data[-1]['ucs']
+sv_seam = grid_sigma_v[np.abs(z_axis - source_z).argmin(), :].max()
 
-# Dastlabki tavsiya qilingan en (w) hisobi uchun vaqtinchalik rec_width
-temp_w = 20.0 
-pillar_strength = (avg_ucs * strength_red_factor) * (temp_w / (H + 1e-6))**0.5
-y_zone = max((H / 2) * (np.sqrt(sigma1_act.max() / (pillar_strength + 1e-6)) - 1), 1.5)
-stable_core = 0.5 * H
-rec_width = np.round(2 * y_zone + stable_core, 1)
+w_sol = 20.0
+for _ in range(10):
+    p_strength = (ucs_seam * strength_red) * (w_sol / H)**0.5
+    y_zone_calc = (H / 2) * (np.sqrt(sv_seam / (p_strength + 1e-6)) - 1)
+    new_w = 2 * max(y_zone_calc, 1.5) + 0.5 * H
+    if abs(new_w - w_sol) < 0.1: break
+    w_sol = new_w
 
-# Selek mustahkamligini yangilangan rec_width bilan qayta aniqlash
-pillar_strength = (avg_ucs * strength_red_factor) * (rec_width / (H + 1e-6))**0.5
-
-fos_2d = sigma1_limit / (sigma1_act + 1e-6)
-fos_2d = np.clip(fos_2d, 0, 3.0)
+rec_width = np.round(w_sol, 1)
+pillar_strength = p_strength
+y_zone = max(y_zone_calc, 1.5)
+fos_2d = np.clip(sigma1_limit / (sigma1_act + 1e-6), 0, 3.0)
 
 # --- VIZUALIZATSIYA ---
 st.subheader(f"📊 {obj_name}: Monitoring va Ekspert Xulosasi")
@@ -138,17 +146,20 @@ with col_g2:
     st.plotly_chart(fig2, use_container_width=True)
 
 with col_g3:
-    sigma3_ax = np.linspace(0, avg_ucs * 0.5, 100)
-    red_h = strength_red_factor 
+    # Hoek-Brown Envelopes grafik interfeysi
+    sigma3_ax = np.linspace(0, ucs_seam * 0.5, 100)
+    # Envelope parametrlarini olish
+    mb_s, s_s, a_s = grid_mb.max(), grid_s_hb.max(), grid_a_hb.max()
     red_fire = np.exp(-0.0035 * (T_source_max - 20)) 
-    s1_init = sigma3_ax + avg_ucs * (mb * sigma3_ax / (avg_ucs + 1e-6) + s_hb)**a_hb
-    s1_hot = sigma3_ax + (avg_ucs * red_h) * (mb * sigma3_ax / (avg_ucs * red_h + 1e-6) + s_hb)**a_hb
-    s1_fire = sigma3_ax + (avg_ucs * red_fire) * (mb * sigma3_ax / (avg_ucs * red_fire + 1e-6) + s_hb)**a_hb
+    
+    s1_20 = sigma3_ax + ucs_seam * (mb_s * sigma3_ax / (ucs_seam + 1e-6) + s_s)**a_s
+    s1_sov = sigma3_ax + (ucs_seam * strength_red) * (mb_s * sigma3_ax / (ucs_seam * strength_red + 1e-6) + s_s)**a_s
+    s1_yon = sigma3_ax + (ucs_seam * red_fire) * (mb_s * sigma3_ax / (ucs_seam * red_fire + 1e-6) + s_s)**a_s
     
     fig_hb = go.Figure()
-    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_init, name='20°C', line=dict(color='red', width=2)))
-    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_hot, name='Sovugandagi Zarar', line=dict(color='cyan', dash='dash')))
-    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_fire, name='Yonayotgan payt', line=dict(color='orange', width=4)))
+    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_20, name='20°C', line=dict(color='red', width=2)))
+    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_sov, name='Sovugandagi Zarar', line=dict(color='cyan', dash='dash')))
+    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_yon, name='Yonayotgan payt', line=dict(color='orange', width=4)))
     fig_hb.update_layout(title="🛡️ Hoek-Brown Envelopes", template="plotly_dark", height=300, legend=dict(orientation="h", y=-0.3))
     st.plotly_chart(fig_hb, use_container_width=True)
 
@@ -173,6 +184,7 @@ with c2:
     fig_tm = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.15, 
                            subplot_titles=("Harorat Maydoni (°C)", "Xavfsizlik Koeffitsiyenti (FOS) & Yielded Zones"))
     
+    # Heatmap va Contour interfeysi
     fig_tm.add_trace(go.Heatmap(
         z=temp_2d, x=x_axis, y=z_axis, colorscale='Hot', zmin=25, zmax=T_source_max,
         colorbar=dict(title="T (°C)", x=1.08, y=0.78, len=0.42, thickness=15)
