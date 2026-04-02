@@ -74,28 +74,23 @@ sigma_v = 0.027 * grid_z
 sigma_thermal = E_modulus * alpha_thermal * delta_T
 bending_effect = 2.0 * np.exp(-((grid_x / (total_depth + 1e-6))**2)) 
 
-# Yangi sigma_h (Termal va bending hisobga olingan)
 sigma_h = (0.5 * sigma_v) - sigma_thermal - bending_effect
-
-# Termal UCS va Hoek-Brown chegarasi
 sigma_ci = avg_ucs * np.exp(-0.0025 * (temp_2d - 20))
 sigma3_safe = np.maximum(sigma_h, 0.01)
 sigma1_limit = sigma3_safe + sigma_ci * (mb * sigma3_safe / (sigma_ci + 1e-6) + s_hb)**a_hb
 
-# Failure tahlili
 shear_failure = sigma_v >= sigma1_limit
 sigma_t_limit = 0.05 * sigma_ci  
 tensile_failure = sigma_h <= -sigma_t_limit
 
 # --- WILSON PILLAR STRENGTH ---
 avg_t_at_pillar = np.mean(temp_2d[np.abs(z_axis - source_z).argmin(), :])
-strength_red_factor = np.exp(-0.0025 * (avg_t_at_pillar - 20))
+strength_red_factor = np.exp(-0.0025 * (avg_t_at_pillar - 20)) # Bu o'sha red_hot parametri
 pillar_strength = 0.6 * (avg_ucs * strength_red_factor)
 y_zone = max((H / 2) * (np.sqrt((0.027 * source_z) / (pillar_strength + 1e-6)) - 1), 1.5)
 stable_core = 0.5 * H
 rec_width = np.round(2 * y_zone + stable_core, 1)
 
-# FOS maydoni
 fos_2d = sigma1_limit / (sigma_v + 1e-6)
 fos_2d = np.clip(fos_2d, 0, 3.0)
 
@@ -158,42 +153,54 @@ with c1:
 
 with c2:
     st.subheader("🔥 TM Maydoni va Selek Interferensiyasi (RS2)")
-    fig_tm = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1, subplot_titles=("Harorat (°C)", "Xavfsizlik Koeffitsiyenti (FOS) & Yielded Zones"))
+    fig_tm = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.15, 
+                           subplot_titles=("Harorat Maydoni (°C)", "Xavfsizlik Koeffitsiyenti (FOS) & Yielded Zones"))
     
+    # 1. Harorat
     fig_tm.add_trace(go.Heatmap(
         z=temp_2d, x=x_axis, y=z_axis, colorscale='Hot', zmin=25, zmax=T_source_max,
-        colorbar=dict(title="T (°C)", x=1.05, y=0.78, len=0.4)
+        colorbar=dict(title="T (°C)", x=1.08, y=0.78, len=0.42, thickness=15)
     ), row=1, col=1)
     
+    # 2. FOS
     fig_tm.add_trace(go.Contour(
         z=fos_2d, x=x_axis, y=z_axis, 
         colorscale=[[0, 'red'], [0.33, 'yellow'], [0.5, 'green'], [1, 'darkgreen']],
         zmin=0, zmax=3.0, contours_showlines=False,
-        colorbar=dict(title="FOS", x=1.05, y=0.22, len=0.4)
+        colorbar=dict(title="FOS", x=1.08, y=0.22, len=0.42, thickness=15)
     ), row=2, col=1)
 
+    # 3. Shear Failure
     fig_tm.add_trace(go.Scatter(
         x=grid_x[shear_failure][::2], y=grid_z[shear_failure][::2], 
-        mode='markers', marker=dict(color='red', size=2, symbol='x', opacity=0.4),
+        mode='markers', marker=dict(color='red', size=3, symbol='x', opacity=0.5),
         name='Shear Failure'
     ), row=2, col=1)
 
+    # 4. Tensile Failure
     fig_tm.add_trace(go.Scatter(
         x=grid_x[tensile_failure][::2], y=grid_z[tensile_failure][::2],
-        mode='markers', marker=dict(color='blue', size=2, symbol='cross', opacity=0.4),
+        mode='markers', marker=dict(color='blue', size=3, symbol='cross', opacity=0.5),
         name='Tensile Failure'
     ), row=2, col=1)
     
+    # Wilson selek o'rni
     p_x1 = (sources['1']['x'] + sources['2']['x']) / 2
     p_x2 = (sources['2']['x'] + sources['3']['x']) / 2
     for px in [p_x1, p_x2]:
         fig_tm.add_shape(type="rect", x0=px-rec_width/2, x1=px+rec_width/2, y0=source_z-H/2, y1=source_z+H/2, 
                          line=dict(color="lime", width=3, dash='dot'), row=2, col=1)
 
-    fig_tm.update_layout(template="plotly_dark", height=800, showlegend=True, margin=dict(r=100))
+    fig_tm.update_layout(
+        template="plotly_dark", 
+        height=850, 
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=-0.12, xanchor="center", x=0.5),
+        margin=dict(r=150, t=80, b=100)
+    )
     fig_tm.update_yaxes(autorange='reversed', row=1, col=1)
     fig_tm.update_yaxes(autorange='reversed', row=2, col=1)
     st.plotly_chart(fig_tm, use_container_width=True)
 
 st.sidebar.markdown("---")
-st.sidebar.write(f"Tuzuvchi: Diana Meiram/ Saitov Dilshodbek")
+st.sidebar.write(f"Tuzuvchi: Saitov Dilshodbek")
