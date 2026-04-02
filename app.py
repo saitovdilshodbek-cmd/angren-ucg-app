@@ -130,12 +130,25 @@ with col_g2:
 with col_g3:
     sigma3_ax = np.linspace(0, ucs_seam * 0.5, 100)
     mb_s, s_s, a_s = grid_mb.max(), grid_s_hb.max(), grid_a_hb.max()
+    
+    # 1. 20°C (Normal)
     s1_20 = sigma3_ax + ucs_seam * (mb_s * sigma3_ax / (ucs_seam + 1e-6) + s_s)**a_s
+    
+    # 2. Yonayotgan payt (Max T dagi pasayish)
+    strength_red_burning = np.exp(-0.0025 * (T_source_max - 20))
+    ucs_burning = ucs_seam * strength_red_burning
+    s1_burning = sigma3_ax + ucs_burning * (mb_s * sigma3_ax / (ucs_burning + 1e-6) + s_s)**a_s
+    
+    # 3. Sovugandagi Zarar (Post-burn)
     s1_sov = sigma3_ax + (ucs_seam * strength_red) * (mb_s * sigma3_ax / (ucs_seam * strength_red + 1e-6) + s_s)**a_s
+    
     fig_hb = go.Figure()
-    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_20, name='20°C', line=dict(color='red')))
-    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_sov, name='Post-burn', line=dict(color='cyan', dash='dash')))
-    st.plotly_chart(fig_hb.update_layout(title="🛡️ Hoek-Brown Envelopes", template="plotly_dark", height=300, legend=dict(orientation="h", y=-0.3)), use_container_width=True)
+    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_20, name='20°C', line=dict(color='red', width=2)))
+    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_sov, name='Sovugandagi Zarar', line=dict(color='cyan', dash='dash', width=2)))
+    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_burning, name='Yonayotgan payt', line=dict(color='orange', width=4)))
+    
+    st.plotly_chart(fig_hb.update_layout(title="🛡️ Hoek-Brown Envelopes", template="plotly_dark", height=300, 
+                                        legend=dict(orientation="h", y=-0.3, x=0.5, xanchor="center")), use_container_width=True)
 
 st.markdown("---")
 c1, c2 = st.columns([1, 2.5])
