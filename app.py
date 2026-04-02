@@ -65,19 +65,27 @@ for key, val in sources.items():
         dist_sq = (grid_x - val['x'])**2 + (grid_z - source_z)**2
         temp_2d += (curr_T - 25) * np.exp(-dist_sq / (2 * radius**2))
 
-# --- STRESS FIELD & RS2 FAILURE LOGIC ---
+# --- STRESS FIELD & RS2 FAILURE LOGIC (ENHANCED) ---
+E_modulus = 5000  
+alpha_thermal = 1e-5  
+delta_T = temp_2d - 25
+
 sigma_v = 0.027 * grid_z
-sigma_h = 0.5 * sigma_v  # Lateral stress (K0=0.5)
+sigma_thermal = E_modulus * alpha_thermal * delta_T
+bending_effect = 2.0 * np.exp(-((grid_x / (total_depth + 1e-6))**2)) 
+
+# Yangi sigma_h (Termal va bending hisobga olingan)
+sigma_h = (0.5 * sigma_v) - sigma_thermal - bending_effect
 
 # Termal UCS va Hoek-Brown chegarasi
 sigma_ci = avg_ucs * np.exp(-0.0025 * (temp_2d - 20))
 sigma3_safe = np.maximum(sigma_h, 0.01)
 sigma1_limit = sigma3_safe + sigma_ci * (mb * sigma3_safe / (sigma_ci + 1e-6) + s_hb)**a_hb
 
-# Failure aniqlash
+# Failure tahlili
 shear_failure = sigma_v >= sigma1_limit
-sigma_t = 0.05 * sigma_ci  # Cho'zilish mustahkamligi
-tensile_failure = sigma_h < -sigma_t
+sigma_t_limit = 0.05 * sigma_ci  
+tensile_failure = sigma_h <= -sigma_t_limit
 
 # --- WILSON PILLAR STRENGTH ---
 avg_t_at_pillar = np.mean(temp_2d[np.abs(z_axis - source_z).argmin(), :])
@@ -152,13 +160,11 @@ with c2:
     st.subheader("🔥 TM Maydoni va Selek Interferensiyasi (RS2)")
     fig_tm = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1, subplot_titles=("Harorat (°C)", "Xavfsizlik Koeffitsiyenti (FOS) & Yielded Zones"))
     
-    # 1. Harorat maydoni
     fig_tm.add_trace(go.Heatmap(
         z=temp_2d, x=x_axis, y=z_axis, colorscale='Hot', zmin=25, zmax=T_source_max,
         colorbar=dict(title="T (°C)", x=1.05, y=0.78, len=0.4)
     ), row=1, col=1)
     
-    # 2. FOS maydoni (Contour)
     fig_tm.add_trace(go.Contour(
         z=fos_2d, x=x_axis, y=z_axis, 
         colorscale=[[0, 'red'], [0.33, 'yellow'], [0.5, 'green'], [1, 'darkgreen']],
@@ -166,21 +172,18 @@ with c2:
         colorbar=dict(title="FOS", x=1.05, y=0.22, len=0.4)
     ), row=2, col=1)
 
-    # 3. RS2 Style: Shear Failure nuqtalari
     fig_tm.add_trace(go.Scatter(
-        x=grid_x[shear_failure][::2], y=grid_z[shear_failure][::2], # Tezlik uchun har ikkinchi nuqta
+        x=grid_x[shear_failure][::2], y=grid_z[shear_failure][::2], 
         mode='markers', marker=dict(color='red', size=2, symbol='x', opacity=0.4),
         name='Shear Failure'
     ), row=2, col=1)
 
-    # 4. RS2 Style: Tensile Failure nuqtalari
     fig_tm.add_trace(go.Scatter(
         x=grid_x[tensile_failure][::2], y=grid_z[tensile_failure][::2],
         mode='markers', marker=dict(color='blue', size=2, symbol='cross', opacity=0.4),
         name='Tensile Failure'
     ), row=2, col=1)
     
-    # Wilson selek o'rni
     p_x1 = (sources['1']['x'] + sources['2']['x']) / 2
     p_x2 = (sources['2']['x'] + sources['3']['x']) / 2
     for px in [p_x1, p_x2]:
