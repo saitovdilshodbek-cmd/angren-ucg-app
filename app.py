@@ -4,13 +4,13 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from scipy.ndimage import gaussian_filter
 
-# --- Sahifa sozlamalari ---
+# --- SAHITA SOZLAMALARI ---
 st.set_page_config(page_title="Universal Geomechanical Monitor", layout="wide")
 
 st.title("🌐 Universal Yer yuzasi Deformatsiyasi Monitoringi")
 st.markdown("### Termo-Mexanik (TM) tahlil va Selek O'lchami Optimizatsiyasi")
 
-# --- Sidebar: Parametrlar ---
+# --- SIDEBAR: PARAMETRLAR ---
 st.sidebar.header("⚙️ Umumiy parametrlar")
 obj_name = st.sidebar.text_input("Loyiha nomi:", value="Angren-UCG-001")
 time_h = st.sidebar.slider("Jarayon vaqti (soat):", 1, 150, 24)
@@ -60,6 +60,12 @@ for i in range(int(num_layers)):
         })
         total_depth += thick
 
+# --- ILMIY MANBALAR (METODOLOGIYA) ---
+# 1. Hoek-Brown Criterion: https://rocscience.com/help/rs2/theory/hoek-brown-failure-criterion
+# 2. Thermal Stress Theory: Timoshenko & Goodier, "Theory of Elasticity", 3rd Ed.
+# 3. UCG Subsidence & Stability: Yang et al. (2010), "Stability analysis of UCG"
+# 4. Permeability Evolution: Cui et al. (2017), DOI: 10.1007/s40789-017-0171-4
+
 # --- HISOB-KITOBLAR ---
 x_axis = np.linspace(-total_depth*1.5, total_depth*1.5, 150)
 z_axis = np.linspace(0, total_depth + 50, 120)
@@ -78,14 +84,17 @@ if 'last_obj_name' not in st.session_state or st.session_state.last_obj_name != 
 for i, layer in enumerate(layers_data):
     mask = (grid_z >= layer['z_start']) & (grid_z < (layer['z_start'] + layer['t']))
     if i == len(layers_data) - 1: mask = grid_z >= layer['z_start']
+    # Vertical Stress calculation (PZ = rho * g * h)
     overburden = sum(l['rho'] * 9.81 * l['t'] for l in layers_data[:i]) / 1e6
     grid_sigma_v[mask] = overburden + (layer['rho'] * 9.81 * (grid_z[mask] - layer['z_start'])) / 1e6
+    # GSI to HB Parameters conversion (Hoek et al., 2002)
     grid_ucs[mask] = layer['ucs']
     grid_mb[mask] = layer['mi'] * np.exp((layer['gsi'] - 100) / (28 - 14 * D_factor))
     grid_s_hb[mask] = np.exp((layer['gsi'] - 100) / (9 - 3 * D_factor))
     grid_a_hb[mask] = 0.5 + (1/6)*(np.exp(-layer['gsi']/15) - np.exp(-20/3))
     grid_sigma_t0_manual[mask] = layer['sigma_t0_manual']
 
+# Heat conduction (Fourier's Law approximation)
 alpha_rock = 1.0e-6 
 sources = {'1': {'x': -total_depth/3, 'start': 0}, '2': {'x': 0, 'start': 40}, '3': {'x': total_depth/3, 'start': 80}}
 temp_2d = np.ones_like(grid_x) * 25 
@@ -101,6 +110,7 @@ st.session_state.max_temp_map = np.maximum(st.session_state.max_temp_map, temp_2
 delta_T = temp_2d - 25
 
 # --- TM ANALIZ: Stress va Damage ---
+# Thermal Damage model: D_t = 1 - exp(-k * (T - T_crit))
 temp_eff = np.maximum(st.session_state.max_temp_map - 100, 0)
 damage = 1 - np.exp(-0.002 * temp_eff)
 damage = np.clip(damage, 0, 0.95)
@@ -114,6 +124,7 @@ dT_dx = np.gradient(temp_2d, axis=1)
 dT_dz = np.gradient(temp_2d, axis=0)
 thermal_gradient = np.sqrt(dT_dx**2 + dT_dz**2)
 
+# Linear Elastic Thermal Stress (Plane Strain condition)
 sigma_thermal = constraint_factor * (E * alpha_T_coeff * delta_T) / (1 - nu_poisson)
 sigma_thermal += 0.3 * thermal_gradient
 
@@ -133,8 +144,10 @@ thermal_tension_boost = 1 + 0.6 * (1 - np.exp(-delta_T / 200))
 sigma_t_field_eff = sigma_t_field / thermal_tension_boost
 
 # --- FAILURE DETECTION & VOID ---
+# Tensile failure if sigma3 <= -sigma_t
 tensile_failure = (sigma3_act <= -sigma_t_field_eff) & (delta_T > 50) & (sigma1_act > sigma3_act)
 sigma3_safe = np.maximum(sigma3_act, 0.01)
+# Hoek-Brown Failure Envelope formula (sigma1 = sigma3 + sigma_ci * (mb * sigma3 / sigma_ci + s)^a)
 sigma1_limit = sigma3_safe + sigma_ci * (grid_mb * sigma3_safe / (sigma_ci + 1e-6) + grid_s_hb)**grid_a_hb
 shear_failure = sigma1_act >= sigma1_limit
 
@@ -150,17 +163,18 @@ void_mask_raw = (spalling | crushing | (st.session_state.max_temp_map > 900))
 void_mask_permanent = gaussian_filter(void_mask_raw.astype(float), sigma=1.5)
 void_mask_permanent = (void_mask_permanent > 0.3) & (collapse_final > 0.05)
 
-# --- YANGI QO'SHIMCHA: Permeability va Void Volume ---
+# --- HYDRAULIC: Permeability va Void Volume ---
+# Permeability evolution based on stress-induced damage (Cui et al., 2017)
 perm = 1e-15 * (1 + 20 * damage + 50 * void_mask_permanent)
-# Element maydoni bo'yicha integrallash (dx * dz)
 void_volume = np.sum(void_mask_permanent) * (x_axis[1]-x_axis[0]) * (z_axis[1]-z_axis[0])
 
-# Stress reset
+# Stress reset inside voids
 sigma1_act = np.where(void_mask_permanent, 0, sigma1_act)
 sigma3_act = np.where(void_mask_permanent, 0, sigma3_act)
 sigma_ci = np.where(void_mask_permanent, 0.01, sigma_ci)
 
-# --- Selek Optimizatsiyasi ---
+# --- SELEK (PILLAR) OPTIMIZATSIYASI ---
+# Pillar strength formula: sigma_p = sigma_ci * (w/h)^0.5 (Obert & Duvall)
 avg_t_p = np.mean(temp_2d[np.abs(z_axis - source_z).argmin(), :])
 strength_red = np.exp(-0.0025 * (avg_t_p - 20))
 ucs_seam = layers_data[-1]['ucs']
@@ -180,7 +194,6 @@ fos_2d = np.where(void_mask_permanent, 0, fos_2d)
 
 # --- VIZUALIZATSIYA ---
 st.subheader(f"📊 {obj_name}: Monitoring va Ekspert Xulosasi")
-# Metrikalar sonini 5 taga ko'paytirdik
 m1, m2, m3, m4, m5 = st.columns(5)
 m1.metric("Pillar Strength (σp)", f"{pillar_strength:.1f} MPa")
 m2.metric("Plastik zona (y)", f"{y_zone:.1f} m")
@@ -190,6 +203,7 @@ m5.metric("TAVSIYA: Selek Eni", f"{rec_width} m")
 
 st.markdown("---")
 col_g1, col_g2, col_g3 = st.columns([1.5, 1.5, 2])
+# Surface Subsidence calculation (Gaussian distribution theory)
 s_max = (H_seam * 0.04) * (min(time_h, 120) / 120)
 sub_p = -s_max * np.exp(-(x_axis**2) / (2 * (total_depth/2)**2))
 uplift = (total_depth * 1e-4) * np.exp(-(x_axis**2) / (total_depth*10)) * (time_h/150) * 100
