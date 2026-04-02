@@ -69,7 +69,6 @@ H_seam = layers_data[-1]['t']
 
 grid_sigma_v, grid_ucs, grid_mb, grid_s_hb, grid_a_hb, grid_sigma_t0_manual = [np.zeros_like(grid_z) for _ in range(6)]
 
-# SESSION STATE (Xotira)
 if 'max_temp_map' not in st.session_state or st.session_state.max_temp_map.shape != grid_z.shape:
     st.session_state.max_temp_map = np.ones_like(grid_z) * 25
 if 'last_obj_name' not in st.session_state or st.session_state.last_obj_name != obj_name:
@@ -101,7 +100,7 @@ for key, val in sources.items():
 st.session_state.max_temp_map = np.maximum(st.session_state.max_temp_map, temp_2d)
 delta_T = temp_2d - 25
 
-# --- TM ANALIZ: Stress va Damage ---
+# --- TM ANALIZ: Stress va Damage (YANGILANGAN) ---
 temp_eff = np.maximum(st.session_state.max_temp_map - 100, 0)
 damage = 1 - np.exp(-0.002 * temp_eff)
 damage = np.clip(damage, 0, 0.95)
@@ -115,8 +114,10 @@ constraint_factor = 0.7
 dT_dx = np.gradient(temp_2d, axis=1)
 dT_dz = np.gradient(temp_2d, axis=0)
 thermal_gradient = np.sqrt(dT_dx**2 + dT_dz**2)
-# Thermal stress gradient va delta_T ning kombinatsiyasi
+
+# Thermal stressga Gradient ta'sirini qo'shish
 sigma_thermal = constraint_factor * (E * alpha_T_coeff * delta_T) / (1 - nu_poisson)
+sigma_thermal += 0.3 * thermal_gradient
 
 grid_sigma_h = (k_ratio * grid_sigma_v) - sigma_thermal
 sigma1_act = np.maximum(grid_sigma_v, grid_sigma_h)
@@ -134,25 +135,28 @@ sigma_t_field = grid_sigma_t0_base * np.exp(-beta_thermal * (temp_2d - 20))
 thermal_tension_boost = 1 + 0.6 * (1 - np.exp(-delta_T / 200))
 sigma_t_field_eff = sigma_t_field / thermal_tension_boost
 
-# --- FAILURE DETECTION ---
+# --- FAILURE DETECTION (YANGILANGAN) ---
 tensile_failure = (sigma3_act <= -sigma_t_field_eff) & (delta_T > 50) & (sigma1_act > sigma3_act)
 sigma3_safe = np.maximum(sigma3_act, 0.01)
 sigma1_limit = sigma3_safe + sigma_ci * (grid_mb * sigma3_safe / (sigma_ci + 1e-6) + grid_s_hb)**grid_a_hb
 shear_failure = sigma1_act >= sigma1_limit
 
-# Spalling, Crushing va Collapse
+# Spalling, Crushing va Collapse mantiqi
 spalling = tensile_failure & (temp_2d > 400)
 crushing = shear_failure & (temp_2d > 600)
+
+# Depth factor va Collapse final formulasi
+depth_factor = np.exp(-grid_z / total_depth)
 local_collapse_T = np.clip((st.session_state.max_temp_map - 600) / 300, 0, 1)
 time_factor = np.clip((time_h - 40) / 60, 0, 1)
-collapse_final = local_collapse_T * time_factor
+collapse_final = local_collapse_T * time_factor * (1 - depth_factor)
 
-# Bo'shliq maskasini shakllantirish va silliqlash
+# Bo'shliq maskasini shakllantirish
 void_mask_raw = (spalling | crushing | (st.session_state.max_temp_map > 900))
 void_mask_permanent = gaussian_filter(void_mask_raw.astype(float), sigma=1.5)
-void_mask_permanent = (void_mask_permanent > 0.3) & (collapse_final > 0.1)
+void_mask_permanent = (void_mask_permanent > 0.3) & (collapse_final > 0.05)
 
-# Bo'shliq ichida stresslarni nolga tenglashtirish
+# Stresslarni reset qilish
 sigma1_act = np.where(void_mask_permanent, 0, sigma1_act)
 sigma3_act = np.where(void_mask_permanent, 0, sigma3_act)
 sigma_ci = np.where(void_mask_permanent, 0.01, sigma_ci)
@@ -235,7 +239,6 @@ with c2:
         colorbar=dict(title="FOS", title_side="top", x=1.05, y=0.22, len=0.42, thickness=15)
     ), row=2, col=1)
 
-    # Doimiy bo'shliq va uning konturi (oq chiziq)
     void_visual = np.where(void_mask_permanent > 0.1, 1.0, np.nan)
     fig_tm.add_trace(go.Heatmap(
         z=void_visual, x=x_axis, y=z_axis,
@@ -243,7 +246,6 @@ with c2:
         showscale=False, opacity=0.9, hoverinfo='skip'
     ), row=2, col=1)
     
-    # Bo'shliq atrofidagi oq kontur
     fig_tm.add_trace(go.Contour(
         z=void_mask_permanent.astype(int),
         x=x_axis, y=z_axis,
@@ -253,7 +255,6 @@ with c2:
         hoverinfo='skip'
     ), row=2, col=1)
     
-    # Faqat bo'shliqdan tashqaridagi nuqtalarni ko'rsatish uchun maskalash
     shear_disp = np.copy(shear_failure)
     shear_disp[void_mask_permanent] = False
     tens_disp = np.copy(tensile_failure)
@@ -262,7 +263,6 @@ with c2:
     fig_tm.add_trace(go.Scatter(x=grid_x[shear_disp][::2], y=grid_z[shear_disp][::2], mode='markers', marker=dict(color='red', size=3, symbol='x'), name='Shear'), row=2, col=1)
     fig_tm.add_trace(go.Scatter(x=grid_x[tens_disp][::2], y=grid_z[tens_disp][::2], mode='markers', marker=dict(color='blue', size=3, symbol='cross'), name='Tensile'), row=2, col=1)
     
-    # Selek (Pillar) chizmalari
     for px in [(sources['1']['x']+sources['2']['x'])/2, (sources['2']['x']+sources['3']['x'])/2]:
         fig_tm.add_shape(type="rect", x0=px-rec_width/2, x1=px+rec_width/2, y0=source_z-H_seam/2, y1=source_z+H_seam/2, line=dict(color="lime", width=3), row=2, col=1)
     
