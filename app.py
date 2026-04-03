@@ -7,16 +7,6 @@ from scipy.ndimage import gaussian_filter
 # --- Sahifa sozlamalari ---
 st.set_page_config(page_title="Universal Geomechanical Monitor", layout="wide")
 
-# ==============================================================================
-# --- 🌍 GEOTECHNICAL DATABASE (NEW INTEGRATION) ---
-# ==============================================================================
-geo_db = {
-    "Angren (Uzbekistan)": {"E": 5500, "phi": 28, "c": 2.2, "alpha_T": 1.2e-5, "rho": 1350, "ucs": 15, "gsi": 55, "mi": 10},
-    "Zonguldak (Turkey)": {"E": 7500, "phi": 32, "c": 4.5, "alpha_T": 1.0e-5, "rho": 1450, "ucs": 35, "gsi": 65, "mi": 12},
-    "Shivee Ovoo (Mongolia)": {"E": 3200, "phi": 24, "c": 1.8, "alpha_T": 1.5e-5, "rho": 1250, "ucs": 10, "gsi": 45, "mi": 8},
-    "Custom": {"E": 5000, "phi": 25, "c": 2.0, "alpha_T": 1.0e-5, "rho": 2500, "ucs": 40, "gsi": 60, "mi": 10}
-}
-
 st.title("🌐 Universal Yer yuzasi Deformatsiyasi Monitoringi")
 st.markdown("### Termo-Mexanik (TM) tahlil va Selek O'lchami Optimizatsiyasi")
 
@@ -24,14 +14,6 @@ st.markdown("### Termo-Mexanik (TM) tahlil va Selek O'lchami Optimizatsiyasi")
 # --- 🧮 TO'LIQ MATEMATIK METODOLOGIYA (PHD LEVEL) ---
 # ==============================================================================
 st.sidebar.header("🧮 Matematik Metodologiya")
-
-# NEW: Ma'lumotlar bazasi va Rejim tanlovi
-selected_field = st.sidebar.selectbox("Kon ma'lumotlar bazasi:", list(geo_db.keys()))
-f_params = geo_db[selected_field]
-
-display_mode = st.sidebar.selectbox("Vizualizatsiya rejimi:", ["Standard (Metric)", "Universal (Dimensionless)"])
-failure_model = st.sidebar.selectbox("Plastiklik modeli (Failure Criteria):", ["Hoek-Brown (2018)", "Mohr-Coulomb", "Drucker-Prager"])
-
 formula_option = st.sidebar.selectbox(
     "Formulalarni ko'rish:",
     ["Yopish", "1. Hoek-Brown Failure (2018)", "2. Thermal Damage & Permeability", "3. Thermal Stress & Tension", "4. Pillar & Subsidence"]
@@ -41,21 +23,38 @@ if formula_option != "Yopish":
     with st.expander(f"📚 Ilmiy asos: {formula_option}", expanded=True):
         if formula_option == "1. Hoek-Brown Failure (2018)":
             st.latex(r"\sigma_1 = \sigma_3 + \sigma_{ci} \left( m_b \frac{\sigma_3}{\sigma_{ci}} + s \right)^a")
-            st.info("**Hoek-Brown:** GSI va Disturbance (D) faktorlari asosida massiv mustahkamligi.")
+            st.latex(r"m_b = m_i \exp\left(\frac{GSI-100}{28-14D}\right); \quad s = \exp\left(\frac{GSI-100}{9-3D}\right)")
+            st.latex(r"a = \frac{1}{2} + \frac{1}{6} \left( e^{-GSI/15} - e^{-20/3} \right)")
+            st.info("**Hoek-Brown:** GSI va Disturbance (D) faktorlari asosida massiv mustahkamligini hisoblash.")
+        
         elif formula_option == "2. Thermal Damage & Permeability":
             st.latex(r"D(T) = 1 - \exp\left(-\beta (T - T_0)\right)")
+            st.latex(r"\sigma_{ci(T)} = \sigma_{ci} \cdot (1 - D(T))")
+            st.latex(r"k = k_0 \left[ 1 + 20 \cdot D(T) + 50 \cdot V_{void} \right]")
+            st.info("**Termal degradatsiya:** Harorat ta'sirida jins strukturasining emirilishi va o'tkazuvchanlik ortishi.")
+            
         elif formula_option == "3. Thermal Stress & Tension":
-            st.latex(r"\sigma_{th} = \frac{E \cdot \alpha \cdot \Delta T}{1 - \nu}")
-        elif formula_option == "4. Pillar & Subsidence":
-            st.latex(r"\sigma_{p} = (UCS \cdot \eta) \cdot (w/H)^{0.5}")
+            st.latex(r"\sigma_{th} = \frac{E \cdot \alpha \cdot \Delta T}{1 - \nu} + \xi \cdot \nabla T")
+            st.latex(r"\sigma_{t(T)} = \sigma_{t0} \cdot \exp\left(-\beta_{th} (T - 20)\right)")
+            st.latex(r"FOS = \frac{\sigma_{limit}}{\sigma_{actual}}")
+            st.info("**Termo-mexanika:** Termal kengayish kuchlanishi va cho'zilish mustahkamligining kamayishi.")
 
-# --- Sidebar: Parametrlar ---
+        elif formula_option == "4. Pillar & Subsidence":
+            st.latex(r"\sigma_{p} = (UCS \cdot \eta) \cdot \left( \frac{w}{H} \right)^{0.5}")
+            st.latex(r"y = \frac{H}{2} \left( \sqrt{\frac{\sigma_v}{\sigma_p}} - 1 \right)")
+            st.latex(r"S(x) = S_{max} \cdot \exp\left( -\frac{x^2}{2i^2} \right); \quad \epsilon = 1.52 \frac{S(x)}{R}")
+            st.info("**Geomexanika:** Selek barqarorligi, plastik zona va yer yuzasining gorizontal deformatsiyasi.")
+
+# --- Sidebar: Parametrlar (Asl holatda saqlandi) ---
 st.sidebar.header("⚙️ Umumiy parametrlar")
-obj_name = st.sidebar.text_input("Loyiha nomi:", value=f"{selected_field.split()[0]}-UCG")
+obj_name = st.sidebar.text_input("Loyiha nomi:", value="Angren-UCG-001")
 time_h = st.sidebar.slider("Jarayon vaqti (soat):", 1, 150, 24)
 num_layers = st.sidebar.number_input("Qatlamlar soni:", min_value=1, max_value=5, value=3)
 
-tensile_mode = st.sidebar.selectbox("Tensile modeli:", ["Empirical (UCS)", "HB-based (auto)", "Manual"])
+tensile_mode = st.sidebar.selectbox(
+    "Tensile modeli:",
+    ["Empirical (UCS)", "HB-based (auto)", "Manual"]
+)
 
 st.sidebar.subheader("💎 Jins Xususiyatlari")
 D_factor = st.sidebar.slider("Disturbance Factor (D):", 0.0, 1.0, 0.7)
@@ -76,22 +75,16 @@ layers_data = []
 total_depth = 0
 for i in range(int(num_layers)):
     with st.sidebar.expander(f"{i+1}-qatlam parametrlari", expanded=(i == int(num_layers)-1)):
-        # DB dan defolt qiymatlarni olish (faqat oxirgi qatlam/ko'mir uchun)
-        is_seam = (i == int(num_layers)-1)
-        def_ucs = f_params['ucs'] if is_seam else 40.0
-        def_gsi = f_params['gsi'] if is_seam else 60.0
-        def_rho = f_params['rho'] if is_seam else 2500
-
         col1, col2 = st.columns([2, 1])
         with col1:
             name = st.text_input(f"Nomi:", value=f"Qatlam-{i+1}", key=f"name_{i}")
             thick = st.number_input(f"Qalinlik (m):", value=50.0, key=f"t_{i}")
-            u = st.number_input(f"UCS (MPa):", value=float(def_ucs), key=f"u_{i}")
-            rho = st.number_input(f"Zichlik (kg/m³):", value=int(def_rho), key=f"rho_{i}")
+            u = st.number_input(f"UCS (MPa):", value=40.0, key=f"u_{i}")
+            rho = st.number_input(f"Zichlik (kg/m³):", value=2500, key=f"rho_{i}")
         with col2:
             color = st.color_picker(f"Rangi:", strata_colors[i % len(strata_colors)], key=f"color_{i}")
-            g = st.slider(f"GSI:", 10, 100, int(def_gsi), key=f"g_{i}")
-            m = st.number_input(f"mi:", value=float(f_params['mi']) if is_seam else 10.0, key=f"m_{i}")
+            g = st.slider(f"GSI:", 10, 100, 60, key=f"g_{i}")
+            m = st.number_input(f"mi:", value=10.0, key=f"m_{i}")
             
         s_t0_val = st.number_input(f"σt0 (MPa):", value=3.0, key=f"st_{i}") if tensile_mode == "Manual" else 0.0
         
@@ -102,7 +95,7 @@ for i in range(int(num_layers)):
         })
         total_depth += thick
 
-# --- HISOB-KITOBLAR (ALGORITM ASOSI) ---
+# --- HISOB-KITOBLAR (ALGORITM BUZILMAGAN) ---
 x_axis = np.linspace(-total_depth*1.5, total_depth*1.5, 150)
 z_axis = np.linspace(0, total_depth + 50, 120)
 grid_x, grid_z = np.meshgrid(x_axis, z_axis)
@@ -128,13 +121,13 @@ for i, layer in enumerate(layers_data):
     grid_a_hb[mask] = 0.5 + (1/6)*(np.exp(-layer['gsi']/15) - np.exp(-20/3))
     grid_sigma_t0_manual[mask] = layer['sigma_t0_manual']
 
-alpha_rock = f_params['alpha_T'] * 1e5 # Ma'lumotlar bazasidan issiqlik o'tkazuvchanlik
+alpha_rock = 1.0e-6 
 sources = {'1': {'x': -total_depth/3, 'start': 0}, '2': {'x': 0, 'start': 40}, '3': {'x': total_depth/3, 'start': 80}}
 temp_2d = np.ones_like(grid_x) * 25 
 for key, val in sources.items():
     if time_h > val['start']:
         dt_sec = (time_h - val['start']) * 3600
-        pen_depth = np.sqrt(4 * 1e-6 * dt_sec) 
+        pen_depth = np.sqrt(4 * alpha_rock * dt_sec) 
         curr_T = T_source_max if (time_h - val['start']) <= burn_duration else 25 + (T_source_max-25)*np.exp(-0.03*((time_h-val['start'])-burn_duration))
         dist_sq = (grid_x - val['x'])**2 + (grid_z - source_z)**2
         temp_2d += (curr_T - 25) * np.exp(-dist_sq / (pen_depth**2 + 15**2))
@@ -148,32 +141,21 @@ damage = 1 - np.exp(-0.002 * temp_eff)
 damage = np.clip(damage, 0, 0.95)
 sigma_ci = grid_ucs * (1 - damage)
 
-E_mod = f_params['E'] 
-alpha_T_coeff = f_params['alpha_T']
+E = 5000 
+alpha_T_coeff = 1e-5
 constraint_factor = 0.7 
 
-sigma_thermal = constraint_factor * (E_mod * alpha_T_coeff * delta_T) / (1 - nu_poisson)
+dT_dx = np.gradient(temp_2d, axis=1)
+dT_dz = np.gradient(temp_2d, axis=0)
+thermal_gradient = np.sqrt(dT_dx**2 + dT_dz**2)
+
+sigma_thermal = constraint_factor * (E * alpha_T_coeff * delta_T) / (1 - nu_poisson)
+sigma_thermal += 0.3 * thermal_gradient
 
 grid_sigma_h = (k_ratio * grid_sigma_v) - sigma_thermal
 sigma1_act = np.maximum(grid_sigma_v, grid_sigma_h)
 sigma3_act = np.minimum(grid_sigma_v, grid_sigma_h)
 
-# --- PLASTIKLIK MODELLARI INTEGRATSIYASI ---
-def get_sigma1_limit(s3, model_type):
-    if model_type == "Mohr-Coulomb":
-        phi_rad = np.radians(f_params['phi'])
-        ka = (1 + np.sin(phi_rad)) / (1 - np.sin(phi_rad))
-        return s3 * ka + 2 * f_params['c'] * np.sqrt(ka)
-    elif model_type == "Drucker-Prager":
-        # Simplified DP for rock masses
-        return s3 * 1.8 + (sigma_ci * 0.4)
-    else: # Hoek-Brown
-        s3_safe = np.maximum(s3, 0.01)
-        return s3_safe + sigma_ci * (grid_mb * s3_safe / (sigma_ci + 1e-6) + grid_s_hb)**grid_a_hb
-
-sigma1_limit = get_sigma1_limit(sigma3_act, failure_model)
-
-# --- FAILURE DETECTION ---
 if tensile_mode == "Empirical (UCS)":
     grid_sigma_t0_base = tensile_ratio * sigma_ci
 elif tensile_mode == "HB-based (auto)":
@@ -182,22 +164,36 @@ else:
     grid_sigma_t0_base = grid_sigma_t0_manual
 
 sigma_t_field = grid_sigma_t0_base * np.exp(-beta_thermal * (temp_2d - 20))
-sigma_t_field_eff = sigma_t_field / (1 + 0.6 * (1 - np.exp(-delta_T / 200)))
+thermal_tension_boost = 1 + 0.6 * (1 - np.exp(-delta_T / 200))
+sigma_t_field_eff = sigma_t_field / thermal_tension_boost
 
-tensile_failure = (sigma3_act <= -sigma_t_field_eff) & (delta_T > 50)
+# --- FAILURE DETECTION & VOID ---
+tensile_failure = (sigma3_act <= -sigma_t_field_eff) & (delta_T > 50) & (sigma1_act > sigma3_act)
+sigma3_safe = np.maximum(sigma3_act, 0.01)
+sigma1_limit = sigma3_safe + sigma_ci * (grid_mb * sigma3_safe / (sigma_ci + 1e-6) + grid_s_hb)**grid_a_hb
 shear_failure = sigma1_act >= sigma1_limit
 
 spalling = tensile_failure & (temp_2d > 400)
 crushing = shear_failure & (temp_2d > 600)
 
-void_mask_raw = (spalling | crushing | (st.session_state.max_temp_map > 900))
-void_mask_permanent = gaussian_filter(void_mask_raw.astype(float), sigma=1.5) > 0.3
+depth_factor = np.exp(-grid_z / total_depth)
+local_collapse_T = np.clip((st.session_state.max_temp_map - 600) / 300, 0, 1)
+time_factor = np.clip((time_h - 40) / 60, 0, 1)
+collapse_final = local_collapse_T * time_factor * (1 - depth_factor)
 
-# --- Permeability va Selek ---
+void_mask_raw = (spalling | crushing | (st.session_state.max_temp_map > 900))
+void_mask_permanent = gaussian_filter(void_mask_raw.astype(float), sigma=1.5)
+void_mask_permanent = (void_mask_permanent > 0.3) & (collapse_final > 0.05)
+
+# --- Permeability va Void Volume ---
 perm = 1e-15 * (1 + 20 * damage + 50 * void_mask_permanent)
 void_volume = np.sum(void_mask_permanent) * (x_axis[1]-x_axis[0]) * (z_axis[1]-z_axis[0])
 
-# Selek Optimizatsiyasi
+sigma1_act = np.where(void_mask_permanent, 0, sigma1_act)
+sigma3_act = np.where(void_mask_permanent, 0, sigma3_act)
+sigma_ci = np.where(void_mask_permanent, 0.01, sigma_ci)
+
+# --- Selek Optimizatsiyasi ---
 avg_t_p = np.mean(temp_2d[np.abs(z_axis - source_z).argmin(), :])
 strength_red = np.exp(-0.0025 * (avg_t_p - 20))
 ucs_seam = layers_data[-1]['ucs']
@@ -216,12 +212,12 @@ fos_2d = np.clip(sigma1_limit / (sigma1_act + 1e-6), 0, 3.0)
 fos_2d = np.where(void_mask_permanent, 0, fos_2d)
 
 # --- VIZUALIZATSIYA ---
-st.subheader(f"📊 {obj_name} ({selected_field}): Monitoring")
+st.subheader(f"📊 {obj_name}: Monitoring va Ekspert Xulosasi")
 m1, m2, m3, m4, m5 = st.columns(5)
 m1.metric("Pillar Strength (σp)", f"{pillar_strength:.1f} MPa")
 m2.metric("Plastik zona (y)", f"{y_zone:.1f} m")
-m3.metric("Failure Model", failure_model.split('(')[0])
-m4.metric("Kamera Hajmi", f"{void_volume:.1f} m³")
+m3.metric("Kamera Hajmi", f"{void_volume:.1f} m³")
+m4.metric("Maks. O'tkazuvchanlik", f"{np.max(perm):.1e} m²")
 m5.metric("TAVSIYA: Selek Eni", f"{rec_width} m")
 
 st.markdown("---")
@@ -235,54 +231,95 @@ with col_g1:
 with col_g2:
     st.plotly_chart(go.Figure(go.Scatter(x=x_axis, y=uplift, fill='tozeroy', line=dict(color='cyan', width=3))).update_layout(title="🔥 Termal deformatsiya (cm)", template="plotly_dark", height=300), use_container_width=True)
 with col_g3:
-    # Hoek-Brown Envelopes
     sigma3_ax = np.linspace(0, ucs_seam * 0.5, 100)
-    s1_20 = sigma3_ax + ucs_seam * (f_params['mi'] * sigma3_ax / (ucs_seam + 1e-6) + 1)**0.5
+    mb_s, s_s, a_s = grid_mb.max(), grid_s_hb.max(), grid_a_hb.max()
+    s1_20 = sigma3_ax + ucs_seam * (mb_s * sigma3_ax / (ucs_seam + 1e-6) + s_s)**a_s
+    strength_red_burning = np.exp(-0.0025 * (T_source_max - 20))
+    ucs_burning = ucs_seam * strength_red_burning
+    s1_burning = sigma3_ax + ucs_burning * (mb_s * sigma3_ax / (ucs_burning + 1e-6) + s_s)**a_s
+    s1_sov = sigma3_ax + (ucs_seam * strength_red) * (mb_s * sigma3_ax / (ucs_seam * strength_red + 1e-6) + s_s)**a_s
     fig_hb = go.Figure()
-    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_20, name='Massiv (20°C)', line=dict(color='red')))
-    st.plotly_chart(fig_hb.update_layout(title="🛡️ Failure Envelope", template="plotly_dark", height=300), use_container_width=True)
+    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_20, name='20°C', line=dict(color='red', width=2)))
+    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_sov, name='Zararlangan', line=dict(color='cyan', dash='dash', width=2)))
+    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_burning, name='Yonish payti', line=dict(color='orange', width=4)))
+    st.plotly_chart(fig_hb.update_layout(title="🛡️ Hoek-Brown Envelopes", template="plotly_dark", height=300, 
+                                        legend=dict(orientation="h", y=-0.3, x=0.5, xanchor="center")), use_container_width=True)
 
 st.markdown("---")
 c1, c2 = st.columns([1, 2.5])
 with c1:
-    st.subheader("📋 Kesim")
+    st.subheader("📋 Ilmiy Tahlil")
+    st.error("🔴 FOS < 1.0: Failure")
+    st.warning("🟡 FOS 1.0 - 1.5: Unstable")
+    st.success("🟢 FOS > 1.5: Stable")
     fig_s = go.Figure()
-    for l in layers_data: fig_s.add_trace(go.Bar(x=['Section'], y=[l['t']], name=l['name'], marker_color=l['color'], width=0.4))
+    for l in layers_data: fig_s.add_trace(go.Bar(x=['Kesim'], y=[l['t']], name=l['name'], marker_color=l['color'], width=0.4))
     st.plotly_chart(fig_s.update_layout(barmode='stack', template="plotly_dark", yaxis=dict(autorange='reversed'), height=450, showlegend=False), use_container_width=True)
 
 with c2:
-    st.subheader(f"🔥 TM Maydoni va Selek Interferensiyasi ({display_mode})")
+    st.subheader("🔥 TM Maydoni va Selek Interferensiyasi (RS2)")
+    fig_tm = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.15, subplot_titles=("Harorat Maydoni (°C)", "Xavfsizlik Koeffitsiyenti (FOS) & Yielded Zones"))
     
-    # Dimensionless logic
-    if display_mode == "Universal (Dimensionless)":
-        p_x, p_z = grid_x / total_depth, grid_z / total_depth
-        p_t = (temp_2d - 25) / (T_source_max - 25)
-        x_label, z_label = "X / H", "Z / H"
-    else:
-        p_x, p_z, p_t = grid_x, grid_z, temp_2d
-        x_label, z_label = "Masofa (m)", "Chuqurlik (m)"
-
-    fig_tm = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.15, subplot_titles=("Harorat Maydoni", "FOS & Yielded Zones"))
+    fig_tm.add_trace(go.Heatmap(
+        z=temp_2d, x=x_axis, y=z_axis, colorscale='Hot', zmin=25, zmax=T_source_max, 
+        colorbar=dict(title="T (°C)", title_side="top", x=1.05, y=0.78, len=0.42, thickness=15)
+    ), row=1, col=1)
     
-    fig_tm.add_trace(go.Heatmap(z=p_t, x=x_axis if display_mode=="Standard (Metric)" else x_axis/total_depth, y=z_axis if display_mode=="Standard (Metric)" else z_axis/total_depth, colorscale='Hot'), row=1, col=1)
+    fig_tm.add_trace(go.Contour(
+        z=fos_2d, x=x_axis, y=z_axis, 
+        colorscale=[[0, 'red'], [0.33, 'yellow'], [0.5, 'green'], [1, 'darkgreen']], 
+        zmin=0, zmax=3.0, contours_showlines=False, 
+        colorbar=dict(title="FOS", title_side="top", x=1.05, y=0.22, len=0.42, thickness=15)
+    ), row=2, col=1)
+
+    void_visual = np.where(void_mask_permanent > 0.1, 1.0, np.nan)
+    fig_tm.add_trace(go.Heatmap(
+        z=void_visual, x=x_axis, y=z_axis,
+        colorscale=[[0, 'black'], [1, 'black']], 
+        showscale=False, opacity=0.9, hoverinfo='skip'
+    ), row=2, col=1)
     
-    fig_tm.add_trace(go.Contour(z=fos_2d, x=x_axis if display_mode=="Standard (Metric)" else x_axis/total_depth, y=z_axis if display_mode=="Standard (Metric)" else z_axis/total_depth, colorscale='RdYlGn', zmin=0, zmax=3.0, contours_showlines=False), row=2, col=1)
+    fig_tm.add_trace(go.Contour(
+        z=void_mask_permanent.astype(int),
+        x=x_axis, y=z_axis,
+        showscale=False,
+        contours=dict(coloring='lines'),
+        line=dict(color='white', width=2),
+        hoverinfo='skip'
+    ), row=2, col=1)
+    
+    shear_disp = np.copy(shear_failure)
+    shear_disp[void_mask_permanent] = False
+    tens_disp = np.copy(tensile_failure)
+    tens_disp[void_mask_permanent] = False
 
-    # RS2 Yielded Markers
-    y_idx, x_idx = np.where(shear_failure == True)
-    fig_tm.add_trace(go.Scatter(x=p_x[y_idx[::5], x_idx[::5]], y=p_z[y_idx[::5], x_idx[::5]], mode='markers', marker=dict(color='black', size=2, symbol='x'), name='Shear Yield'), row=2, col=1)
-
-    fig_tm.update_layout(template="plotly_dark", height=850, showlegend=True)
-    fig_tm.update_yaxes(autorange='reversed', title=z_label, row=1, col=1); fig_tm.update_yaxes(autorange='reversed', title=z_label, row=2, col=1)
-    fig_tm.update_xaxes(title=x_label, row=2, col=1)
+    fig_tm.add_trace(go.Scatter(x=grid_x[shear_disp][::2], y=grid_z[shear_disp][::2], mode='markers', marker=dict(color='red', size=3, symbol='x'), name='Shear'), row=2, col=1)
+    fig_tm.add_trace(go.Scatter(x=grid_x[tens_disp][::2], y=grid_z[tens_disp][::2], mode='markers', marker=dict(color='blue', size=3, symbol='cross'), name='Tensile'), row=2, col=1)
+    
+    for px in [(sources['1']['x']+sources['2']['x'])/2, (sources['2']['x']+sources['3']['x'])/2]:
+        fig_tm.add_shape(type="rect", x0=px-rec_width/2, x1=px+rec_width/2, y0=source_z-H_seam/2, y1=source_z+H_seam/2, line=dict(color="lime", width=3), row=2, col=1)
+    
+    fig_tm.update_layout(
+        template="plotly_dark", height=850, margin=dict(r=150, t=80, b=100),
+        showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=-0.12, xanchor="center", x=0.5)
+    )
+    fig_tm.update_yaxes(autorange='reversed', row=1, col=1); fig_tm.update_yaxes(autorange='reversed', row=2, col=1)
     st.plotly_chart(fig_tm, use_container_width=True)
 
-# --- MANBALAR ---
+# --- ILMIY METODOLOGIYA VA MANBALAR ---
 st.markdown("---")
-with st.expander("📚 PhD Research References"):
-    st.write("1. Hoek-Brown Failure Criterion (2018 Edition).")
-    st.write("2. Thermal-Mechanical Coupling in UCG Stability (Yang, 2010).")
-    st.write("3. Angren Coal Mine Geomechanical Properties Database.")
+with st.expander("📚 Ilmiy Metodologiya va Manbalar (PhD Research References)"):
+    st.markdown("#### Ushbu model quyidagi fundamental va zamonaviy ilmiy ishlar asosida tuzilgan:")
+    refs = [
+        "1. **Hoek, E., & Brown, E. T. (2018).** The Hoek-Brown failure criterion and GSI - 2018 edition.",
+        "2. **Yang, D. (2010).** Stability of underground coal gasification.",
+        "3. **Shao, S. et al. (2015).** A thermal damage constitutive model for rock.",
+        "4. **Cui, X. et al. (2017).** Permeability evolution of coal under thermal-mechanical coupling.",
+        "5. **Kratzsch, H. (2012).** Mining Subsidence Engineering.",
+        "6. **Brady, B. H., & Brown, E. T. (2006).** Rock Mechanics: For Underground Mining."
+    ]
+    for r in refs:
+        st.write(r)
 
 st.sidebar.markdown("---")
-st.sidebar.write(f"Tuzuvchi: Saitov Dilshodbek | {selected_field}")
+st.sidebar.write(f"Tuzuvchi: {obj_name.split('-')[0]} / Saitov Dilshodbek")
