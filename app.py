@@ -11,15 +11,14 @@ st.title("🌐 Universal Yer yuzasi Deformatsiyasi Monitoringi")
 st.markdown("### Termo-Mexanik (TM) tahlil va Selek O'lchami Optimizatsiyasi")
 
 # ==============================================================================
-# --- YANGI: MATEMATIK APPARAT VA FORMULALAR MENYUSI ---
+# --- 🧮 MATEMATIK APPARAT VA FORMULALAR MENYUSI (YANGI) ---
 # ==============================================================================
 st.sidebar.header("🧮 Matematik Metodologiya")
 formula_option = st.sidebar.selectbox(
-    "Formulalarni ko'rsatish:",
-    ["Yopish", "Hoek-Brown Criterion", "Thermal Stress & Damage", "Pillar Strength & Subsidence"]
+    "Formulalarni ko'rish:",
+    ["Yopish", "Hoek-Brown Criterion", "Thermal Stress & Damage", "Pillar & Subsidence"]
 )
 
-# Formulalarni asosiy ekranda chiqarish (Dashboard tepasida)
 if formula_option != "Yopish":
     with st.expander(f"📚 Ilmiy asos: {formula_option}", expanded=True):
         if formula_option == "Hoek-Brown Criterion":
@@ -31,12 +30,12 @@ if formula_option != "Yopish":
             st.latex(r"D(T) = 1 - e^{-\beta (T - T_{ref})}")
             st.info("**Termo-mexanika:** Harorat ta'sirida kuchlanish ortishi va jins strukturasining degradatsiyasi.")
             
-        elif formula_option == "Pillar Strength & Subsidence":
+        elif formula_option == "Pillar & Subsidence":
             st.latex(r"\sigma_{p} = \sigma_{ci} \cdot \left( A + B \cdot \frac{w}{h} \right)")
             st.latex(r"S(x) = S_{max} \cdot \exp\left( -\frac{x^2}{2i^2} \right)")
-            st.info("**Geomexanika:** Selek barqarorligi va yer yuzasining cho'kish profili (Kratzsch modeli).")
+            st.info("**Geomexanika:** Selek (pillar) barqarorligi va yer yuzasining cho'kish profili.")
 
-# --- Sidebar: Parametrlar (Mavjud qismlar o'zgarishsiz qoldi) ---
+# --- Sidebar: Parametrlar (Asl holatda saqlandi) ---
 st.sidebar.header("⚙️ Umumiy parametrlar")
 obj_name = st.sidebar.text_input("Loyiha nomi:", value="Angren-UCG-001")
 time_h = st.sidebar.slider("Jarayon vaqti (soat):", 1, 150, 24)
@@ -86,7 +85,7 @@ for i in range(int(num_layers)):
         })
         total_depth += thick
 
-# --- HISOB-KITOBLAR (Matematik mantiq saqlangan) ---
+# --- HISOB-KITOBLAR (ALGORITM BUZILMAGAN) ---
 x_axis = np.linspace(-total_depth*1.5, total_depth*1.5, 150)
 z_axis = np.linspace(0, total_depth + 50, 120)
 grid_x, grid_z = np.meshgrid(x_axis, z_axis)
@@ -212,7 +211,6 @@ m4.metric("Maks. O'tkazuvchanlik", f"{np.max(perm):.1e} m²")
 m5.metric("TAVSIYA: Selek Eni", f"{rec_width} m")
 
 st.markdown("---")
-# (Grafiklar qismi kodingizdagidek qoldi)
 col_g1, col_g2, col_g3 = st.columns([1.5, 1.5, 2])
 s_max = (H_seam * 0.04) * (min(time_h, 120) / 120)
 sub_p = -s_max * np.exp(-(x_axis**2) / (2 * (total_depth/2)**2))
@@ -298,9 +296,18 @@ with c2:
     fig_tm.update_yaxes(autorange='reversed', row=1, col=1); fig_tm.update_yaxes(autorange='reversed', row=2, col=1)
     st.plotly_chart(fig_tm, use_container_width=True)
 
-# --- REFERENCES (Mavjud qismlar o'zgarishsiz qoldi) ---
+# --- ILMIY METODOLOGIYA VA MANBALAR ---
+st.markdown("---")
 with st.expander("📚 Ilmiy Metodologiya va Manbalar (PhD Research References)"):
-    # ... kodingizdagi refs ro'yxati shu yerda ...
+    st.markdown("#### Ushbu model quyidagi fundamental va zamonaviy ilmiy ishlar asosida tuzilgan:")
+    refs = [
+        "1. **Hoek, E., & Brown, E. T. (2018).** The Hoek-Brown failure criterion and GSI - 2018 edition.",
+        "2. **Yang, D. (2010).** Stability of underground coal gasification.",
+        "3. **Shao, S. et al. (2015).** A thermal damage constitutive model for rock.",
+        "4. **Cui, X. et al. (2017).** Permeability evolution of coal under thermal-mechanical coupling.",
+        "5. **Kratzsch, H. (2012).** Mining Subsidence Engineering.",
+        "6. **Brady, B. H., & Brown, E. T. (2006).** Rock Mechanics: For Underground Mining."
+    ]
     for r in refs:
         st.write(r)
 
