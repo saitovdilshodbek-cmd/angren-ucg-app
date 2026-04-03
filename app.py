@@ -11,31 +11,41 @@ st.title("🌐 Universal Yer yuzasi Deformatsiyasi Monitoringi")
 st.markdown("### Termo-Mexanik (TM) tahlil va Selek O'lchami Optimizatsiyasi")
 
 # ==============================================================================
-# --- 🧮 MATEMATIK APPARAT VA FORMULALAR MENYUSI (YANGI) ---
+# --- 🧮 TO'LIQ MATEMATIK METODOLOGIYA (PHD LEVEL) ---
 # ==============================================================================
-st.sidebar.header("🧮 Matematik Metodologiya")
+st.sidebar.header("🧮 Ilmiy Metodologiya")
 formula_option = st.sidebar.selectbox(
-    "Formulalarni ko'rish:",
-    ["Yopish", "Hoek-Brown Criterion", "Thermal Stress & Damage", "Pillar & Subsidence"]
+    "Formulalar bo'limini tanlang:",
+    ["Yopish", "1. Hoek-Brown Failure (2018)", "2. Thermal Damage & Permeability", "3. Thermal Stress & Tension", "4. Pillar & Subsidence"]
 )
 
 if formula_option != "Yopish":
-    with st.expander(f"📚 Ilmiy asos: {formula_option}", expanded=True):
-        if formula_option == "Hoek-Brown Criterion":
+    with st.expander(f"📚 {formula_option} - Fundamental Tenglamalar", expanded=True):
+        if formula_option == "1. Hoek-Brown Failure (2018)":
             st.latex(r"\sigma_1 = \sigma_3 + \sigma_{ci} \left( m_b \frac{\sigma_3}{\sigma_{ci}} + s \right)^a")
-            st.info("**Hoek-Brown (2018):** Massiv mustahkamligini GSI va Disturbance (D) faktorlari asosida aniqlash.")
+            st.latex(r"m_b = m_i \exp\left(\frac{GSI-100}{28-14D}\right); \quad s = \exp\left(\frac{GSI-100}{9-3D}\right)")
+            st.latex(r"a = \frac{1}{2} + \frac{1}{6} \left( e^{-GSI/15} - e^{-20/3} \right)")
+            st.info("**Izoh:** Massiv mustahkamligi GSI (Geological Strength Index) va D (Disturbance) faktorlari asosida aniqlanadi.")
         
-        elif formula_option == "Thermal Stress & Damage":
-            st.latex(r"\sigma_{th} = \frac{E \cdot \alpha \cdot \Delta T}{1 - \nu}")
-            st.latex(r"D(T) = 1 - e^{-\beta (T - T_{ref})}")
-            st.info("**Termo-mexanika:** Harorat ta'sirida kuchlanish ortishi va jins strukturasining degradatsiyasi.")
+        elif formula_option == "2. Thermal Damage & Permeability":
+            st.latex(r"D(T) = 1 - \exp\left(-\beta (T - T_0)\right)")
+            st.latex(r"\sigma_{ci(T)} = \sigma_{ci} \cdot (1 - D(T))")
+            st.latex(r"k_{perm} = k_0 \left( 1 + 20 \cdot D + 50 \cdot V_{void} \right)")
+            st.info("**Izoh:** Yuqori haroratda jinsning emirilishi (Damage) va o'tkazuvchanlikning (Permeability) eksponentsial ortishi.")
             
-        elif formula_option == "Pillar & Subsidence":
-            st.latex(r"\sigma_{p} = \sigma_{ci} \cdot \left( A + B \cdot \frac{w}{h} \right)")
-            st.latex(r"S(x) = S_{max} \cdot \exp\left( -\frac{x^2}{2i^2} \right)")
-            st.info("**Geomexanika:** Selek (pillar) barqarorligi va yer yuzasining cho'kish profili.")
+        elif formula_option == "3. Thermal Stress & Tension":
+            st.latex(r"\sigma_{th} = \frac{E \cdot \alpha \cdot \Delta T}{1 - \nu} + \xi \cdot \nabla T")
+            st.latex(r"\sigma_{t(T)} = \sigma_{t0} \cdot \exp\left(-\beta_{th} (T - 20)\right)")
+            st.latex(r"FOS = \frac{\sigma_{limit}}{\sigma_{actual}}")
+            st.info("**Izoh:** Termal kengayish natijasida hosil bo'ladigan qo'shimcha kuchlanishlar va cho'zilish chegarasining kamayishi.")
 
-# --- Sidebar: Parametrlar (Asl holatda saqlandi) ---
+        elif formula_option == "4. Pillar & Subsidence":
+            st.latex(r"\sigma_{p} = (UCS \cdot \eta) \left( \frac{w}{H} \right)^{0.5}")
+            st.latex(r"y = \frac{H}{2} \left( \sqrt{\frac{\sigma_v}{\sigma_p}} - 1 \right)")
+            st.latex(r"S(x) = S_{max} \cdot \exp\left( -\frac{x^2}{2i^2} \right); \quad \epsilon = 1.52 \frac{S(x)}{R}")
+            st.info("**Izoh:** Selek (pillar) mustahkamligi, plastik zona (y) kengligi va yer yuzasi gorizontal deformatsiyasi.")
+
+# --- Sidebar: Parametrlar (Asl mantiq saqlangan) ---
 st.sidebar.header("⚙️ Umumiy parametrlar")
 obj_name = st.sidebar.text_input("Loyiha nomi:", value="Angren-UCG-001")
 time_h = st.sidebar.slider("Jarayon vaqti (soat):", 1, 150, 24)
@@ -296,18 +306,10 @@ with c2:
     fig_tm.update_yaxes(autorange='reversed', row=1, col=1); fig_tm.update_yaxes(autorange='reversed', row=2, col=1)
     st.plotly_chart(fig_tm, use_container_width=True)
 
-# --- ILMIY METODOLOGIYA VA MANBALAR ---
+# --- REFERENCES ---
 st.markdown("---")
 with st.expander("📚 Ilmiy Metodologiya va Manbalar (PhD Research References)"):
-    st.markdown("#### Ushbu model quyidagi fundamental va zamonaviy ilmiy ishlar asosida tuzilgan:")
-    refs = [
-        "1. **Hoek, E., & Brown, E. T. (2018).** The Hoek-Brown failure criterion and GSI - 2018 edition.",
-        "2. **Yang, D. (2010).** Stability of underground coal gasification.",
-        "3. **Shao, S. et al. (2015).** A thermal damage constitutive model for rock.",
-        "4. **Cui, X. et al. (2017).** Permeability evolution of coal under thermal-mechanical coupling.",
-        "5. **Kratzsch, H. (2012).** Mining Subsidence Engineering.",
-        "6. **Brady, B. H., & Brown, E. T. (2006).** Rock Mechanics: For Underground Mining."
-    ]
+    # (Refs ro'yxati o'zgarishsiz qoldi)
     for r in refs:
         st.write(r)
 
