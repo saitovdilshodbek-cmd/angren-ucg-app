@@ -365,7 +365,7 @@ with t2:
         "Parametr": ["Elastiklik Moduli (E)", "Termal kengayish (α)", "Atrof-muhit harorati (T₀)"],
         "Qiymat": [f"{E_MODULUS} MPa", f"{ALPHA_THERMAL} 1/°C", "20 °C"],
         "Tanlanish sababi": [
-            "Angren ko'miri uchun xos bo'lgan o'rtacha deformatsiya koeffitsiyenti.",
+            "Ko'miri uchun xos bo'lgan o'rtacha deformatsiya koeffitsiyenti.",
             "Ko'mirning issiqlikdan chiziqli kengayish ko'rsatkichi (Yang, 2010).",
             "Kon qatlamining boshlang'ich tabiiy harorati."
         ]
