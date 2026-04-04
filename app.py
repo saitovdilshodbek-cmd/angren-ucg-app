@@ -306,6 +306,82 @@ with c2:
     fig_tm.update_yaxes(autorange='reversed', row=1, col=1); fig_tm.update_yaxes(autorange='reversed', row=2, col=1)
     st.plotly_chart(fig_tm, use_container_width=True)
 
+st.header("🕒 Dinamik 3D Termo-Mexanik Simulyatsiya")
+
+# Vaqt slayderi
+time_step = st.slider("Yonish davomiyligi (kun):", 1, 30, 15)
+
+def generate_improved_3d_model(t):
+    # 1. Koordinatalar to'ri
+    x, y = np.meshgrid(np.linspace(-50, 50, 30), np.linspace(-50, 50, 30))
+    
+    # --- TAKLIF 3: Logarifmik cho'kish (Knothe + Time Dynamics) ---
+    # np.log1p cho'kishni dastlab sekin, keyinroq tezlashuvchi qiladi
+    subsidence_factor = (np.log1p(t) / np.log1p(30)) * 12 
+    subsidence = - subsidence_factor * np.exp(-(x**2 + y**2) / 500)
+    z_surface = np.full_like(x, 20) + subsidence
+    
+    # 2. Yonish kamerasi o'lchamlari
+    r_x = 2 + t * 0.4
+    r_y = 1.5 + t * 0.3
+    r_z = 1.5 + t * 0.2
+    
+    u = np.linspace(0, 2 * np.pi, 40)
+    v = np.linspace(0, np.pi, 40)
+    cx = r_x * np.outer(np.cos(u), np.sin(v))
+    cy = r_y * np.outer(np.sin(u), np.sin(v))
+    cz = r_z * np.outer(np.ones(np.size(u)), np.cos(v))
+    
+    # --- TAKLIF 1: Yonish kamerasining tartibsiz deformatsiyasi ---
+    # Bu real yonish konturini (irregular shape) ifodalaydi
+    deform_x = cx * (1 + 0.08 * np.random.randn(*cx.shape))
+    deform_y = cy * (1 + 0.08 * np.random.randn(*cy.shape))
+    deform_z = cz * (1 + 0.04 * np.random.randn(*cz.shape))
+    
+    fig = go.Figure()
+
+    # --- TAKLIF 4: Qatlamlar shaffofligini oshirish (Vizual aniqlik) ---
+    # Yer yuzasi
+    fig.add_trace(go.Surface(x=x, y=y, z=z_surface, colorscale='Greens', showscale=False, name="Yer yuzasi"))
+    
+    # Overburden (Qoplovchi jinslar) - 5m balandlikda
+    fig.add_trace(go.Surface(x=x, y=y, z=np.full_like(x, 5), colorscale='Greys', opacity=0.5, showscale=False, name="Overburden"))
+    
+    # Ko'mir qatlami - -5m balandlikda
+    fig.add_trace(go.Surface(x=x, y=y, z=np.full_like(x, -5), colorscale='Oranges', opacity=0.4, showscale=False, name="Ko'mir qatlami"))
+
+    # Deformatsiyalangan yonish kamerasi
+    fig.add_trace(go.Surface(x=deform_x, y=deform_y, z=deform_z, colorscale='Hot', showscale=False, name="Yonish kamerasi"))
+
+    # --- TAKLIF 2: Yoriqlar zonasi (Yuqoriga tarqalish) ---
+    if t > 5:
+        n_cracks = int(t * 7)
+        # Yoriqlar kaminaning tom qismida (Roof collapse zone) to'planadi
+        crack_x = np.random.uniform(-r_x-3, r_x+3, n_cracks)
+        crack_y = np.random.uniform(-r_y-3, r_y+3, n_cracks)
+        # r_z dan yuqoriga qarab tasodifiy tarqalish
+        crack_z = r_z + np.abs(np.random.randn(n_cracks) * 2.5) 
+        
+        fig.add_trace(go.Scatter3d(x=crack_x, y=crack_y, z=crack_z, mode='markers', 
+                                   marker=dict(size=3, color='black', symbol='diamond', opacity=0.8), 
+                                   name="Termal yoriqlar"))
+
+    # Grafik sozlamalari
+    fig.update_layout(
+        scene=dict(
+            xaxis=dict(range=[-60, 60], title="X (m)"),
+            yaxis=dict(range=[-60, 60], title="Y (m)"),
+            zaxis=dict(range=[-15, 25], title="Chuqurlik (m)"),
+            aspectmode='manual',
+            aspectratio=dict(x=1, y=1, z=0.5) # Chuqurlikni bo'rttirib ko'rsatish
+        ),
+        margin=dict(l=0, r=0, b=0, t=30),
+        title=f"UCG Termo-Mexanik Model (Kun: {t})"
+    )
+    return fig
+
+st.plotly_chart(generate_improved_3d_model(time_step), use_container_width=True)
+
 # ==============================================================================
 # --- 📑 CHUQURLASHTIRILGAN ILMIY HISOBOT VA BIBLIOGRAFIYA (PHD EDITION) ---
 # ==============================================================================
