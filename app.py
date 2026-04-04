@@ -306,81 +306,76 @@ with c2:
     fig_tm.update_yaxes(autorange='reversed', row=1, col=1); fig_tm.update_yaxes(autorange='reversed', row=2, col=1)
     st.plotly_chart(fig_tm, use_container_width=True)
 
-st.header("🕒 Dinamik 3D Termo-Mexanik Simulyatsiya")
 
-# Vaqt slayderi
-time_step = st.slider("Yonish davomiyligi (kun):", 1, 30, 15)
+st.header("🕒 Dinamik 3D Termo-Mexanik Model")
+st.write("Yonish jarayonining vaqt davomida kengayishi va uning massivga ta'siri.")
 
-def generate_improved_3d_model(t):
-    # 1. Koordinatalar to'ri
-    x, y = np.meshgrid(np.linspace(-50, 50, 30), np.linspace(-50, 50, 30))
+# Vaqt slayderi (masalan, 1 tadan 30 kungacha)
+time_step = st.slider("Yonish davomiyligi (kun):", 1, 30, 10)
+
+def generate_3d_ucg_model(t):
+    # 1. Qatlamlar geometriyasi
+    x, y = np.meshgrid(np.linspace(-50, 50, 20), np.linspace(-50, 50, 20))
     
-    # --- TAKLIF 3: Logarifmik cho'kish (Knothe + Time Dynamics) ---
-    # np.log1p cho'kishni dastlab sekin, keyinroq tezlashuvchi qiladi
-    subsidence_factor = (np.log1p(t) / np.log1p(30)) * 12 
-    subsidence = - subsidence_factor * np.exp(-(x**2 + y**2) / 500)
+    # Yer yuzasi (Subsidence realistik progressiya)
+    subsidence = - (np.log1p(t)/np.log1p(30)) * 10 * np.exp(-(x**2 + y**2) / 400)
     z_surface = np.full_like(x, 20) + subsidence
     
-    # 2. Yonish kamerasi o'lchamlari
-    r_x = 2 + t * 0.4
-    r_y = 1.5 + t * 0.3
+    # Yonish kamerasi (Dinamik, biroz deformatsiyalangan ellipsoid)
+    r_x = 2 + t * 0.5
     r_z = 1.5 + t * 0.2
-    
-    u = np.linspace(0, 2 * np.pi, 40)
-    v = np.linspace(0, np.pi, 40)
+    u = np.linspace(0, 2 * np.pi, 30)
+    v = np.linspace(0, np.pi, 30)
     cx = r_x * np.outer(np.cos(u), np.sin(v))
-    cy = r_y * np.outer(np.sin(u), np.sin(v))
+    cy = r_x * np.outer(np.sin(u), np.sin(v))
     cz = r_z * np.outer(np.ones(np.size(u)), np.cos(v))
     
-    # --- TAKLIF 1: Yonish kamerasining tartibsiz deformatsiyasi ---
-    # Bu real yonish konturini (irregular shape) ifodalaydi
-    deform_x = cx * (1 + 0.08 * np.random.randn(*cx.shape))
-    deform_y = cy * (1 + 0.08 * np.random.randn(*cy.shape))
-    deform_z = cz * (1 + 0.04 * np.random.randn(*cz.shape))
+    # Biroz notekis deformatsiya qo‘shish
+    deform_x = cx * (1 + 0.1 * np.random.randn(*cx.shape))
+    deform_y = cy * (1 + 0.1 * np.random.randn(*cy.shape))
+    deform_z = cz * (1 + 0.05 * np.random.randn(*cz.shape))
     
     fig = go.Figure()
 
-    # --- TAKLIF 4: Qatlamlar shaffofligini oshirish (Vizual aniqlik) ---
-    # Yer yuzasi
+    # A) Yer yuzasi (Subsidence layer)
     fig.add_trace(go.Surface(x=x, y=y, z=z_surface, colorscale='Greens', showscale=False, name="Yer yuzasi"))
-    
-    # Overburden (Qoplovchi jinslar) - 5m balandlikda
-    fig.add_trace(go.Surface(x=x, y=y, z=np.full_like(x, 5), colorscale='Greys', opacity=0.5, showscale=False, name="Overburden"))
-    
-    # Ko'mir qatlami - -5m balandlikda
+
+    # B) Qatlamlar (Overburden va Ko'mir)
+    fig.add_trace(go.Surface(x=x, y=y, z=np.full_like(x, 5), colorscale='Greys', opacity=0.5, showscale=False, name="Qoplovchi jins"))
     fig.add_trace(go.Surface(x=x, y=y, z=np.full_like(x, -5), colorscale='Oranges', opacity=0.4, showscale=False, name="Ko'mir qatlami"))
 
-    # Deformatsiyalangan yonish kamerasi
-    fig.add_trace(go.Surface(x=deform_x, y=deform_y, z=deform_z, colorscale='Hot', showscale=False, name="Yonish kamerasi"))
+    # C) Yonish kamerasi (Dinamik)
+    fig.add_trace(go.Surface(x=deform_x, y=deform_y, z=deform_z, colorscale='Reds', showscale=False, name="Yonish kamerasi"))
 
-    # --- TAKLIF 2: Yoriqlar zonasi (Yuqoriga tarqalish) ---
+    # D) Yoriqlar zonasi (Vaqtga bog'liq tarqalish)
     if t > 5:
-        n_cracks = int(t * 7)
-        # Yoriqlar kaminaning tom qismida (Roof collapse zone) to'planadi
-        crack_x = np.random.uniform(-r_x-3, r_x+3, n_cracks)
-        crack_y = np.random.uniform(-r_y-3, r_y+3, n_cracks)
-        # r_z dan yuqoriga qarab tasodifiy tarqalish
-        crack_z = r_z + np.abs(np.random.randn(n_cracks) * 2.5) 
-        
+        n_cracks = int(t * 5)
+        crack_x = np.random.uniform(-r_x-2, r_x+2, n_cracks)
+        crack_y = np.random.uniform(-r_x-2, r_x+2, n_cracks)
+        crack_z = r_z + np.abs(np.random.randn(n_cracks) * 1.0)  # yuqoriga tarqalish
         fig.add_trace(go.Scatter3d(x=crack_x, y=crack_y, z=crack_z, mode='markers', 
-                                   marker=dict(size=3, color='black', symbol='diamond', opacity=0.8), 
-                                   name="Termal yoriqlar"))
+                                   marker=dict(size=2, color='black', symbol='x'), name="Termal yoriqlar"))
 
-    # Grafik sozlamalari
     fig.update_layout(
+        title=f"Yonish jarayoni: {t}-kun",
         scene=dict(
-            xaxis=dict(range=[-60, 60], title="X (m)"),
-            yaxis=dict(range=[-60, 60], title="Y (m)"),
-            zaxis=dict(range=[-15, 25], title="Chuqurlik (m)"),
-            aspectmode='manual',
-            aspectratio=dict(x=1, y=1, z=0.5) # Chuqurlikni bo'rttirib ko'rsatish
+            xaxis_title="X (m)", yaxis_title="Y (m)", zaxis_title="Chuqurlik (m)",
+            zaxis=dict(range=[-20, 25]),
         ),
-        margin=dict(l=0, r=0, b=0, t=30),
-        title=f"UCG Termo-Mexanik Model (Kun: {t})"
+        margin=dict(l=0, r=0, b=0, t=40)
     )
     return fig
 
-st.plotly_chart(generate_improved_3d_model(time_step), use_container_width=True)
+st.plotly_chart(generate_3d_ucg_model(time_step), use_container_width=True)
+
+st.markdown("""
+### 📊 Model interpretatsiyasi:
+1.  **Dinamik yonish:** Slayderni surganingizda yonish kamerasi (qizil ellipsoid) kengayadi va biroz notekis shakl oladi.
+2.  **Yoriqlar (Fractures):** Yonish davomiyligi ortishi bilan kaminaning tom qismida **termal va mexanik yoriqlar** (qora belgilar) paydo bo‘ladi.
+3.  **Subsidence (Yer cho'kishi):** Yer yuzasidagi yashil qatlamda kamera kengayishiga mutanosib ravishda **cho'kish voronkasi** shakllanadi.
+4.  **O'zaro ta'sir:** Yonish kamerasining o'lchami ortishi selekning samarali enini kamaytiradi, bu esa yuqoridagi FOS koeffitsiyentiga bevosita ta'sir qiladi.
+""")
+
 
 # ==============================================================================
 # --- 📑 CHUQURLASHTIRILGAN ILMIY HISOBOT VA BIBLIOGRAFIYA (PHD EDITION) ---
