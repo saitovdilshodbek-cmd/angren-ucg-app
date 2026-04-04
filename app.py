@@ -308,159 +308,187 @@ with c2:
 
 
 # ==============================================================================
-# --- 🌀 BOSQICHMA-BOSQICH UCG DINAMIK MODELI (GEOMEXANIK BOG'LIQLIK) ---
+# --- 🌀 BOSQICHMA-BOSQICH UCG DINAMIK MODELI ---
+# Bu bo'lim yuqoridagi layers_data, total_depth, source_z, H_seam
+# o'zgaruvchilaridan foydalanadi (sidebar'dan kiritilgan real qatlam ma'lumotlari)
 # ==============================================================================
-st.header("🌀 UCG: Kompleks Qatlamli Yonish va O'pirilish Modeli")
+st.markdown("---")
+st.header("🌀 UCG: Bosqichma-bosqich Yonish va O'pirilish Modeli")
+st.caption("⬇️ Qatlamlar, chuqurliklar va ranglar yuqoridagi sidebar parametrlaridan avtomatik olinmoqda")
 
-# 60 kunlik umumiy sikl
-time_step = st.slider("Loyiha davomiyligi (kun):", 1, 60, 30)
+time_step = st.slider("Loyiha davomiyligi (kun):", 1, 60, 30, key="ucg_time_step")
 
-def generate_layered_3d_model(t, layers):
-    # 1. Koordinatalar setkasi
-    grid_size = 40
-    x_range = np.linspace(-100, 100, grid_size)
-    y_range = np.linspace(-60, 60, grid_size)
-    x, y = np.meshgrid(x_range, y_range)
-    
+
+def generate_step_by_step_model(t, layers_data, total_depth, H_seam):
+    """
+    3D UCG dinamik modeli.
+    layers_data  — sidebar'dan kiritilgan qatlam ma'lumotlari (1-kod)
+    total_depth  — barcha qatlamlarning umumiy chuqurligi (m)
+    H_seam       — ko'mir qatlamining qalinligi (m)
+    """
+
+    # ---- Koordinatalar ----
+    x, y = np.meshgrid(np.linspace(-100, 100, 45), np.linspace(-70, 70, 45))
     centers_x = [-45, 0, 45]
-    
-    # 2. Kameralar holatini aniqlash
-    radii = []
+
+    # ---- 3D koordinat masshtabi ----
+    # 1-koddagi real chuqurlikni 3D modelning z o'qiga moslashtirish
+    # z=25 → yer yuzasi, z=0 → ko'mir qatlami markazi
+    z_surface_3d = 25.0
+    z_range_3d   = 32.0   # model ko'rsatiladigan diapason (-7 dan 25 gacha)
+    scale = z_range_3d / total_depth if total_depth > 0 else 1.0
+
+    # Ko'mir qatlamining 3D modeldagi z-koordinatasi
+    coal_center_z3d = z_surface_3d - source_z * scale   # source_z = 1-koddan
+
+    # ---- Kameralar holati ----
     states = []
+    radii  = []
     for i in range(3):
         start_day = i * 20
-        end_day = (i + 1) * 20
+        end_day   = (i + 1) * 20
         if t <= start_day:
-            radii.append(0); states.append("Kutilmoqda")
+            states.append("Kutilmoqda")
+            radii.append(0)
         elif start_day < t <= end_day:
-            local_t = t - start_day
-            radii.append(2 + local_t * 0.5); states.append("Faol")
+            states.append("Faol")
+            radii.append(2 + (t - start_day) * 0.5)
         else:
-            radii.append(12); states.append("Yonib bo'lgan")
+            states.append("Yonib bo'lgan")
+            radii.append(2 + 20 * 0.5)
 
-    # 3. Cho'kishni (Subsidence) hisoblash
-    # Birinchi koddagi s_max mantiqiga yaqinlashtirilgan
-    total_subs = np.zeros_like(x)
+    # ---- Cho'kish (Subsidence) ----
+    subsidence_factor = (np.log1p(t) / np.log1p(60)) * 18
+    subs_total = np.zeros_like(x)
     for i in range(3):
         if radii[i] > 0:
-            # Cho'kish chuqurligi kamera radiusiga va vaqtga bog'liq
-            strength = (radii[i] / 12) * 5.0 
-            total_subs += - strength * np.exp(-((x - centers_x[i])**2 + y**2) / 800)
+            subs_total += -(subsidence_factor * np.log1p(radii[i]) / np.log1p(12)) * \
+                           np.exp(-((x - centers_x[i])**2 + y**2) / 600)
 
+    z_surface_dyn = np.full_like(x, z_surface_3d) + subs_total
+    max_subs = np.abs(subs_total).max()
+
+    # ---- Grafik ----
     fig = go.Figure()
 
-    # 4. QATLAMLARNI BLOK HOLIDA CHIZISH (Integrated from layers_data)
-    # layers_data dagi har bir qatlamni 3D sirt sifatida chizamiz
-    # Z o'qi teskari (chuqurlik pastga qarab ortadi, shuning uchun -1 bilan ko'paytiriladi)
-    
-    current_z_top = 0
-    for i, layer in enumerate(layers):
-        z_top = current_z_top
-        z_bottom = current_z_top + layer['t']
-        
-        # Yer yuzasi (0-metr) cho'kishni hisobga oladi
-        if i == 0:
-            z_surface = -z_top + total_subs
-        else:
-            # Pastki qatlamlar cho'kishning 70% ini qabul qiladi (attenuation)
-            z_surface = -z_top + (total_subs * (0.7 ** i))
+    # Yer yuzasi
+    fig.add_trace(go.Surface(
+        x=x, y=y, z=z_surface_dyn,
+        colorscale='Greens', showscale=False, name="Yer yuzasi"
+    ))
 
-        # Qatlamning ustki qismi
+    # Har bir real qatlam uchun gorizontal yuzalar
+    cum_depth = 0
+    for idx, layer in enumerate(layers_data):
+        z_top_3d = z_surface_3d - cum_depth * scale
+        cum_depth += layer['t']
+        z_bot_3d = z_surface_3d - cum_depth * scale
+
+        # Hex rangni RGB ga aylantirish
+        hex_c = layer['color'].lstrip('#')
+        r_c, g_c, b_c = tuple(int(hex_c[j:j+2], 16) for j in (0, 2, 4))
+        layer_colorscale = [[0, f'rgb({r_c},{g_c},{b_c})'], [1, f'rgb({r_c},{g_c},{b_c})']]
+
+        # Qatlam yuzasi (yuqori chegarasi)
+        opacity_val = 0.5 if idx < len(layers_data) - 1 else 0.65
         fig.add_trace(go.Surface(
-            x=x, y=y, z=z_surface,
-            colorscale=[[0, layer['color']], [1, layer['color']]],
-            opacity=0.6 if i > 0 else 0.9,
+            x=x, y=y, z=np.full_like(x, z_top_3d),
+            colorscale=layer_colorscale,
+            opacity=opacity_val,
             showscale=False,
-            name=layer['name'],
-            legendgroup=layer['name'],
-            hoverinfo='text',
-            text=f"Qatlam: {layer['name']} | Chuqurlik: {z_top}m"
+            name=layer['name']
         ))
-        
-        current_z_top = z_bottom
 
-    # 5. UCG KAMERALARI (Ko'mir qatlami ichida)
-    # Ko'mir qatlami oxirgi qatlam deb hisoblangan (layers[-1])
-    coal_z_center = -(sum(l['t'] for l in layers[:-1]) + layers[-1]['t']/2)
-    
-    u, v = np.mgrid[0:2*np.pi:20j, 0:np.pi:20j]
+    # ---- Kameralar va o'pirilishlar ----
+    u_ang, v_ang = np.mgrid[0:2*np.pi:25j, 0:np.pi:25j]
     for i, cx in enumerate(centers_x):
         if radii[i] > 0:
+            np.random.seed(i + t)
             r = radii[i]
-            # Kamera deformatsiyasi
-            dx = r * np.cos(u) * np.sin(v) 
-            dy = (r*0.7) * np.sin(u) * np.sin(v)
-            dz = (r*0.5) * np.cos(v) + coal_z_center
-            
-            color = 'Hot' if states[i] == "Faol" else 'Greys'
+
+            dx = r       * np.cos(u_ang) * np.sin(v_ang) * (1 + 0.07 * np.random.randn(25, 25))
+            dy = (r*0.8) * np.sin(u_ang) * np.sin(v_ang) * (1 + 0.07 * np.random.randn(25, 25))
+            dz = (r*0.6) * np.cos(v_ang)                 * (1 + 0.04 * np.random.randn(25, 25))
+
+            c_map = 'Hot'     if states[i] == "Faol"         else 'Greys_r'
+            opac  = 0.95      if states[i] == "Faol"         else 0.5
+
+            # Kamerani ko'mir qatlamining 3D z-koordinatasiga joylash
             fig.add_trace(go.Surface(
-                x=dx + cx, y=dy, z=dz,
-                colorscale=color, opacity=0.9, showscale=False,
-                name=f"Kamera {i+1}"
+                x=dx + cx,
+                y=dy,
+                z=dz + coal_center_z3d,
+                colorscale=c_map, opacity=opac, showscale=False,
+                name=f"{layers_data[-1]['name']} K{i+1}"
             ))
 
-            # 6. O'PIRILISH (COLLAPSE) ZONASI
+            # Yonib bo'lgan kameralar uchun o'pirilish zonasi
             if states[i] == "Yonib bo'lgan":
-                np.random.seed(i)
-                n_collapse = 40
-                col_x = np.random.uniform(cx - 8, cx + 8, n_collapse)
-                col_y = np.random.uniform(-8, 8, n_collapse)
-                # O'pirilish jinslari kamera ustida to'planadi
-                col_z = np.random.uniform(coal_z_center, coal_z_center + 15, n_collapse)
-                
+                n_collapse = 50
+                col_x = np.random.uniform(cx - 10, cx + 10, n_collapse)
+                col_y = np.random.uniform(-10,      10,      n_collapse)
+                col_z = np.random.uniform(coal_center_z3d,
+                                          coal_center_z3d + max_subs / 2,
+                                          n_collapse)
                 fig.add_trace(go.Scatter3d(
                     x=col_x, y=col_y, z=col_z,
                     mode='markers',
-                    marker=dict(size=3, color='black', symbol='diamond'),
-                    name=f"O'pirilish K{i+1}"
+                    marker=dict(size=2.5, color='black', symbol='diamond', opacity=0.6),
+                    name=f"Collapse K{i+1}"
                 ))
 
-    # 7. FAOL STRESS NUQTALARI
-    if "Faol" in states:
-        idx = states.index("Faol")
-        np.random.seed(t)
-        st_x = np.random.uniform(centers_x[idx]-15, centers_x[idx]+15, 15)
-        st_y = np.random.uniform(-15, 15, 15)
-        st_z = np.random.uniform(coal_z_center + 10, 0, 15)
-        
+    # ---- Faol stress ----
+    if any(s == "Faol" for s in states):
+        act_idx = states.index("Faol")
+        act_x   = centers_x[act_idx]
+        n_pts   = int((t % 20) + 10)
+
+        st_x = np.random.uniform(act_x - 15, act_x + 15, n_pts)
+        st_y = np.random.uniform(-15,          15,         n_pts)
+        st_z = np.random.uniform(coal_center_z3d - max_subs/3,
+                                 coal_center_z3d + max_subs/3, n_pts)
+
         fig.add_trace(go.Scatter3d(
             x=st_x, y=st_y, z=st_z,
             mode='markers',
             marker=dict(size=4, color='cyan', symbol='x'),
-            name="Dinamik Stress"
+            name="Faol Stress"
         ))
 
-    # Grafik sozlamalari
-    max_depth = sum(l['t'] for l in layers)
+    # ---- Qatlamlar ro'yxati (annotatsiya) ----
+    layer_legend = " | ".join(
+        [f"<span style='color:{l['color']}'>{l['name']} ({l['t']:.0f}m)</span>"
+         for l in layers_data]
+    )
+    st.markdown(f"**Qatlamlar:** {layer_legend}", unsafe_allow_html=True)
+
     fig.update_layout(
         scene=dict(
             xaxis_title="X (m)",
             yaxis_title="Y (m)",
-            zaxis_title="Z (m)",
-            zaxis=dict(range=[-max_depth - 20, 30]),
-            aspectmode='manual',
-            aspectratio=dict(x=1, y=0.6, z=0.5)
+            zaxis_title="H (m)",
+            zaxis=dict(range=[coal_center_z3d - 15, z_surface_3d + 5])
         ),
-        margin=dict(l=0, r=0, b=0, t=40),
-        title=f"Angren UCG Kompleks 3D Modeli: {t}-kun"
+        margin=dict(l=0, r=0, b=0, t=30),
+        title=f"UCG Bosqichma-bosqich Model: {t}-kun  |  {obj_name}"
     )
-    return fig
+    return fig, states
 
-# Ilovada chaqirish
-# Diqqat: 'layers_data' o'zgaruvchisi birinchi kod blokidan kelishi kerak
-if 'layers_data' in locals() or 'layers_data' in globals():
-    fig_3d = generate_layered_3d_model(time_step, layers_data)
-    st.plotly_chart(fig_3d, use_container_width=True)
-    
-    # Izohlar
-    with st.expander("📝 3D Model Izohi"):
-        st.write(f"""
-        - **Qatlamli bloklar:** Sidebar orqali kiritilgan {len(layers_data)} ta qatlam o'zining fizik qalinligi bo'yicha 3D fazoda aks etgan.
-        - **Dinamik Cho'kish:** Kamera kengayishi bilan yuqori qatlamlar (Overburden) plastik deformatsiyaga uchramoqda.
-        - **Termal Kamera:** Markazdagi radius {time_step}-kunga kelib {12 if time_step > 40 else (2 + (time_step%20)*0.5):.1f} metrga yetdi.
-        """)
-else:
-    st.warning("Iltimos, avval sidebar orqali qatlam parametrlarini kiriting!")
+
+# ---- Grafik va holat paneli ----
+fig_final, current_states = generate_step_by_step_model(
+    time_step, layers_data, total_depth, H_seam
+)
+st.plotly_chart(fig_final, use_container_width=True)
+
+collapsed_count = current_states.count("Yonib bo'lgan")
+st.info(
+    f"**Joriy tahlil:** {time_step}-kun holatida "
+    f"{collapsed_count} ta kamera yonib bo'lgan. "
+    f"Ko'mir qatlami ({layers_data[-1]['name']}, "
+    f"{layers_data[-1]['t']:.0f} m qalinlik) uchun "
+    f"cho'kish {collapsed_count * 5:.1f} m atrofida prognoz qilinmoqda."
+)
 
 # ==============================================================================
 # --- 📑 CHUQURLASHTIRILGAN ILMIY HISOBOT VA BIBLIOGRAFIYA (PHD EDITION) ---
