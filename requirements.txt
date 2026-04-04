@@ -2,3 +2,5 @@ numpy
 matplotlib
 scipy
 plotly
+streamlit
+scikit-learn
