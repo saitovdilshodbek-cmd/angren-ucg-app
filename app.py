@@ -411,8 +411,6 @@ def generate_step_by_step_model(t):
 fig_final, current_st = generate_step_by_step_model(time_step)
 st.plotly_chart(fig_final, use_container_width=True)
 
-# Holat paneli
-st.info(f"**Joriy tahlil:** {time_step}-kun holatida cho'kish maksimal darajasi {np.abs(current_st.count('Yonib bo'lgan') * 5):.1f} m atrofida prognoz qilinmoqda.")
 # ==============================================================================
 # --- 📑 CHUQURLASHTIRILGAN ILMIY HISOBOT VA BIBLIOGRAFIYA (PHD EDITION) ---
 # ==============================================================================
