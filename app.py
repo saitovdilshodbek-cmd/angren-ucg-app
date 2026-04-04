@@ -306,9 +306,7 @@ with c2:
     fig_tm.update_yaxes(autorange='reversed', row=1, col=1); fig_tm.update_yaxes(autorange='reversed', row=2, col=1)
     st.plotly_chart(fig_tm, use_container_width=True)
 
-import streamlit as st
-import numpy as np
-import plotly.graph_objects as go
+
 
 # ==============================================================================
 # --- 🌀 BOSQICHMA-BOSQICH UCG DINAMIK MODELI (FIRST CODE INTEGRATION) ---
