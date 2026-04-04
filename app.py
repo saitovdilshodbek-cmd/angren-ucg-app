@@ -380,92 +380,80 @@ def generate_integrated_3d(h, layers, s_max):
             hoverinfo='skip'
         ))
 
-def generate_integrated_3d(h, layers, s_max):
-    grid_res = 35 
-    # Y o'qini faqat manfiy tomondan 0 gacha olamiz (Kesim hosil qilish uchun)
-    x = np.linspace(-100, 100, grid_res)
-    y = np.linspace(-60, 0, grid_res) # 0 da to'xtaydi, ya'ni o'rtasidan kesiladi
-    gx, gy = np.meshgrid(x, y)
-    
-    subs_map = -s_max * np.exp(-(gx**2 + gy**2) / 800)
-    fig = go.Figure()
-    
-    curr_z = 0
-    for i, layer in enumerate(layers):
-        z_top_base = curr_z
-        z_bottom_base = curr_z + layer['t']
-        
-        deform_top = subs_map * (0.85 ** i)
-        deform_bottom = subs_map * (0.85 ** (i + 1))
-        
-        z_top = -z_top_base + deform_top
-        z_bottom = -z_bottom_base + deform_bottom
-        
-        # 1. Qatlamning ustki sirti
-        fig.add_trace(go.Surface(
-            x=gx, y=gy, z=z_top,
-            colorscale=[[0, layer['color']], [1, layer['color']]],
-            opacity=1.0, showscale=False, name=layer['name']
-        ))
-        
-        # 2. Qatlamning pastki sirti
-        fig.add_trace(go.Surface(
-            x=gx, y=gy, z=z_bottom,
-            colorscale=[[0, layer['color']], [1, layer['color']]],
-            opacity=0.8, showscale=False
-        ))
+        # 3. Qatlamning yon devorlari (Blok ko'rinishini berish uchun)
+        # To'rning chetki chiziqlari bo'ylab vertikal yuzalar chizamiz
+        for side in range(4):
+            if side == 0: # X-min devori
+                sx, sy = gx[:, 0], gy[:, 0]
+                sz_t, sz_b = z_top[:, 0], z_bottom[:, 0]
+            elif side == 1: # X-max devori
+                sx, sy = gx[:, -1], gy[:, -1]
+                sz_t, sz_b = z_top[:, -1], z_bottom[:, -1]
+            elif side == 2: # Y-min devori
+                sx, sy = gx[0, :], gy[0, :]
+                sz_t, sz_b = z_top[0, :], z_bottom[0, :]
+            else: # Y-max devori
+                sx, sy = gx[-1, :], gy[-1, :]
+                sz_t, sz_b = z_top[-1, :], z_bottom[-1, :]
 
-        # 3. KESIM YUZASI (Front Wall - Blokning aynan kesilgan o'rta qismi)
-        # Y = 0 bo'lgan chiziq bo'ylab vertikal "devor" chizamiz
-        fx, fy = gx[-1, :], gy[-1, :] # Y ning eng oxirgi nuqtasi (0 nuqtasi)
-        fz_t, fz_b = z_top[-1, :], z_bottom[-1, :]
-        
-        fig.add_trace(go.Surface(
-            x=np.array([fx, fx]),
-            y=np.array([fy, fy]),
-            z=np.array([fz_t, fz_b]),
-            colorscale=[[0, layer['color']], [1, layer['color']]],
-            opacity=1.0, showscale=False
-        ))
-
-        # 4. Yon devorlar (Qolgan 3 tomoni uchun)
-        for side in [0, 1, 2]: # X-min, X-max, Y-min
-            if side == 0: sx, sy, sz_t, sz_b = gx[:, 0], gy[:, 0], z_top[:, 0], z_bottom[:, 0]
-            elif side == 1: sx, sy, sz_t, sz_b = gx[:, -1], gy[:, -1], z_top[:, -1], z_bottom[:, -1]
-            else: sx, sy, sz_t, sz_b = gx[0, :], gy[0, :], z_top[0, :], z_bottom[0, :]
-            
             fig.add_trace(go.Surface(
-                x=np.array([sx, sx]), y=np.array([sy, sy]), z=np.array([sz_t, sz_b]),
-                colorscale=[[0, layer['color']], [1, layer['color']]], opacity=1.0, showscale=False
+                x=np.array([sx, sx]),
+                y=np.array([sy, sy]),
+                z=np.array([sz_t, sz_b]),
+                colorscale=[[0, layer['color']], [1, layer['color']]],
+                opacity=1.0, showscale=False, hoverinfo='skip'
             ))
             
         curr_z = z_bottom_base
 
-    # 5. UCG KAMERASI (Kesimda ko'rinishi uchun)
+    # UCG Kamerasi (Issiqlik zonasi)
     coal_z = -(sum(l['t'] for l in layers[:-1]) + layers[-1]['t']/2)
-    # Kameraning faqat yarmini chizamiz (v diapazoni 0 dan pi/2 gacha)
-    u, v = np.mgrid[0:2*np.pi:20j, 0:np.pi/2:20j] 
-    r = min(h / 10, 13) # Radius
+    u, v = np.mgrid[0:2*np.pi:15j, 0:np.pi:15j]
+    r = min(h / 10, 12)
     
     if r > 1:
-        cx, cy, cz = r*np.cos(u)*np.sin(v), (r*0.8)*np.sin(u)*np.sin(v), (r*0.6)*np.cos(v) + coal_z
-        # Kamera kesim yuzasiga jips bo'lishi uchun Y o'qi bo'ylab suramiz (ixtiyoriy)
+        cx, cy, cz = r*np.cos(u)*np.sin(v), (r*0.7)*np.sin(u)*np.sin(v), (r*0.5)*np.cos(v) + coal_z
         fig.add_trace(go.Surface(
             x=cx, y=cy, z=cz, 
             colorscale='Hot', opacity=1.0, showscale=False,
-            lighting=dict(ambient=0.7, diffuse=1.0, specular=0.5)
+            lighting=dict(ambient=0.6, diffuse=0.8)
         ))
 
     fig.update_layout(
         scene=dict(
-            xaxis=dict(title="X (m)"), yaxis=dict(title="Y (Kesim)", range=[-60, 20]),
-            zaxis=dict(title="Z (m)", range=[-sum(l['t'] for l in layers)-10, 20]),
-            camera=dict(eye=dict(x=1.5, y=-1.5, z=0.8)) # Kesimni yaxshi ko'rish uchun burchak
+            xaxis=dict(backgroundcolor="rgb(20, 20, 20)", gridcolor="gray", showbackground=True),
+            yaxis=dict(backgroundcolor="rgb(20, 20, 20)", gridcolor="gray", showbackground=True),
+            zaxis=dict(backgroundcolor="rgb(20, 20, 20)", gridcolor="gray", showbackground=True, range=[-sum(l['t'] for l in layers)-10, 20]),
+            aspectmode='manual',
+            aspectratio=dict(x=1, y=0.6, z=0.5)
         ),
-        height=750, margin=dict(l=0, r=0, b=0, t=0), template="plotly_dark"
+        height=700, margin=dict(l=0, r=0, b=0, t=0),
+        template="plotly_dark"
     )
     return fig
+# --- 4. GRAFIKLARNI CHIQARISH ---
+col_left, col_right = st.columns([2, 1])
 
+with col_left:
+    st.subheader("🌐 3D Geomexanik Massiv")
+    st.plotly_chart(generate_integrated_3d(time_h, layers_data, s_max_3d), use_container_width=True)
+
+with col_right:
+    st.subheader("📈 Dinamik Trendlar")
+    # Hoek-Brown va vaqt bog'liqligi grafigi
+    h_axis = np.linspace(0, 150, 50)
+    st_trend = [calculate_live_metrics(val, layers_data, T_source_max)[0] for val in h_axis]
+    
+    fig_trend = go.Figure()
+    fig_trend.add_trace(go.Scatter(x=h_axis, y=st_trend, name="Mustahkamlik", line=dict(color='orange', width=3)))
+    fig_trend.add_vline(x=time_h, line_dash="dash", line_color="red")
+    fig_trend.update_layout(template="plotly_dark", height=250, title="Mustahkamlik pasayishi (MPa/h)", margin=dict(l=10, r=10, t=30, b=10))
+    st.plotly_chart(fig_trend, use_container_width=True)
+    
+    # Qatlamlar statistikasi
+    st.write("**Qatlamlar tuzilishi:**")
+    for l in layers_data:
+        st.caption(f"• {l['name']}: {l['t']} m (UCS: {l['ucs']} MPa)")
 
 # --- 5. EKSPERT XULOSASI ---
 st.markdown("---")
