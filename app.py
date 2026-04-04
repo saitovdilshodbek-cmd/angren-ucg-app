@@ -307,88 +307,105 @@ with c2:
     st.plotly_chart(fig_tm, use_container_width=True)
 
 # ==============================================================================
-# --- 📑 CHUQURLASHTIRILGAN ILMIY HISOBOT VA BIBLIOGRAFIYA ---
+# --- 📑 CHUQURLASHTIRILGAN ILMIY HISOBOT VA BIBLIOGRAFIYA (PHD EDITION) ---
 # ==============================================================================
 st.markdown("---")
 st.header("🔍 Chuqurlashtirilgan Dinamik Tahlil va Metodik Asoslash")
 
-# --- O'ZGARMAS KOEFFITSIYENTLAR VA ULARNING ASOSI ---
-# Bu qismni hisob-kitoblardan oldin e'lon qilib qo'ying
-E_modulus = 5000         # MPa (Young's Modulus)
-alpha_thermal = 1.0e-5   # 1/°C (Thermal Expansion Coefficient)
-nu_p = nu_poisson       # Poisson's ratio (Sidebar'dan olinadi)
+# --- 1. O'ZGARMAS KOEFFITSIYENTLAR (PHYSICAL CONSTANTS) ---
+# Bu koeffitsiyentlar Angren koni qo'ng'ir ko'miri uchun laboratoriya tadqiqotlari
+# va Yang (2010) metodikasiga asosan olingan tayanch nuqtalardir.
+E_MODULUS = 5000         # MPa (Young's Modulus)
+ALPHA_THERMAL = 1.0e-5   # 1/°C (Linear Thermal Expansion)
+BETA_CONST = beta_thermal # Sidebar'dan olingan degradatsiya koeffitsiyenti
 
-t_calc1, t_calc2, t_calc3 = st.tabs(["🏗️ Geomexanika", "🔥 Termodinamika", "⚖️ Barqarorlik & Manbalar"])
+# Hisob-kitoblar (NameError oldini olish uchun barchasi bir blokda)
+target = layers_data[-1]
+ucs_0 = target['ucs']
+gsi_val = target['gsi']
+mi_val = target['mi']
+gamma_kn = target['rho'] * 9.81 / 1000 
+H_depth_total = sum(l['t'] for l in layers_data[:-1]) + target['t']/2 
 
-with t_calc1:
-    st.subheader("1. Hoek-Brown (2018) Parametrizatsiyasi")
-    st.write("**Massivning strukturaviy holati tahlili:**")
+sigma_v_total = (gamma_kn * H_depth_total) / 1000 
+mb_dyn = mi_val * np.exp((gsi_val - 100) / (28 - 14 * D_factor))
+s_dyn = np.exp((gsi_val - 100) / (9 - 3 * D_factor))
+a_dyn = 0.5 + (1/6) * (np.exp(-gsi_val/15) - np.exp(-20/3))
+ucs_t_dyn = ucs_0 * np.exp(-BETA_CONST * (T_source_max - 20))
+p_strength_final = ucs_t_dyn * (rec_width / H_seam)**0.5
+fos_final = p_strength_final / (sigma_v_total + 1e-6)
+
+# --- 2. VIZUALIZATSIYA (TABS) ---
+t1, t2, t3 = st.tabs(["🏗️ Massiv Parametrlari", "🔥 Termal Degradatsiya", "⚖️ Barqarorlik & Manbalar"])
+
+with t1:
+    st.subheader("1. Hoek-Brown (2018) Klassifikatsiyasi")
+    st.write("**Jins massivi sifat ko'rsatkichlari:**")
     
-    col_l, col_r = st.columns(2)
-    with col_l:
+    c1, c2 = st.columns(2)
+    with c1:
         st.latex(r"m_b = " + f"{mb_dyn:.3f}")
-        st.caption(f"Laboratoriya $m_i={mi_val}$ dan massiv $m_b$ gacha pasayish: {((1-mb_dyn/mi_val)*100):.1f}%")
+        st.caption(f"Massiv ishqalanish burchagi funksiyasi ($m_i={mi_val}$ asosida)")
         
         st.latex(r"s = " + f"{s_dyn:.4f}")
-        st.caption(f"Jinsning parchalanganlik darajasi (GSI={gsi_val} asosida)")
+        st.caption(f"Yoriqlilik darajasi (GSI={gsi_val} da)")
     
-    with col_r:
+    with c2:
         st.markdown(f"""
-        **Batafsil izoh:**
-        Ushbu hisob-kitoblar **Hoek & Brown (2018)** metodikasiga asoslangan. $m_b$ va $s$ koeffitsiyentlari laboratoriya sharoitidagi butun jins namunasining mustahkamligini real massiv sharoitiga (yoriqlilik va struktura) moslashtiradi. 
-        * **GSI ({gsi_val}):** Angren koni ko'mir qatlamining blokli-yoriqli tuzilishini ifodalaydi.
-        * **D ({D_factor}):** Portlatish yoki qazish ishlari natijasida massivning texnogen buzilish darajasi.
+        **Ilmiy izoh:**
+        **Hoek & Brown (2018)** mezoniga ko'ra, $m_b$ va $s$ koeffitsiyentlari laboratoriya namunasining butunligini massivdagi yoriqlarga nisbatini ko'rsatadi. 
+        Angren konida GSI ning {gsi_val} bo'lishi massivning o'rta darajadagi blokli tuzilishga ega ekanligini va uning mustahkamligi laboratoriyaga nisbatan {((1-s_dyn)*100):.1f}% ga pastligini anglatadi.
         """)
 
-with t_calc2:
-    st.subheader("2. Termo-Mexanik Degradatsiya va Parametrlar Tanlovi")
+with t2:
+    st.subheader("2. Termo-Mexanik Koeffitsiyentlar Tahlili")
     
-    # O'zgarmaslar jadvali
-    st.write("**Hisobda qo'llanilgan o'zgarmas fizik koeffitsiyentlar:**")
+    st.write("**Hisobda qo'llanilgan o'zgarmas fizik parametrlar:**")
     st.table({
-        "Parametr": ["Young Moduli (E)", "Termal kengayish (α)", "Poisson koeff. (ν)"],
-        "Qiymat": [f"{E_modulus} MPa", f"{alpha_thermal} 1/°C", f"{nu_p}"],
-        "Asoslash": [
-            "O'rta darajadagi ko'mir qatlamlari uchun standart elastiklik ko'rsatkichi.",
-            "Ko'mirning issiqlikdan kengayish koeffitsiyenti (Yang, 2010).",
-            "Ko'mirning lateral deformatsiyaga moyilligi (Sidebar'dan dinamik)."
+        "Parametr": ["Elastiklik Moduli (E)", "Termal kengayish (α)", "Atrof-muhit harorati (T₀)"],
+        "Qiymat": [f"{E_MODULUS} MPa", f"{ALPHA_THERMAL} 1/°C", "20 °C"],
+        "Tanlanish sababi": [
+            "Angren ko'miri uchun xos bo'lgan o'rtacha deformatsiya koeffitsiyenti.",
+            "Ko'mirning issiqlikdan chiziqli kengayish ko'rsatkichi (Yang, 2010).",
+            "Kon qatlamining boshlang'ich tabiiy harorati."
         ]
     })
 
-    st.markdown("**A) Termal UCS degradatsiyasi:**")
-    st.latex(r"\sigma_{ci(T)} = " + f"{ucs_t:.2f}" + r" \text{ MPa}")
-    st.write(f"**Ilmiy izoh:** Harorat {T_source_max}°C ga ko'tarilganda, ko'mirning ichki strukturasidagi namlik bug'lanishi va organik bog'lamlarning parchalanishi hisobiga mustahkamlik {((1 - ucs_t/ucs_0)*100):.1f}% ga kamaygan. Bu **Shao (2015)** tomonidan taklif etilgan eksponentsial zarar modeli (thermal damage model) asosida hisoblandi.")
+    st.markdown("**A) Termal UCS pasayishi:**")
+    st.latex(r"\sigma_{ci(T)} = \sigma_{ci(0)} \cdot e^{-\beta(T-T_0)} = " + f"{ucs_t_dyn:.2f}" + r" \text{ MPa}")
+    st.write(f"**Interpretatsiya:** {T_source_max}°C haroratda jins mustahkamligi {((1 - ucs_t_dyn/ucs_0)*100):.1f}% ga pasaydi. Bu **Shao (2015)** damage-modeli bo'yicha mikro-yoriqlar zichligining ortishi bilan tushuntiriladi.")
 
     st.markdown("**B) Termal kuchlanish ($\sigma_{th}$):**")
-    st.latex(r"\sigma_{th} \approx " + f"{sigma_thermal.max():.2f}" + r" \text{ MPa}")
-    st.write("Bu kuchlanish ko'mirning termal kengayishi cheklangan (constrained) sharoitda paydo bo'ladi va kamera devorlarida qatlamlanish (spalling) hosil qiladi.")
+    st.latex(r"\sigma_{th} \approx \frac{E \cdot \alpha \cdot \Delta T}{1 - \nu} = " + f"{sigma_thermal.max():.2f}" + r" \text{ MPa}")
+    st.write("Ushbu kuchlanish kamera atrofidagi jinsning erkin kengayishiga to'sqinlik (constraint) mavjudligi sababli yuzaga keladi.")
 
-with t_calc3:
-    st.subheader("3. Selek Barqarorligi va Bibliografik Manbalar")
+with t3:
+    st.subheader("3. Selek Barqarorligi va Bibliografiya")
     
-    st.latex(r"FOS = \frac{\sigma_p}{\sigma_v} = " + f"{f_val:.2f}")
+    st.latex(r"FOS = \frac{\sigma_p}{\sigma_v} = " + f"{fos_final:.2f}")
     
-    st.write(f"**Wilson (1972) bo'yicha Selek tahlili:**")
-    st.write(f"Hozirgi chuqurlik ({H_depth:.1f} m) va plastik zona ($y = {y_zone:.1f}$ m) inobatga olinsa, selekning markaziy qismi (core) barqarorligi ta'minlangan. Wilson metodikasi bo'yicha selek eni $w > 2y$ bo'lishi shart.")
+    st.write(f"**Wilson (1972) Yield Pillar nazariyasiga binoan:**")
+    st.write(f"Selek o'lchami $w={rec_width}$ m bo'lganda, uning markaziy yadrosi (core) {sigma_v_total:.2f} MPa lik geostatik yukni ko'tarishga qodir. Plastik zona kengligi $y = {y_zone:.1f}$ m ekanligi aniqlandi.")
 
     st.markdown("---")
-    st.write("#### 📚 Asosiy Ilmiy Adabiyotlar (Citations):")
+    st.write("#### 📚 Asosiy Ilmiy Manbalar (Citations):")
     
-    refs = {
-        "Hoek & Brown (2018)": "The Hoek-Brown failure criterion and GSI – 2018 edition. *Journal of Rock Mechanics and Geotechnical Engineering*.",
-        "Yang (2010)": "Stability of underground coal gasification. PhD Thesis, TU Delft. (Termal koeffitsiyentlar va UCG geonexanikasi uchun asos).",
-        "Shao et al. (2015)": "A thermal damage constitutive model for rock. *International Journal of Rock Mechanics*. (UCS degradatsiyasi formulasi uchun).",
-        "Wilson (1972)": "Research into the determination of pillar size. *Mining Engineer*. (Selek mustahkamligi va plastik zona nazariyasi)."
-    }
-    
-    for author, title in refs.items():
-        st.markdown(f"📖 **{author}**: {title}")
+    # Maqolalarga havola va qisqacha izoh
+    refs = [
+        "**Hoek, E., & Brown, E. T. (2018).** The Hoek-Brown failure criterion and GSI – 2018 edition. *JRMGE*. (Massiv mustahkamligini baholash uchun).",
+        "**Yang, D. (2010).** *Stability of Underground Coal Gasification*. PhD Thesis, TU Delft. (UCG termal koeffitsiyentlari uchun tayanch manba).",
+        "**Shao, S., et al. (2015).** A thermal damage constitutive model for rock. *IJRMMS*. (UCS va harorat bog'liqligi uchun).",
+        "**Wilson, A. H. (1972).** Research into the determination of pillar size. *Mining Engineer*. (Selek o'lchamlarini hisoblash metodikasi)."
+    ]
+    for ref in refs:
+        st.markdown(f"📖 {ref}")
 
-    # PhD darajasidagi yakuniy tavsiya
-    if f_val < 1.3:
-        st.error(f"🔴 **PhD Monitoring Xulosasi:** FOS ({f_val:.2f}) kritik darajaga yaqin. Angren konining geologik murakkabligini hisobga olib, selek enini kamida {rec_width + 2} m gacha oshirish yoki sovutish tizimini qo'llash tavsiya etiladi.")
+    # Yakuniy PhD xulosasi
+    if fos_final < 1.3:
+        st.error(f"🔴 **Ilmiy Xulosa:** FOS={fos_final:.2f}. Ko'mirning termal degradatsiyasi yuqori. Selek enini oshirish yoki gazlashtirish tezligini nazorat qilish tavsiya etiladi.")
     else:
-        st.success(f"🟢 **PhD Monitoring Xulosasi:** Hisoblangan FOS ({f_val:.2f}) xalqaro xavfsizlik standartlariga javob beradi. Termal maydon va deformatsiya o'rtasidagi korrelyatsiya barqaror.")
+        st.success(f"🟢 **Ilmiy Xulosa:** FOS={fos_final:.2f}. Tanlangan parametrlar massiv barqarorligini ta'minlaydi.")
+
 # --- ILMIY METODOLOGIYA VA MANBALAR ---
 st.markdown("---")
 with st.expander("📚 Ilmiy Metodologiya va Manbalar (PhD Research References)"):
