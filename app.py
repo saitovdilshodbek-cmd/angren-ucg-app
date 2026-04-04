@@ -307,20 +307,19 @@ with c2:
     st.plotly_chart(fig_tm, use_container_width=True)
 
 # ==============================================================================
-# --- 🌀 BOSQICHMA-BOSQICH UCG DINAMIK MODELI (PHD EDITION) ---
+# --- 🌀 BOSQICHMA-BOSQICH UCG DINAMIK MODELI (MUKAMMAL VARIANT) ---
 # ==============================================================================
-st.header("🌀 Bosqichma-bosqich UCG Termo-Mexanik Simulyatori")
+st.header("🌀 UCG: Bosqichma-bosqich Yonish va O'pirilish Modeli")
 
-# Vaqt slayderi (60 kunlik umumiy sikl)
+# 60 kunlik umumiy sikl
 time_step = st.slider("Loyiha davomiyligi (kun):", 1, 60, 30)
 
-def generate_sequential_model(t):
+def generate_step_by_step_model(t):
     # 1. Koordinatalar va markazlar
     x, y = np.meshgrid(np.linspace(-100, 100, 45), np.linspace(-70, 70, 45))
     centers_x = [-45, 0, 45]
     
-    # 2. Har bir kamera uchun holatni aniqlash
-    # Har bir kamera 20 kun davomida yonadi deb hisoblaymiz
+    # 2. Kameralar holati va o'lchamlarini aniqlash
     states = []
     radii = []
     for i in range(3):
@@ -329,79 +328,91 @@ def generate_sequential_model(t):
         
         if t <= start_day:
             states.append("Kutilmoqda")
-            radii.append(0) # Hali boshlanmagan
+            radii.append(0)
         elif start_day < t <= end_day:
             states.append("Faol")
-            # Shu kamera uchun lokal vaqtni hisoblash (1-20 kun oralig'ida)
             local_t = t - start_day
             radii.append(2 + local_t * 0.5) 
         else:
             states.append("Yonib bo'lgan")
-            radii.append(2 + 20 * 0.5) # Maksimal o'lchamda qoladi
+            radii.append(2 + 20 * 0.5)
 
-    # 3. Cho'kishni hisoblash (Faqat faol va yonib bo'lgan kameralar uchun)
+    # 3. Cho'kishni (Subsidence) hisoblash - Taklif: log1p(radii) asosida
     subsidence_factor = (np.log1p(t) / np.log1p(60)) * 18
     subs_total = np.zeros_like(x)
-    for i, cx in enumerate(centers_x):
+    for i in range(3):
         if radii[i] > 0:
-            subs_total += - (subsidence_factor * (radii[i]/12)) * np.exp(-((x - cx)**2 + y**2) / 600)
+            # Taklif: Har bir kameraning cho'kishga qo'shgan hissasi
+            subs_total += - (subsidence_factor * np.log1p(radii[i]) / np.log1p(12)) * \
+                           np.exp(-((x - centers_x[i])**2 + y**2) / 600)
     
     z_surface = np.full_like(x, 25) + subs_total
+    max_subs = np.abs(subs_total.max())
     
     fig = go.Figure()
 
-    # 4. Qatlamlarni chizish
+    # 4. Qatlamlarni chizish - Taklif: Yangilangan opacity (0.45 va 0.35)
     fig.add_trace(go.Surface(x=x, y=y, z=z_surface, colorscale='Greens', showscale=False, name="Yer yuzasi"))
-    fig.add_trace(go.Surface(x=x, y=y, z=np.full_like(x, 7), colorscale='Greys', opacity=0.4, showscale=False))
-    fig.add_trace(go.Surface(x=x, y=y, z=np.full_like(x, -7), colorscale='Oranges', opacity=0.3, showscale=False))
+    fig.add_trace(go.Surface(x=x, y=y, z=np.full_like(x, 7), colorscale='Greys', opacity=0.45, showscale=False, name="Overburden"))
+    fig.add_trace(go.Surface(x=x, y=y, z=np.full_like(x, -7), colorscale='Oranges', opacity=0.35, showscale=False, name="Ko'mir qatlami"))
 
-    # 5. Kameralarni chizish
+    # 5. Kameralar va O'pirilishlar (Collapse)
     u, v = np.mgrid[0:2*np.pi:25j, 0:np.pi:25j]
     for i, cx in enumerate(centers_x):
         if radii[i] > 0:
-            # Har bir kamera uchun o'ziga xos deformatsiya
+            # Taklif: np.random.seed barqaror vizualizatsiya uchun
+            np.random.seed(i + t)
             r = radii[i]
+            
+            # Deformatsiyalangan karkas
             dx = r * np.cos(u) * np.sin(v) * (1 + 0.07 * np.random.randn(25, 25))
             dy = (r*0.8) * np.sin(u) * np.sin(v) * (1 + 0.07 * np.random.randn(25, 25))
             dz = (r*0.6) * np.cos(v) * (1 + 0.04 * np.random.randn(25, 25))
             
-            # Rangni holatga qarab tanlash
             c_map = 'Hot' if states[i] == "Faol" else 'Greys_r'
             opac = 0.95 if states[i] == "Faol" else 0.5
             
             fig.add_trace(go.Surface(x=dx + cx, y=dy, z=dz, colorscale=c_map, opacity=opac, showscale=False))
 
-    # 6. Stress (Selek kuchlanishi) faqat faol kamera atrofida
+            # Taklif: Yonib bo'lgan kameralar uchun O'pirilish (Collapse) zonasi
+            if states[i] == "Yonib bo'lgan":
+                n_collapse = 50
+                col_x = np.random.uniform(cx - 10, cx + 10, n_collapse)
+                col_y = np.random.uniform(-10, 10, n_collapse)
+                # Z balandligi subsidence bilan proporsional
+                col_z = np.random.uniform(0, max_subs / 2, n_collapse)
+                
+                fig.add_trace(go.Scatter3d(x=col_x, y=col_y, z=col_z, mode='markers',
+                                           marker=dict(size=2.5, color='black', symbol='diamond', opacity=0.6),
+                                           name=f"Collapse K{i+1}"))
+
+    # 6. Faol stress (Taklif: st_z maksimal cho'kishga proporsional)
     if any(s == "Faol" for s in states):
-        active_idx = states.index("Faol")
-        active_x = centers_x[active_idx]
-        n_pts = int((t % 20) + 5)
-        # Faol kamera atrofidagi stress nuqtalari
-        st_x = np.random.uniform(active_x - 15, active_x + 15, n_pts)
+        act_idx = states.index("Faol")
+        act_x = centers_x[act_idx]
+        n_pts = int((t % 20) + 10)
+        
+        st_x = np.random.uniform(act_x - 15, act_x + 15, n_pts)
         st_y = np.random.uniform(-15, 15, n_pts)
-        st_z = np.random.uniform(-5, 5, n_pts)
-        fig.add_trace(go.Scatter3d(x=st_x, y=st_y, z=st_z, mode='markers', 
+        # Taklif: Stress balandligi cho'kish faktoriga bog'liq
+        st_z = np.random.uniform(-max_subs/3, max_subs/3, n_pts)
+        
+        fig.add_trace(go.Scatter3d(x=st_x, y=st_y, z=st_z, mode='markers',
                                    marker=dict(size=4, color='cyan', symbol='x'), name="Faol Stress"))
 
     fig.update_layout(
-        scene=dict(xaxis_title="X (m)", yaxis_title="Y (m)", zaxis_title="Z (m)", zaxis=dict(range=[-20, 35])),
+        scene=dict(xaxis_title="X (m)", yaxis_title="Y (m)", zaxis_title="H (m)", zaxis=dict(range=[-20, 35])),
         margin=dict(l=0, r=0, b=0, t=30),
-        title=f"Bosqichma-bosqich yonish: {t}-kun"
+        title=f"UCG Bosqichma-bosqich Model: {t}-kun"
     )
     return fig, states
 
-# Grafikni chiqarish
-fig_res, current_states = generate_sequential_model(time_step)
-st.plotly_chart(fig_res, use_container_width=True)
+# Ilovada grafikni chiqarish
+fig_final, current_st = generate_step_by_step_model(time_step)
+st.plotly_chart(fig_final, use_container_width=True)
 
 # Holat paneli
-st.write("### 📢 Kameralar joriy holati:")
-c1, c2, c3 = st.columns(3)
-c1.metric("1-Kamara (Markaz: -45m)", current_states[0])
-c2.metric("2-Kamara (Markaz: 0m)", current_states[1])
-c3.metric("3-Kamara (Markaz: 45m)", current_states[2])
-
-
+st.info(f"**Joriy tahlil:** {time_step}-kun holatida cho'kish maksimal darajasi {np.abs(current_st.count('Yonib bo'lgan') * 5):.1f} m atrofida prognoz qilinmoqda.")
 # ==============================================================================
 # --- 📑 CHUQURLASHTIRILGAN ILMIY HISOBOT VA BIBLIOGRAFIYA (PHD EDITION) ---
 # ==============================================================================
