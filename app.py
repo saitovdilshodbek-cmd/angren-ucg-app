@@ -307,72 +307,60 @@ with c2:
     st.plotly_chart(fig_tm, use_container_width=True)
 
 # ==============================================================================
-# --- 📑 HISOBOT VA INTERPRETATSIYA BO'LIMI (YANGI) ---
+# --- 🔢 QADAM-BA-QADAM HISOBLASH JURNALI (VERIFICATION) ---
 # ==============================================================================
-st.markdown("---")
-st.header("📑 Hisoblash Metodikasi va Interpretatsiya")
-
-tab1, tab2, tab3 = st.tabs(["🔍 Parametrlar tahlili", "📐 Formula va Bog'liqliklar", "📝 Ekspert Xulosasi"])
-
-with tab1:
-    st.subheader("Kiritilgan parametrlar va ularning modelga ta'siri")
+with st.expander("🔢 Real-vaqtda hisoblash jurnali (Matematik tekshiruv)", expanded=False):
+    st.write(f"**Loyiha:** {obj_name} | **Sana:** 2026-04-04")
     
-    col_inf1, col_inf2 = st.columns(2)
+    # Oxirgi qatlam (ko'mir qatlami) ma'lumotlarini olish
+    target_layer = layers_data[-1]
+    z_mid = target_layer['z_start'] + target_layer['t']/2
     
-    with col_inf1:
-        st.write(f"**1. Geologik sharoit (GSI va D):**")
-        st.write(f"Siz kiritgan GSI ({layers_data[-1]['gsi']}) va Disturbance Factor ({D_factor}) asosida jins massivining butunligi aniqlandi. "
-                 f"Bu parametrlar **Hoek-Brown** formulasidagi $m_b, s$ va $a$ koeffitsiyentlarini shakllantiradi.")
+    st.markdown("---")
+    col_calc1, col_calc2 = st.columns(2)
+    
+    with col_calc1:
+        st.subheader("1. Geostatik va HB hisobi")
+        # Vertikal kuchlanish
+        sigma_v_val = sum(l['rho'] * 9.81 * l['t'] for l in layers_data[:-1]) / 1e6
+        st.write(f"• **Vertikal kuchlanish ($\sigma_v$):**")
+        st.latex(rf"\sigma_v = \sum \rho g h \approx {sigma_v_val:.2f} \text{{ MPa}}")
         
-        st.write(f"**2. Termal ta'sir (T_max: {T_source_max}°C):**")
-        st.write(f"Yuqori harorat jinsning elastiklik modulini va mustahkamligini kamaytiradi. "
-                 f"Hozirgi modelda $\\beta = {beta_thermal}$ koeffitsiyenti bilan eksponentsial pasayish hisobga olingan.")
+        # Hoek-Brown mb koeffitsiyenti
+        mb_calc = target_layer['mi'] * np.exp((target_layer['gsi'] - 100) / (28 - 14 * D_factor))
+        st.write(f"• **Hoek-Brown $m_b$ koeffitsiyenti:**")
+        st.latex(rf"m_b = {target_layer['mi']} \cdot e^{{({target_layer['gsi']}-100)/({28-14*D_factor:.1f})}} = {mb_calc:.3f}")
 
-    with col_inf2:
-        st.write(f"**3. Mexanik kuchlanish (k-ratio: {k_ratio}):**")
-        st.write(f"Gorizontal kuchlanishning vertikalga nisbati ({k_ratio}) selek barqarorligiga bevosita ta'sir qiladi. "
-                 f"Sizning holatingizda $\sigma_h = {k_ratio} \cdot \sigma_v$ sifatida qabul qilindi.")
+    with col_calc2:
+        st.subheader("2. Termal Degradatsiya hisobi")
+        # Harorat ta'sirida UCS kamayishi
+        # T_source_max kiritilgan maksimal harorat
+        ucs_final = target_layer['ucs'] * np.exp(-beta_thermal * (T_source_max - 20))
+        st.write(f"• **Termal UCS ($\sigma_{{ci(T)}}$):**")
+        st.latex(rf"{target_layer['ucs']} \cdot e^{{-{beta_thermal} \cdot ({T_source_max}-20)}} = {ucs_final:.2f} \text{{ MPa}}")
         
-        st.write(f"**4. Selek (Pillar) geometriyasi:**")
-        st.write(f"Kamera balandligi $H = {H_seam}$ m va hisoblangan optimal en $w = {rec_width}$ m. "
-                 f"Bu nisbat ($w/H$) selekning yuk ko'tarish qobiliyatini belgilaydi.")
+        # Termal kuchlanish
+        sigma_th_val = constraint_factor * (E * alpha_T_coeff * (T_source_max - 25)) / (1 - nu_poisson)
+        st.write(f"• **Termal kuchlanish ($\sigma_{{th}}$):**")
+        st.latex(rf"\sigma_{{th}} \approx {sigma_th_val:.2f} \text{{ MPa}}")
 
-with tab2:
-    st.subheader("Matematik bog'liqliklar zanjiri")
+    st.markdown("---")
+    st.subheader("3. Selek Barqarorligi (Wilson & Pillar Strength)")
     
-    st.info("Model quyidagi ketma-ketlikda hisoblandi:")
+    # Selek mustahkamligi hisobi
+    st.write(f"Selek eni $w = {rec_width}$ m va balandligi $H = {H_seam}$ m bo'lganda:")
+    p_str_final = ucs_final * (rec_width / H_seam)**0.5
+    st.latex(rf"\sigma_p = {ucs_final:.2f} \cdot \left( \frac{{{rec_width}}}{{{H_seam}}} \right)^{{0.5}} = {p_str_final:.2f} \text{{ MPa}}")
     
-    # 1-qadam
-    st.markdown("**1-qadam: Hoek-Brown Parametrizatsiyasi**")
-    st.latex(r"m_b = m_i \cdot \exp\left(\frac{GSI-100}{28-14D}\right)")
-    st.caption("Ushbu formula massivning laboratoriya namunasidan farqli o'laroq haqiqiy mustahkamligini aniqlaydi.")
-
-    # 2-qadam
-    st.markdown("**2-qadam: Termo-Mexanik Degradatsiya**")
-    st.latex(r"\sigma_{ci(T)} = \sigma_{ci} \cdot e^{-\beta (T - 20)}")
-    st.caption(f"Harorat {T_source_max}°C ga yetganda, jinsning UCS ko'rsatkichi termal zarar (damage) tufayli kamayadi.")
-
-    # 3-qadam
-    st.markdown("**3-qadam: Selek Optimizatsiyasi (Wilson Method)**")
-    st.latex(r"w_{opt} = 2 \cdot y_{zone} + 0.5 \cdot H")
-    st.write(f"Hisoblangan plastik zona (y) = **{y_zone:.2f} m**. Selek o'lchami ushbu zonaning ikki barobaridan kichik bo'lmasligi kerak.")
-
-with tab3:
-    st.subheader("PhD Tadqiqotchisi uchun Tavsiyalar")
-    
-    # Avtomatik mantiqiy xulosa shakllantirish
-    if fos_2d.min() < 1.0:
-        st.error(f"⚠️ **Diqqat:** Modelda FOS < 1.0 bo'lgan zonalar aniqlandi. Bu '{obj_name}' loyihasida "
-                 f"kamera atrofida jiddiy deformatsiya va jinslar qulashi (collapse) xavfi borligini anglatadi.")
+    # Xavfsizlik koeffitsiyenti
+    fos_pillar = p_str_final / (sigma_v_val + 1e-6)
+    st.write(f"• **Selek uchun FOS:**")
+    if fos_pillar > 1.5:
+        st.success(rf"FOS = \frac{{{p_str_final:.2f}}}{{{sigma_v_val:.2f}}} = {fos_pillar:.2f} \text{{ (Xavfsiz)}}")
     else:
-        st.success(f"✅ **Barqarorlik:** Umumiy hisobda tizim barqaror. Selek eni {rec_width} m bo'lganda xavfsizlik ta'minlanadi.")
+        st.error(rf"FOS = \frac{{{p_str_final:.2f}}}{{{sigma_v_val:.2f}}} = {fos_pillar:.2f} \text{{ (Xavf mavjud)}}")
 
-    st.markdown(f"""
-    **Tahlil natijasi:**
-    * **Termal kengayish:** {T_source_max}°C haroratda hosil bo'lgan termal kuchlanishlar ($\sigma_{{th}}$) vertikal yuklanishga qo'shimcha bosim beradi.
-    * **O'tkazuvchanlik:** Bo'shliqlar hosil bo'lishi natijasida filtratsiya koeffitsiyenti **{np.max(perm):.1e} m²** gacha ortishi kutilmoqda.
-    * **Monitoring:** Angren koni sharoitida, ayniqsa {layers_data[-1]['name']} qatlamida cho'zilish kuchlanishlariga (tensile stress) e'tibor berish tavsiya etiladi.
-    """)
+    st.info("💡 Izoh: Ushbu hisob-kitoblar modelning eng kritik nuqtasi (kamera markazi) uchun bajarildi.")
     
 # --- ILMIY METODOLOGIYA VA MANBALAR ---
 st.markdown("---")
