@@ -342,14 +342,14 @@ m4.metric("Jarayon bosqichi", f"{'Faol' if time_h < 100 else 'Sovish'}")
 st.markdown("---")
 
 def generate_integrated_3d(h, layers, s_max):
-    grid_res = 35 
-    # Y o'qini faqat manfiy tomondan 0 gacha olamiz (Kesim hosil qilish uchun)
+    grid_res = 30 # Bloklar hisoblanganda unumdorlik uchun resni biroz kamaytirdik
     x = np.linspace(-100, 100, grid_res)
-    y = np.linspace(-60, 0, grid_res) # 0 da to'xtaydi, ya'ni o'rtasidan kesiladi
+    y = np.linspace(-60, 60, grid_res)
     gx, gy = np.meshgrid(x, y)
     
     # Cho'kish krateri (Gaussian model)
     subs_map = -s_max * np.exp(-(gx**2 + gy**2) / 800)
+    
     fig = go.Figure()
     
     curr_z = 0
@@ -357,7 +357,7 @@ def generate_integrated_3d(h, layers, s_max):
         z_top_base = curr_z
         z_bottom_base = curr_z + layer['t']
         
-        # Deformatsiya koeffitsiyentlari (chuqurlashgan sari so'nadi)
+        # Deformatsiya koeffitsiyentlari
         deform_top = subs_map * (0.85 ** i)
         deform_bottom = subs_map * (0.85 ** (i + 1))
         
@@ -368,72 +368,104 @@ def generate_integrated_3d(h, layers, s_max):
         fig.add_trace(go.Surface(
             x=gx, y=gy, z=z_top,
             colorscale=[[0, layer['color']], [1, layer['color']]],
-            opacity=1.0, showscale=False, name=layer['name'],
+            opacity=0.9, showscale=False, name=f"{layer['name']} (Top)",
+            hoverinfo='skip'
+        ))
+        
+        # 2. Qatlamning pastki sirti
+        fig.add_trace(go.Surface(
+            x=gx, y=gy, z=z_bottom,
+            colorscale=[[0, layer['color']], [1, layer['color']]],
+            opacity=0.9, showscale=False, name=f"{layer['name']} (Bottom)",
             hoverinfo='skip'
         ))
 
-        # 2. KESIM YUZASI (Aynan o'rtadagi vertikal devor)
-        # Y = 0 chizig'i bo'ylab qatlamning "ichini" ko'rsatuvchi yuza
-        # gy[-1, :] bu Y=0 degani
-        fx, fy = gx[-1, :], gy[-1, :] 
-        fz_t, fz_b = z_top[-1, :], z_bottom[-1, :]
-        
-        fig.add_trace(go.Surface(
-            x=np.array([fx, fx]),
-            y=np.array([fy, fy]),
-            z=np.array([fz_t, fz_b]),
-            colorscale=[[0, layer['color']], [1, layer['color']]],
-            opacity=1.0, showscale=False,
-            hoverinfo='text',
-            text=f"Qatlam: {layer['name']}"
-        ))
+        # 3. Qatlamning yon devorlari (Blok ko'rinishini berish uchun)
+        # To'rning chetki chiziqlari bo'ylab vertikal yuzalar chizamiz
+        for side in range(4):
+            if side == 0: # X-min devori
+                sx, sy = gx[:, 0], gy[:, 0]
+                sz_t, sz_b = z_top[:, 0], z_bottom[:, 0]
+            elif side == 1: # X-max devori
+                sx, sy = gx[:, -1], gy[:, -1]
+                sz_t, sz_b = z_top[:, -1], z_bottom[:, -1]
+            elif side == 2: # Y-min devori
+                sx, sy = gx[0, :], gy[0, :]
+                sz_t, sz_b = z_top[0, :], z_bottom[0, :]
+            else: # Y-max devori
+                sx, sy = gx[-1, :], gy[-1, :]
+                sz_t, sz_b = z_top[-1, :], z_bottom[-1, :]
 
-        # 3. QOLGAN YON DEVORLAR (X-min, X-max va orqa Y-min devorlari)
-        for side in [0, 1, 2]: 
-            if side == 0: # X-min
-                sx, sy, sz_t, sz_b = gx[:, 0], gy[:, 0], z_top[:, 0], z_bottom[:, 0]
-            elif side == 1: # X-max
-                sx, sy, sz_t, sz_b = gx[:, -1], gy[:, -1], z_top[:, -1], z_bottom[:, -1]
-            else: # Y-min (Orqa tomon)
-                sx, sy, sz_t, sz_b = gx[0, :], gy[0, :], z_top[0, :], z_bottom[0, :]
-            
             fig.add_trace(go.Surface(
-                x=np.array([sx, sx]), y=np.array([sy, sy]), z=np.array([sz_t, sz_b]),
+                x=np.array([sx, sx]),
+                y=np.array([sy, sy]),
+                z=np.array([sz_t, sz_b]),
                 colorscale=[[0, layer['color']], [1, layer['color']]],
                 opacity=1.0, showscale=False, hoverinfo='skip'
             ))
             
         curr_z = z_bottom_base
 
-    # 4. UCG KAMERASI (Kesimda yarmi ko'rinishi uchun)
+    # UCG Kamerasi (Issiqlik zonasi)
     coal_z = -(sum(l['t'] for l in layers[:-1]) + layers[-1]['t']/2)
-    # v diapazonini pi/2 gacha olamiz, shunda kameraning faqat bizga qaragan yarmi chiziladi
-    u_c, v_c = np.mgrid[0:2*np.pi:20j, 0:np.pi/2:20j] 
-    r = min(h / 10, 13) 
+    u, v = np.mgrid[0:2*np.pi:15j, 0:np.pi:15j]
+    r = min(h / 10, 12)
     
     if r > 1:
-        # Kameraning o'lchamlari va joylashuvi
-        cx, cy, cz = r*np.cos(u_c)*np.sin(v_c), (r*0.8)*np.sin(u_c)*np.sin(v_c), (r*0.6)*np.cos(v_c) + coal_z
+        cx, cy, cz = r*np.cos(u)*np.sin(v), (r*0.7)*np.sin(u)*np.sin(v), (r*0.5)*np.cos(v) + coal_z
         fig.add_trace(go.Surface(
             x=cx, y=cy, z=cz, 
             colorscale='Hot', opacity=1.0, showscale=False,
-            name="Yonish kamerasi",
-            lighting=dict(ambient=0.7, diffuse=1.0, specular=0.5)
+            lighting=dict(ambient=0.6, diffuse=0.8)
         ))
 
-    # 5. GRAFIK SOZLAMALARI
     fig.update_layout(
         scene=dict(
-            xaxis=dict(title="X (m)", backgroundcolor="black", showbackground=True),
-            yaxis=dict(title="Y (Kesim)", range=[-60, 20], backgroundcolor="black", showbackground=True),
-            zaxis=dict(title="Z (Chuqurlik)", range=[-sum(l['t'] for l in layers)-10, 20]),
-            # Kamerani kesim yuzasiga qaraydigan qilib sozlash
-            camera=dict(eye=dict(x=1.6, y=-1.6, z=1.0)) 
+            xaxis=dict(backgroundcolor="rgb(20, 20, 20)", gridcolor="gray", showbackground=True),
+            yaxis=dict(backgroundcolor="rgb(20, 20, 20)", gridcolor="gray", showbackground=True),
+            zaxis=dict(backgroundcolor="rgb(20, 20, 20)", gridcolor="gray", showbackground=True, range=[-sum(l['t'] for l in layers)-10, 20]),
+            aspectmode='manual',
+            aspectratio=dict(x=1, y=0.6, z=0.5)
         ),
-        height=750, margin=dict(l=0, r=0, b=0, t=0),
+        height=700, margin=dict(l=0, r=0, b=0, t=0),
         template="plotly_dark"
     )
     return fig
+# --- 4. GRAFIKLARNI CHIQARISH ---
+col_left, col_right = st.columns([2, 1])
+
+with col_left:
+    st.subheader("🌐 3D Geomexanik Massiv")
+    st.plotly_chart(generate_integrated_3d(time_h, layers_data, s_max_3d), use_container_width=True)
+
+with col_right:
+    st.subheader("📈 Dinamik Trendlar")
+    # Hoek-Brown va vaqt bog'liqligi grafigi
+    h_axis = np.linspace(0, 150, 50)
+    st_trend = [calculate_live_metrics(val, layers_data, T_source_max)[0] for val in h_axis]
+    
+    fig_trend = go.Figure()
+    fig_trend.add_trace(go.Scatter(x=h_axis, y=st_trend, name="Mustahkamlik", line=dict(color='orange', width=3)))
+    fig_trend.add_vline(x=time_h, line_dash="dash", line_color="red")
+    fig_trend.update_layout(template="plotly_dark", height=250, title="Mustahkamlik pasayishi (MPa/h)", margin=dict(l=10, r=10, t=30, b=10))
+    st.plotly_chart(fig_trend, use_container_width=True)
+    
+    # Qatlamlar statistikasi
+    st.write("**Qatlamlar tuzilishi:**")
+    for l in layers_data:
+        st.caption(f"• {l['name']}: {l['t']} m (UCS: {l['ucs']} MPa)")
+
+# --- 5. EKSPERT XULOSASI ---
+st.markdown("---")
+with st.expander("📝 Avtomatik Ilmiy Interpretatsiya", expanded=True):
+    risk_level = "YUQORI" if p_str < 15 else "O'RTA" if p_str < 25 else "PAST"
+    st.write(f"""
+    **Tahlil natijasi ({time_h}-soat):**
+    1. **Termal degradatsiya:** Harorat {t_now:.1f} °C ga yetishi natijasida ko'mir mustahkamligi boshlang'ich holatga nisbatan {((1-p_str/layers_data[-1]['ucs'])*100):.1f}% ga kamaygan.
+    2. **Yer yuzasi:** {s_max_3d*100:.1f} cm lik vertikal cho'kish kutilmoqda. Bu {layers_data[0]['name']} qatlamida plastik deformatsiyalarni yuzaga keltirishi mumkin.
+    3. **Xavf darajasi:** **{risk_level}**. Tavsiya etilgan selek eni: **{w_rec:.1f} metr**.
+    """)
+
 
 # ==============================================================================
 # --- 📑 CHUQURLASHTIRILGAN ILMIY HISOBOT VA BIBLIOGRAFIYA (PHD EDITION) ---
