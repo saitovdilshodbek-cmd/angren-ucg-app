@@ -45,7 +45,7 @@ if formula_option != "Yopish":
             st.latex(r"S(x) = S_{max} \cdot \exp\left( -\frac{x^2}{2i^2} \right); \quad \epsilon = 1.52 \frac{S(x)}{R}")
             st.info("**Geomexanika:** Selek barqarorligi, plastik zona va yer yuzasining gorizontal deformatsiyasi.")
 
-# --- Sidebar: Parametrlar (Asl holatda saqlandi) ---
+# --- Sidebar: Parametrlar ---
 st.sidebar.header("⚙️ Umumiy parametrlar")
 obj_name = st.sidebar.text_input("Loyiha nomi:", value="Angren-UCG-001")
 time_h = st.sidebar.slider("Jarayon vaqti (soat):", 1, 150, 24)
@@ -95,7 +95,7 @@ for i in range(int(num_layers)):
         })
         total_depth += thick
 
-# --- HISOB-KITOBLAR (ALGORITM BUZILMAGAN) ---
+# --- HISOB-KITOBLAR ---
 x_axis = np.linspace(-total_depth*1.5, total_depth*1.5, 150)
 z_axis = np.linspace(0, total_depth + 50, 120)
 grid_x, grid_z = np.meshgrid(x_axis, z_axis)
@@ -305,6 +305,108 @@ with c2:
     )
     fig_tm.update_yaxes(autorange='reversed', row=1, col=1); fig_tm.update_yaxes(autorange='reversed', row=2, col=1)
     st.plotly_chart(fig_tm, use_container_width=True)
+
+# ==============================================================================
+# --- 🧊 3D CUT-AWAY DYNAMIC MODEL (Ertelenmas PhD Moduli) ---
+# ==============================================================================
+st.markdown("---")
+st.subheader("🧱 3D Qatlamli Geostruktura va Dinamik Termal Maydon")
+
+# 1. 3D Panjara va Massivlarni tayyorlash
+y_range = 100 
+y_3d = np.linspace(0, y_range, 30) 
+x_3d = np.linspace(x_axis.min(), x_axis.max(), 30)
+X_3d, Y_3d = np.meshgrid(x_3d, y_3d)
+
+# 3D Hajmiy koordinatalar
+x_v, y_v, z_v = np.mgrid[x_axis.min():x_axis.max():25j, 0:y_range:25j, 0:total_depth:25j]
+temp_vol = np.ones_like(x_v) * 25
+
+# 2. Dinamik Harorat Maydonini Hisoblash (3D)
+thermal_radius_3d = np.sqrt(4 * alpha_rock * (time_h * 3600)) * 15 + 5
+for key, val in sources.items():
+    if time_h > val['start']:
+        dist_sq_3d = (x_v - val['x'])**2 + (y_v - y_range/2)**2 + (z_v - source_z)**2
+        temp_vol += (T_source_max - 25) * np.exp(-dist_sq_3d / (thermal_radius_3d*3)**2)
+
+# 3. 🧮 ADVANCED 3D GEOMECHANICS
+z_indices = np.searchsorted(z_axis, z_v)
+z_indices = np.clip(z_indices, 0, len(z_axis)-1)
+
+grid_ucs_3d = grid_ucs[z_indices]
+grid_mb_3d = grid_mb[z_indices]
+grid_s_3d = grid_s_hb[z_indices]
+grid_a_3d = grid_a_hb[z_indices]
+
+damage_3d = 1 - np.exp(-beta_thermal * (temp_vol - 100).clip(0))
+sigma_ci_3d = grid_ucs_3d * (1 - damage_3d)
+sigma_th_3d = (E * alpha_T_coeff * (temp_vol - 25)) / (1 - 2 * nu_poisson)
+
+sigma_v_3d = grid_sigma_v[z_indices]
+sigma_z_eff = sigma_v_3d - sigma_th_3d
+sigma_x_eff = (k_ratio * sigma_v_3d) - sigma_th_3d
+sigma_y_eff = (k_ratio * sigma_v_3d) - sigma_th_3d
+
+sigma1_3d = np.maximum.reduce([sigma_x_eff, sigma_y_eff, sigma_z_eff])
+sigma3_3d = np.minimum.reduce([sigma_x_eff, sigma_y_eff, sigma_z_eff])
+
+s3_safe_3d = np.maximum(sigma3_3d, 0.01)
+sigma1_limit_3d = s3_safe_3d + sigma_ci_3d * (grid_mb_3d * s3_safe_3d / (sigma_ci_3d + 1e-6) + grid_s_3d)**grid_a_3d
+failure_3d = (sigma1_3d >= sigma1_limit_3d).astype(int)
+void_3d_final = ((failure_3d == 1) & (temp_vol > 600)).astype(int)
+
+# 4. 🎨 3D VIZUALIZATSIYA
+fig_3d = go.Figure()
+
+# Qatlamlarni chizish (Cut-away effekti)
+for i, layer in enumerate(layers_data):
+    z_top_3d = layer['z_start']
+    Z_top_surf_3d = np.full_like(X_3d, z_top_3d)
+    mask_3d = np.ones_like(X_3d)
+    mask_3d[(X_3d > 0) & (Y_3d < y_range/2)] = np.nan 
+    
+    fig_3d.add_trace(go.Surface(
+        x=X_3d, y=Y_3d, z=Z_top_surf_3d * mask_3d,
+        surfacecolor=np.full_like(X_3d, i),
+        colorscale=[[0, layer['color']], [1, layer['color']]],
+        showscale=False, opacity=0.8, name=layer['name']
+    ))
+
+# Kaverna (Void)
+fig_3d.add_trace(go.Isosurface(
+    x=x_v.flatten(), y=y_v.flatten(), z=z_v.flatten(),
+    value=void_3d_final.flatten(),
+    isomin=0.5, isomax=1, surface_count=1,
+    colorscale=[[0, 'black'], [1, 'black']], showscale=False, name="Void"
+))
+
+# Issiqlik zonasi
+fig_3d.add_trace(go.Isosurface(
+    x=x_v.flatten(), y=y_v.flatten(), z=z_v.flatten(),
+    value=temp_vol.flatten(),
+    isomin=300, isomax=T_source_max,
+    opacity=0.2, surface_count=2, colorscale='Hot', name="Thermal"
+))
+
+# Yielded Zone
+fig_3d.add_trace(go.Isosurface(
+    x=x_v.flatten(), y=y_v.flatten(), z=z_v.flatten(),
+    value=failure_3d.flatten(),
+    isomin=0.5, isomax=1,
+    opacity=0.1, surface_count=1, colorscale=[[0, 'red'], [1, 'red']], showscale=False, name="Yielded"
+))
+
+fig_3d.update_layout(
+    scene=dict(
+        xaxis_title="X (m)", yaxis_title="Y (m)", zaxis_title="Z (m)",
+        zaxis=dict(autorange="reversed"),
+        aspectratio=dict(x=1.5, y=1, z=1)
+    ),
+    height=800, margin=dict(l=0, r=0, b=0, t=50), template="plotly_dark"
+)
+st.plotly_chart(fig_3d, use_container_width=True)
+
+st.success(f"✅ 3D Modellashtirish yakunlandi. Hoek-Brown (2018) va Termal Tenzor integratsiyasi muvaffaqiyatli.")
 
 # --- ILMIY METODOLOGIYA VA MANBALAR ---
 st.markdown("---")
