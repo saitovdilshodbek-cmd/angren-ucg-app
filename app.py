@@ -494,101 +494,158 @@ import numpy as np
 import plotly.graph_objects as go
 
 def generate_integrated_3d(h, layers, s_max):
-    grid_res = 35 
-    # RASMGA O'XSHASH QILISH UCHUN O'ZGARISH №1:
-    # Y o'qini musbat diapazonda olamiz (0 dan 60 gacha)
-    # Bu blokning "old" yarmini chizish imkonini beradi
-    x = np.linspace(-100, 100, grid_res)
-    y = np.linspace(0, 60, grid_res) # Musbat diapazon
-    gx, gy = np.meshgrid(x, y)
+    """
+    Taqdim etilgan rasmga o'xshash, 3D ko'rinish simulyatsiya qilingan 2D blok-diagramma
+    va qatlamlardagi issiqlik tarqalishi vizualizatsiyasi.
+    """
+    # 1. GEOMETRIYA PARAMETRLARI
+    L = 200  # Blok uzunligi (X)
+    W = 100  # Blok eni (Y)
+    total_depth = sum(l['t'] for l in layers)
     
-    # Cho'kish krateri (Gaussian model) - musbat Y uchun ham ishlaydi
-    subs_map = -s_max * np.exp(-(gx**2 + gy**2) / 800)
+    # Izometrik proyeksiyani simulyatsiya qilish uchun burchaklar
+    theta = np.radians(30)  # X o'qi og'ish burchagi
+    phi = np.radians(15)    # Y o'qi og'ish burchagi
+    
+    # Proyeksiya funksiyasi: (X, Y, Z) -> (2D_X, 2D_Y)
+    def project(x, y, z):
+        x_2d = x * np.cos(theta) - y * np.cos(phi)
+        # Z o'qi teskari (pastga chuqurlik), shuning uchun -z
+        y_2d = x * np.sin(theta) + y * np.sin(phi) - z
+        return x_2d, y_2d
+
     fig = go.Figure()
+
+    # 2. TERMAl TARQALISHNI HISOB-KITOBI (Kesma yuzasi uchun)
+    # Ko'mir qatlami markazida issiqlik manbai
+    coal_layer = layers[-1]
+    coal_z_center = sum(l['t'] for l in layers[:-1]) + coal_layer['t'] / 2
     
-    curr_z = 0
-    for i, layer in enumerate(layers):
-        z_top_base = curr_z
-        z_bottom_base = curr_z + layer['t']
-        
-        # Deformatsiya koeffitsiyentlari
-        deform_top = subs_map * (0.85 ** i)
-        deform_bottom = subs_map * (0.85 ** (i + 1))
-        
-        z_top = -z_top_base + deform_top
-        z_bottom = -z_bottom_base + deform_bottom
-        
-        # 1. Qatlamning ustki sirti
-        fig.add_trace(go.Surface(
-            x=gx, y=gy, z=z_top,
-            colorscale=[[0, layer['color']], [1, layer['color']]],
-            opacity=1.0, showscale=False, name=layer['name'],
-            hoverinfo='skip'
-        ))
+    # Soatbay issiqlik tarqalishi radiusi (Birinchi kod mantiqiga binoan)
+    alpha_rock = 1.0e-6 # m^2/s
+    dt_sec = h * 3600
+    R_th = np.sqrt(4 * alpha_rock * dt_sec) # Termal radius
+    T_max = 1000 # Maksimal harorat (°C)
+    T_env = 25   # Atrof-muhit harorati
 
-        # RASMGA O'XSHASH QILISH UCHUN O'ZGARISH №2:
-        # KESIM YUZASI (Old vertikal devor)
-        # Endi kesim gridning BOSCHIDA (Y=0 nuqtasida, ya'ni gy[0, :] da)
-        fx, fy = gx[0, :], gy[0, :] # Birinchi qator (Y=0)
-        fz_t, fz_b = z_top[0, :], z_bottom[0, :]
-        
-        fig.add_trace(go.Surface(
-            x=np.array([fx, fx]),
-            y=np.array([fy, fy]),
-            z=np.array([fz_t, fz_b]),
-            colorscale=[[0, layer['color']], [1, layer['color']]],
-            opacity=1.0, showscale=False,
-            hoverinfo='text',
-            text=f"Qatlam: {layer['name']}"
-        ))
-
-        # 3. QOLGAN YON DEVORLAR (X-min, X-max va orqa Y-max devorlari)
-        # Kesim oldinda bo'lgani uchun, orqa devor Y-max bo'ladi
-        for side in [0, 1, 2]: 
-            if side == 0: # X-min
-                sx, sy, sz_t, sz_b = gx[:, 0], gy[:, 0], z_top[:, 0], z_bottom[:, 0]
-            elif side == 1: # X-max
-                sx, sy, sz_t, sz_b = gx[:, -1], gy[:, -1], z_top[:, -1], z_bottom[:, -1]
-            else: # Y-max (Orqa tomon)
-                sx, sy, sz_t, sz_b = gx[-1, :], gy[-1, :], z_top[-1, :], z_bottom[-1, :]
-            
-            fig.add_trace(go.Surface(
-                x=np.array([sx, sx]), y=np.array([sy, sy]), z=np.array([sz_t, sz_b]),
-                colorscale=[[0, layer['color']], [1, layer['color']]],
-                opacity=1.0, showscale=False, hoverinfo='skip'
-            ))
-            
-        curr_z = z_bottom_base
-
-    # RASMGA O'XSHASH QILISH UCHUN O'ZGARISH №3:
-    # UCG KAMERASI (Kesimda bizga qaragan yarmi ko'rinishi uchun)
-    coal_z = -(sum(l['t'] for l in layers[:-1]) + layers[-1]['t']/2)
-    # Kameraning bizga qaragan yarmini (Y > 0) chizish uchun 
-    # v diapazonini pi/2 dan pi gacha olamiz
-    u_c, v_c = np.mgrid[0:2*np.pi:20j, np.pi/2:np.pi:20j] 
-    r = min(h / 10, 13) 
+    # 3. KESMA YUZASINI CHIZISH (FRONT FACE)
+    # Bu yuzada harorat xaritasi ko'rinadi
+    N_res = 50
+    x_face = np.linspace(0, L, N_res)
+    # Chuqurlik to'ri
+    z_face = np.linspace(0, total_depth, N_res)
+    GX_f, GZ_f = np.meshgrid(x_face, z_face)
     
-    if r > 1:
-        cx, cy, cz = r*np.cos(u_c)*np.sin(v_c), (r*0.8)*np.sin(u_c)*np.sin(v_c), (r*0.6)*np.cos(v_c) + coal_z
-        fig.add_trace(go.Surface(
-            x=cx, y=cy, z=cz, 
-            colorscale='Hot', opacity=1.0, showscale=False,
-            name="Yonish kamerasi",
-            lighting=dict(ambient=0.7, diffuse=1.0, specular=0.5)
-        ))
+    # Issiqlik tarqalishi Gaussian modeli (X=0 da manba)
+    dist_sq_f = (GX_f - 0)**2 + (GZ_f - coal_z_center)**2
+    # R_th ga bog'liq issiqlik xaritasi
+    T_field_f = T_env + (T_max - T_env) * np.exp(-dist_sq_f / (R_th**2 + 5**2))
 
-    # 5. GRAFIK SOZLAMALARI
+    # Proyeksiyalangan kordinatalar
+    FX_2d, FY_2d = project(GX_f, 0, GZ_f)
+    
+    # Kesma yuzasidagi issiqlik xaritasi (Heatmap)
+    fig.add_trace(go.Heatmap(
+        x=FX_2d[0, :],
+        y=FY_2d[:, 0],
+        z=T_field_f,
+        colorscale='Hot',
+        zmin=T_env, zmax=T_max,
+        showscale=True,
+        colorbar=dict(title="T (°C)", len=0.6, thickness=15, x=0.95),
+        name="Termal Kesma",
+        hoverinfo='skip',
+        opacity=0.9
+    ))
+
+    # 4. YON YUZANI CHIZISH (SIDE FACE)
+    # Bu yuzada qatlamlar chiziqlari ko'rinadi
+    Y_face_s = np.linspace(0, W, N_res)
+    Z_face_s = np.linspace(0, total_depth, N_res)
+    GY_s, GZ_s = np.meshgrid(Y_face_s, Z_face_s)
+    
+    # Issiqlik tarqalishi (X=0, Y=0 da manba)
+    dist_sq_s = (0)**2 + (GY_s - 0)**2 + (GZ_s - coal_z_center)**2
+    T_field_s = T_env + (T_max - T_env) * np.exp(-dist_sq_s / (R_th**2 + 5**2))
+    
+    SX_2d, SY_2d = project(0, GY_s, GZ_s)
+    
+    # Yon yuzadagi issiqlik xaritasi
+    fig.add_trace(go.Heatmap(
+        x=SX_2d[0, :],
+        y=SY_2d[:, 0],
+        z=T_field_s,
+        colorscale='Hot',
+        zmin=T_env, zmax=T_max,
+        showscale=False,
+        name="Termal Yon",
+        hoverinfo='skip',
+        opacity=0.9
+    ))
+
+    # 5. QATLAMLAR CHEGARALARI VA KONTURLARI
+    current_z = 0
+    line_style = dict(color='rgba(100, 100, 100, 0.5)', width=1)
+    
+    for layer in layers:
+        current_z += layer['t']
+        
+        # Front face kontur chizig'i
+        fx1, fy1 = project(0, 0, current_z)
+        fx2, fy2 = project(L, 0, current_z)
+        fig.add_trace(go.Scatter(x=[fx1, fx2], y=[fy1, fy2], mode='lines', line=line_style, showlegend=False))
+        
+        # Side face kontur chizig'i
+        sx1, sy1 = project(0, 0, current_z)
+        sx2, sy2 = project(0, W, current_z)
+        fig.add_trace(go.Scatter(x=[sx1, sx2], y=[sy1, sy2], mode='lines', line=line_style, showlegend=False))
+        
+        # Top face kontur chizig'i (agar eng yuqori bo'lmasa)
+        if current_z < total_depth:
+            tx1, ty1 = project(L, 0, current_z)
+            tx2, ty2 = project(L, W, current_z)
+            fig.add_trace(go.Scatter(x=[tx1, tx2], y=[ty1, ty2], mode='lines', line=line_style, showlegend=False))
+            tx3, ty3 = project(0, W, current_z)
+            fig.add_trace(go.Scatter(x=[tx2, tx3], y=[ty2, ty3], mode='lines', line=line_style, showlegend=False))
+
+    # Eng ustki sirt (Yer yuzasi - deformatsiyasiz ko'rsatiladi)
+    top_color = layers[0]['color']
+    tx, ty = project(np.array([0, L, L, 0, 0]), np.array([0, 0, W, W, 0]), 0)
+    fig.add_trace(go.Scatter(
+        x=tx, y=ty, fill='toself', fillcolor=top_color, 
+        line=dict(color='black', width=1), opacity=0.8, name="Yer yuzasi"
+    ))
+
+    # 6. UCG KONI VA CHO'KISH MODELI (Faqat vizual simulyatsiya)
+    if R_th > 10:
+        # Koni simulyatsiyasi (Kesma yuzasida)
+        r_cone = min(R_th - 5, 20)
+        u = np.linspace(0, 2*np.pi, 20)
+        v = np.linspace(0, r_cone, 10)
+        U, V = np.meshgrid(u, v)
+        cx = V * np.cos(U)
+        cz = V * np.sin(U) + coal_z_center
+        
+        # Proyeksiyalash (Kamera X=0 da)
+        cpx, cpy = project(0, cx, cz)
+        fig.add_trace(go.Scatter(x=cpx.flatten(), y=cpy.flatten(), mode='markers', marker=dict(size=1.5, color='orange'), name="Yonish kamerasi"))
+
+        # Yer yuzasi cho'kishi (Gaussian visual overlay)
+        if h > burn_duration:
+            Hour_f = min((h - burn_duration) / 100, 1.0)
+            s_map_vis = -(s_max * 1.5) * Hour_f * np.exp(-(x_face**2) / 800)
+            tpx, tpy = project(x_face, 0, 0)
+            # Deformatsiyani Z o'qi bo'ylab qo'shish
+            fig.add_trace(go.Scatter(x=tpx, y=tpy + s_map_vis, mode='lines', line=dict(color='magenta', width=2), name="Cho'kish konturi"))
+
+    # 7. GRAFIK SOZLAMALARI
     fig.update_layout(
-        scene=dict(
-            xaxis=dict(title="X (m)", backgroundcolor="black", showbackground=True),
-            # Y o'qi diapazoni musbat
-            yaxis=dict(title="Y (Kesim)", range=[-20, 60], backgroundcolor="black", showbackground=True),
-            zaxis=dict(title="Z (Chuqurlik)", range=[-sum(l['t'] for l in layers)-10, 20]),
-            # Kamerani rasmga o'xshash burchakdan sozlash
-            camera=dict(eye=dict(x=1.5, y=-1.5, z=1.2)) 
-        ),
-        height=750, margin=dict(l=0, r=0, b=0, t=0),
-        template="plotly_dark"
+        template="plotly_dark",
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False, autorange='reversed'), # Chuqurlik pastga
+        height=700,
+        margin=dict(l=20, r=20, t=50, b=20),
+        title=f"Angren UCG: {h}-soatdagi Termo-Geomexanik Blok-Diagrammasi (Kun: {h//24})"
     )
     return fig
 
