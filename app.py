@@ -306,6 +306,74 @@ with c2:
     fig_tm.update_yaxes(autorange='reversed', row=1, col=1); fig_tm.update_yaxes(autorange='reversed', row=2, col=1)
     st.plotly_chart(fig_tm, use_container_width=True)
 
+# ==============================================================================
+# --- 📑 HISOBOT VA INTERPRETATSIYA BO'LIMI (YANGI) ---
+# ==============================================================================
+st.markdown("---")
+st.header("📑 Hisoblash Metodikasi va Interpretatsiya")
+
+tab1, tab2, tab3 = st.tabs(["🔍 Parametrlar tahlili", "📐 Formula va Bog'liqliklar", "📝 Ekspert Xulosasi"])
+
+with tab1:
+    st.subheader("Kiritilgan parametrlar va ularning modelga ta'siri")
+    
+    col_inf1, col_inf2 = st.columns(2)
+    
+    with col_inf1:
+        st.write(f"**1. Geologik sharoit (GSI va D):**")
+        st.write(f"Siz kiritgan GSI ({layers_data[-1]['gsi']}) va Disturbance Factor ({D_factor}) asosida jins massivining butunligi aniqlandi. "
+                 f"Bu parametrlar **Hoek-Brown** formulasidagi $m_b, s$ va $a$ koeffitsiyentlarini shakllantiradi.")
+        
+        st.write(f"**2. Termal ta'sir (T_max: {T_source_max}°C):**")
+        st.write(f"Yuqori harorat jinsning elastiklik modulini va mustahkamligini kamaytiradi. "
+                 f"Hozirgi modelda $\\beta = {beta_thermal}$ koeffitsiyenti bilan eksponentsial pasayish hisobga olingan.")
+
+    with col_inf2:
+        st.write(f"**3. Mexanik kuchlanish (k-ratio: {k_ratio}):**")
+        st.write(f"Gorizontal kuchlanishning vertikalga nisbati ({k_ratio}) selek barqarorligiga bevosita ta'sir qiladi. "
+                 f"Sizning holatingizda $\sigma_h = {k_ratio} \cdot \sigma_v$ sifatida qabul qilindi.")
+        
+        st.write(f"**4. Selek (Pillar) geometriyasi:**")
+        st.write(f"Kamera balandligi $H = {H_seam}$ m va hisoblangan optimal en $w = {rec_width}$ m. "
+                 f"Bu nisbat ($w/H$) selekning yuk ko'tarish qobiliyatini belgilaydi.")
+
+with tab2:
+    st.subheader("Matematik bog'liqliklar zanjiri")
+    
+    st.info("Model quyidagi ketma-ketlikda hisoblandi:")
+    
+    # 1-qadam
+    st.markdown("**1-qadam: Hoek-Brown Parametrizatsiyasi**")
+    st.latex(r"m_b = m_i \cdot \exp\left(\frac{GSI-100}{28-14D}\right)")
+    st.caption("Ushbu formula massivning laboratoriya namunasidan farqli o'laroq haqiqiy mustahkamligini aniqlaydi.")
+
+    # 2-qadam
+    st.markdown("**2-qadam: Termo-Mexanik Degradatsiya**")
+    st.latex(r"\sigma_{ci(T)} = \sigma_{ci} \cdot e^{-\beta (T - 20)}")
+    st.caption(f"Harorat {T_source_max}°C ga yetganda, jinsning UCS ko'rsatkichi termal zarar (damage) tufayli kamayadi.")
+
+    # 3-qadam
+    st.markdown("**3-qadam: Selek Optimizatsiyasi (Wilson Method)**")
+    st.latex(r"w_{opt} = 2 \cdot y_{zone} + 0.5 \cdot H")
+    st.write(f"Hisoblangan plastik zona (y) = **{y_zone:.2f} m**. Selek o'lchami ushbu zonaning ikki barobaridan kichik bo'lmasligi kerak.")
+
+with tab3:
+    st.subheader("PhD Tadqiqotchisi uchun Tavsiyalar")
+    
+    # Avtomatik mantiqiy xulosa shakllantirish
+    if fos_2d.min() < 1.0:
+        st.error(f"⚠️ **Diqqat:** Modelda FOS < 1.0 bo'lgan zonalar aniqlandi. Bu '{obj_name}' loyihasida "
+                 f"kamera atrofida jiddiy deformatsiya va jinslar qulashi (collapse) xavfi borligini anglatadi.")
+    else:
+        st.success(f"✅ **Barqarorlik:** Umumiy hisobda tizim barqaror. Selek eni {rec_width} m bo'lganda xavfsizlik ta'minlanadi.")
+
+    st.markdown(f"""
+    **Tahlil natijasi:**
+    * **Termal kengayish:** {T_source_max}°C haroratda hosil bo'lgan termal kuchlanishlar ($\sigma_{{th}}$) vertikal yuklanishga qo'shimcha bosim beradi.
+    * **O'tkazuvchanlik:** Bo'shliqlar hosil bo'lishi natijasida filtratsiya koeffitsiyenti **{np.max(perm):.1e} m²** gacha ortishi kutilmoqda.
+    * **Monitoring:** Angren koni sharoitida, ayniqsa {layers_data[-1]['name']} qatlamida cho'zilish kuchlanishlariga (tensile stress) e'tibor berish tavsiya etiladi.
+    """)
+    
 # --- ILMIY METODOLOGIYA VA MANBALAR ---
 st.markdown("---")
 with st.expander("📚 Ilmiy Metodologiya va Manbalar (PhD Research References)"):
