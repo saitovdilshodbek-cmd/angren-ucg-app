@@ -306,6 +306,131 @@ with c2:
     fig_tm.update_yaxes(autorange='reversed', row=1, col=1); fig_tm.update_yaxes(autorange='reversed', row=2, col=1)
     st.plotly_chart(fig_tm, use_container_width=True)
 
+import streamlit as st
+import numpy as np
+import plotly.graph_objects as go
+from scipy.ndimage import gaussian_filter
+
+# --- 1. SAHIFA SOZLAMALARI ---
+st.set_page_config(page_title="UCG Termo-Mexanik Simulator", layout="wide")
+
+# CSS: Interfeysni chiroyli qilish
+st.markdown("""
+    <style>
+    .main { background-color: #0e1117; }
+    .stMetric { background-color: #1f2937; padding: 10px; border-radius: 10px; }
+    </style>
+    """, unsafe_allow_html=True)
+
+st.title("🌐 UCG: Termo-Mexanik Blok-Model Monitoringi")
+
+# --- 2. SIDEBAR PARAMETRLARI ---
+st.sidebar.header("⚙️ Umumiy Parametrlar")
+obj_name = st.sidebar.text_input("Loyiha nomi:", value="Angren-UCG-001")
+time_day = st.sidebar.slider("Loyiha davomiyligi (kun):", 1, 60, 30)
+num_layers = st.sidebar.number_input("Qatlamlar soni:", min_value=1, max_value=5, value=3)
+
+st.sidebar.subheader("🔥 Termal Parametrlar")
+T_source_max = st.sidebar.slider("Maksimal harorat (°C)", 600, 1200, 1075)
+burn_duration_days = 20 # Har bir kamera 20 kun yonadi
+
+# Qatlamlarni yig'ish
+layer_props = []
+total_depth = 0
+strata_colors = ['#87CEEB', '#F4A460', '#D3D3D3', '#F5DEB3', '#555555']
+
+for i in range(int(num_layers)):
+    with st.sidebar.expander(f"{i+1}-qatlam: Parametrlar", expanded=(i == num_layers-1)):
+        col1, col2 = st.columns(2)
+        with col1:
+            name = st.text_input(f"Nomi:", value=f"Qatlam-{i+1}", key=f"n_{i}")
+            thick = st.number_input(f"Qalinlik (m):", value=40.0, key=f"t_{i}")
+        with col2:
+            ucs = st.number_input(f"UCS (MPa):", value=35.0, key=f"u_{i}")
+            rho = st.number_input(f"Zichlik (kg/m³):", value=2400, key=f"r_{i}")
+        color = st.color_picker(f"Rangi:", strata_colors[i % len(strata_colors)], key=f"c_{i}")
+        layer_props.append({'name': name, 't': thick, 'ucs': ucs, 'rho': rho, 'color': color, 'z_start': total_depth})
+        total_depth += thick
+
+# --- 3. MATEMATIK HISOB-KITOBLAR ---
+# Koordinatalar
+x_axis = np.linspace(-150, 150, 100)
+z_axis = np.linspace(0, total_depth + 20, 80)
+grid_x, grid_z = np.meshgrid(x_axis, z_axis)
+
+# Kamera koordinatalari (Sizning mantiqingiz bo'yicha)
+source_z = total_depth - (layer_props[-1]['t'] / 2)
+sources = {
+    '1': {'x': -60, 'start': 0}, 
+    '2': {'x': 0, 'start': 20}, 
+    '3': {'x': 60, 'start': 40}
+}
+
+# Harorat maydoni (Time-dependent)
+alpha_rock = 1.0e-6
+temp_2d = np.ones_like(grid_x) * 25
+
+for key, val in sources.items():
+    if time_day > val['start']:
+        dt_active = time_day - val['start']
+        dt_sec = dt_active * 24 * 3600
+        pen_depth = np.sqrt(4 * alpha_rock * dt_sec)
+        
+        # Harorat dinamikasi: Yonish vs Sovish
+        if dt_active <= burn_duration_days:
+            curr_T = T_source_max
+        else:
+            curr_T = 25 + (T_source_max - 25) * np.exp(-0.05 * (dt_active - burn_duration_days))
+            
+        dist_sq = (grid_x - val['x'])**2 + (grid_z - source_z)**2
+        temp_2d += (curr_T - 25) * np.exp(-dist_sq / (pen_depth**2 + 20**2))
+
+# Geostatik bosim (Sigma V)
+grid_sigma_v = np.zeros_like(grid_z)
+for i, layer in enumerate(layer_props):
+    mask = (grid_z >= layer['z_start']) & (grid_z < (layer['z_start'] + layer['t']))
+    if i == len(layer_props) - 1: mask = grid_z >= layer['z_start']
+    overburden_p = sum(l['rho'] * 9.81 * l['t'] for l in layer_props[:i]) / 1e6
+    grid_sigma_v[mask] = overburden_p + (layer['rho'] * 9.81 * (grid_z[mask] - layer['z_start'])) / 1e6
+
+# --- 4. VIZUALIZATSIYA ---
+col_left, col_right = st.columns([2, 1])
+
+with col_left:
+    st.subheader("🔥 2D Termo-Mexanik Kesim")
+    fig_tm = go.Figure()
+    # Heatmap (Harorat)
+    fig_tm.add_trace(go.Heatmap(
+        z=temp_2d, x=x_axis, y=z_axis,
+        colorscale='Hot', zmin=25, zmax=T_source_max,
+        colorbar=dict(title="T (°C)", len=0.8)
+    ))
+    # Qatlam chegaralarini chizish
+    for layer in layer_props:
+        fig_tm.add_shape(type="line", x0=-150, x1=150, y0=layer['z_start'], y1=layer['z_start'],
+                         line=dict(color="white", width=1, dash="dot"))
+        
+    fig_tm.update_layout(height=500, template="plotly_dark", yaxis=dict(autorange='reversed', title="Chuqurlik (m)"), xaxis_title="Masofa (m)")
+    st.plotly_chart(fig_tm, use_container_width=True)
+
+with col_right:
+    st.subheader("📊 Selek Barqarorligi")
+    ucs_seam = layer_props[-1]['ucs']
+    sigma_v_max = grid_sigma_v.max()
+    
+    # Termal damage (Sizning formulangiz)
+    damage_factor = np.exp(-0.003 * (temp_2d.max() - 25))
+    pillar_strength = ucs_seam * damage_factor * (1.2) # Selek eni koeffitsiyenti bilan
+    fos = pillar_strength / (sigma_v_max + 1e-6)
+    
+    st.metric("Pillar Strength", f"{pillar_strength:.2f} MPa")
+    st.metric("Vertical Stress", f"{sigma_v_max:.2f} MPa")
+    st.metric("FOS (Xavfsizlik)", f"{fos:.2f}")
+    
+    if fos < 1.2:
+        st.error("❌ XAVF: Selek o'pirilishi ehtimoli yuqori!")
+    else:
+        st.success("✅ BARQAROR: Selek yukni ko'tara oladi.")
 
 # --- 5. 3D BLOK MODEL INTEGRATSIYASI ---
 st.markdown("---")
@@ -342,6 +467,12 @@ def draw_3d_blocks():
     return fig_3d
 
 st.plotly_chart(draw_3d_blocks(), use_container_width=True)
+
+# --- 6. PH.D. XULOSA ---
+with st.expander("📝 Ilmiy-metodik asoslar (Hoek-Brown & Thermal Damage)"):
+    st.write(f"**Loyiha:** {obj_name}")
+    st.latex(r"\sigma_{ci(T)} = \sigma_{ci} \cdot e^{-\beta \Delta T}")
+    st.write("Ushbu modelda Hoek-Brown (2018) mezonlari va Shao (2015) termal degradatsiya modellari birlashtirilgan. Kameralarning ketma-ket yonishi konda kuchlanishlar migratsiyasini (Stress Migration) ta'minlaydi.")
 
 # ==============================================================================
 # --- 📑 CHUQURLASHTIRILGAN ILMIY HISOBOT VA BIBLIOGRAFIYA (PHD EDITION) ---
