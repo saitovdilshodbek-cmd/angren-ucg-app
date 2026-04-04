@@ -306,151 +306,144 @@ with c2:
     fig_tm.update_yaxes(autorange='reversed', row=1, col=1); fig_tm.update_yaxes(autorange='reversed', row=2, col=1)
     st.plotly_chart(fig_tm, use_container_width=True)
 
-import streamlit as st
-import numpy as np
-import plotly.graph_objects as go
 
 # ==============================================================================
-# --- 🌀 UCG: VAQT VA QATLAMLAR INTEGRATSIYALASHGAN 3D MODEL ---
+# --- 🌀 UCG: SOATBAY (time_h) VA QATLAMLAR INTEGRATSIYASI ---
 # ==============================================================================
-st.header("🌀 UCG: Vaqtga Bog'liq Qatlamli Deformatsiya Modeli")
+st.header("🌀 UCG: Termo-Mexanik Dinamik 3D Model")
 
-# Vaqt slayderi (0-60 kun)
-time_step = st.slider("Loyiha davomiyligi (kun):", 1, 60, 30)
-
-def generate_dynamic_3d_model(t, layers):
-    # 1. To'r (Grid) yaratish
-    grid_res = 40
+def generate_hourly_3d_model(h, layers):
+    # 1. Koordinatalar setkasi
+    grid_res = 45
     x = np.linspace(-100, 100, grid_res)
     y = np.linspace(-60, 60, grid_res)
     grid_x, grid_y = np.meshgrid(x, y)
     
-    # 2. Kameralar markazi va vaqt bo'yicha holati
-    centers_x = [-45, 0, 45]
+    # 2. Kameralar markazi (X o'qi bo'ylab joylashuvi)
+    # Birinchi koddagi 'sources' mantiqiga binoan
+    centers_x = [-60, 0, 60]
     radii = []
-    states = []
+    temp_states = [] # Harorat holati
     
-    for i in range(3):
-        start_day = i * 20
-        duration = 20
-        if t <= start_day:
-            radii.append(0); states.append("Kutilmoqda")
-        elif start_day < t <= start_day + duration:
-            # Vaqtga bog'liq radius o'sishi (Linear growth)
-            growth = (t - start_day) / duration
-            radii.append(2 + growth * 10); states.append("Faol")
+    for i, cx in enumerate(centers_x):
+        # Har bir kamera ma'lum soatdan keyin boshlanadi (0, 40, 80-soatlar)
+        start_h = i * 40 
+        if h <= start_h:
+            radii.append(0); temp_states.append("Sovuq")
+        elif start_h < h <= start_h + 40:
+            # Soatbay o'sish: 40 soat ichida maksimal 12 metr radiusga yetadi
+            growth = (h - start_h) / 40
+            radii.append(2 + growth * 10); temp_states.append("Faol")
         else:
-            # Maksimal radiusga yetgan (Yonib bo'lgan)
-            radii.append(12); states.append("Yonib bo'lgan")
+            # Yonib bo'lgan, lekin sovish jarayonida
+            radii.append(12); temp_states.append("Soviyotgan")
 
-    # 3. VAQTGA BOG'LIQ CHO'KISH (SUBSIDENCE)
-    # t ortishi bilan cho'kish chuqurlashadi va kengayadi
+    # 3. SOATBAY CHO'KISH (time_h bog'liqligi)
+    # Birinchi koddagi s_max (cho'kish) mantiqini 3D ga ko'chiramiz
     total_subs = np.zeros_like(grid_x)
     for i in range(3):
         if radii[i] > 0:
-            # Cho'kish amplitudasi vaqt va radiusga bog'liq
-            amplitude = (radii[i] / 12) * 6.0 
-            # Cho'kish krateri vaqt o'tishi bilan kengayadi (i=300 dan 500 gacha)
-            spread = 400 + (t * 2) 
-            total_subs += - amplitude * np.exp(-((grid_x - centers_x[i])**2 + grid_y**2) / spread)
+            # Cho'kish amplitudasi soat o'tishi bilan ortadi
+            # 150 soatda maksimal darajaga yetadi
+            hour_factor = min(h / 150, 1.0)
+            amplitude = (radii[i] / 12) * 5.0 * hour_factor
+            total_subs += - amplitude * np.exp(-((grid_x - centers_x[i])**2 + grid_y**2) / 600)
 
     fig = go.Figure()
 
-    # 4. DINAMIK QATLAMLAR (BLOKLAR)
+    # 4. QATLAMLARNI BLOK HOLIDA CHIZISH (layers_data bog'liqligi)
     current_depth = 0
     for i, layer in enumerate(layers):
         z_top = current_depth
         z_bottom = current_depth + layer['t']
         
-        # Vaqtga bog'liq deformatsiya koeffitsiyenti (chuqurlashgan sari so'nadi)
-        # s = f(t, i) -> vaqt o'tishi bilan pastki qatlamlar ham ko'proq deformatsiyalanadi
-        time_impact = np.clip(t / 60, 0.2, 1.0)
-        layer_deform = total_subs * (0.8 ** i) * time_impact
+        # Deformatsiya chuqurlik va vaqt bilan so'nadi
+        # i=0 (eng yuqori qatlam) eng ko'p cho'kadi
+        depth_attenuation = 0.85 ** i
+        layer_deform = total_subs * depth_attenuation
 
-        # Har bir qatlamning ustki sirti
+        # Qatlam sirtini chizish
         fig.add_trace(go.Surface(
             x=grid_x, y=grid_y, z=-z_top + layer_deform,
             colorscale=[[0, layer['color']], [1, layer['color']]],
-            opacity=0.7 if i > 0 else 1.0,
+            opacity=0.8 if i == 0 else 0.5, # Ustki qatlam aniqroq, pastdagilar shaffofroq
             showscale=False,
             name=layer['name'],
-            legendgroup=layer['name'],
-            hoverinfo='skip'
+            legendgroup="Qatlamlar",
+            hoverinfo='text',
+            text=f"Qatlam: {layer['name']} | Qalinlik: {layer['t']}m"
         ))
         current_depth = z_bottom
 
-    # 5. UCG KAMERASI VA ISSIQLIK RADIUSI
-    # Ko'mir qatlami markazi (oxirgi qatlam deb faraz qilinadi)
-    coal_center_z = -(sum(l['t'] for l in layers[:-1]) + layers[-1]['t']/2)
+    # 5. UCG KAMERALARI (Ko'mir qatlami ichida)
+    # Ko'mir qatlami oxirgi qatlam deb olingan (layers[-1])
+    coal_z_center = -(sum(l['t'] for l in layers[:-1]) + layers[-1]['t']/2)
     
-    u, v = np.mgrid[0:2*np.pi:15j, 0:np.pi:15j]
+    u, v = np.mgrid[0:2*np.pi:18j, 0:np.pi:18j]
     for i, cx in enumerate(centers_x):
         if radii[i] > 0:
             r = radii[i]
-            # Vaqtga bog'liq shakl o'zgarishi (pulsatsiya effekti uchun t ishlatiladi)
-            pulse = 1 + 0.05 * np.sin(t * 0.5) if states[i] == "Faol" else 1.0
+            # Haroratga qarab rang o'zgarishi
+            if temp_states[i] == "Faol":
+                c_map = 'YlOrRd' # Issiq yonish
+                opac = 0.9
+            else:
+                c_map = 'Greys' # Kul va sovigan zona
+                opac = 0.6
+                
+            dx = r * np.cos(u) * np.sin(v)
+            dy = (r * 0.8) * np.sin(u) * np.sin(v)
+            dz = (r * 0.5) * np.cos(v) + coal_z_center
             
-            dx = r * np.cos(u) * np.sin(v) * pulse
-            dy = (r * 0.7) * np.sin(u) * np.sin(v)
-            dz = (r * 0.5) * np.cos(v) + coal_center_z
-            
-            color = 'Hot' if states[i] == "Faol" else 'Greys'
             fig.add_trace(go.Surface(
                 x=dx + cx, y=dy, z=dz,
-                colorscale=color, opacity=0.85, showscale=False,
-                name=f"Kamera {i+1} ({states[i]})"
+                colorscale=c_map, opacity=opac, showscale=False,
+                name=f"Kamera {i+1}"
             ))
 
-    # 6. VAQTGA BOG'LIQ STRESS VA O'PIRILISH
-    if "Faol" in states:
-        active_x = centers_x[states.index("Faol")]
-        # Stress nuqtalari soni vaqt o'tishi bilan ortadi
-        n_points = int(10 + (t % 20)) 
-        np.random.seed(t)
-        st_x = np.random.uniform(active_x - 15, active_x + 15, n_points)
-        st_y = np.random.uniform(-15, 15, n_points)
-        st_z = np.random.uniform(coal_center_z, 0, n_points)
+    # 6. FAOL TERMALE STRESS NUQTALARI (time_h ga qarab harakatlanadi)
+    if "Faol" in temp_states:
+        act_idx = temp_states.index("Faol")
+        np.random.seed(int(h)) # Har soatda stress nuqtalari o'rnini o'zgartiradi
+        n_pts = int(5 + (h % 30))
+        
+        st_x = np.random.uniform(centers_x[act_idx]-20, centers_x[act_idx]+20, n_pts)
+        st_y = np.random.uniform(-20, 20, n_pts)
+        # Stress asosan ko'mir qatlami va uning tomi atrofida
+        st_z = np.random.uniform(coal_z_center, coal_z_center + 15, n_pts)
         
         fig.add_trace(go.Scatter3d(
             x=st_x, y=st_y, z=st_z,
             mode='markers',
-            marker=dict(size=4, color='cyan', symbol='x'),
-            name="Dinamik Kuchlanish"
+            marker=dict(size=4, color='cyan', symbol='diamond'),
+            name="Termal Kuchlanish"
         ))
 
-    # Grafik sozlamalari
-    total_h = sum(l['t'] for l in layers)
+    # Grafik interfeysi
+    total_h_depth = sum(l['t'] for l in layers)
     fig.update_layout(
         scene=dict(
-            xaxis=dict(title="X (m)", range=[-100, 100]),
+            xaxis=dict(title="Masofa X (m)", range=[-100, 100]),
             yaxis=dict(title="Y (m)", range=[-60, 60]),
-            zaxis=dict(title="Z (m)", range=[-total_h - 10, 20]),
+            zaxis=dict(title="Chuqurlik Z (m)", range=[-total_h_depth - 10, 20]),
+            aspectmode='manual',
             aspectratio=dict(x=1, y=0.6, z=0.4)
         ),
-        title=f"Angren Konining 3D Dinamik Modeli (Kun: {t})",
-        margin=dict(l=0, r=0, b=0, t=40)
+        margin=dict(l=0, r=0, b=0, t=50),
+        title=f"Angren-UCG: {h}-soatdagi 3D Geomexanik holat"
     )
     return fig
 
-# Ilovada natijani chiqarish
-if 'layers_data' in locals() or 'layers_data' in globals():
-    fig = generate_dynamic_3d_model(time_step, layers_data)
-    st.plotly_chart(fig, use_container_width=True)
+# --- Chaqirish ---
+# Birinchi koddagi 'time_h' va 'layers_data' o'zgaruvchilarini ishlatamiz
+if 'time_h' in locals() and 'layers_data' in locals():
+    fig_3d = generate_hourly_3d_model(time_h, layers_data)
+    st.plotly_chart(fig_3d, use_container_width=True)
     
-    # Ekspert tahlili (Vaqtga bog'liq)
-    st.subheader(f"📅 {time_step}-kunlik Geomexanik Hisobot")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.write(f"**Kamera holati:** {time_step}-kunda kameralar rivojlanishi faol bosqichda.")
-        st.metric("Maksimal Cho'kish", f"{abs(time_step * 0.1):.2f} m")
-    with col2:
-        st.write("**Xavf tahlili:**")
-        if time_step > 45:
-            st.error("⚠️ Yuqori qatlamlarda o'pirilish xavfi (Collapse) mavjud!")
-        else:
-            st.success("✅ Hozircha massiv barqaror holatda.")
+    st.info(f"ℹ️ **3D Interpretatsiya:** Sidebar'dagi jarayon vaqti ({time_h}-soat) asosida "
+            f"kameralarning termal kengayishi va qatlamlar deformatsiyasi qayta hisoblandi.")
 else:
-    st.warning("Iltimos, avval qatlam parametrlarini sidebar orqali kiriting!")
+    st.warning("Iltimos, sidebar parametrlari va qatlamlar ma'lumotlari mavjudligini tekshiring.")
 
 # ==============================================================================
 # --- 📑 CHUQURLASHTIRILGAN ILMIY HISOBOT VA BIBLIOGRAFIYA (PHD EDITION) ---
