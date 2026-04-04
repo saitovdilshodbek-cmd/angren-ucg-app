@@ -466,40 +466,15 @@ with st.expander("📝 Avtomatik Ilmiy Interpretatsiya", expanded=True):
     3. **Xavf darajasi:** **{risk_level}**. Tavsiya etilgan selek eni: **{w_rec:.1f} metr**.
     """)
 
-# --- 🔥 PDE HEAT SOLVER (UPGRADE) ---
-def solve_heat_step(T, Q, alpha, dx, dt):
-    Tn = T.copy()
-    Tn[1:-1,1:-1] = T[1:-1,1:-1] + alpha * dt * (
-        (T[2:,1:-1] - 2*T[1:-1,1:-1] + T[:-2,1:-1]) / dx**2 +
-        (T[1:-1,2:] - 2*T[1:-1,1:-1] + T[1:-1,:-2]) / dx**2
-    ) + Q[1:-1,1:-1]*dt
-    return Tn
+from sklearn.ensemble import RandomForestRegressor
 
-# Heat source (UCG kamera joylashuvi)
-Q = np.zeros_like(temp_2d)
-for val in sources.values():
-    cx, cz = val['x'], source_z
-    Q += 500 * np.exp(-((grid_x - cx)**2 + (grid_z - cz)**2) / 200)
+@st.cache_resource
+def train_rf(X, y):
+    model = RandomForestRegressor(n_estimators=30, max_depth=10)
+    model.fit(X, y)
+    return model
 
-# Iterativ yechim
-for _ in range(10):
-    temp_2d = solve_heat_step(temp_2d, Q, alpha_rock, dx=1.0, dt=0.1)
-    
-# --- 💨 GAS FLOW (DARCY) ---
-pressure = temp_2d * 10  # soddalashtirilgan bog‘lanish
-
-dp_dx = np.gradient(pressure, axis=1)
-dp_dz = np.gradient(pressure, axis=0)
-
-vx = -perm * dp_dx
-vz = -perm * dp_dz
-
-gas_velocity = np.sqrt(vx**2 + vz**2)
-
-# --- 🧠 AI MODEL (Collapse Prediction) ---
 try:
-    from sklearn.ensemble import RandomForestRegressor
-
     X = np.column_stack([
         temp_2d.flatten(),
         sigma1_act.flatten(),
@@ -509,49 +484,92 @@ try:
 
     y = void_mask_permanent.flatten().astype(int)
 
-    rf_model = RandomForestRegressor(n_estimators=30, max_depth=10)
-    rf_model.fit(X, y)
-
+    rf_model = train_rf(X, y)
     collapse_pred = rf_model.predict(X).reshape(temp_2d.shape)
 
 except:
     collapse_pred = np.zeros_like(temp_2d)
 
-# --- ⚙️ AUTO OPTIMIZATION ---
-from scipy.optimize import minimize
+# --- TM FIGURE (FINAL) ---
+fig_tm = make_subplots(
+    rows=2, cols=1,
+    shared_xaxes=True,
+    vertical_spacing=0.15,
+    subplot_titles=("Harorat Maydoni (°C)", "FOS & Failure Zones")
+)
 
-def objective(w):
-    strength = (ucs_seam) * (w / H_seam)**0.5
-    risk = np.mean(void_mask_permanent)
-    return -(strength - 15 * risk)
+# --- Heatmap ---
+fig_tm.add_trace(go.Heatmap(
+    z=temp_2d, x=x_axis, y=z_axis,
+    colorscale='Hot',
+    zmin=25, zmax=T_source_max,
+    colorbar=dict(title="T (°C)")
+), row=1, col=1)
 
-opt = minimize(objective, x0=rec_width, bounds=[(5, 100)])
-optimal_width_ai = opt.x[0]
+# --- FOS ---
+fig_tm.add_trace(go.Contour(
+    z=fos_2d, x=x_axis, y=z_axis,
+    colorscale=[[0,'red'],[0.5,'yellow'],[1,'green']],
+    zmin=0, zmax=3,
+    contours_showlines=False
+), row=2, col=1)
 
-m5.metric("AI Tavsiya (Selek)", f"{optimal_width_ai:.1f} m")
+# --- VOID ---
+void_visual = np.where(void_mask_permanent, 1, np.nan)
+fig_tm.add_trace(go.Heatmap(
+    z=void_visual,
+    x=x_axis, y=z_axis,
+    colorscale=[[0,'black'],[1,'black']],
+    showscale=False,
+    opacity=0.8
+), row=2, col=1)
 
-# AI collapse heatmap
+# --- SHEAR / TENSILE ---
+fig_tm.add_trace(go.Scatter(
+    x=grid_x[shear_failure][::3],
+    y=grid_z[shear_failure][::3],
+    mode='markers',
+    marker=dict(color='red', size=3),
+    name='Shear'
+), row=2, col=1)
+
+fig_tm.add_trace(go.Scatter(
+    x=grid_x[tensile_failure][::3],
+    y=grid_z[tensile_failure][::3],
+    mode='markers',
+    marker=dict(color='blue', size=3),
+    name='Tensile'
+), row=2, col=1)
+
+# --- AI COLLAPSE ---
 fig_tm.add_trace(go.Heatmap(
     z=collapse_pred,
     x=x_axis, y=z_axis,
     colorscale='Viridis',
-    opacity=0.4,
+    opacity=0.35,
     showscale=False
 ), row=2, col=1)
 
-# Gas flow vectors (kamroq nuqtada)
-skip = 5
-fig_tm.add_trace(go.Cone(
-    x=grid_x[::skip, ::skip].flatten(),
-    y=np.zeros_like(grid_x[::skip, ::skip]).flatten(),
-    z=grid_z[::skip, ::skip].flatten(),
-    u=vx[::skip, ::skip].flatten(),
-    v=np.zeros_like(vx[::skip, ::skip]).flatten(),
-    w=vz[::skip, ::skip].flatten(),
-    sizemode="scaled",
-    sizeref=2,
-    showscale=False
-))
+# --- LAYOUT ---
+fig_tm.update_layout(
+    template="plotly_dark",
+    height=800,
+    showlegend=True
+)
+
+fig_tm.update_yaxes(autorange='reversed', row=1, col=1)
+fig_tm.update_yaxes(autorange='reversed', row=2, col=1)
+
+# 🔥 FAQAT SHU YERDA CHIQADI
+st.plotly_chart(fig_tm, use_container_width=True)
+
+@st.cache_data
+def run_heat(T, Q):
+    for _ in range(10):
+        T = solve_heat_step(T, Q, alpha_rock, dx=1.0, dt=0.1)
+    return T
+
+temp_2d = run_heat(temp_2d, Q)
 
 
 
