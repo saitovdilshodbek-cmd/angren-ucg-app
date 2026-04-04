@@ -421,16 +421,6 @@ def generate_final_3d_model(t, stage):
 # Vizualizatsiyani chiqarish
 st.plotly_chart(generate_final_3d_model(time_day, process_stage), use_container_width=True)
 
-# --- 8. ILMIY INTERPRETATSIYA (PhD TUYUNTIRISH) ---
-with st.expander("📝 Modelning Ilmiy Asoslari", expanded=True):
-    st.markdown(f"""
-    Ushbu 3D simulyatsiya Angren koni sharoitidagi **UCG jarayonining termo-mexanik modelini** ifodalaydi:
-    
-    * **Vaqt Dinamikasi:** Yer yuzasi cho'kishi $s(t)$ logarifmik funksiya (`log1p`) yordamida hisoblandi, bu jinslarning dastlabki qisilishi va keyingi tezkor o'pirilishini ifodalaydi.
-    * **Seleklar (Pillars):** Kameralar orasidagi ko'k rangli belgilar **selek kuchlanishini** ko'rsatadi. Ularning balandligi va zichligi joriy cho'kish darajasiga ({subsidence_factor:.1f}) bog'liq.
-    * **Goaf (O'pirilish):** Yonib bo'lgandan keyingi bosqichda kaminaning tom qismida paydo bo'ladigan yoriqlar zonasi balandligi kaminaning kengayishiga mutanosib ravishda ortadi.
-    """)
-
 
 # ==============================================================================
 # --- 📑 CHUQURLASHTIRILGAN ILMIY HISOBOT VA BIBLIOGRAFIYA (PHD EDITION) ---
