@@ -306,75 +306,94 @@ with c2:
     fig_tm.update_yaxes(autorange='reversed', row=1, col=1); fig_tm.update_yaxes(autorange='reversed', row=2, col=1)
     st.plotly_chart(fig_tm, use_container_width=True)
 
+def generate_multi_cavity_3d_model(t, stage):
+    # --- 1. KOORDINATALAR TO'RI ---
+    x, y = np.meshgrid(np.linspace(-90, 90, 40), np.linspace(-60, 60, 40))
+    z_surface_base = np.full_like(x, 25)
 
-st.header("🕒 Dinamik 3D Termo-Mexanik Model")
-st.write("Yonish jarayonining vaqt davomida kengayishi va uning massivga ta'siri.")
+    # 3 ta kameraning markaziy koordinatalari
+    cavity_centers_x = [-40, 0, 40]
 
-# Vaqt slayderi (masalan, 1 tadan 30 kungacha)
-time_step = st.slider("Yonish davomiyligi (kun):", 1, 30, 10)
+    # --- 2. DINAMIK HISOB-KITOBLAR ---
+    if stage == "🔥 Faol yonish":
+        t_expansion = min(t, 30)
+        r_x_base = 2 + t_expansion * 0.4
+        r_y_base = 1.5 + t_expansion * 0.3
+        r_z_base = 1.5 + t_expansion * 0.2
+        subsidence_factor = (np.log1p(t)/np.log1p(60)) * 15
+    else:  # ❄️ Post-burn
+        r_x_base = 2 + 30 * 0.4
+        r_y_base = 1.5 + 30 * 0.3
+        r_z_base = 1.5 + 30 * 0.2
+        subsidence_factor = 18
 
-def generate_3d_ucg_model(t):
-    # 1. Qatlamlar geometriyasi
-    x, y = np.meshgrid(np.linspace(-50, 50, 20), np.linspace(-50, 50, 20))
-    
-    # Yer yuzasi (Subsidence realistik progressiya)
-    subsidence = - (np.log1p(t)/np.log1p(30)) * 10 * np.exp(-(x**2 + y**2) / 400)
-    z_surface = np.full_like(x, 20) + subsidence
-    
-    # Yonish kamerasi (Dinamik, biroz deformatsiyalangan ellipsoid)
-    r_x = 2 + t * 0.5
-    r_z = 1.5 + t * 0.2
-    u = np.linspace(0, 2 * np.pi, 30)
-    v = np.linspace(0, np.pi, 30)
-    cx = r_x * np.outer(np.cos(u), np.sin(v))
-    cy = r_x * np.outer(np.sin(u), np.sin(v))
-    cz = r_z * np.outer(np.ones(np.size(u)), np.cos(v))
-    
-    # Biroz notekis deformatsiya qo‘shish
-    deform_x = cx * (1 + 0.1 * np.random.randn(*cx.shape))
-    deform_y = cy * (1 + 0.1 * np.random.randn(*cy.shape))
-    deform_z = cz * (1 + 0.05 * np.random.randn(*cz.shape))
-    
+    # --- 3. Cho'kish voronkasini hisoblash (superpozitsiya) ---
+    subsidence = np.zeros_like(x)
+    for cx in cavity_centers_x:
+        subsidence += - (subsidence_factor * np.log1p(t)/np.log1p(60)) * np.exp(-((x - cx)**2 + y**2) / 600)
+    z_surface_final = z_surface_base + subsidence
+
     fig = go.Figure()
 
-    # A) Yer yuzasi (Subsidence layer)
-    fig.add_trace(go.Surface(x=x, y=y, z=z_surface, colorscale='Greens', showscale=False, name="Yer yuzasi"))
+    # --- 4. 3D VIZUALIZATSIYA ---
+    fig.add_trace(go.Surface(x=x, y=y, z=z_surface_final, colorscale='Greens', showscale=False, name="Yer yuzasi"))
+    fig.add_trace(go.Surface(x=x, y=y, z=np.full_like(x, 7), colorscale='Greys', opacity=0.4, showscale=False, name="Overburden"))
+    fig.add_trace(go.Surface(x=x, y=y, z=np.full_like(x, -7), colorscale='Oranges', opacity=0.3, showscale=False, name="Ko'mir qatlami"))
 
-    # B) Qatlamlar (Overburden va Ko'mir)
-    fig.add_trace(go.Surface(x=x, y=y, z=np.full_like(x, 5), colorscale='Greys', opacity=0.5, showscale=False, name="Qoplovchi jins"))
-    fig.add_trace(go.Surface(x=x, y=y, z=np.full_like(x, -5), colorscale='Oranges', opacity=0.4, showscale=False, name="Ko'mir qatlami"))
+    u = np.linspace(0, 2 * np.pi, 30)
+    v = np.linspace(0, np.pi, 30)
 
-    # C) Yonish kamerasi (Dinamik)
-    fig.add_trace(go.Surface(x=deform_x, y=deform_y, z=deform_z, colorscale='Reds', showscale=False, name="Yonish kamerasi"))
+    for i, cx_mark in enumerate(cavity_centers_x):
+        # Seed qo'shib, deformatsiya barqaror
+        np.random.seed(i + t)
+        deform_cx = r_x_base * np.outer(np.cos(u), np.sin(v)) * (1 + 0.08 * np.random.randn(30, 30))
+        deform_cy = r_y_base * np.outer(np.sin(u), np.sin(v)) * (1 + 0.08 * np.random.randn(30, 30))
+        deform_cz = r_z_base * np.outer(np.ones(np.size(u)), np.cos(v)) * (1 + 0.04 * np.random.randn(30, 30))
 
-    # D) Yoriqlar zonasi (Vaqtga bog'liq tarqalish)
-    if t > 5:
-        n_cracks = int(t * 5)
-        crack_x = np.random.uniform(-r_x-2, r_x+2, n_cracks)
-        crack_y = np.random.uniform(-r_x-2, r_x+2, n_cracks)
-        crack_z = r_z + np.abs(np.random.randn(n_cracks) * 1.0)  # yuqoriga tarqalish
-        fig.add_trace(go.Scatter3d(x=crack_x, y=crack_y, z=crack_z, mode='markers', 
-                                   marker=dict(size=2, color='black', symbol='x'), name="Termal yoriqlar"))
+        cavity_x = deform_cx + cx_mark
+        cavity_y = deform_cy
+        cavity_z = deform_cz
 
+        colorscale_cavity = 'Hot' if stage == "🔥 Faol yonish" else 'Greys_r'
+        opacity_cavity = 0.95 if stage == "🔥 Faol yonish" else 0.6
+
+        fig.add_trace(go.Surface(x=cavity_x, y=cavity_y, z=cavity_z,
+                                 colorscale=colorscale_cavity, opacity=opacity_cavity,
+                                 showscale=False, name=f"Kamera {i+1}"))
+
+    # --- 5. Yoriqlar va selek interaksiya ---
+    if stage == "🔥 Faol yonish" and t > 10:
+        n_inter = int(t / 2)
+        inter_x = np.concatenate([np.random.uniform(-25, -15, n_inter), np.random.uniform(15, 25, n_inter)])
+        inter_y = np.random.uniform(-10, 10, n_inter*2)
+        inter_z = np.random.uniform(-subsidence_factor/3, subsidence_factor/3, n_inter*2)
+        fig.add_trace(go.Scatter3d(x=inter_x, y=inter_y, z=inter_z, mode='markers',
+                                   marker=dict(size=3, color='blue', symbol='cross', opacity=0.7),
+                                   name="Selek kuchlanishi (Pillar Stress)"))
+    elif stage == "❄️ Yonib bo'lgandan keyingi holat":
+        n_post = 150
+        post_x = np.random.uniform(-60, 60, n_post)
+        post_y = np.random.uniform(-30, 30, n_post)
+        post_z = r_z_base + np.random.uniform(0, subsidence_factor/1.5, n_post)
+        fig.add_trace(go.Scatter3d(x=post_x, y=post_y, z=post_z, mode='markers',
+                                   marker=dict(size=2.5, color='black', symbol='diamond', opacity=0.6),
+                                   name="O'pirilish zonasi (Collapse)"))
+
+    # Grafik sozlamalari
     fig.update_layout(
-        title=f"Yonish jarayoni: {t}-kun",
+        title=f"UCG 3D Simulyatsiya: {stage} (Kun: {t})",
         scene=dict(
-            xaxis_title="X (m)", yaxis_title="Y (m)", zaxis_title="Chuqurlik (m)",
-            zaxis=dict(range=[-20, 25]),
+            xaxis=dict(range=[-100, 100], title="X (m)"),
+            yaxis=dict(range=[-70, 70], title="Y (m)"),
+            zaxis=dict(range=[-20, 30], title="Chuqurlik (m)"),
+            aspectmode='manual',
+            aspectratio=dict(x=1.2, y=1, z=0.5)
         ),
-        margin=dict(l=0, r=0, b=0, t=40)
+        margin=dict(l=0, r=0, b=0, t=30),
+        legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01)
     )
     return fig
 
-st.plotly_chart(generate_3d_ucg_model(time_step), use_container_width=True)
-
-st.markdown("""
-### 📊 Model interpretatsiyasi:
-1.  **Dinamik yonish:** Slayderni surganingizda yonish kamerasi (qizil ellipsoid) kengayadi va biroz notekis shakl oladi.
-2.  **Yoriqlar (Fractures):** Yonish davomiyligi ortishi bilan kaminaning tom qismida **termal va mexanik yoriqlar** (qora belgilar) paydo bo‘ladi.
-3.  **Subsidence (Yer cho'kishi):** Yer yuzasidagi yashil qatlamda kamera kengayishiga mutanosib ravishda **cho'kish voronkasi** shakllanadi.
-4.  **O'zaro ta'sir:** Yonish kamerasining o'lchami ortishi selekning samarali enini kamaytiradi, bu esa yuqoridagi FOS koeffitsiyentiga bevosita ta'sir qiladi.
-""")
 
 
 # ==============================================================================
