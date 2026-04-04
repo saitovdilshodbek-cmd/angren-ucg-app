@@ -307,105 +307,41 @@ with c2:
     st.plotly_chart(fig_tm, use_container_width=True)
 
 
+# --- 5. 3D BLOK MODEL INTEGRATSIYASI ---
+st.markdown("---")
+st.subheader("📦 3D Hajmli Blok-Model (Blok holatida)")
 
-# ==============================================================================
-# --- 🌀 BOSQICHMA-BOSQICH UCG DINAMIK MODELI (FIRST CODE INTEGRATION) ---
-# ==============================================================================
-st.set_page_config(page_title="UCG Termo-Mexanik Simulator", layout="wide")
-st.header("🌀 Bosqichma-bosqich UCG Termo-Mexanik Simulyatori (Integrated)")
+def draw_3d_blocks():
+    fig_3d = go.Figure()
+    x_3d, y_3d = np.meshgrid(np.linspace(-100, 100, 30), np.linspace(-60, 60, 30))
+    
+    # Qatlamlarni blok sifatida chizish
+    for i, layer in enumerate(layer_props):
+        # Qatlam usti va osti
+        z_top = np.full_like(x_3d, layer['z_start'])
+        fig_3d.add_trace(go.Surface(x=x_3d, y=y_3d, z=z_top, 
+                                    colorscale=[[0, layer['color']], [1, layer['color']]], 
+                                    opacity=0.3, showscale=False, name=layer['name']))
+    
+    # Kameralar (Sferoid bloklar)
+    u, v = np.mgrid[0:2*np.pi:20j, 0:np.pi:20j]
+    for key, val in sources.items():
+        if time_day > val['start']:
+            r = min(10, (time_day - val['start']) * 0.5)
+            cx, cy, cz = val['x'], 0, source_z
+            xs = r * np.cos(u) * np.sin(v) + cx
+            ys = r * np.sin(u) * np.sin(v) + cy
+            zs = (r*0.6) * np.cos(v) + cz
+            
+            active = (time_day - val['start']) <= burn_duration_days
+            fig_3d.add_trace(go.Surface(x=xs, y=ys, z=zs, 
+                                        colorscale='Hot' if active else 'Greys', 
+                                        showscale=False, opacity=0.8))
 
-# --- Sidebar: Parametrlar ---
-st.sidebar.header("⚙️ Umumiy Parametrlar")
-time_step = st.sidebar.slider("Loyiha davomiyligi (kun):", 1, 60, 30)
-num_layers = st.sidebar.number_input("Qatlamlar soni:", min_value=1, max_value=5, value=3)
+    fig_3d.update_layout(scene=dict(zaxis=dict(autorange='reversed')), height=700, template="plotly_dark")
+    return fig_3d
 
-st.sidebar.subheader("🔥 Yonish va Termal")
-burn_duration = st.sidebar.number_input("Kamera yonish muddati (soat):", value=40)
-T_source_max = st.sidebar.slider("Maksimal harorat (°C)", 600, 1200, 1075)
-
-st.sidebar.subheader("📐 Jins Xususiyatlari")
-layer_props = []
-total_depth = 0
-strata_colors = ['#87CEEB', '#F4A460', '#D3D3D3', '#F5DEB3', '#555555']
-
-for i in range(int(num_layers)):
-    with st.sidebar.expander(f"{i+1}-qatlam parametrlari", expanded=(i==0)):
-        name = st.text_input(f"Nomi:", value=f"Qatlam-{i+1}", key=f"name_{i}")
-        thick = st.number_input(f"Qalinlik (m):", value=50.0, key=f"t_{i}")
-        ucs = st.number_input(f"UCS (MPa):", value=40.0, key=f"ucs_{i}")
-        rho = st.number_input(f"Zichlik (kg/m³):", value=2500, key=f"rho_{i}")
-        color = st.color_picker(f"Rangi:", strata_colors[i % len(strata_colors)], key=f"color_{i}")
-        layer_props.append({'name': name, 't': thick, 'ucs': ucs, 'rho': rho, 'color': color, 'z_start': total_depth})
-        total_depth += thick
-
-# --- Hisob-kitoblar: Koordinata va Harorat ---
-x_axis = np.linspace(-total_depth*1.5, total_depth*1.5, 150)
-z_axis = np.linspace(0, total_depth + 50, 120)
-grid_x, grid_z = np.meshgrid(x_axis, z_axis)
-source_z = total_depth - (layer_props[-1]['t'] / 2)
-H_seam = layer_props[-1]['t']
-
-# Bosqichma-bosqich harorat modeli
-alpha_rock = 1.0e-6
-temp_2d = np.ones_like(grid_x) * 25
-sources = {'1': {'x': -total_depth/3, 'start': 0}, 
-           '2': {'x': 0, 'start': 10}, 
-           '3': {'x': total_depth/3, 'start': 20}}
-
-for key, val in sources.items():
-    if time_step*24 > val['start']:
-        dt_sec = (time_step*24 - val['start']) * 3600
-        pen_depth = np.sqrt(4 * alpha_rock * dt_sec)
-        curr_T = T_source_max if (time_step*24 - val['start']) <= burn_duration else 25 + (T_source_max-25)*np.exp(-0.03*((time_step*24-val['start'])-burn_duration))
-        dist_sq = (grid_x - val['x'])**2 + (grid_z - source_z)**2
-        temp_2d += (curr_T - 25) * np.exp(-dist_sq / (pen_depth**2 + 15**2))
-
-# --- Jins kuchlanishi va stress ---
-grid_sigma_v = np.zeros_like(grid_z)
-for i, layer in enumerate(layer_props):
-    mask = (grid_z >= layer['z_start']) & (grid_z < (layer['z_start'] + layer['t']))
-    if i == len(layer_props) - 1: mask = grid_z >= layer['z_start']
-    overburden = sum(l['rho'] * 9.81 * l['t'] for l in layer_props[:i]) / 1e6
-    grid_sigma_v[mask] = overburden + (layer['rho'] * 9.81 * (grid_z[mask] - layer['z_start'])) / 1e6
-
-# --- Visualization: 2D Heatmap ---
-st.subheader("🔥 Harorat maydoni va stress monitoring")
-fig_tm = go.Figure()
-fig_tm.add_trace(go.Heatmap(
-    z=temp_2d, x=x_axis, y=z_axis,
-    colorscale='Hot', zmin=25, zmax=T_source_max,
-    colorbar=dict(title="T (°C)")
-))
-fig_tm.update_yaxes(autorange='reversed')
-st.plotly_chart(fig_tm, use_container_width=True)
-
-# --- Qatlamli stress diagrammasi ---
-st.subheader("📊 Qatlamlar va Vertikal Stress")
-fig_layer = go.Figure()
-for l in layer_props:
-    fig_layer.add_trace(go.Bar(x=['Kesim'], y=[l['t']], name=l['name'], marker_color=l['color'], width=0.4))
-fig_layer.update_layout(barmode='stack', yaxis=dict(autorange='reversed'))
-st.plotly_chart(fig_layer, use_container_width=True)
-
-# --- FOS va xavfsizlik baholash ---
-ucs_seam = layer_props[-1]['ucs']
-sigma_v_total = grid_sigma_v.max()
-pillar_strength = ucs_seam * (1.0)  # oddiy estimate
-fos_final = pillar_strength / (sigma_v_total + 1e-6)
-
-st.subheader("⚖️ Selek barqarorligi va FOS")
-st.metric("Pillar Strength (σp)", f"{pillar_strength:.1f} MPa")
-st.metric("FOS", f"{fos_final:.2f}")
-if fos_final < 1.3:
-    st.error("🔴 Xavf: Selek barqaror emas")
-else:
-    st.success("🟢 Xavfsiz: Selek barqaror")
-
-# --- Yakuniy xulosa ---
-st.subheader("📌 Yakuniy ilmiy xulosa")
-st.write(f"Loyiha davomiyligi: {time_step} kun, Maksimal harorat: {T_source_max}°C")
-st.write("Bu model birinchi kod interfeysi va parametrlariga moslashtirilgan bosqichma-bosqich UCG dinamika simulyatoridir.")
-
+st.plotly_chart(draw_3d_blocks(), use_container_width=True)
 
 # ==============================================================================
 # --- 📑 CHUQURLASHTIRILGAN ILMIY HISOBOT VA BIBLIOGRAFIYA (PHD EDITION) ---
