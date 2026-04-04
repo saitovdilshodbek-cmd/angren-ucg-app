@@ -135,32 +135,6 @@ for key, val in sources.items():
 st.session_state.max_temp_map = np.maximum(st.session_state.max_temp_map, temp_2d)
 delta_T = temp_2d - 25
 
-
-# ==============================================================================
-# --- 🔥 PDE HEAT SOLVER (UPGRADE) ---
-# Gaussdan keyin iterativ aniqlashtirish: issiqlik tarqalishi tenglamasi (2D FDM)
-# ==============================================================================
-def solve_heat_step(T, Q, alpha, dx, dt):
-    Tn = T.copy()
-    Tn[1:-1, 1:-1] = (
-        T[1:-1, 1:-1]
-        + alpha * dt * (
-            (T[2:, 1:-1] - 2*T[1:-1, 1:-1] + T[:-2, 1:-1]) / dx**2
-            + (T[1:-1, 2:] - 2*T[1:-1, 1:-1] + T[1:-1, :-2]) / dx**2
-        )
-        + Q[1:-1, 1:-1] * dt
-    )
-    return Tn
-# Issiqlik manbai (UCG kamera joylashuvi)
-Q_heat = np.zeros_like(temp_2d)
-for val in sources.values():
-    cx_src = val['x']
-    Q_heat += 500 * np.exp(-((grid_x - cx_src)**2 + (grid_z - source_z)**2) / 200)
-# 10 ta iteratsiya bilan PDE yechimi (temp_2d ni aniqlashtiramiz)
-for _ in range(10):
-    temp_2d = solve_heat_step(temp_2d, Q_heat, alpha_rock, dx=1.0, dt=0.1)
-# ==============================================================================
-
 # --- TM ANALIZ: Stress va Damage ---
 temp_eff = np.maximum(st.session_state.max_temp_map - 100, 0)
 damage = 1 - np.exp(-0.002 * temp_eff)
@@ -193,6 +167,30 @@ sigma_t_field = grid_sigma_t0_base * np.exp(-beta_thermal * (temp_2d - 20))
 thermal_tension_boost = 1 + 0.6 * (1 - np.exp(-delta_T / 200))
 sigma_t_field_eff = sigma_t_field / thermal_tension_boost
 
+# AI collapse heatmap
+fig_tm.add_trace(go.Heatmap(
+    z=collapse_pred,
+    x=x_axis, y=z_axis,
+    colorscale='Viridis',
+    opacity=0.4,
+    showscale=False
+), row=2, col=1)
+
+# Gas flow vectors (kamroq nuqtada)
+skip = 5
+fig_tm.add_trace(go.Cone(
+    x=grid_x[::skip, ::skip].flatten(),
+    y=np.zeros_like(grid_x[::skip, ::skip]).flatten(),
+    z=grid_z[::skip, ::skip].flatten(),
+    u=vx[::skip, ::skip].flatten(),
+    v=np.zeros_like(vx[::skip, ::skip]).flatten(),
+    w=vz[::skip, ::skip].flatten(),
+    sizemode="scaled",
+    sizeref=2,
+    showscale=False
+))
+
+
 # --- FAILURE DETECTION & VOID ---
 tensile_failure = (sigma3_act <= -sigma_t_field_eff) & (delta_T > 50) & (sigma1_act > sigma3_act)
 sigma3_safe = np.maximum(sigma3_act, 0.01)
@@ -211,6 +209,28 @@ void_mask_raw = (spalling | crushing | (st.session_state.max_temp_map > 900))
 void_mask_permanent = gaussian_filter(void_mask_raw.astype(float), sigma=1.5)
 void_mask_permanent = (void_mask_permanent > 0.3) & (collapse_final > 0.05)
 
+# --- 🧠 AI MODEL (Collapse Prediction) ---
+try:
+    from sklearn.ensemble import RandomForestRegressor
+
+    X = np.column_stack([
+        temp_2d.flatten(),
+        sigma1_act.flatten(),
+        sigma3_act.flatten(),
+        grid_z.flatten()
+    ])
+
+    y = void_mask_permanent.flatten().astype(int)
+
+    rf_model = RandomForestRegressor(n_estimators=30, max_depth=10)
+    rf_model.fit(X, y)
+
+    collapse_pred = rf_model.predict(X).reshape(temp_2d.shape)
+
+except:
+    collapse_pred = np.zeros_like(temp_2d)
+
+
 # --- Permeability va Void Volume ---
 perm = 1e-15 * (1 + 20 * damage + 50 * void_mask_permanent)
 void_volume = np.sum(void_mask_permanent) * (x_axis[1]-x_axis[0]) * (z_axis[1]-z_axis[0])
@@ -218,38 +238,6 @@ void_volume = np.sum(void_mask_permanent) * (x_axis[1]-x_axis[0]) * (z_axis[1]-z
 sigma1_act = np.where(void_mask_permanent, 0, sigma1_act)
 sigma3_act = np.where(void_mask_permanent, 0, sigma3_act)
 sigma_ci = np.where(void_mask_permanent, 0.01, sigma_ci)
-
-# ==============================================================================
-# --- 💨 GAS FLOW (DARCY QONUNI) ---
-# Bosim gradient asosida gaz oqim vektorlari
-# ==============================================================================
-pressure = temp_2d * 10  # Soddalashtirilgan: P ~ T*10 (Pa/MPa proporsionallik)
-dp_dx_gas = np.gradient(pressure, axis=1)
-dp_dz_gas = np.gradient(pressure, axis=0)
-vx_gas = -perm * dp_dx_gas
-vz_gas = -perm * dp_dz_gas
-gas_velocity = np.sqrt(vx_gas**2 + vz_gas**2)
-# ==============================================================================
-# ==============================================================================
-# --- 🧠 AI MODEL (RandomForest — Collapse Prediction) ---
-# temp_2d, sigma1, sigma3, chuqurlik → void/collapse ehtimoli
-# ==============================================================================
-try:
-    from sklearn.ensemble import RandomForestRegressor
-    X_ai = np.column_stack([
-        temp_2d.flatten(),
-        sigma1_act.flatten(),
-        sigma3_act.flatten(),
-        grid_z.flatten()
-    ])
-    y_ai = void_mask_permanent.flatten().astype(int)
-    rf_model = RandomForestRegressor(n_estimators=30, max_depth=10, random_state=42)
-    rf_model.fit(X_ai, y_ai)
-    collapse_pred = rf_model.predict(X_ai).reshape(temp_2d.shape)
-except Exception:
-    collapse_pred = np.zeros_like(temp_2d)
-# ==============================================================================
-# --- Selek Optimizatsiyasi (klassik iteratsiya) ---
 
 # --- Selek Optimizatsiyasi ---
 avg_t_p = np.mean(temp_2d[np.abs(z_axis - source_z).argmin(), :])
@@ -268,19 +256,6 @@ for _ in range(15):
 rec_width, pillar_strength, y_zone = np.round(w_sol, 1), p_strength, max(y_zone_calc, 1.5)
 fos_2d = np.clip(sigma1_limit / (sigma1_act + 1e-6), 0, 3.0)
 fos_2d = np.where(void_mask_permanent, 0, fos_2d)
-
-# ==============================================================================
-# --- ⚙️ AUTO OPTIMIZATION (Scipy Minimize) ---
-# Mustahkamlik va void xavfini muvozanatlash orqali optimal selek enini topish
-# ==============================================================================
-def objective(w):
-    strength = ucs_seam * (w[0] / H_seam)**0.5
-    risk = np.mean(void_mask_permanent)
-    return -(strength - 15 * risk)
-opt_result = minimize(objective, x0=[rec_width], bounds=[(5, 100)])
-optimal_width_ai = float(np.clip(opt_result.x[0], 5, 100))
-# ==============================================================================
-
 
 # --- VIZUALIZATSIYA ---
 st.subheader(f"📊 {obj_name}: Monitoring va Ekspert Xulosasi")
@@ -376,38 +351,6 @@ with c2:
     )
     fig_tm.update_yaxes(autorange='reversed', row=1, col=1); fig_tm.update_yaxes(autorange='reversed', row=2, col=1)
     st.plotly_chart(fig_tm, use_container_width=True)
-
-  # ------------------------------------------------------------------
-    # 🧠 AI Collapse Prediction — Viridis heatmap (row=2)
-    # ------------------------------------------------------------------
-    fig_tm.add_trace(go.Heatmap(
-        z=collapse_pred,
-        x=x_axis, y=z_axis,
-        colorscale='Viridis',
-        opacity=0.4,
-        showscale=False,
-        name='AI Collapse'
-    ), row=2, col=1)
-    # ------------------------------------------------------------------
-    # 💨 Gas Flow Vectors — Cone (row=1, harorat maydonida ko'rsatiladi)
-    # Siyrak nuqtalarda (skip) vektorlar
-    # ------------------------------------------------------------------
-    skip = 8
-    gx_skip = grid_x[::skip, ::skip].flatten()
-    gz_skip = grid_z[::skip, ::skip].flatten()
-    vx_skip = vx_gas[::skip, ::skip].flatten()
-    vz_skip = vz_gas[::skip, ::skip].flatten()
-    gy_zero = np.zeros_like(gx_skip)
-    vy_zero = np.zeros_like(vx_skip)
-    fig_tm.add_trace(go.Cone(
-        x=gx_skip, y=gy_zero, z=gz_skip,
-        u=vx_skip, v=vy_zero, w=vz_skip,
-        sizemode="scaled", sizeref=2,
-        showscale=False,
-        colorscale='Blues',
-        name='Gaz Oqimi'
-    ), row=1, col=1)
-    # ------------------------------------------------------------------
 
 # ==============================================================================
 # --- 🌀 UCG: KOMPLEKS MONITORING VA 3D DINAMIK NATIJALAR ---
