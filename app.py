@@ -307,13 +307,12 @@ with c2:
     st.plotly_chart(fig_tm, use_container_width=True)
 
 # ==============================================================================
-# --- 📑 BATAFSIL ILMIY HISOBOT VA BIBLIOGRAFIK ASOSLASH ---
+# --- 📑 TO'LIQ ILMIY HISOBOT VA BIBLIOGRAFIYA (XATOSIZ VARIANT) ---
 # ==============================================================================
 st.markdown("---")
 st.header("🔍 Chuqurlashtirilgan Dinamik Tahlil")
-st.info("Ushbu bo'limda kiritilgan parametrlar va olingan natijalar xalqaro metodikalar asosida interpretatsiya qilinadi.")
 
-# --- HISOB-KITOBLAR ---
+# --- MUHIM: O'zgaruvchilarni qayta aniqlash (NameError oldini olish uchun) ---
 target = layers_data[-1]
 ucs_0 = target['ucs']
 gsi_val = target['gsi']
@@ -321,11 +320,16 @@ mi_val = target['mi']
 gamma = target['rho'] * 9.81 / 1000 
 H_depth = sum(l['t'] for l in layers_data[:-1]) + target['t']/2 
 
+# Asosiy hisoblar
 sigma_v_calc = (gamma * H_depth) / 1000 
 mb_dyn = mi_val * np.exp((gsi_val - 100) / (28 - 14 * D_factor))
 s_dyn = np.exp((gsi_val - 100) / (9 - 3 * D_factor))
 a_dyn = 0.5 + (1/6) * (np.exp(-gsi_val/15) - np.exp(-20/3))
+
+# Termal UCS (Mana shu o'zgaruvchi xatolikni keltirib chiqargan edi)
 ucs_t = ucs_0 * np.exp(-beta_thermal * (T_source_max - 20))
+
+# Selek va FOS
 p_strength_dyn = ucs_t * (rec_width / H_seam)**0.5
 f_val = p_strength_dyn / (sigma_v_calc + 1e-6)
 
@@ -334,57 +338,47 @@ t1, t2, t3 = st.tabs(["🏗️ Massiv Xususiyatlari", "🔥 Termal Destruksiya",
 
 with t1:
     st.subheader("1. Hoek-Brown (2018 Edition) Interpretatsiyasi")
-    
     col_l, col_r = st.columns(2)
     with col_l:
         st.latex(r"m_b = " + f"{mb_dyn:.3f}")
-        st.write(f"**Tahlil:** $m_b$ qiymati laboratoriya ko'rsatkichi ({mi_val}) dan {((1-mb_dyn/mi_val)*100):.1f}% ga kamaydi. Bu massivdagi yoriqlar va GSI={gsi_val} koeffitsiyenti ta'siridir.")
+        st.write(f"**Tahlil:** $m_b$ qiymati laboratoriya ko'rsatkichi ({mi_val}) dan {((1-mb_dyn/mi_val)*100):.1f}% ga kamaydi.")
         
         st.latex(r"s = " + f"{s_dyn:.4f}")
         st.write(f"**Tahlil:** $s$ koeffitsiyenti jinsning bog'liqligini ko'rsatadi. Hozirgi qiymat massivning **{('kuchsiz' if s_dyn < 0.01 else 'o`rta darajadagi')}** buzilishini anglatadi.")
-
     with col_r:
-        st.markdown("> **Ilmiy asos:** Hoek va Brown (2018) bo'yicha, $m_b, s, a$ parametrlarining o'zgarishi massivning 'nonlinear failure envelope'ini (chiziqli bo'lmagan buzilish chegarasi) belgilaydi. Bu Angren ko'mir koni kabi murakkab tuzilmali konlar uchun eng aniq model hisoblanadi.")
+        st.markdown("> **Ilmiy asos:** Hoek va Brown (2018) bo'yicha, $m_b, s, a$ parametrlari massivning chiziqli bo'lmagan buzilish chegarasini belgilaydi.")
 
 with t2:
     st.subheader("2. Termo-Mexanik Degradatsiya Zanjiri")
-    
     st.markdown(f"**A) UCS ning Haroratga Bog'liqligi:**")
-    st.latex(r"\sigma_{ci(T)} = " + f"{ucs_t:.2f} \text{ MPa}")
-    st.write(f"**Batafsil izoh:** {T_source_max}°C haroratda ko'mir qatlamida mikro-yoriqlar kengayadi. **Shao (2015)** tadqiqotlariga ko'ra, harorat 600°C dan oshganda jins strukturasida qaytmas termal zarar (damage) yuzaga keladi.")
+    # To'g'rilangan LaTeX qatori:
+    st.latex(r"\sigma_{ci(T)} = " + f"{ucs_t:.2f}" + r" \text{ MPa}")
+    st.write(f"**Batafsil izoh:** {T_source_max}°C haroratda ko'mir qatlamida mikro-yoriqlar kengayadi. **Shao (2015)** tadqiqotlariga ko'ra, harorat 600°C dan oshganda jins strukturasida qaytmas termal zarar yuzaga keladi.")
     
-    st.markdown(f"**B) Termal Kengayish Bosimi ($\sigma_{{th}}$):**")
-    st.latex(r"\sigma_{th} \approx " + f"{sigma_thermal.max():.2f} \text{ MPa}")
-    st.write(f"**Batafsil izoh:** Bu bosim vertikal bosimga perpendikulyar yo'nalishda ta'sir qilib, kamera devorlarida kuchlanish konsentratsiyasini oshiradi. Bu esa **'spalling failure'** (qipiqlanish) mexanizmini ishga tushiradi.")
+    st.markdown(f"**B) Termal Kengayish Bosimi:**")
+    st.latex(r"\sigma_{th} \approx " + f"{sigma_thermal.max():.2f}" + r" \text{ MPa}")
+    st.write(f"**Batafsil izoh:** Bu bosim kamera devorlarida kuchlanish konsentratsiyasini oshirib, **'spalling failure'** mexanizmini ishga tushiradi.")
 
 with t3:
     st.subheader("3. Selek Barqarorligi va Bibliografiya")
-    
     st.latex(r"FOS = \frac{\sigma_p}{\sigma_v} = " + f"{f_val:.2f}")
-    
-    # Wilson Method izohi
-    st.write(f"**Wilson (1972) metodikasi bo'yicha tahlil:**")
-    st.write(f"Selekning markaziy qismi (core) barqaror qolishi uchun $w = {rec_width}$ m o'lcham tanlandi. "
-             f"Plastik zona $y = {y_zone:.1f}$ m ni tashkil qiladi. Agar $w < 2y$ bo'lsa, selek to'liq plastik holatga o'tib, yuk ko'tarish qobiliyatini yo'qotadi.")
+    st.write(f"**Wilson (1972) metodikasi bo'yicha tahlil:** Selekning markaziy qismi barqaror qolishi uchun $w = {rec_width}$ m o'lcham tanlandi. Plastik zona $y = {y_zone:.1f}$ m ni tashkil qiladi.")
 
     st.markdown("---")
-    st.write("#### 📚 Foydalanilgan Ilmiy Manbalar (Citations):")
-    
+    st.write("#### 📚 Foydalanilgan Ilmiy Manbalar:")
     sources = {
-        "Hoek-Brown Criterion": "Hoek, E., & Brown, E. T. (2018). The Hoek-Brown failure criterion and GSI. *Journal of Rock Mechanics and Geotechnical Engineering*.",
-        "Thermal Damage": "Shao, S., et al. (2015). A thermal damage constitutive model for rock under high temperature. *International Journal of Rock Mechanics and Mining Sciences*.",
-        "UCG Stability": "Yang, D. (2010). *Stability of Underground Coal Gasification*. PhD Thesis, TU Delft. (Selek o'lchamlarini hisoblashda asos qilib olingan).",
-        "Pillar Design": "Wilson, A. H. (1972). Research into the determination of pillar size. *Mining Engineer*. (Plastik zona va 'yield pillar' nazariyasi)."
+        "Hoek-Brown Criterion": "Hoek, E., & Brown, E. T. (2018). The Hoek-Brown failure criterion and GSI. *JRMGE*.",
+        "Thermal Damage": "Shao, S., et al. (2015). A thermal damage constitutive model for rock. *IJRMMS*.",
+        "UCG Stability": "Yang, D. (2010). *Stability of Underground Coal Gasification*. PhD Thesis, TU Delft.",
+        "Pillar Design": "Wilson, A. H. (1972). Research into the determination of pillar size. *Mining Engineer*."
     }
-    
     for key, val in sources.items():
         st.markdown(f"📖 **[{key}]**: {val}")
 
     if f_val < 1.2:
-        st.error("❗ **PhD Tavsiyasi:** FOS koeffitsiyenti past. Yangi 'strip mining' yoki 'panel isolation' strategiyasini ko'rib chiqish zarur.")
+        st.error("❗ **PhD Tavsiyasi:** FOS koeffitsiyenti past. Selek o'lchamlarini qayta ko'rib chiqish zarur.")
     else:
-        st.success("✔️ **PhD Tavsiyasi:** Loyihaviy barqarorlik ta'minlangan. Termal monitoring datchiklarini plastik zona chegarasiga o'rnatish tavsiya etiladi.")
-    
+        st.success("✔️ **PhD Tavsiyasi:** Loyihaviy barqarorlik ta'minlangan.")  
 # --- ILMIY METODOLOGIYA VA MANBALAR ---
 st.markdown("---")
 with st.expander("📚 Ilmiy Metodologiya va Manbalar (PhD Research References)"):
