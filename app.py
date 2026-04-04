@@ -306,110 +306,110 @@ with c2:
     fig_tm.update_yaxes(autorange='reversed', row=1, col=1); fig_tm.update_yaxes(autorange='reversed', row=2, col=1)
     st.plotly_chart(fig_tm, use_container_width=True)
 
-# ==============================================================================
-# --- 🌀 BOSQICHMA-BOSQICH UCG DINAMIK MODELI (MUKAMMAL VARIANT) ---
-# ==============================================================================
-st.header("🌀 UCG: Bosqichma-bosqich Yonish va O'pirilish Modeli")
 
-# 60 kunlik umumiy sikl
-time_step = st.slider("Loyiha davomiyligi (kun):", 1, 60, 30)
+# ==============================================================================
+# --- 🌀 HAQIQIY QATLAM QALINLIGI BILAN UCG MODELI (VOLUMETRIC STRATIGRAPHY) ---
+# ==============================================================================
+st.header("🌀 Angren-UCG: Qatlam Qalinligi va Hajmli Dinamika")
 
-def generate_step_by_step_model(t):
-    # 1. Koordinatalar va markazlar
-    x, y = np.meshgrid(np.linspace(-100, 100, 45), np.linspace(-70, 70, 45))
+# Sidebar orqali qalinliklarni boshqarish
+with st.sidebar:
+    st.subheader("🏗️ Stratigrafiya Sozlamalari")
+    t_overburden = st.slider("Overburden qalinligi (m):", 10, 50, 20)
+    t_coal = st.slider("Ko'mir qatlami qalinligi (m):", 5, 15, 8)
+    time_step = st.slider("Loyiha kuni:", 1, 60, 30)
+
+def generate_volumetric_model(t, th_over, th_coal):
+    x, y = np.meshgrid(np.linspace(-100, 100, 40), np.linspace(-70, 70, 40))
     centers_x = [-45, 0, 45]
     
-    # 2. Kameralar holati va o'lchamlarini aniqlash
-    states = []
+    # 1. Qatlamlar chegarasini aniqlash (Z o'qi bo'yicha)
+    # Ko'mir qatlami markazi Z=0 da deb olsak:
+    coal_top = th_coal / 2
+    coal_bottom = -th_coal / 2
+    overburden_top = coal_top + th_over
+    
+    # 2. Dinamik Cho'kish (Vaqt va qalinlikka bog'liq)
+    subs_factor = (np.log1p(t) / np.log1p(60)) * (th_coal * 1.5) # Cho'kish ko'mir qalinligiga bog'liq
+    subs_total = np.zeros_like(x)
+    
     radii = []
     for i in range(3):
         start_day = i * 20
-        end_day = (i + 1) * 20
-        
-        if t <= start_day:
-            states.append("Kutilmoqda")
-            radii.append(0)
-        elif start_day < t <= end_day:
-            states.append("Faol")
-            local_t = t - start_day
-            radii.append(2 + local_t * 0.5) 
-        else:
-            states.append("Yonib bo'lgan")
-            radii.append(2 + 20 * 0.5)
+        local_t = max(0, min(t - start_day, 20))
+        r = 2 + local_t * 0.45 if t > start_day else 0
+        radii.append(r)
+        if r > 0:
+            subs_total += - (subs_factor * np.log1p(r)/np.log1p(11)) * \
+                           np.exp(-((x - centers_x[i])**2 + y**2) / 700)
 
-    # 3. Cho'kishni (Subsidence) hisoblash - Taklif: log1p(radii) asosida
-    subsidence_factor = (np.log1p(t) / np.log1p(60)) * 18
-    subs_total = np.zeros_like(x)
-    for i in range(3):
-        if radii[i] > 0:
-            # Taklif: Har bir kameraning cho'kishga qo'shgan hissasi
-            subs_total += - (subsidence_factor * np.log1p(radii[i]) / np.log1p(12)) * \
-                           np.exp(-((x - centers_x[i])**2 + y**2) / 600)
-    
-    z_surface = np.full_like(x, 25) + subs_total
-    max_subs = np.abs(subs_total.max())
-    
     fig = go.Figure()
 
-    # 4. Qatlamlarni chizish - Taklif: Yangilangan opacity (0.45 va 0.35)
+    # 3. YER YUZASI (Dinamik)
+    z_surface = np.full_like(x, overburden_top) + subs_total
     fig.add_trace(go.Surface(x=x, y=y, z=z_surface, colorscale='Greens', showscale=False, name="Yer yuzasi"))
-    fig.add_trace(go.Surface(x=x, y=y, z=np.full_like(x, 7), colorscale='Greys', opacity=0.45, showscale=False, name="Overburden"))
-    fig.add_trace(go.Surface(x=x, y=y, z=np.full_like(x, -7), colorscale='Oranges', opacity=0.35, showscale=False, name="Ko'mir qatlami"))
 
-    # 5. Kameralar va O'pirilishlar (Collapse)
+    # 4. OVERBURDEN BLOKI (Qalinligi bilan)
+    # Ustki chegara
+    fig.add_trace(go.Surface(x=x, y=y, z=np.full_like(x, coal_top), 
+                             colorscale='Greys', opacity=0.4, showscale=False, name="Overburden-Base"))
+    
+    # 5. KO'MIR QATLAMI BLOKI (Hajm berish uchun ustki va ostki qismlar)
+    # Ustki chegara (Roof)
+    fig.add_trace(go.Surface(x=x, y=y, z=np.full_like(x, coal_top), 
+                             colorscale='YlOrBr', opacity=0.3, showscale=False, name="Ko'mir (Top)"))
+    # Ostki chegara (Floor)
+    fig.add_trace(go.Surface(x=x, y=y, z=np.full_like(x, coal_bottom), 
+                             colorscale='YlOrBr', opacity=0.3, showscale=False, name="Ko'mir (Bottom)"))
+
+    # 6. KAMERALAR (Faqat ko'mir qatlami qalinligi ichida rivojlanadi)
     u, v = np.mgrid[0:2*np.pi:25j, 0:np.pi:25j]
     for i, cx in enumerate(centers_x):
         if radii[i] > 0:
-            # Taklif: np.random.seed barqaror vizualizatsiya uchun
             np.random.seed(i + t)
             r = radii[i]
+            # Kamera balandligi ko'mir qalinligidan oshib ketmasligi kerak (r_z cheklovi)
+            r_z_limited = min(r * 0.6, th_coal / 2)
             
-            # Deformatsiyalangan karkas
-            dx = r * np.cos(u) * np.sin(v) * (1 + 0.07 * np.random.randn(25, 25))
-            dy = (r*0.8) * np.sin(u) * np.sin(v) * (1 + 0.07 * np.random.randn(25, 25))
-            dz = (r*0.6) * np.cos(v) * (1 + 0.04 * np.random.randn(25, 25))
+            dx = r * np.cos(u) * np.sin(v) * (1 + 0.05 * np.random.randn(25, 25))
+            dy = (r*0.8) * np.sin(u) * np.sin(v) * (1 + 0.05 * np.random.randn(25, 25))
+            dz = r_z_limited * np.cos(v) * (1 + 0.03 * np.random.randn(25, 25))
             
-            c_map = 'Hot' if states[i] == "Faol" else 'Greys_r'
-            opac = 0.95 if states[i] == "Faol" else 0.5
+            # Kamera rangi
+            is_active = (i * 20 < t <= (i + 1) * 20)
+            c_map = 'Hot' if is_active else 'Greys_r'
             
-            fig.add_trace(go.Surface(x=dx + cx, y=dy, z=dz, colorscale=c_map, opacity=opac, showscale=False))
+            fig.add_trace(go.Surface(x=dx + cx, y=dy, z=dz, colorscale=c_map, opacity=0.9, showscale=False))
 
-            # Taklif: Yonib bo'lgan kameralar uchun O'pirilish (Collapse) zonasi
-            if states[i] == "Yonib bo'lgan":
-                n_collapse = 50
-                col_x = np.random.uniform(cx - 10, cx + 10, n_collapse)
-                col_y = np.random.uniform(-10, 10, n_collapse)
-                # Z balandligi subsidence bilan proporsional
-                col_z = np.random.uniform(0, max_subs / 2, n_collapse)
-                
-                fig.add_trace(go.Scatter3d(x=col_x, y=col_y, z=col_z, mode='markers',
-                                           marker=dict(size=2.5, color='black', symbol='diamond', opacity=0.6),
-                                           name=f"Collapse K{i+1}"))
+            # 7. O'PIRILISH (COLLAPSE) - Faqat yonib bo'lganlar uchun
+            if t > (i + 1) * 20:
+                n_c = 40
+                c_x = np.random.uniform(cx - 10, cx + 10, n_c)
+                c_y = np.random.uniform(-10, 10, n_c)
+                # O'pirilish ko'mir qatlamidan yuqoriga overburden'ga qarab ketadi
+                c_z = np.random.uniform(coal_top, coal_top + (th_over/3), n_c)
+                fig.add_trace(go.Scatter3d(x=c_x, y=c_y, z=c_z, mode='markers',
+                                           marker=dict(size=2, color='black', symbol='diamond', opacity=0.5)))
 
-    # 6. Faol stress (Taklif: st_z maksimal cho'kishga proporsional)
-    if any(s == "Faol" for s in states):
-        act_idx = states.index("Faol")
-        act_x = centers_x[act_idx]
-        n_pts = int((t % 20) + 10)
-        
-        st_x = np.random.uniform(act_x - 15, act_x + 15, n_pts)
-        st_y = np.random.uniform(-15, 15, n_pts)
-        # Taklif: Stress balandligi cho'kish faktoriga bog'liq
-        st_z = np.random.uniform(-max_subs/3, max_subs/3, n_pts)
-        
-        fig.add_trace(go.Scatter3d(x=st_x, y=st_y, z=st_z, mode='markers',
-                                   marker=dict(size=4, color='cyan', symbol='x'), name="Faol Stress"))
-
+    # Layout sozlamalari
     fig.update_layout(
-        scene=dict(xaxis_title="X (m)", yaxis_title="Y (m)", zaxis_title="H (m)", zaxis=dict(range=[-20, 35])),
+        scene=dict(
+            xaxis_title="X (m)", yaxis_title="Y (m)", zaxis_title="Balandlik (m)",
+            zaxis=dict(range=[coal_bottom - 10, overburden_top + 10])
+        ),
         margin=dict(l=0, r=0, b=0, t=30),
-        title=f"UCG Bosqichma-bosqich Model: {t}-kun"
+        title=f"Qatlam qalinligi hisobga olingan model ({t}-kun)"
     )
-    return fig, states
+    return fig
 
-# Ilovada grafikni chiqarish
-fig_final, current_st = generate_step_by_step_model(time_step)
+# Grafikni chiqarish
+fig_final = generate_volumetric_model(time_step, t_overburden, t_coal)
 st.plotly_chart(fig_final, use_container_width=True)
+
+st.info(f"""
+**Ilmiy yangilik:** Ushbu modelda kaminaning vertikal o'lchami ko'mir qatlamining qalinligiga ({t_coal} m) bog'landi. 
+Yer yuzasidagi maksimal cho'kish esa ko'mir qatlamining qazib olingan (yonib ketgan) hajmiga proporsional ravishda hisoblanmoqda.
+""")
 
 # ==============================================================================
 # --- 📑 CHUQURLASHTIRILGAN ILMIY HISOBOT VA BIBLIOGRAFIYA (PHD EDITION) ---
