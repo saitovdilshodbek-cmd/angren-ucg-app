@@ -306,14 +306,44 @@ with c2:
     fig_tm.update_yaxes(autorange='reversed', row=1, col=1); fig_tm.update_yaxes(autorange='reversed', row=2, col=1)
     st.plotly_chart(fig_tm, use_container_width=True)
 
-
 # ==============================================================================
-# --- 🌀 UCG: SOATBAY (time_h) VA QATLAMLAR INTEGRATSIYASI ---
+# --- 🌀 UCG: KOMPLEKS MONITORING VA 3D DINAMIK NATIJALAR ---
 # ==============================================================================
-st.header("🌀 UCG: Termo-Mexanik Dinamik 3D Model")
+st.header(f"📊 {obj_name}: Kompleks Monitoring Paneli")
 
+# --- 1. GEOMEXANIK HISOB-KITOBLAR (Dinamik) ---
+def calculate_live_metrics(h, layers, T_max):
+    target = layers[-1] # Ko'mir qatlami
+    ucs_0 = target['ucs']
+    H_seam = target['t']
+    
+    # Vaqtga bog'liq harorat va degradatsiya
+    curr_T = 25 + (T_max - 25) * (min(h, 40) / 40) if h <= 40 else T_max * np.exp(-0.001 * (h-40))
+    strength_red = np.exp(-0.0025 * (curr_T - 20))
+    
+    # Selek mustahkamligi (Pillar Strength)
+    w_rec = 15.0 + (h / 150) * 10 # Vaqt o'tishi bilan tavsiyaviy en o'zgarishi
+    p_strength = (ucs_0 * strength_red) * (w_rec / H_seam)**0.5
+    
+    # Cho'kish (Subsidence) - Max qiymat
+    max_sub_val = (H_seam * 0.05) * (min(h, 120) / 120)
+    
+    return p_strength, w_rec, curr_T, max_sub_val
+
+p_str, w_rec, t_now, s_max_3d = calculate_live_metrics(time_h, layers_data, T_source_max)
+
+# --- 2. METRIKALAR (Dashboard ko'rinishida) ---
+m1, m2, m3, m4 = st.columns(4)
+m1.metric("Pillar Strength", f"{p_str:.1f} MPa", delta=f"{t_now:.0f} °C da", delta_color="inverse")
+m2.metric("Tavsiya: Selek Eni", f"{w_rec:.1f} m")
+m3.metric("Maks. Cho'kish", f"{s_max_3d*100:.1f} cm")
+m4.metric("Jarayon bosqichi", f"{'Faol' if time_h < 100 else 'Sovish'}")
+
+st.markdown("---")
+
+# --- 3. 3D MODEL GENERATSIYASI ---
 def generate_integrated_3d(h, layers, s_max):
-    grid_res = 30 # Bloklar hisoblanganda unumdorlik uchun resni biroz kamaytirdik
+    grid_res = 40
     x = np.linspace(-100, 100, grid_res)
     y = np.linspace(-60, 60, grid_res)
     gx, gy = np.meshgrid(x, y)
@@ -323,85 +353,73 @@ def generate_integrated_3d(h, layers, s_max):
     
     fig = go.Figure()
     
+    # Qatlamlarni blok holida chizish
     curr_z = 0
     for i, layer in enumerate(layers):
-        z_top_base = curr_z
-        z_bottom_base = curr_z + layer['t']
+        z_top = curr_z
+        z_bottom = curr_z + layer['t']
         
-        # Deformatsiya koeffitsiyentlari
-        deform_top = subs_map * (0.85 ** i)
-        deform_bottom = subs_map * (0.85 ** (i + 1))
+        # Deformatsiya so'nishi (chuqurlik bo'yiq)
+        deform = subs_map * (0.85 ** i)
         
-        z_top = -z_top_base + deform_top
-        z_bottom = -z_bottom_base + deform_bottom
-        
-        # 1. Qatlamning ustki sirti
         fig.add_trace(go.Surface(
-            x=gx, y=gy, z=z_top,
+            x=gx, y=gy, z=-z_top + deform,
             colorscale=[[0, layer['color']], [1, layer['color']]],
-            opacity=0.9, showscale=False, name=f"{layer['name']} (Top)",
-            hoverinfo='skip'
+            opacity=0.7, showscale=False, name=layer['name']
         ))
-        
-        # 2. Qatlamning pastki sirti
-        fig.add_trace(go.Surface(
-            x=gx, y=gy, z=z_bottom,
-            colorscale=[[0, layer['color']], [1, layer['color']]],
-            opacity=0.9, showscale=False, name=f"{layer['name']} (Bottom)",
-            hoverinfo='skip'
-        ))
-
-        # 3. Qatlamning yon devorlari (Blok ko'rinishini berish uchun)
-        # To'rning chetki chiziqlari bo'ylab vertikal yuzalar chizamiz
-        for side in range(4):
-            if side == 0: # X-min devori
-                sx, sy = gx[:, 0], gy[:, 0]
-                sz_t, sz_b = z_top[:, 0], z_bottom[:, 0]
-            elif side == 1: # X-max devori
-                sx, sy = gx[:, -1], gy[:, -1]
-                sz_t, sz_b = z_top[:, -1], z_bottom[:, -1]
-            elif side == 2: # Y-min devori
-                sx, sy = gx[0, :], gy[0, :]
-                sz_t, sz_b = z_top[0, :], z_bottom[0, :]
-            else: # Y-max devori
-                sx, sy = gx[-1, :], gy[-1, :]
-                sz_t, sz_b = z_top[-1, :], z_bottom[-1, :]
-
-            fig.add_trace(go.Surface(
-                x=np.array([sx, sx]),
-                y=np.array([sy, sy]),
-                z=np.array([sz_t, sz_b]),
-                colorscale=[[0, layer['color']], [1, layer['color']]],
-                opacity=1.0, showscale=False, hoverinfo='skip'
-            ))
-            
-        curr_z = z_bottom_base
+        curr_z = z_bottom
 
     # UCG Kamerasi (Issiqlik zonasi)
     coal_z = -(sum(l['t'] for l in layers[:-1]) + layers[-1]['t']/2)
     u, v = np.mgrid[0:2*np.pi:15j, 0:np.pi:15j]
+    # Radius vaqtga bog'liq (0-12m)
     r = min(h / 10, 12)
     
     if r > 1:
         cx, cy, cz = r*np.cos(u)*np.sin(v), (r*0.7)*np.sin(u)*np.sin(v), (r*0.5)*np.cos(v) + coal_z
-        fig.add_trace(go.Surface(
-            x=cx, y=cy, z=cz, 
-            colorscale='Hot', opacity=1.0, showscale=False,
-            lighting=dict(ambient=0.6, diffuse=0.8)
-        ))
+        fig.add_trace(go.Surface(x=cx, y=cy, z=cz, colorscale='Hot', opacity=0.9, showscale=False))
 
     fig.update_layout(
-        scene=dict(
-            xaxis=dict(backgroundcolor="rgb(20, 20, 20)", gridcolor="gray", showbackground=True),
-            yaxis=dict(backgroundcolor="rgb(20, 20, 20)", gridcolor="gray", showbackground=True),
-            zaxis=dict(backgroundcolor="rgb(20, 20, 20)", gridcolor="gray", showbackground=True, range=[-sum(l['t'] for l in layers)-10, 20]),
-            aspectmode='manual',
-            aspectratio=dict(x=1, y=0.6, z=0.5)
-        ),
-        height=700, margin=dict(l=0, r=0, b=0, t=0),
-        template="plotly_dark"
+        scene=dict(zaxis=dict(range=[-sum(l['t'] for l in layers)-10, 20])),
+        height=600, margin=dict(l=0, r=0, b=0, t=0)
     )
     return fig
+
+# --- 4. GRAFIKLARNI CHIQARISH ---
+col_left, col_right = st.columns([2, 1])
+
+with col_left:
+    st.subheader("🌐 3D Geomexanik Massiv")
+    st.plotly_chart(generate_integrated_3d(time_h, layers_data, s_max_3d), use_container_width=True)
+
+with col_right:
+    st.subheader("📈 Dinamik Trendlar")
+    # Hoek-Brown va vaqt bog'liqligi grafigi
+    h_axis = np.linspace(0, 150, 50)
+    st_trend = [calculate_live_metrics(val, layers_data, T_source_max)[0] for val in h_axis]
+    
+    fig_trend = go.Figure()
+    fig_trend.add_trace(go.Scatter(x=h_axis, y=st_trend, name="Mustahkamlik", line=dict(color='orange', width=3)))
+    fig_trend.add_vline(x=time_h, line_dash="dash", line_color="red")
+    fig_trend.update_layout(template="plotly_dark", height=250, title="Mustahkamlik pasayishi (MPa/h)", margin=dict(l=10, r=10, t=30, b=10))
+    st.plotly_chart(fig_trend, use_container_width=True)
+    
+    # Qatlamlar statistikasi
+    st.write("**Qatlamlar tuzilishi:**")
+    for l in layers_data:
+        st.caption(f"• {l['name']}: {l['t']} m (UCS: {l['ucs']} MPa)")
+
+# --- 5. EKSPERT XULOSASI ---
+st.markdown("---")
+with st.expander("📝 Avtomatik Ilmiy Interpretatsiya", expanded=True):
+    risk_level = "YUQORI" if p_str < 15 else "O'RTA" if p_str < 25 else "PAST"
+    st.write(f"""
+    **Tahlil natijasi ({time_h}-soat):**
+    1. **Termal degradatsiya:** Harorat {t_now:.1f} °C ga yetishi natijasida ko'mir mustahkamligi boshlang'ich holatga nisbatan {((1-p_str/layers_data[-1]['ucs'])*100):.1f}% ga kamaygan.
+    2. **Yer yuzasi:** {s_max_3d*100:.1f} cm lik vertikal cho'kish kutilmoqda. Bu {layers_data[0]['name']} qatlamida plastik deformatsiyalarni yuzaga keltirishi mumkin.
+    3. **Xavf darajasi:** **{risk_level}**. Tavsiya etilgan selek eni: **{w_rec:.1f} metr**.
+    """)
+
 
 # ==============================================================================
 # --- 📑 CHUQURLASHTIRILGAN ILMIY HISOBOT VA BIBLIOGRAFIYA (PHD EDITION) ---
