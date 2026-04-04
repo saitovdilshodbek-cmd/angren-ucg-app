@@ -341,9 +341,8 @@ m4.metric("Jarayon bosqichi", f"{'Faol' if time_h < 100 else 'Sovish'}")
 
 st.markdown("---")
 
-# --- 3. 3D MODEL GENERATSIYASI ---
 def generate_integrated_3d(h, layers, s_max):
-    grid_res = 40
+    grid_res = 30 # Bloklar hisoblanganda unumdorlik uchun resni biroz kamaytirdik
     x = np.linspace(-100, 100, grid_res)
     y = np.linspace(-60, 60, grid_res)
     gx, gy = np.meshgrid(x, y)
@@ -353,38 +352,85 @@ def generate_integrated_3d(h, layers, s_max):
     
     fig = go.Figure()
     
-    # Qatlamlarni blok holida chizish
     curr_z = 0
     for i, layer in enumerate(layers):
-        z_top = curr_z
-        z_bottom = curr_z + layer['t']
+        z_top_base = curr_z
+        z_bottom_base = curr_z + layer['t']
         
-        # Deformatsiya so'nishi (chuqurlik bo'yiq)
-        deform = subs_map * (0.85 ** i)
+        # Deformatsiya koeffitsiyentlari
+        deform_top = subs_map * (0.85 ** i)
+        deform_bottom = subs_map * (0.85 ** (i + 1))
         
+        z_top = -z_top_base + deform_top
+        z_bottom = -z_bottom_base + deform_bottom
+        
+        # 1. Qatlamning ustki sirti
         fig.add_trace(go.Surface(
-            x=gx, y=gy, z=-z_top + deform,
+            x=gx, y=gy, z=z_top,
             colorscale=[[0, layer['color']], [1, layer['color']]],
-            opacity=0.7, showscale=False, name=layer['name']
+            opacity=0.9, showscale=False, name=f"{layer['name']} (Top)",
+            hoverinfo='skip'
         ))
-        curr_z = z_bottom
+        
+        # 2. Qatlamning pastki sirti
+        fig.add_trace(go.Surface(
+            x=gx, y=gy, z=z_bottom,
+            colorscale=[[0, layer['color']], [1, layer['color']]],
+            opacity=0.9, showscale=False, name=f"{layer['name']} (Bottom)",
+            hoverinfo='skip'
+        ))
+
+        # 3. Qatlamning yon devorlari (Blok ko'rinishini berish uchun)
+        # To'rning chetki chiziqlari bo'ylab vertikal yuzalar chizamiz
+        for side in range(4):
+            if side == 0: # X-min devori
+                sx, sy = gx[:, 0], gy[:, 0]
+                sz_t, sz_b = z_top[:, 0], z_bottom[:, 0]
+            elif side == 1: # X-max devori
+                sx, sy = gx[:, -1], gy[:, -1]
+                sz_t, sz_b = z_top[:, -1], z_bottom[:, -1]
+            elif side == 2: # Y-min devori
+                sx, sy = gx[0, :], gy[0, :]
+                sz_t, sz_b = z_top[0, :], z_bottom[0, :]
+            else: # Y-max devori
+                sx, sy = gx[-1, :], gy[-1, :]
+                sz_t, sz_b = z_top[-1, :], z_bottom[-1, :]
+
+            fig.add_trace(go.Surface(
+                x=np.array([sx, sx]),
+                y=np.array([sy, sy]),
+                z=np.array([sz_t, sz_b]),
+                colorscale=[[0, layer['color']], [1, layer['color']]],
+                opacity=1.0, showscale=False, hoverinfo='skip'
+            ))
+            
+        curr_z = z_bottom_base
 
     # UCG Kamerasi (Issiqlik zonasi)
     coal_z = -(sum(l['t'] for l in layers[:-1]) + layers[-1]['t']/2)
     u, v = np.mgrid[0:2*np.pi:15j, 0:np.pi:15j]
-    # Radius vaqtga bog'liq (0-12m)
     r = min(h / 10, 12)
     
     if r > 1:
         cx, cy, cz = r*np.cos(u)*np.sin(v), (r*0.7)*np.sin(u)*np.sin(v), (r*0.5)*np.cos(v) + coal_z
-        fig.add_trace(go.Surface(x=cx, y=cy, z=cz, colorscale='Hot', opacity=0.9, showscale=False))
+        fig.add_trace(go.Surface(
+            x=cx, y=cy, z=cz, 
+            colorscale='Hot', opacity=1.0, showscale=False,
+            lighting=dict(ambient=0.6, diffuse=0.8)
+        ))
 
     fig.update_layout(
-        scene=dict(zaxis=dict(range=[-sum(l['t'] for l in layers)-10, 20])),
-        height=600, margin=dict(l=0, r=0, b=0, t=0)
+        scene=dict(
+            xaxis=dict(backgroundcolor="rgb(20, 20, 20)", gridcolor="gray", showbackground=True),
+            yaxis=dict(backgroundcolor="rgb(20, 20, 20)", gridcolor="gray", showbackground=True),
+            zaxis=dict(backgroundcolor="rgb(20, 20, 20)", gridcolor="gray", showbackground=True, range=[-sum(l['t'] for l in layers)-10, 20]),
+            aspectmode='manual',
+            aspectratio=dict(x=1, y=0.6, z=0.5)
+        ),
+        height=700, margin=dict(l=0, r=0, b=0, t=0),
+        template="plotly_dark"
     )
     return fig
-
 # --- 4. GRAFIKLARNI CHIQARISH ---
 col_left, col_right = st.columns([2, 1])
 
