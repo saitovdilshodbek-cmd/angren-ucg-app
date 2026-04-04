@@ -425,22 +425,6 @@ def generate_3d_block_model(t, th_over, th_coal):
 fig_res = generate_3d_block_model(time_day, t_over, t_coal)
 st.plotly_chart(fig_res, use_container_width=True)
 
-# --- 5. EKSPERT XULOSASI (Kodingizdagi hisob-kitoblarga tayanib) ---
-st.markdown("---")
-col_inf1, col_inf2 = st.columns(2)
-with col_inf1:
-    st.subheader("📚 Hajmli Geometriya Tahlili")
-    st.write(f"- **Ko'mir qatlami bloki:** {t_coal} m qalinlikda ({coal_bottom_z}m dan {coal_top_z}m gacha).")
-    st.write(f"- **Overburden massivi:** {t_over} m balandlikda.")
-    st.write("- **Kamera holati:** To'liq ko'mir bloki markazida joylashgan.")
-
-with col_inf2:
-    st.subheader("⚠️ Geomexanik Xulosa")
-    if time_day > 40:
-        st.error("❗ 3-kamera faol. Oldingi kameralarda o'pirilish (Goaf) zonasi shakllangan.")
-    else:
-        st.success("✔️ Massiv barqarorligi Hoek-Brown (2018) mezonlariga mos.")
-
 
 # ==============================================================================
 # --- 📑 CHUQURLASHTIRILGAN ILMIY HISOBOT VA BIBLIOGRAFIYA (PHD EDITION) ---
