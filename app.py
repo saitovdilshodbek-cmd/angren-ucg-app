@@ -307,60 +307,95 @@ with c2:
     st.plotly_chart(fig_tm, use_container_width=True)
 
 # ==============================================================================
-# --- 🔢 QADAM-BA-QADAM HISOBLASH JURNALI (VERIFICATION) ---
+# --- 📑 INTERAKTIV ILMIY HISOBOT VA DINAMIK HISOBLASH ---
 # ==============================================================================
-with st.expander("🔢 Real-vaqtda hisoblash jurnali (Matematik tekshiruv)", expanded=False):
-    st.write(f"**Loyiha:** {obj_name} | **Sana:** 2026-04-04")
-    
-    # Oxirgi qatlam (ko'mir qatlami) ma'lumotlarini olish
-    target_layer = layers_data[-1]
-    z_mid = target_layer['z_start'] + target_layer['t']/2
-    
-    st.markdown("---")
-    col_calc1, col_calc2 = st.columns(2)
-    
-    with col_calc1:
-        st.subheader("1. Geostatik va HB hisobi")
-        # Vertikal kuchlanish
-        sigma_v_val = sum(l['rho'] * 9.81 * l['t'] for l in layers_data[:-1]) / 1e6
-        st.write(f"• **Vertikal kuchlanish ($\sigma_v$):**")
-        st.latex(rf"\sigma_v = \sum \rho g h \approx {sigma_v_val:.2f} \text{{ MPa}}")
-        
-        # Hoek-Brown mb koeffitsiyenti
-        mb_calc = target_layer['mi'] * np.exp((target_layer['gsi'] - 100) / (28 - 14 * D_factor))
-        st.write(f"• **Hoek-Brown $m_b$ koeffitsiyenti:**")
-        st.latex(rf"m_b = {target_layer['mi']} \cdot e^{{({target_layer['gsi']}-100)/({28-14*D_factor:.1f})}} = {mb_calc:.3f}")
+st.markdown("---")
+st.header("🔍 Dinamik Hisoblash va Parametrik Tahlil")
+st.info("Ushbu bo'limda Sidebar'dagi parametrlar asosida real vaqtda bajarilgan hisob-kitoblar keltirilgan.")
 
-    with col_calc2:
-        st.subheader("2. Termal Degradatsiya hisobi")
-        # Harorat ta'sirida UCS kamayishi
-        # T_source_max kiritilgan maksimal harorat
-        ucs_final = target_layer['ucs'] * np.exp(-beta_thermal * (T_source_max - 20))
-        st.write(f"• **Termal UCS ($\sigma_{{ci(T)}}$):**")
-        st.latex(rf"{target_layer['ucs']} \cdot e^{{-{beta_thermal} \cdot ({T_source_max}-20)}} = {ucs_final:.2f} \text{{ MPa}}")
-        
-        # Termal kuchlanish
-        sigma_th_val = constraint_factor * (E * alpha_T_coeff * (T_source_max - 25)) / (1 - nu_poisson)
-        st.write(f"• **Termal kuchlanish ($\sigma_{{th}}$):**")
-        st.latex(rf"\sigma_{{th}} \approx {sigma_th_val:.2f} \text{{ MPa}}")
+# Hisob-kitoblar uchun joriy qatlam (ko'mir qatlami) ma'lumotlarini ajratib olish
+target = layers_data[-1]
+ucs_0 = target['ucs']
+gsi_val = target['gsi']
+mi_val = target['mi']
+gamma = target['rho'] * 9.81 / 1000  # kN/m3
+H_depth = sum(l['t'] for l in layers_data[:-1]) + target['t']/2 # Markaziy chuqurlik
 
-    st.markdown("---")
-    st.subheader("3. Selek Barqarorligi (Wilson & Pillar Strength)")
+# 1. Geostatik bosim
+sigma_v_calc = (gamma * H_depth) / 1000 # MPa
+
+# 2. Hoek-Brown koeffitsiyentlari (Dinamik)
+mb_dyn = mi_val * np.exp((gsi_val - 100) / (28 - 14 * D_factor))
+s_dyn = np.exp((gsi_val - 100) / (9 - 3 * D_factor))
+a_dyn = 0.5 + (1/6) * (np.exp(-gsi_val/15) - np.exp(-20/3))
+
+# 3. Termal effekt (Dinamik)
+# dT = T_source_max - 20 (atrof-muhit harorati)
+ucs_t = ucs_0 * np.exp(-beta_thermal * (T_source_max - 20))
+
+# 4. Pillar (Selek) mustahkamligi
+p_strength_dyn = ucs_t * (rec_width / H_seam)**0.5
+
+# --- VIZUALIZATSIYA (TABS) ---
+t_calc1, t_calc2, t_calc3 = st.tabs(["🏗️ Geomexanika", "🔥 Termodinamika", "⚖️ Barqarorlik Tahlili"])
+
+with t_calc1:
+    st.subheader("1. Hoek-Brown Mustahkamlik Mezonlari")
+    st.write("Jins massivining struktura holati va buzilish darajasi asosida hisob:")
     
-    # Selek mustahkamligi hisobi
-    st.write(f"Selek eni $w = {rec_width}$ m va balandligi $H = {H_seam}$ m bo'lganda:")
-    p_str_final = ucs_final * (rec_width / H_seam)**0.5
-    st.latex(rf"\sigma_p = {ucs_final:.2f} \cdot \left( \frac{{{rec_width}}}{{{H_seam}}} \right)^{{0.5}} = {p_str_final:.2f} \text{{ MPa}}")
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.latex(rf"m_b = m_i \cdot e^{{\frac{{GSI-100}}{{28-14D}}}} = {mi_val} \cdot e^{{\frac{{{gsi_val}-100}}{{{28-14*D_factor:.1f}}}}} = {mb_dyn:.3f}")
+        st.caption("Izoh: $m_b$ - massiv uchun qisqartirilgan mi koeffitsiyenti.")
+        
+        st.latex(rf"s = e^{{\frac{{GSI-100}}{{9-3D}}}} = e^{{\frac{{{gsi_val}-100}}{{{9-3*D_factor:.1f}}}}} = {s_dyn:.4f}")
+        st.caption("Izoh: $s$ - jinsning parchalanganlik darajasi (1.0 bo'lsa - butun).")
     
-    # Xavfsizlik koeffitsiyenti
-    fos_pillar = p_str_final / (sigma_v_val + 1e-6)
-    st.write(f"• **Selek uchun FOS:**")
-    if fos_pillar > 1.5:
-        st.success(rf"FOS = \frac{{{p_str_final:.2f}}}{{{sigma_v_val:.2f}}} = {fos_pillar:.2f} \text{{ (Xavfsiz)}}")
+    with col_b:
+        st.latex(rf"a = \frac{1}{2} + \frac{1}{6}(e^{{-GSI/15}} - e^{{-20/3}}) = {a_dyn:.3f}")
+        st.caption("Izoh: $a$ - GSI ga bog'liq bo'lgan eksponenta.")
+        
+    st.write(f"**Xulosa:** GSI={gsi_val} va D={D_factor} bo'lganda, jinsning laboratoriya mustahkamligi massivda {s_dyn:.2%} gacha kamayishi aniqlandi.")
+
+with t_calc2:
+    st.subheader("2. Termal Degradatsiya va Kuchlanish")
+    st.write("Yuqori harorat ta'sirida jins xususiyatlarining o'zgarishi:")
+    
+    c_t1, c_t2 = st.columns(2)
+    with c_t1:
+        st.write("**UCS ning kamayishi:**")
+        st.latex(rf"\sigma_{{ci(T)}} = \sigma_{{ci(0)}} \cdot e^{{-\beta(T-20)}}")
+        st.latex(rf"\sigma_{{ci(T)}} = {ucs_0} \cdot e^{{-{beta_thermal} \cdot ({T_source_max}-20)}} = {ucs_t:.2f} \text{{ MPa}}")
+        st.info(f"Izoh: Harorat {T_source_max}°C ga chiqqanda, mustahkamlik {((1 - ucs_t/ucs_0)*100):.1f}% ga kamaydi.")
+
+    with c_t2:
+        st.write("**Termal kengayish kuchlanishi:**")
+        # sigma_th = (E * alpha * dT) / (1-nu)
+        st.latex(rf"\sigma_{{th}} = \frac{{E \cdot \alpha \cdot \Delta T}}{{1 - \nu}}")
+        st.latex(rf"\sigma_{{th}} \approx \frac{{5000 \cdot 10^{{-5}} \cdot ({T_source_max}-25)}}{{1 - {nu_poisson}}} = {sigma_thermal.max():.2f} \text{{ MPa}}")
+        st.warning("Izoh: Bu kuchlanish yonish kamerasi devorlarida spalling (qipiqlanish) hosil qiladi.")
+
+with t_calc3:
+    st.subheader("3. Selek (Pillar) va Yer yuzasi Barqarorligi")
+    
+    st.write(f"**Selekning yuk ko'tarish qobiliyati (Pillar Strength):**")
+    st.latex(rf"\sigma_p = \sigma_{{ci(T)}} \cdot \sqrt{\frac{{w}}{{H}}}} = {ucs_t:.2f} \cdot \sqrt{{\frac{{{rec_width}}}{{{H_seam}}}}} = {p_strength_dyn:.2f} \text{{ MPa}}")
+    
+    f_val = p_strength_dyn / (sigma_v_calc + 1e-6)
+    st.write(f"**Xavfsizlik koeffitsiyenti (FOS):**")
+    st.latex(rf"FOS = \frac{{\sigma_p}}{{\sigma_v}} = \frac{{{p_strength_dyn:.2f}}}{{{sigma_v_calc:.2f}}} = {f_val:.2f}")
+    
+    if f_val < 1.2:
+        st.error(f"⚠️ FOS ({f_val:.2f}) juda past! Selek enini ({rec_width} m) oshirish yoki haroratni nazorat qilish tavsiya etiladi.")
+    elif f_val < 1.5:
+        st.warning(f"🟡 FOS ({f_val:.2f}) chegarada. Angren koni uchun qo'shimcha mahkamlash choralari zarur.")
     else:
-        st.error(rf"FOS = \frac{{{p_str_final:.2f}}}{{{sigma_v_val:.2f}}} = {fos_pillar:.2f} \text{{ (Xavf mavjud)}}")
+        st.success(f"✅ FOS ({f_val:.2f}) yetarli. Selek barqaror hisoblanadi.")
 
-    st.info("💡 Izoh: Ushbu hisob-kitoblar modelning eng kritik nuqtasi (kamera markazi) uchun bajarildi.")
+    st.markdown("""
+    **Metodologik izoh:** Ushbu hisob-kitoblar **Wilson (1972)** va **Hoek-Brown (2018)** metodikalarining integratsiyasi asosida, 
+    UCG jarayonidagi termal destruksiyani hisobga olgan holda bajarildi.
+    """)
     
 # --- ILMIY METODOLOGIYA VA MANBALAR ---
 st.markdown("---")
