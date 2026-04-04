@@ -306,46 +306,98 @@ with c2:
     fig_tm.update_yaxes(autorange='reversed', row=1, col=1); fig_tm.update_yaxes(autorange='reversed', row=2, col=1)
     st.plotly_chart(fig_tm, use_container_width=True)
 
-# ==============================================================================
-# --- 💎 3D ADVANCED TM SIMULATION (PhD Research Grade) ---
-# ==============================================================================
+import plotly.graph_objects as go
+import numpy as np
 
-# 1. 3D Massivlarni qatlamlar bo'yicha yoyish (Broadcasting)
-# Bu erda temp_vol.shape - (nx, ny, nz) o'lchamga ega
-grid_ucs_3d = np.broadcast_to(grid_ucs.reshape(grid_ucs.shape[0], 1, grid_ucs.shape[1]).transpose(2,1,0), temp_vol.shape)
-grid_mb_3d = np.broadcast_to(grid_mb.reshape(grid_mb.shape[0], 1, grid_mb.shape[1]).transpose(2,1,0), temp_vol.shape)
-grid_s_3d = np.broadcast_to(grid_s_hb.reshape(grid_s_hb.shape[0], 1, grid_s_hb.shape[1]).transpose(2,1,0), temp_vol.shape)
-grid_a_3d = np.broadcast_to(grid_a_hb.reshape(grid_a_hb.shape[0], 1, grid_a_hb.shape[1]).transpose(2,1,0), temp_vol.shape)
+# 1. Asosiy figuraning statik qismlarini yaratamiz (Z-kesma va Stress maydoni)
+# Z bo'yicha markaziy kesma (Center slice)
+z_slice = temp_vol.shape[2] // 2
 
-# 2. Termal Degradatsiya va Kuchlanishlar
-# beta - sidebar'dan kelayotgan thermal decay koeffitsiyenti
-damage_3d = 1 - np.exp(-beta_thermal * (temp_vol - 100).clip(0))
-sigma_ci_3d = grid_ucs_3d * (1 - damage_3d)
+fig_complex = go.Figure()
 
-# Termal kuchlanish (3D Hajmiy Kengayish)
-# E va alpha_T_coeff - sidebar parametrlaridan
-sigma_th_3d = (E * alpha_T_coeff * (temp_vol - 25)) / (1 - 2 * nu_poisson)
+# Statik Trace 1: Harorat kesmasi
+fig_complex.add_trace(go.Surface(
+    x=x_v[:, :, z_slice],
+    y=y_v[:, :, z_slice],
+    z=z_v[:, :, z_slice],
+    surfacecolor=temp_vol[0, :, :, z_slice], # Dastlabki vaqtdagi kesma
+    colorscale='Hot',
+    cmin=25, cmax=1200,
+    showscale=True,
+    opacity=0.5,
+    name="Temp Slice"
+))
 
-# 3. Effektiv Kuchlanishlar Maydoni
-# sigma_v_3d chuqurlikka bog'liq (oldin hisoblangan)
-sigma_z_eff = sigma_v_3d - sigma_th_3d
-sigma_x_eff = (k_ratio * sigma_v_3d) - sigma_th_3d
-sigma_y_eff = (k_ratio * sigma_v_3d) - sigma_th_3d
+# Statik Trace 2: sigma1 - sigma3 differensial stress
+stress_field = sigma1_3d - sigma3_3d
+fig_complex.add_trace(go.Volume(
+    x=x_v.flatten(),
+    y=y_v.flatten(),
+    z=z_v.flatten(),
+    value=stress_field.flatten(),
+    opacity=0.08,
+    surface_count=20,
+    colorscale='Jet',
+    name="Stress Field"
+))
 
-# 4. Asosiy Kuchlanishlar (Principal Stresses)
-sigma1_3d = np.maximum.reduce([sigma_x_eff, sigma_y_eff, sigma_z_eff])
-sigma3_3d = np.minimum.reduce([sigma_x_eff, sigma_y_eff, sigma_z_eff])
+# 2. Animatsiya kadrlari (Frames) ni yaratamiz
+frames = []
+for t in range(nt):
+    frames.append(go.Frame(
+        data=[
+            # Isosurface - bu animatsiya qilinadigan qism
+            go.Isosurface(
+                x=x_v.flatten(),
+                y=y_v.flatten(),
+                z=z_v.flatten(),
+                value=temp_vol[t].flatten(),
+                isomin=600,
+                isomax=1200,
+                colorscale='Hot',
+                showscale=False
+            ),
+            # Agar slice ham vaqtga qarab o'zgarishi kerak bo'lsa, 
+            # bu yerga Surface trace-ni ham qo'shish mumkin
+        ],
+        name=f"t={t}"
+    ))
 
-# 5. Hoek-Brown 2018 Failure Criterion (3D)
-s3_safe = np.maximum(sigma3_3d, 0.01)
-# Hoek-Brown limitini har bir nuqta uchun alohida hisoblaymiz
-sigma1_limit_3d = s3_safe + sigma_ci_3d * (grid_mb_3d * s3_safe / sigma_ci_3d + grid_s_3d)**grid_a_3d
+# 3. Figuraga kadrlarni yuklash va tugmalarni sozlash
+fig_complex.frames = frames
 
-# 6. Failure va Bo'shliq (Void) tahlili
-failure_3d = (sigma1_3d >= sigma1_limit_3d).astype(int)
-# Mexanik buzilish va yuqori harorat kombinatsiyasi = Bo'shliq (Cavern)
-void_3d_final = ((failure_3d == 1) & (temp_vol > 600)).astype(int)
+fig_complex.update_layout(
+    title="Geofizik Jarayon: Harorat va Stress Maydoni",
+    scene=dict(
+        xaxis_title='X',
+        yaxis_title='Y',
+        zaxis_title='Z'
+    ),
+    updatemenus=[dict(
+        type="buttons",
+        buttons=[
+            dict(
+                label="Play",
+                method="animate",
+                args=[None, {"frame": {"duration": 100, "redraw": True}, "fromcurrent": True}]
+            ),
+            dict(
+                label="Pause",
+                method="animate",
+                args=[[None], {"frame": {"duration": 0, "redraw": False}, "mode": "immediate"}]
+            )
+        ],
+        direction="left",
+        pad={"r": 10, "t": 87},
+        showactive=False,
+        x=0.1,
+        xanchor="right",
+        y=0,
+        yanchor="top"
+    )]
+)
 
+fig_complex.show()
 # ==============================================================================
 # --- 🧊 PLOTLY VIZUALIZATSIYA ---
 # ==============================================================================
