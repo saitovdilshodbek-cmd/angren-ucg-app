@@ -489,7 +489,99 @@ m4.metric("Jarayon bosqichi", f"{'Faol' if time_h < 100 else 'Sovish'}")
 st.markdown("---")
 
 # --- 3. 3D MODEL GENERATSIYASI ---
+def generate_integrated_3d(h, layers, s_max):
+    grid_res = 35 
+    # Y o'qini faqat manfiy tomondan 0 gacha olamiz (Kesim hosil qilish uchun)
+    x = np.linspace(-100, 100, grid_res)
+    y = np.linspace(-60, 0, grid_res) # 0 da to'xtaydi, ya'ni o'rtasidan kesiladi
+    gx, gy = np.meshgrid(x, y)
+    
+    # Cho'kish krateri (Gaussian model)
+    subs_map = -s_max * np.exp(-(gx**2 + gy**2) / 800)
+    fig = go.Figure()
+    
+    curr_z = 0
+    for i, layer in enumerate(layers):
+        z_top_base = curr_z
+        z_bottom_base = curr_z + layer['t']
+        
+        # Deformatsiya koeffitsiyentlari (chuqurlashgan sari so'nadi)
+        deform_top = subs_map * (0.85 ** i)
+        deform_bottom = subs_map * (0.85 ** (i + 1))
+        
+        z_top = -z_top_base + deform_top
+        z_bottom = -z_bottom_base + deform_bottom
+        
+        # 1. Qatlamning ustki sirti
+        fig.add_trace(go.Surface(
+            x=gx, y=gy, z=z_top,
+            colorscale=[[0, layer['color']], [1, layer['color']]],
+            opacity=1.0, showscale=False, name=layer['name'],
+            hoverinfo='skip'
+        ))
 
+        # 2. KESIM YUZASI (Aynan o'rtadagi vertikal devor)
+        # Y = 0 chizig'i bo'ylab qatlamning "ichini" ko'rsatuvchi yuza
+        # gy[-1, :] bu Y=0 degani
+        fx, fy = gx[-1, :], gy[-1, :] 
+        fz_t, fz_b = z_top[-1, :], z_bottom[-1, :]
+        
+        fig.add_trace(go.Surface(
+            x=np.array([fx, fx]),
+            y=np.array([fy, fy]),
+            z=np.array([fz_t, fz_b]),
+            colorscale=[[0, layer['color']], [1, layer['color']]],
+            opacity=1.0, showscale=False,
+            hoverinfo='text',
+            text=f"Qatlam: {layer['name']}"
+        ))
+
+        # 3. QOLGAN YON DEVORLAR (X-min, X-max va orqa Y-min devorlari)
+        for side in [0, 1, 2]: 
+            if side == 0: # X-min
+                sx, sy, sz_t, sz_b = gx[:, 0], gy[:, 0], z_top[:, 0], z_bottom[:, 0]
+            elif side == 1: # X-max
+                sx, sy, sz_t, sz_b = gx[:, -1], gy[:, -1], z_top[:, -1], z_bottom[:, -1]
+            else: # Y-min (Orqa tomon)
+                sx, sy, sz_t, sz_b = gx[0, :], gy[0, :], z_top[0, :], z_bottom[0, :]
+            
+            fig.add_trace(go.Surface(
+                x=np.array([sx, sx]), y=np.array([sy, sy]), z=np.array([sz_t, sz_b]),
+                colorscale=[[0, layer['color']], [1, layer['color']]],
+                opacity=1.0, showscale=False, hoverinfo='skip'
+            ))
+            
+        curr_z = z_bottom_base
+
+    # 4. UCG KAMERASI (Kesimda yarmi ko'rinishi uchun)
+    coal_z = -(sum(l['t'] for l in layers[:-1]) + layers[-1]['t']/2)
+    # v diapazonini pi/2 gacha olamiz, shunda kameraning faqat bizga qaragan yarmi chiziladi
+    u_c, v_c = np.mgrid[0:2*np.pi:20j, 0:np.pi/2:20j] 
+    r = min(h / 10, 13) 
+    
+    if r > 1:
+        # Kameraning o'lchamlari va joylashuvi
+        cx, cy, cz = r*np.cos(u_c)*np.sin(v_c), (r*0.8)*np.sin(u_c)*np.sin(v_c), (r*0.6)*np.cos(v_c) + coal_z
+        fig.add_trace(go.Surface(
+            x=cx, y=cy, z=cz, 
+            colorscale='Hot', opacity=1.0, showscale=False,
+            name="Yonish kamerasi",
+            lighting=dict(ambient=0.7, diffuse=1.0, specular=0.5)
+        ))
+
+    # 5. GRAFIK SOZLAMALARI
+    fig.update_layout(
+        scene=dict(
+            xaxis=dict(title="X (m)", backgroundcolor="black", showbackground=True),
+            yaxis=dict(title="Y (Kesim)", range=[-60, 20], backgroundcolor="black", showbackground=True),
+            zaxis=dict(title="Z (Chuqurlik)", range=[-sum(l['t'] for l in layers)-10, 20]),
+            # Kamerani kesim yuzasiga qaraydigan qilib sozlash
+            camera=dict(eye=dict(x=1.6, y=-1.6, z=1.0)) 
+        ),
+        height=750, margin=dict(l=0, r=0, b=0, t=0),
+        template="plotly_dark"
+    )
+    return fig
 
 # --- 4. GRAFIKLARNI CHIQARISH ---
 col_left, col_right = st.columns([2, 1])
