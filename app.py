@@ -306,6 +306,8 @@ with c2:
     fig_tm.update_yaxes(autorange='reversed', row=1, col=1); fig_tm.update_yaxes(autorange='reversed', row=2, col=1)
     st.plotly_chart(fig_tm, use_container_width=True)
 
+
+
 # ==============================================================================
 # --- 🌐 3D TERMO-MEXANIK SIMULYATOR (MULTI-CAVITY & SUBSIDENCE) ---
 # ==============================================================================
@@ -428,6 +430,7 @@ with st.expander("📝 Modelning Ilmiy Asoslari", expanded=True):
     * **Seleklar (Pillars):** Kameralar orasidagi ko'k rangli belgilar **selek kuchlanishini** ko'rsatadi. Ularning balandligi va zichligi joriy cho'kish darajasiga ({subsidence_factor:.1f}) bog'liq.
     * **Goaf (O'pirilish):** Yonib bo'lgandan keyingi bosqichda kaminaning tom qismida paydo bo'ladigan yoriqlar zonasi balandligi kaminaning kengayishiga mutanosib ravishda ortadi.
     """)
+
 
 # ==============================================================================
 # --- 📑 CHUQURLASHTIRILGAN ILMIY HISOBOT VA BIBLIOGRAFIYA (PHD EDITION) ---
