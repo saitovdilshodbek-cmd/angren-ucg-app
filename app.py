@@ -392,24 +392,19 @@ with c2:
     ), row=2, col=1)
 
     # ------------------------------------------------------------------
-    # 💨 Gas Flow Vectors — Cone (row=1, harorat maydonida ko'rsatiladi)
-    # Siyrak nuqtalarda (skip) vektorlar
+    # 💨 Gas Flow — 2D Velocity Heatmap (row=1, harorat maydonida overlay)
+    # go.Cone 3D trace bo'lgani uchun 2D subplotga mos kelmaydi.
+    # O'rniga gas_velocity ni shaffof heatmap sifatida ko'rsatamiz.
     # ------------------------------------------------------------------
-    skip = 8
-    gx_skip = grid_x[::skip, ::skip].flatten()
-    gz_skip = grid_z[::skip, ::skip].flatten()
-    vx_skip = vx_gas[::skip, ::skip].flatten()
-    vz_skip = vz_gas[::skip, ::skip].flatten()
-    gy_zero = np.zeros_like(gx_skip)
-    vy_zero = np.zeros_like(vx_skip)
+    gas_vel_norm = gas_velocity / (gas_velocity.max() + 1e-30)
 
-    fig_tm.add_trace(go.Cone(
-        x=gx_skip, y=gy_zero, z=gz_skip,
-        u=vx_skip, v=vy_zero, w=vz_skip,
-        sizemode="scaled", sizeref=2,
-        showscale=False,
+    fig_tm.add_trace(go.Heatmap(
+        z=gas_vel_norm,
+        x=x_axis, y=z_axis,
         colorscale='Blues',
-        name='Gaz Oqimi'
+        opacity=0.35,
+        showscale=False,
+        name='Gaz Oqimi Tezligi'
     ), row=1, col=1)
     # ------------------------------------------------------------------
 
