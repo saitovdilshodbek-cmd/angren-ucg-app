@@ -490,128 +490,104 @@ st.markdown("---")
 
 # --- 3. 3D MODEL GENERATSIYASI ---
 
+import numpy as np
+import plotly.graph_objects as go
+
 def generate_integrated_3d(h, layers, s_max):
-    grid_res = 40
-    # 1. Koordinatalar: Rasmga o'xshash burchakli kesim (L-shape) yaratish uchun
-    # X va Y o'qlarining faqat musbat qismida "bo'shliq" hosil qilamiz
+    grid_res = 35 
+    # RASMGA O'XSHASH QILISH UCHUN O'ZGARISH №1:
+    # Y o'qini musbat diapazonda olamiz (0 dan 60 gacha)
+    # Bu blokning "old" yarmini chizish imkonini beradi
     x = np.linspace(-100, 100, grid_res)
-    y = np.linspace(-60, 60, grid_res)
+    y = np.linspace(0, 60, grid_res) # Musbat diapazon
     gx, gy = np.meshgrid(x, y)
     
-    # L-kesim maskasi (X>0 va Y>0 bo'lgan chorak qismni olib tashlash)
-    mask = ~((gx > 0) & (gy > 0))
-    
-    # Cho'kish krateri (Gaussian)
-    subs_map = -s_max * np.exp(-(gx**2 + gy**2) / 1200)
-    
+    # Cho'kish krateri (Gaussian model) - musbat Y uchun ham ishlaydi
+    subs_map = -s_max * np.exp(-(gx**2 + gy**2) / 800)
     fig = go.Figure()
-    curr_z = 0
     
-    # 2. Qatlamlarni va ularning ichki kesimlarini chizish
+    curr_z = 0
     for i, layer in enumerate(layers):
         z_top_base = curr_z
         z_bottom_base = curr_z + layer['t']
         
-        # Deformatsiya chuqurlik bilan so'nadi
+        # Deformatsiya koeffitsiyentlari
         deform_top = subs_map * (0.85 ** i)
         deform_bottom = subs_map * (0.85 ** (i + 1))
         
         z_top = -z_top_base + deform_top
         z_bottom = -z_bottom_base + deform_bottom
-
-        # Faqat maskalangan (kesilmagan) qismlarni chizish
-        z_top_masked = np.where(mask, z_top, np.nan)
-        z_bottom_masked = np.where(mask, z_bottom, np.nan)
-
-        # Qatlam sirtlari
-        fig.add_trace(go.Surface(
-            x=gx, y=gy, z=z_top_masked,
-            colorscale=[[0, layer['color']], [1, layer['color']]],
-            opacity=1.0, showscale=False, hoverinfo='skip'
-        ))
-
-        # KESIM DEVORLARI (Rasmda ko'rsatilgan ichki yuzalar)
-        # X = 0 tekisligi bo'ylab kesim
-        mid_idx = grid_res // 2
-        fig.add_trace(go.Surface(
-            x=gx[mid_idx:, mid_idx], y=gy[mid_idx:, mid_idx], 
-            z=np.array([z_top[mid_idx:, mid_idx], z_bottom[mid_idx:, mid_idx]]),
-            colorscale=[[0, layer['color']], [1, layer['color']]],
-            showscale=False, opacity=1.0
-        ))
-        # Y = 0 tekisligi bo'ylab kesim
-        fig.add_trace(go.Surface(
-            x=gx[mid_idx, mid_idx:], y=gy[mid_idx, mid_idx:], 
-            z=np.array([z_top[mid_idx, mid_idx:], z_bottom[mid_idx, mid_idx:]]),
-            colorscale=[[0, layer['color']], [1, layer['color']]],
-            showscale=False, opacity=1.0
-        ))
         
-        curr_z = z_bottom_base
+        # 1. Qatlamning ustki sirti
+        fig.add_trace(go.Surface(
+            x=gx, y=gy, z=z_top,
+            colorscale=[[0, layer['color']], [1, layer['color']]],
+            opacity=1.0, showscale=False, name=layer['name'],
+            hoverinfo='skip'
+        ))
 
-    # 3. UCHTA YONISH KAMERASI (UCG CAVITIES)
-    coal_z = -(sum(l['t'] for l in layers[:-1]) + layers[-1]['t']/2)
-    centers_x = [-50, 0, 50]
-    
-    for idx, cx in enumerate(centers_x):
-        # Vaqtga bog'liq o'sish (max 12m radius)
-        r = min(h/10 + 2, 12) if h > idx*30 else 0
-        if r > 0:
-            # Kamera sferasi
-            u_c, v_c = np.mgrid[0:2*np.pi:15j, 0:np.pi:15j]
-            # Kesimga tushsa, faqat yarmini chizish (Rasmga moslash)
-            if cx >= 0: v_c = np.mgrid[0:2*np.pi:15j, np.pi/2:np.pi:15j][1]
-            
-            x_c = r * np.cos(u_c) * np.sin(v_c) + cx
-            y_c = r * 0.8 * np.sin(u_c) * np.sin(v_c)
-            z_c = r * 0.6 * np.cos(v_c) + coal_z
+        # RASMGA O'XSHASH QILISH UCHUN O'ZGARISH №2:
+        # KESIM YUZASI (Old vertikal devor)
+        # Endi kesim gridning BOSCHIDA (Y=0 nuqtasida, ya'ni gy[0, :] da)
+        fx, fy = gx[0, :], gy[0, :] # Birinchi qator (Y=0)
+        fz_t, fz_b = z_top[0, :], z_bottom[0, :]
+        
+        fig.add_trace(go.Surface(
+            x=np.array([fx, fx]),
+            y=np.array([fy, fy]),
+            z=np.array([fz_t, fz_b]),
+            colorscale=[[0, layer['color']], [1, layer['color']]],
+            opacity=1.0, showscale=False,
+            hoverinfo='text',
+            text=f"Qatlam: {layer['name']}"
+        ))
+
+        # 3. QOLGAN YON DEVORLAR (X-min, X-max va orqa Y-max devorlari)
+        # Kesim oldinda bo'lgani uchun, orqa devor Y-max bo'ladi
+        for side in [0, 1, 2]: 
+            if side == 0: # X-min
+                sx, sy, sz_t, sz_b = gx[:, 0], gy[:, 0], z_top[:, 0], z_bottom[:, 0]
+            elif side == 1: # X-max
+                sx, sy, sz_t, sz_b = gx[:, -1], gy[:, -1], z_top[:, -1], z_bottom[:, -1]
+            else: # Y-max (Orqa tomon)
+                sx, sy, sz_t, sz_b = gx[-1, :], gy[-1, :], z_top[-1, :], z_bottom[-1, :]
             
             fig.add_trace(go.Surface(
-                x=x_c, y=y_c, z=z_c,
-                colorscale='Hot', showscale=False, opacity=1.0
-            ))
-
-            # 4. TERMAL YORIQZAR VA STRESS NUQTALARI (Nuqtalar orasidagi bog'liqlik)
-            # Har bir kamera atrofida stress konsentratsiyasini ko'rsatamiz
-            n_points = 15
-            theta = np.random.uniform(0, 2*np.pi, n_points)
-            phi = np.random.uniform(0, np.pi, n_points)
-            # Yoriqlar radiusi kameradan biroz tashqarida
-            r_fr = r * np.random.uniform(1.1, 1.8, n_points)
-            
-            px = r_fr * np.cos(theta) * np.sin(phi) + cx
-            py = r_fr * 0.7 * np.sin(theta) * np.sin(phi)
-            pz = r_fr * 0.5 * np.cos(phi) + coal_z
-            
-            # Stress nuqtalarini chizish
-            fig.add_trace(go.Scatter3d(
-                x=px, y=py, z=pz,
-                mode='markers',
-                marker=dict(size=3, color='cyan', opacity=0.8),
-                name="Mikro-yoriqlar"
+                x=np.array([sx, sx]), y=np.array([sy, sy]), z=np.array([sz_t, sz_b]),
+                colorscale=[[0, layer['color']], [1, layer['color']]],
+                opacity=1.0, showscale=False, hoverinfo='skip'
             ))
             
-            # Nuqtalar orasidagi bog'liqlik (Stress links/Networks)
-            # Har bir nuqtani markazga yoki qo'shnisiga chiziq bilan bog'laymiz
-            for j in range(n_points):
-                fig.add_trace(go.Scatter3d(
-                    x=[cx, px[j]], y=[0, py[j]], z=[coal_z, pz[j]],
-                    mode='lines',
-                    line=dict(color='rgba(0, 255, 255, 0.2)', width=1),
-                    showlegend=False
-                ))
+        curr_z = z_bottom_base
 
-    # 5. GRAFIK SOZLAMALARI (Layout)
+    # RASMGA O'XSHASH QILISH UCHUN O'ZGARISH №3:
+    # UCG KAMERASI (Kesimda bizga qaragan yarmi ko'rinishi uchun)
+    coal_z = -(sum(l['t'] for l in layers[:-1]) + layers[-1]['t']/2)
+    # Kameraning bizga qaragan yarmini (Y > 0) chizish uchun 
+    # v diapazonini pi/2 dan pi gacha olamiz
+    u_c, v_c = np.mgrid[0:2*np.pi:20j, np.pi/2:np.pi:20j] 
+    r = min(h / 10, 13) 
+    
+    if r > 1:
+        cx, cy, cz = r*np.cos(u_c)*np.sin(v_c), (r*0.8)*np.sin(u_c)*np.sin(v_c), (r*0.6)*np.cos(v_c) + coal_z
+        fig.add_trace(go.Surface(
+            x=cx, y=cy, z=cz, 
+            colorscale='Hot', opacity=1.0, showscale=False,
+            name="Yonish kamerasi",
+            lighting=dict(ambient=0.7, diffuse=1.0, specular=0.5)
+        ))
+
+    # 5. GRAFIK SOZLAMALARI
     fig.update_layout(
         scene=dict(
-            xaxis=dict(title="X (m)", backgroundcolor="rgb(10,10,10)", gridcolor="gray"),
-            yaxis=dict(title="Y (m)", backgroundcolor="rgb(10,10,10)", gridcolor="gray"),
-            zaxis=dict(title="Z (Depth)", backgroundcolor="rgb(10,10,10)", gridcolor="gray", range=[-sum(l['t'] for l in layers)-10, 20]),
-            camera=dict(eye=dict(x=-1.8, y=-1.8, z=1.2)), # Rasm burchagiga moslashtirilgan
-            aspectmode='manual',
-            aspectratio=dict(x=1, y=0.8, z=0.5)
+            xaxis=dict(title="X (m)", backgroundcolor="black", showbackground=True),
+            # Y o'qi diapazoni musbat
+            yaxis=dict(title="Y (Kesim)", range=[-20, 60], backgroundcolor="black", showbackground=True),
+            zaxis=dict(title="Z (Chuqurlik)", range=[-sum(l['t'] for l in layers)-10, 20]),
+            # Kamerani rasmga o'xshash burchakdan sozlash
+            camera=dict(eye=dict(x=1.5, y=-1.5, z=1.2)) 
         ),
-        height=800, margin=dict(l=0, r=0, b=0, t=0),
+        height=750, margin=dict(l=0, r=0, b=0, t=0),
         template="plotly_dark"
     )
     return fig
