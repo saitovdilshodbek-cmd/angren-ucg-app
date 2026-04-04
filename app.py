@@ -490,13 +490,19 @@ st.markdown("---")
 
 # --- 3. 3D MODEL GENERATSIYASI ---
 
+import numpy as np
+import plotly.graph_objects as go
+
 def generate_integrated_3d(h, layers, s_max):
     grid_res = 35 
-    # Y o'qini faqat manfiy tomondan 0 gacha olamiz (Kesim hosil qilish uchun)
+    # RASMGA O'XSHASH QILISH UCHUN O'ZGARISH №1:
+    # Y o'qini musbat diapazonda olamiz (0 dan 60 gacha)
+    # Bu blokning "old" yarmini chizish imkonini beradi
     x = np.linspace(-100, 100, grid_res)
-    y = np.linspace(-60, 0, grid_res) # 0 da to'xtaydi, ya'ni o'rtasidan kesiladi
+    y = np.linspace(0, 60, grid_res) # Musbat diapazon
     gx, gy = np.meshgrid(x, y)
     
+    # Cho'kish krateri (Gaussian model) - musbat Y uchun ham ishlaydi
     subs_map = -s_max * np.exp(-(gx**2 + gy**2) / 800)
     fig = go.Figure()
     
@@ -505,6 +511,7 @@ def generate_integrated_3d(h, layers, s_max):
         z_top_base = curr_z
         z_bottom_base = curr_z + layer['t']
         
+        # Deformatsiya koeffitsiyentlari
         deform_top = subs_map * (0.85 ** i)
         deform_bottom = subs_map * (0.85 ** (i + 1))
         
@@ -515,64 +522,73 @@ def generate_integrated_3d(h, layers, s_max):
         fig.add_trace(go.Surface(
             x=gx, y=gy, z=z_top,
             colorscale=[[0, layer['color']], [1, layer['color']]],
-            opacity=1.0, showscale=False, name=layer['name']
-        ))
-        
-        # 2. Qatlamning pastki sirti
-        fig.add_trace(go.Surface(
-            x=gx, y=gy, z=z_bottom,
-            colorscale=[[0, layer['color']], [1, layer['color']]],
-            opacity=0.8, showscale=False
+            opacity=1.0, showscale=False, name=layer['name'],
+            hoverinfo='skip'
         ))
 
-        # 3. KESIM YUZASI (Front Wall - Blokning aynan kesilgan o'rta qismi)
-        # Y = 0 bo'lgan chiziq bo'ylab vertikal "devor" chizamiz
-        fx, fy = gx[-1, :], gy[-1, :] # Y ning eng oxirgi nuqtasi (0 nuqtasi)
-        fz_t, fz_b = z_top[-1, :], z_bottom[-1, :]
+        # RASMGA O'XSHASH QILISH UCHUN O'ZGARISH №2:
+        # KESIM YUZASI (Old vertikal devor)
+        # Endi kesim gridning BOSCHIDA (Y=0 nuqtasida, ya'ni gy[0, :] da)
+        fx, fy = gx[0, :], gy[0, :] # Birinchi qator (Y=0)
+        fz_t, fz_b = z_top[0, :], z_bottom[0, :]
         
         fig.add_trace(go.Surface(
             x=np.array([fx, fx]),
             y=np.array([fy, fy]),
             z=np.array([fz_t, fz_b]),
             colorscale=[[0, layer['color']], [1, layer['color']]],
-            opacity=1.0, showscale=False
+            opacity=1.0, showscale=False,
+            hoverinfo='text',
+            text=f"Qatlam: {layer['name']}"
         ))
 
-        # 4. Yon devorlar (Qolgan 3 tomoni uchun)
-        for side in [0, 1, 2]: # X-min, X-max, Y-min
-            if side == 0: sx, sy, sz_t, sz_b = gx[:, 0], gy[:, 0], z_top[:, 0], z_bottom[:, 0]
-            elif side == 1: sx, sy, sz_t, sz_b = gx[:, -1], gy[:, -1], z_top[:, -1], z_bottom[:, -1]
-            else: sx, sy, sz_t, sz_b = gx[0, :], gy[0, :], z_top[0, :], z_bottom[0, :]
+        # 3. QOLGAN YON DEVORLAR (X-min, X-max va orqa Y-max devorlari)
+        # Kesim oldinda bo'lgani uchun, orqa devor Y-max bo'ladi
+        for side in [0, 1, 2]: 
+            if side == 0: # X-min
+                sx, sy, sz_t, sz_b = gx[:, 0], gy[:, 0], z_top[:, 0], z_bottom[:, 0]
+            elif side == 1: # X-max
+                sx, sy, sz_t, sz_b = gx[:, -1], gy[:, -1], z_top[:, -1], z_bottom[:, -1]
+            else: # Y-max (Orqa tomon)
+                sx, sy, sz_t, sz_b = gx[-1, :], gy[-1, :], z_top[-1, :], z_bottom[-1, :]
             
             fig.add_trace(go.Surface(
                 x=np.array([sx, sx]), y=np.array([sy, sy]), z=np.array([sz_t, sz_b]),
-                colorscale=[[0, layer['color']], [1, layer['color']]], opacity=1.0, showscale=False
+                colorscale=[[0, layer['color']], [1, layer['color']]],
+                opacity=1.0, showscale=False, hoverinfo='skip'
             ))
             
         curr_z = z_bottom_base
 
-    # 5. UCG KAMERASI (Kesimda ko'rinishi uchun)
+    # RASMGA O'XSHASH QILISH UCHUN O'ZGARISH №3:
+    # UCG KAMERASI (Kesimda bizga qaragan yarmi ko'rinishi uchun)
     coal_z = -(sum(l['t'] for l in layers[:-1]) + layers[-1]['t']/2)
-    # Kameraning faqat yarmini chizamiz (v diapazoni 0 dan pi/2 gacha)
-    u, v = np.mgrid[0:2*np.pi:20j, 0:np.pi/2:20j] 
-    r = min(h / 10, 13) # Radius
+    # Kameraning bizga qaragan yarmini (Y > 0) chizish uchun 
+    # v diapazonini pi/2 dan pi gacha olamiz
+    u_c, v_c = np.mgrid[0:2*np.pi:20j, np.pi/2:np.pi:20j] 
+    r = min(h / 10, 13) 
     
     if r > 1:
-        cx, cy, cz = r*np.cos(u)*np.sin(v), (r*0.8)*np.sin(u)*np.sin(v), (r*0.6)*np.cos(v) + coal_z
-        # Kamera kesim yuzasiga jips bo'lishi uchun Y o'qi bo'ylab suramiz (ixtiyoriy)
+        cx, cy, cz = r*np.cos(u_c)*np.sin(v_c), (r*0.8)*np.sin(u_c)*np.sin(v_c), (r*0.6)*np.cos(v_c) + coal_z
         fig.add_trace(go.Surface(
             x=cx, y=cy, z=cz, 
             colorscale='Hot', opacity=1.0, showscale=False,
+            name="Yonish kamerasi",
             lighting=dict(ambient=0.7, diffuse=1.0, specular=0.5)
         ))
 
+    # 5. GRAFIK SOZLAMALARI
     fig.update_layout(
         scene=dict(
-            xaxis=dict(title="X (m)"), yaxis=dict(title="Y (Kesim)", range=[-60, 20]),
-            zaxis=dict(title="Z (m)", range=[-sum(l['t'] for l in layers)-10, 20]),
-            camera=dict(eye=dict(x=1.5, y=-1.5, z=0.8)) # Kesimni yaxshi ko'rish uchun burchak
+            xaxis=dict(title="X (m)", backgroundcolor="black", showbackground=True),
+            # Y o'qi diapazoni musbat
+            yaxis=dict(title="Y (Kesim)", range=[-20, 60], backgroundcolor="black", showbackground=True),
+            zaxis=dict(title="Z (Chuqurlik)", range=[-sum(l['t'] for l in layers)-10, 20]),
+            # Kamerani rasmga o'xshash burchakdan sozlash
+            camera=dict(eye=dict(x=1.5, y=-1.5, z=1.2)) 
         ),
-        height=750, margin=dict(l=0, r=0, b=0, t=0), template="plotly_dark"
+        height=750, margin=dict(l=0, r=0, b=0, t=0),
+        template="plotly_dark"
     )
     return fig
 
