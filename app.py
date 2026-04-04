@@ -312,188 +312,15 @@ with c2:
 # ==============================================================================
 st.header("🌀 UCG: Termo-Mexanik Dinamik 3D Model")
 
-def generate_hourly_3d_model(h, layers):
-    # 1. Koordinatalar setkasi
-    grid_res = 45
+def generate_integrated_3d(h, layers, s_max):
+    grid_res = 30 # Bloklar hisoblanganda unumdorlik uchun resni biroz kamaytirdik
     x = np.linspace(-100, 100, grid_res)
     y = np.linspace(-60, 60, grid_res)
-    grid_x, grid_y = np.meshgrid(x, y)
-    
-    # 2. Kameralar markazi (X o'qi bo'ylab joylashuvi)
-    # Birinchi koddagi 'sources' mantiqiga binoan
-    centers_x = [-60, 0, 60]
-    radii = []
-    temp_states = [] # Harorat holati
-    
-    for i, cx in enumerate(centers_x):
-        # Har bir kamera ma'lum soatdan keyin boshlanadi (0, 40, 80-soatlar)
-        start_h = i * 40 
-        if h <= start_h:
-            radii.append(0); temp_states.append("Sovuq")
-        elif start_h < h <= start_h + 40:
-            # Soatbay o'sish: 40 soat ichida maksimal 12 metr radiusga yetadi
-            growth = (h - start_h) / 40
-            radii.append(2 + growth * 10); temp_states.append("Faol")
-        else:
-            # Yonib bo'lgan, lekin sovish jarayonida
-            radii.append(12); temp_states.append("Soviyotgan")
-
-    # 3. SOATBAY CHO'KISH (time_h bog'liqligi)
-    # Birinchi koddagi s_max (cho'kish) mantiqini 3D ga ko'chiramiz
-    total_subs = np.zeros_like(grid_x)
-    for i in range(3):
-        if radii[i] > 0:
-            # Cho'kish amplitudasi soat o'tishi bilan ortadi
-            # 150 soatda maksimal darajaga yetadi
-            hour_factor = min(h / 150, 1.0)
-            amplitude = (radii[i] / 12) * 5.0 * hour_factor
-            total_subs += - amplitude * np.exp(-((grid_x - centers_x[i])**2 + grid_y**2) / 600)
-
-    fig = go.Figure()
-
-    # 4. QATLAMLARNI BLOK HOLIDA CHIZISH (layers_data bog'liqligi)
-    current_depth = 0
-    for i, layer in enumerate(layers):
-        z_top = current_depth
-        z_bottom = current_depth + layer['t']
-        
-        # Deformatsiya chuqurlik va vaqt bilan so'nadi
-        # i=0 (eng yuqori qatlam) eng ko'p cho'kadi
-        depth_attenuation = 0.85 ** i
-        layer_deform = total_subs * depth_attenuation
-
-        # Qatlam sirtini chizish
-        fig.add_trace(go.Surface(
-            x=grid_x, y=grid_y, z=-z_top + layer_deform,
-            colorscale=[[0, layer['color']], [1, layer['color']]],
-            opacity=0.8 if i == 0 else 0.5, # Ustki qatlam aniqroq, pastdagilar shaffofroq
-            showscale=False,
-            name=layer['name'],
-            legendgroup="Qatlamlar",
-            hoverinfo='text',
-            text=f"Qatlam: {layer['name']} | Qalinlik: {layer['t']}m"
-        ))
-        current_depth = z_bottom
-
-    # 5. UCG KAMERALARI (Ko'mir qatlami ichida)
-    # Ko'mir qatlami oxirgi qatlam deb olingan (layers[-1])
-    coal_z_center = -(sum(l['t'] for l in layers[:-1]) + layers[-1]['t']/2)
-    
-    u, v = np.mgrid[0:2*np.pi:18j, 0:np.pi:18j]
-    for i, cx in enumerate(centers_x):
-        if radii[i] > 0:
-            r = radii[i]
-            # Haroratga qarab rang o'zgarishi
-            if temp_states[i] == "Faol":
-                c_map = 'YlOrRd' # Issiq yonish
-                opac = 0.9
-            else:
-                c_map = 'Greys' # Kul va sovigan zona
-                opac = 0.6
-                
-            dx = r * np.cos(u) * np.sin(v)
-            dy = (r * 0.8) * np.sin(u) * np.sin(v)
-            dz = (r * 0.5) * np.cos(v) + coal_z_center
-            
-            fig.add_trace(go.Surface(
-                x=dx + cx, y=dy, z=dz,
-                colorscale=c_map, opacity=opac, showscale=False,
-                name=f"Kamera {i+1}"
-            ))
-
-    # 6. FAOL TERMALE STRESS NUQTALARI (time_h ga qarab harakatlanadi)
-    if "Faol" in temp_states:
-        act_idx = temp_states.index("Faol")
-        np.random.seed(int(h)) # Har soatda stress nuqtalari o'rnini o'zgartiradi
-        n_pts = int(5 + (h % 30))
-        
-        st_x = np.random.uniform(centers_x[act_idx]-20, centers_x[act_idx]+20, n_pts)
-        st_y = np.random.uniform(-20, 20, n_pts)
-        # Stress asosan ko'mir qatlami va uning tomi atrofida
-        st_z = np.random.uniform(coal_z_center, coal_z_center + 15, n_pts)
-        
-        fig.add_trace(go.Scatter3d(
-            x=st_x, y=st_y, z=st_z,
-            mode='markers',
-            marker=dict(size=4, color='cyan', symbol='diamond'),
-            name="Termal Kuchlanish"
-        ))
-
-    # Grafik interfeysi
-    total_h_depth = sum(l['t'] for l in layers)
-    fig.update_layout(
-        scene=dict(
-            xaxis=dict(title="Masofa X (m)", range=[-100, 100]),
-            yaxis=dict(title="Y (m)", range=[-60, 60]),
-            zaxis=dict(title="Chuqurlik Z (m)", range=[-total_h_depth - 10, 20]),
-            aspectmode='manual',
-            aspectratio=dict(x=1, y=0.6, z=0.4)
-        ),
-        margin=dict(l=0, r=0, b=0, t=50),
-        title=f"Angren-UCG: {h}-soatdagi 3D Geomexanik holat"
-    )
-    return fig
-
-# --- Chaqirish ---
-# Birinchi koddagi 'time_h' va 'layers_data' o'zgaruvchilarini ishlatamiz
-if 'time_h' in locals() and 'layers_data' in locals():
-    fig_3d = generate_hourly_3d_model(time_h, layers_data)
-    st.plotly_chart(fig_3d, use_container_width=True)
-    
-    st.info(f"ℹ️ **3D Interpretatsiya:** Sidebar'dagi jarayon vaqti ({time_h}-soat) asosida "
-            f"kameralarning termal kengayishi va qatlamlar deformatsiyasi qayta hisoblandi.")
-else:
-    st.warning("Iltimos, sidebar parametrlari va qatlamlar ma'lumotlari mavjudligini tekshiring.")
-
-
-import streamlit as st
-import numpy as np
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-
-# ==============================================================================
-# --- 🌀 UCG: KOMPLEKS MONITORING VA 3D DINAMIK NATIJALAR ---
-# ==============================================================================
-st.header(f"📊 {obj_name}: Kompleks Monitoring Paneli")
-
-# --- 1. GEOMEXANIK HISOB-KITOBLAR (Dinamik) ---
-def calculate_live_metrics(h, layers, T_max):
-    target = layers[-1] # Ko'mir qatlami
-    ucs_0 = target['ucs']
-    H_seam = target['t']
-    
-    # Vaqtga bog'liq harorat va degradatsiya
-    curr_T = 25 + (T_max - 25) * (min(h, 40) / 40) if h <= 40 else T_max * np.exp(-0.001 * (h-40))
-    strength_red = np.exp(-0.0025 * (curr_T - 20))
-    
-    # Selek mustahkamligi (Pillar Strength)
-    w_rec = 15.0 + (h / 150) * 10 # Vaqt o'tishi bilan tavsiyaviy en o'zgarishi
-    p_strength = (ucs_0 * strength_red) * (w_rec / H_seam)**0.5
-    
-    # Cho'kish (Subsidence) - Max qiymat
-    max_sub_val = (H_seam * 0.05) * (min(h, 120) / 120)
-    
-    return p_strength, w_rec, curr_T, max_sub_val
-
-p_str, w_rec, t_now, s_max_3d = calculate_live_metrics(time_h, layers_data, T_source_max)
-
-# --- 2. METRIKALAR (Dashboard ko'rinishida) ---
-m1, m2, m3, m4 = st.columns(4)
-m1.metric("Pillar Strength", f"{p_str:.1f} MPa", delta=f"{t_now:.0f} °C da", delta_color="inverse")
-m2.metric("Tavsiya: Selek Eni", f"{w_rec:.1f} m")
-m3.metric("Maks. Cho'kish", f"{s_max_3d*100:.1f} cm")
-m4.metric("Jarayon bosqichi", f"{'Faol' if time_h < 100 else 'Sovish'}")
-
-st.markdown("---")
-
-def generate_integrated_3d(h, layers, s_max):
-    grid_res = 35 
-    # Y o'qini faqat manfiy tomondan 0 gacha olamiz (Kesim hosil qilish uchun)
-    x = np.linspace(-100, 100, grid_res)
-    y = np.linspace(-60, 0, grid_res) # 0 da to'xtaydi, ya'ni o'rtasidan kesiladi
     gx, gy = np.meshgrid(x, y)
     
+    # Cho'kish krateri (Gaussian model)
     subs_map = -s_max * np.exp(-(gx**2 + gy**2) / 800)
+    
     fig = go.Figure()
     
     curr_z = 0
@@ -501,6 +328,7 @@ def generate_integrated_3d(h, layers, s_max):
         z_top_base = curr_z
         z_bottom_base = curr_z + layer['t']
         
+        # Deformatsiya koeffitsiyentlari
         deform_top = subs_map * (0.85 ** i)
         deform_bottom = subs_map * (0.85 ** (i + 1))
         
@@ -511,64 +339,67 @@ def generate_integrated_3d(h, layers, s_max):
         fig.add_trace(go.Surface(
             x=gx, y=gy, z=z_top,
             colorscale=[[0, layer['color']], [1, layer['color']]],
-            opacity=1.0, showscale=False, name=layer['name']
+            opacity=0.9, showscale=False, name=f"{layer['name']} (Top)",
+            hoverinfo='skip'
         ))
         
         # 2. Qatlamning pastki sirti
         fig.add_trace(go.Surface(
             x=gx, y=gy, z=z_bottom,
             colorscale=[[0, layer['color']], [1, layer['color']]],
-            opacity=0.8, showscale=False
+            opacity=0.9, showscale=False, name=f"{layer['name']} (Bottom)",
+            hoverinfo='skip'
         ))
 
-        # 3. KESIM YUZASI (Front Wall - Blokning aynan kesilgan o'rta qismi)
-        # Y = 0 bo'lgan chiziq bo'ylab vertikal "devor" chizamiz
-        fx, fy = gx[-1, :], gy[-1, :] # Y ning eng oxirgi nuqtasi (0 nuqtasi)
-        fz_t, fz_b = z_top[-1, :], z_bottom[-1, :]
-        
-        fig.add_trace(go.Surface(
-            x=np.array([fx, fx]),
-            y=np.array([fy, fy]),
-            z=np.array([fz_t, fz_b]),
-            colorscale=[[0, layer['color']], [1, layer['color']]],
-            opacity=1.0, showscale=False
-        ))
+        # 3. Qatlamning yon devorlari (Blok ko'rinishini berish uchun)
+        # To'rning chetki chiziqlari bo'ylab vertikal yuzalar chizamiz
+        for side in range(4):
+            if side == 0: # X-min devori
+                sx, sy = gx[:, 0], gy[:, 0]
+                sz_t, sz_b = z_top[:, 0], z_bottom[:, 0]
+            elif side == 1: # X-max devori
+                sx, sy = gx[:, -1], gy[:, -1]
+                sz_t, sz_b = z_top[:, -1], z_bottom[:, -1]
+            elif side == 2: # Y-min devori
+                sx, sy = gx[0, :], gy[0, :]
+                sz_t, sz_b = z_top[0, :], z_bottom[0, :]
+            else: # Y-max devori
+                sx, sy = gx[-1, :], gy[-1, :]
+                sz_t, sz_b = z_top[-1, :], z_bottom[-1, :]
 
-        # 4. Yon devorlar (Qolgan 3 tomoni uchun)
-        for side in [0, 1, 2]: # X-min, X-max, Y-min
-            if side == 0: sx, sy, sz_t, sz_b = gx[:, 0], gy[:, 0], z_top[:, 0], z_bottom[:, 0]
-            elif side == 1: sx, sy, sz_t, sz_b = gx[:, -1], gy[:, -1], z_top[:, -1], z_bottom[:, -1]
-            else: sx, sy, sz_t, sz_b = gx[0, :], gy[0, :], z_top[0, :], z_bottom[0, :]
-            
             fig.add_trace(go.Surface(
-                x=np.array([sx, sx]), y=np.array([sy, sy]), z=np.array([sz_t, sz_b]),
-                colorscale=[[0, layer['color']], [1, layer['color']]], opacity=1.0, showscale=False
+                x=np.array([sx, sx]),
+                y=np.array([sy, sy]),
+                z=np.array([sz_t, sz_b]),
+                colorscale=[[0, layer['color']], [1, layer['color']]],
+                opacity=1.0, showscale=False, hoverinfo='skip'
             ))
             
         curr_z = z_bottom_base
 
-    # 5. UCG KAMERASI (Kesimda ko'rinishi uchun)
+    # UCG Kamerasi (Issiqlik zonasi)
     coal_z = -(sum(l['t'] for l in layers[:-1]) + layers[-1]['t']/2)
-    # Kameraning faqat yarmini chizamiz (v diapazoni 0 dan pi/2 gacha)
-    u, v = np.mgrid[0:2*np.pi:20j, 0:np.pi/2:20j] 
-    r = min(h / 10, 13) # Radius
+    u, v = np.mgrid[0:2*np.pi:15j, 0:np.pi:15j]
+    r = min(h / 10, 12)
     
     if r > 1:
-        cx, cy, cz = r*np.cos(u)*np.sin(v), (r*0.8)*np.sin(u)*np.sin(v), (r*0.6)*np.cos(v) + coal_z
-        # Kamera kesim yuzasiga jips bo'lishi uchun Y o'qi bo'ylab suramiz (ixtiyoriy)
+        cx, cy, cz = r*np.cos(u)*np.sin(v), (r*0.7)*np.sin(u)*np.sin(v), (r*0.5)*np.cos(v) + coal_z
         fig.add_trace(go.Surface(
             x=cx, y=cy, z=cz, 
             colorscale='Hot', opacity=1.0, showscale=False,
-            lighting=dict(ambient=0.7, diffuse=1.0, specular=0.5)
+            lighting=dict(ambient=0.6, diffuse=0.8)
         ))
 
     fig.update_layout(
         scene=dict(
-            xaxis=dict(title="X (m)"), yaxis=dict(title="Y (Kesim)", range=[-60, 20]),
-            zaxis=dict(title="Z (m)", range=[-sum(l['t'] for l in layers)-10, 20]),
-            camera=dict(eye=dict(x=1.5, y=-1.5, z=0.8)) # Kesimni yaxshi ko'rish uchun burchak
+            xaxis=dict(backgroundcolor="rgb(20, 20, 20)", gridcolor="gray", showbackground=True),
+            yaxis=dict(backgroundcolor="rgb(20, 20, 20)", gridcolor="gray", showbackground=True),
+            zaxis=dict(backgroundcolor="rgb(20, 20, 20)", gridcolor="gray", showbackground=True, range=[-sum(l['t'] for l in layers)-10, 20]),
+            aspectmode='manual',
+            aspectratio=dict(x=1, y=0.6, z=0.5)
         ),
-        height=750, margin=dict(l=0, r=0, b=0, t=0), template="plotly_dark"
+        height=700, margin=dict(l=0, r=0, b=0, t=0),
+        template="plotly_dark"
     )
     return fig
 
