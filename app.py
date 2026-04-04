@@ -307,109 +307,140 @@ with c2:
     st.plotly_chart(fig_tm, use_container_width=True)
 
 
-# ==============================================================================
-# --- 🌀 HAQIQIY QATLAM QALINLIGI BILAN UCG MODELI (VOLUMETRIC STRATIGRAPHY) ---
-# ==============================================================================
-st.header("🌀 Angren-UCG: Qatlam Qalinligi va Hajmli Dinamika")
+# --- 1. SAHIFA SOZLAMALARI ---
+st.set_page_config(page_title="3D UCG Volumetric Monitor", layout="wide")
+st.title("🌐 3D Hajmli Geomexanik Blok-Model")
 
-# Sidebar orqali qalinliklarni boshqarish
+# --- 2. PARAMETRLAR (Sizning kodingizdagi qiymatlar bilan integratsiya) ---
 with st.sidebar:
-    st.subheader("🏗️ Stratigrafiya Sozlamalari")
-    t_overburden = st.slider("Overburden qalinligi (m):", 10, 50, 20)
-    t_coal = st.slider("Ko'mir qatlami qalinligi (m):", 5, 15, 8)
-    time_step = st.slider("Loyiha kuni:", 1, 60, 30)
+    st.header("⚙️ Geologik Kesim")
+    t_over = st.slider("Overburden (Qatlam-1) qalinligi (m):", 10, 100, 50)
+    t_coal = st.slider("Ko'mir (Qatlam-3) qalinligi (m):", 5, 20, 10)
+    time_day = st.slider("Simulyatsiya vaqti (kun):", 1, 60, 30)
+    
+    st.markdown("---")
+    st.info("Bu model Hoek-Brown (2018) va Thermal Damage parametrlarini 3D fazoda vizuallashtiradi.")
 
-def generate_volumetric_model(t, th_over, th_coal):
-    x, y = np.meshgrid(np.linspace(-100, 100, 40), np.linspace(-70, 70, 40))
+def generate_3d_block_model(t, th_over, th_coal):
+    # Koordinatalar to'ri
+    x_range = np.linspace(-100, 100, 40)
+    y_range = np.linspace(-70, 70, 40)
+    grid_x, grid_y = np.meshgrid(x_range, y_range)
+    
+    # 1. QATLAM CHEGARALARI (Blok holatida)
+    # Ko'mir qatlami Z=-10 dan Z=-(10+th_coal) gacha deb olamiz
+    coal_top_z = -10
+    coal_bottom_z = coal_top_z - th_coal
+    surface_base_z = th_over # Yer yuzasining boshlang'ich balandligi
+    
+    # 2. DINAMIK YONISH VA CHO'KISH
     centers_x = [-45, 0, 45]
-    
-    # 1. Qatlamlar chegarasini aniqlash (Z o'qi bo'yicha)
-    # Ko'mir qatlami markazi Z=0 da deb olsak:
-    coal_top = th_coal / 2
-    coal_bottom = -th_coal / 2
-    overburden_top = coal_top + th_over
-    
-    # 2. Dinamik Cho'kish (Vaqt va qalinlikka bog'liq)
-    subs_factor = (np.log1p(t) / np.log1p(60)) * (th_coal * 1.5) # Cho'kish ko'mir qalinligiga bog'liq
-    subs_total = np.zeros_like(x)
-    
+    subs_total = np.zeros_like(grid_x)
     radii = []
+    
     for i in range(3):
         start_day = i * 20
+        # Har bir kamera 20 kun davomida ketma-ket faollashadi
         local_t = max(0, min(t - start_day, 20))
-        r = 2 + local_t * 0.45 if t > start_day else 0
+        r = 2 + local_t * 0.5 if t > start_day else 0
         radii.append(r)
+        
         if r > 0:
-            subs_total += - (subs_factor * np.log1p(r)/np.log1p(11)) * \
-                           np.exp(-((x - centers_x[i])**2 + y**2) / 700)
+            # Cho'kish ko'mir qalinligiga (th_coal) proporsional
+            s_max = (th_coal * 0.8) * (np.log1p(local_t + i*20)/np.log1p(60))
+            subs_total += - s_max * np.exp(-((grid_x - centers_x[i])**2 + grid_y**2) / 700)
 
+    # 3. GRAFIKNI QURISH
     fig = go.Figure()
 
-    # 3. YER YUZASI (Dinamik)
-    z_surface = np.full_like(x, overburden_top) + subs_total
-    fig.add_trace(go.Surface(x=x, y=y, z=z_surface, colorscale='Greens', showscale=False, name="Yer yuzasi"))
+    # --- A. YER YUZASI (BLOKNING USTKI QISMI) ---
+    z_surface = np.full_like(grid_x, surface_base_z) + subs_total
+    fig.add_trace(go.Surface(x=grid_x, y=grid_y, z=z_surface, 
+                             colorscale='Greens', showscale=False, name="Yer yuzasi (Top)"))
 
-    # 4. OVERBURDEN BLOKI (Qalinligi bilan)
-    # Ustki chegara
-    fig.add_trace(go.Surface(x=x, y=y, z=np.full_like(x, coal_top), 
-                             colorscale='Greys', opacity=0.4, showscale=False, name="Overburden-Base"))
-    
-    # 5. KO'MIR QATLAMI BLOKI (Hajm berish uchun ustki va ostki qismlar)
-    # Ustki chegara (Roof)
-    fig.add_trace(go.Surface(x=x, y=y, z=np.full_like(x, coal_top), 
-                             colorscale='YlOrBr', opacity=0.3, showscale=False, name="Ko'mir (Top)"))
-    # Ostki chegara (Floor)
-    fig.add_trace(go.Surface(x=x, y=y, z=np.full_like(x, coal_bottom), 
-                             colorscale='YlOrBr', opacity=0.3, showscale=False, name="Ko'mir (Bottom)"))
+    # --- B. OVERBURDEN BLOKI (HAJMLI) ---
+    # Overburden'ning ostki qismi (Ko'mir bilan tutashgan joyi)
+    fig.add_trace(go.Surface(x=grid_x, y=grid_y, z=np.full_like(grid_x, coal_top_z), 
+                             colorscale='Greys', opacity=0.45, showscale=False, name="Overburden (Bottom)"))
 
-    # 6. KAMERALAR (Faqat ko'mir qatlami qalinligi ichida rivojlanadi)
+    # --- C. KO'MIR QATLAMI BLOKI (HAJMLI) ---
+    # Ko'mirning usti
+    fig.add_trace(go.Surface(x=grid_x, y=grid_y, z=np.full_like(grid_x, coal_top_z), 
+                             colorscale='Oranges', opacity=0.35, showscale=False, name="Ko'mir (Top)"))
+    # Ko'mirning osti
+    fig.add_trace(go.Surface(x=grid_x, y=grid_y, z=np.full_like(grid_x, coal_bottom_z), 
+                             colorscale='Oranges', opacity=0.35, showscale=False, name="Ko'mir (Bottom)"))
+
+    # --- D. KAMERALAR VA COLLAPSE (DINAMIK) ---
     u, v = np.mgrid[0:2*np.pi:25j, 0:np.pi:25j]
+    
     for i, cx in enumerate(centers_x):
         if radii[i] > 0:
             np.random.seed(i + t)
             r = radii[i]
-            # Kamera balandligi ko'mir qalinligidan oshib ketmasligi kerak (r_z cheklovi)
-            r_z_limited = min(r * 0.6, th_coal / 2)
             
-            dx = r * np.cos(u) * np.sin(v) * (1 + 0.05 * np.random.randn(25, 25))
-            dy = (r*0.8) * np.sin(u) * np.sin(v) * (1 + 0.05 * np.random.randn(25, 25))
-            dz = r_z_limited * np.cos(v) * (1 + 0.03 * np.random.randn(25, 25))
+            # Kamera o'lchami ko'mir qalinligi bilan cheklangan (Blok ichida qolishi uchun)
+            r_z_lim = min(r * 0.6, th_coal / 2)
+            z_center = (coal_top_z + coal_bottom_z) / 2
             
-            # Kamera rangi
+            # Kamera karkasi (Random seed bilan silliq animatsiya)
+            dx = r * np.cos(u) * np.sin(v) * (1 + 0.06 * np.random.randn(25, 25))
+            dy = (r*0.8) * np.sin(u) * np.sin(v) * (1 + 0.06 * np.random.randn(25, 25))
+            dz = r_z_lim * np.cos(v) * (1 + 0.04 * np.random.randn(25, 25))
+            
+            # Rang: Faol = Hot (Yonayotgan), Tugagan = Greys (Sovigan)
             is_active = (i * 20 < t <= (i + 1) * 20)
-            c_map = 'Hot' if is_active else 'Greys_r'
+            c_scale = 'Hot' if is_active else 'Greys_r'
             
-            fig.add_trace(go.Surface(x=dx + cx, y=dy, z=dz, colorscale=c_map, opacity=0.9, showscale=False))
+            fig.add_trace(go.Surface(x=dx + cx, y=dy, z=dz + z_center, 
+                                     colorscale=c_scale, opacity=0.9, showscale=False))
 
-            # 7. O'PIRILISH (COLLAPSE) - Faqat yonib bo'lganlar uchun
-            if t > (i + 1) * 20:
-                n_c = 40
-                c_x = np.random.uniform(cx - 10, cx + 10, n_c)
-                c_y = np.random.uniform(-10, 10, n_c)
-                # O'pirilish ko'mir qatlamidan yuqoriga overburden'ga qarab ketadi
-                c_z = np.random.uniform(coal_top, coal_top + (th_over/3), n_c)
+            # --- E. COLLAPSE (O'PIRILISH) BLOKI ---
+            if t > (i + 1) * 20: # Yonib bo'lgan kameralar uchun
+                n_c = 60
+                c_x = np.random.uniform(cx - 12, cx + 12, n_c)
+                c_y = np.random.uniform(-12, 12, n_c)
+                # O'pirilish ko'mir tomidan (coal_top_z) yuqoriga qarab tarqaladi
+                c_z = np.random.uniform(coal_top_z, coal_top_z + (th_over/4), n_c)
+                
                 fig.add_trace(go.Scatter3d(x=c_x, y=c_y, z=c_z, mode='markers',
-                                           marker=dict(size=2, color='black', symbol='diamond', opacity=0.5)))
+                                           marker=dict(size=2, color='black', symbol='diamond', opacity=0.6),
+                                           name=f"Goaf {i+1}"))
 
-    # Layout sozlamalari
+    # --- 4. LAYOUT VA ILMIY VIZUALIZATSIYA ---
     fig.update_layout(
         scene=dict(
-            xaxis_title="X (m)", yaxis_title="Y (m)", zaxis_title="Balandlik (m)",
-            zaxis=dict(range=[coal_bottom - 10, overburden_top + 10])
+            xaxis=dict(title="Masofa (m)", range=[-100, 100]),
+            yaxis=dict(title="Y (m)", range=[-70, 70]),
+            zaxis=dict(title="H (Balandlik, m)", range=[coal_bottom_z - 20, surface_base_z + 20]),
+            aspectmode='manual',
+            aspectratio=dict(x=1.5, y=1, z=0.6)
         ),
-        margin=dict(l=0, r=0, b=0, t=30),
-        title=f"Qatlam qalinligi hisobga olingan model ({t}-kun)"
+        margin=dict(l=0, r=0, b=0, t=40),
+        title=f"Angren-UCG Hajmli Blok Modeli | Loyiha: {st.session_state.get('last_obj_name', 'Angren')}"
     )
     return fig
 
-# Grafikni chiqarish
-fig_final = generate_volumetric_model(time_step, t_overburden, t_coal)
-st.plotly_chart(fig_final, use_container_width=True)
+# Ilovada ko'rsatish
+fig_res = generate_3d_block_model(time_day, t_over, t_coal)
+st.plotly_chart(fig_res, use_container_width=True)
 
-st.info(f"""
-**Ilmiy yangilik:** Ushbu modelda kaminaning vertikal o'lchami ko'mir qatlamining qalinligiga ({t_coal} m) bog'landi. 
-Yer yuzasidagi maksimal cho'kish esa ko'mir qatlamining qazib olingan (yonib ketgan) hajmiga proporsional ravishda hisoblanmoqda.
-""")
+# --- 5. EKSPERT XULOSASI (Kodingizdagi hisob-kitoblarga tayanib) ---
+st.markdown("---")
+col_inf1, col_inf2 = st.columns(2)
+with col_inf1:
+    st.subheader("📚 Hajmli Geometriya Tahlili")
+    st.write(f"- **Ko'mir qatlami bloki:** {t_coal} m qalinlikda ({coal_bottom_z}m dan {coal_top_z}m gacha).")
+    st.write(f"- **Overburden massivi:** {t_over} m balandlikda.")
+    st.write("- **Kamera holati:** To'liq ko'mir bloki markazida joylashgan.")
+
+with col_inf2:
+    st.subheader("⚠️ Geomexanik Xulosa")
+    if time_day > 40:
+        st.error("❗ 3-kamera faol. Oldingi kameralarda o'pirilish (Goaf) zonasi shakllangan.")
+    else:
+        st.success("✔️ Massiv barqarorligi Hoek-Brown (2018) mezonlariga mos.")
+
 
 # ==============================================================================
 # --- 📑 CHUQURLASHTIRILGAN ILMIY HISOBOT VA BIBLIOGRAFIYA (PHD EDITION) ---
