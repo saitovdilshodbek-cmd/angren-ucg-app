@@ -306,6 +306,153 @@ with c2:
     fig_tm.update_yaxes(autorange='reversed', row=1, col=1); fig_tm.update_yaxes(autorange='reversed', row=2, col=1)
     st.plotly_chart(fig_tm, use_container_width=True)
 
+import streamlit as st
+import numpy as np
+import plotly.graph_objects as go
+
+# ==============================================================================
+# --- 🌀 UCG: SOATBAY (time_h) VA QATLAMLAR INTEGRATSIYASI ---
+# ==============================================================================
+st.header("🌀 UCG: Termo-Mexanik Dinamik 3D Model")
+
+def generate_hourly_3d_model(h, layers):
+    # 1. Koordinatalar setkasi
+    grid_res = 45
+    x = np.linspace(-100, 100, grid_res)
+    y = np.linspace(-60, 60, grid_res)
+    grid_x, grid_y = np.meshgrid(x, y)
+    
+    # 2. Kameralar markazi (X o'qi bo'ylab joylashuvi)
+    # Birinchi koddagi 'sources' mantiqiga binoan
+    centers_x = [-60, 0, 60]
+    radii = []
+    temp_states = [] # Harorat holati
+    
+    for i, cx in enumerate(centers_x):
+        # Har bir kamera ma'lum soatdan keyin boshlanadi (0, 40, 80-soatlar)
+        start_h = i * 40 
+        if h <= start_h:
+            radii.append(0); temp_states.append("Sovuq")
+        elif start_h < h <= start_h + 40:
+            # Soatbay o'sish: 40 soat ichida maksimal 12 metr radiusga yetadi
+            growth = (h - start_h) / 40
+            radii.append(2 + growth * 10); temp_states.append("Faol")
+        else:
+            # Yonib bo'lgan, lekin sovish jarayonida
+            radii.append(12); temp_states.append("Soviyotgan")
+
+    # 3. SOATBAY CHO'KISH (time_h bog'liqligi)
+    # Birinchi koddagi s_max (cho'kish) mantiqini 3D ga ko'chiramiz
+    total_subs = np.zeros_like(grid_x)
+    for i in range(3):
+        if radii[i] > 0:
+            # Cho'kish amplitudasi soat o'tishi bilan ortadi
+            # 150 soatda maksimal darajaga yetadi
+            hour_factor = min(h / 150, 1.0)
+            amplitude = (radii[i] / 12) * 5.0 * hour_factor
+            total_subs += - amplitude * np.exp(-((grid_x - centers_x[i])**2 + grid_y**2) / 600)
+
+    fig = go.Figure()
+
+    # 4. QATLAMLARNI BLOK HOLIDA CHIZISH (layers_data bog'liqligi)
+    current_depth = 0
+    for i, layer in enumerate(layers):
+        z_top = current_depth
+        z_bottom = current_depth + layer['t']
+        
+        # Deformatsiya chuqurlik va vaqt bilan so'nadi
+        # i=0 (eng yuqori qatlam) eng ko'p cho'kadi
+        depth_attenuation = 0.85 ** i
+        layer_deform = total_subs * depth_attenuation
+
+        # Qatlam sirtini chizish
+        fig.add_trace(go.Surface(
+            x=grid_x, y=grid_y, z=-z_top + layer_deform,
+            colorscale=[[0, layer['color']], [1, layer['color']]],
+            opacity=0.8 if i == 0 else 0.5, # Ustki qatlam aniqroq, pastdagilar shaffofroq
+            showscale=False,
+            name=layer['name'],
+            legendgroup="Qatlamlar",
+            hoverinfo='text',
+            text=f"Qatlam: {layer['name']} | Qalinlik: {layer['t']}m"
+        ))
+        current_depth = z_bottom
+
+    # 5. UCG KAMERALARI (Ko'mir qatlami ichida)
+    # Ko'mir qatlami oxirgi qatlam deb olingan (layers[-1])
+    coal_z_center = -(sum(l['t'] for l in layers[:-1]) + layers[-1]['t']/2)
+    
+    u, v = np.mgrid[0:2*np.pi:18j, 0:np.pi:18j]
+    for i, cx in enumerate(centers_x):
+        if radii[i] > 0:
+            r = radii[i]
+            # Haroratga qarab rang o'zgarishi
+            if temp_states[i] == "Faol":
+                c_map = 'YlOrRd' # Issiq yonish
+                opac = 0.9
+            else:
+                c_map = 'Greys' # Kul va sovigan zona
+                opac = 0.6
+                
+            dx = r * np.cos(u) * np.sin(v)
+            dy = (r * 0.8) * np.sin(u) * np.sin(v)
+            dz = (r * 0.5) * np.cos(v) + coal_z_center
+            
+            fig.add_trace(go.Surface(
+                x=dx + cx, y=dy, z=dz,
+                colorscale=c_map, opacity=opac, showscale=False,
+                name=f"Kamera {i+1}"
+            ))
+
+    # 6. FAOL TERMALE STRESS NUQTALARI (time_h ga qarab harakatlanadi)
+    if "Faol" in temp_states:
+        act_idx = temp_states.index("Faol")
+        np.random.seed(int(h)) # Har soatda stress nuqtalari o'rnini o'zgartiradi
+        n_pts = int(5 + (h % 30))
+        
+        st_x = np.random.uniform(centers_x[act_idx]-20, centers_x[act_idx]+20, n_pts)
+        st_y = np.random.uniform(-20, 20, n_pts)
+        # Stress asosan ko'mir qatlami va uning tomi atrofida
+        st_z = np.random.uniform(coal_z_center, coal_z_center + 15, n_pts)
+        
+        fig.add_trace(go.Scatter3d(
+            x=st_x, y=st_y, z=st_z,
+            mode='markers',
+            marker=dict(size=4, color='cyan', symbol='diamond'),
+            name="Termal Kuchlanish"
+        ))
+
+    # Grafik interfeysi
+    total_h_depth = sum(l['t'] for l in layers)
+    fig.update_layout(
+        scene=dict(
+            xaxis=dict(title="Masofa X (m)", range=[-100, 100]),
+            yaxis=dict(title="Y (m)", range=[-60, 60]),
+            zaxis=dict(title="Chuqurlik Z (m)", range=[-total_h_depth - 10, 20]),
+            aspectmode='manual',
+            aspectratio=dict(x=1, y=0.6, z=0.4)
+        ),
+        margin=dict(l=0, r=0, b=0, t=50),
+        title=f"Angren-UCG: {h}-soatdagi 3D Geomexanik holat"
+    )
+    return fig
+
+# --- Chaqirish ---
+# Birinchi koddagi 'time_h' va 'layers_data' o'zgaruvchilarini ishlatamiz
+if 'time_h' in locals() and 'layers_data' in locals():
+    fig_3d = generate_hourly_3d_model(time_h, layers_data)
+    st.plotly_chart(fig_3d, use_container_width=True)
+    
+    st.info(f"ℹ️ **3D Interpretatsiya:** Sidebar'dagi jarayon vaqti ({time_h}-soat) asosida "
+            f"kameralarning termal kengayishi va qatlamlar deformatsiyasi qayta hisoblandi.")
+else:
+    st.warning("Iltimos, sidebar parametrlari va qatlamlar ma'lumotlari mavjudligini tekshiring.")
+
+import streamlit as st
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
 # ==============================================================================
 # --- 🌀 UCG: KOMPLEKS MONITORING VA 3D DINAMIK NATIJALAR ---
 # ==============================================================================
@@ -341,6 +488,7 @@ m4.metric("Jarayon bosqichi", f"{'Faol' if time_h < 100 else 'Sovish'}")
 
 st.markdown("---")
 
+# --- 3. 3D MODEL GENERATSIYASI ---
 def generate_integrated_3d(h, layers, s_max):
     grid_res = 30 # Bloklar hisoblanganda unumdorlik uchun resni biroz kamaytirdik
     x = np.linspace(-100, 100, grid_res)
@@ -431,6 +579,7 @@ def generate_integrated_3d(h, layers, s_max):
         template="plotly_dark"
     )
     return fig
+
 # --- 4. GRAFIKLARNI CHIQARISH ---
 col_left, col_right = st.columns([2, 1])
 
