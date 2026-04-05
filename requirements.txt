@@ -6,3 +6,11 @@ streamlit
 scikit-learn
 pandas
 torch
+streamlit
+numpy
+pandas
+plotly
+scipy
+scikit-learn
+torch
+pydeck
