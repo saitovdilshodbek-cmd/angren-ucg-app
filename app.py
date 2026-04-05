@@ -299,6 +299,7 @@ def get_nn_model():
     if not PT_AVAILABLE:
         return None
 
+    # 1. Sintetik dataset yaratish
     def generate_ucg_dataset(n=10000):
         data = []
         for _ in range(n):
@@ -312,6 +313,7 @@ def get_nn_model():
             data.append([T, sigma1, sigma3, depth, collapse])
         return np.array(data)
 
+    # 2. Tarmoq arxitekturasi
     class CollapseNet(nn.Module):
         def __init__(self):
             super().__init__()
@@ -326,6 +328,7 @@ def get_nn_model():
         def forward(self, x):
             return self.net(x)
 
+    # 3. Ma'lumotlarni tayyorlash va o'qitish
     data = generate_ucg_dataset()
     X = torch.tensor(data[:, :-1], dtype=torch.float32)
     y = torch.tensor(data[:, -1], dtype=torch.float32).view(-1, 1)
@@ -516,7 +519,7 @@ with c2:
         marker=dict(symbol='arrow', size=10, color=qmag[mask_q], colorscale='ice',
                     cmin=0, cmax=qmag_max, angle=angles, opacity=0.85, showscale=False,
                     line=dict(width=0)),
-        name="Gaz oqimi", hovertemplate="x=%{x:.0f}m  z=%{z:.0f}m<extra></extra>"
+        name="Gaz oqimi", hovertemplate="x=%{x:.0f}m  z=%{y:.0f}m<extra></extra>"
     ), row=1, col=1)
 
     # FOS Contour
@@ -602,164 +605,61 @@ mk4.metric("Jarayon bosqichi", "Faol" if time_h < 100 else "Sovish")
 
 st.markdown("---")
 
-# ==============================================================================
-# --- 🌐 YANGI REALISTIK 3D GEOMEXANIK MODEL ---
-# ==============================================================================
-def generate_realistic_3d(h, layers, s_max, total_depth, source_z, H_seam):
-    """
-    Realistik 3D geomexanik model:
-    - Yer yuzasi cho'kish krateri
-    - Qatlamlar (deformatsiyalangan)
-    - Ko'mir qatlami (to'g'ri burchakli parallelepiped)
-    - Yonish kamerasi (silindr)
-    - Issiqlik plume (yarim shaffof ellipsoid)
-    - Yoriqlar (chiziqlar)
-    """
-    # 1. Grid yaratish
-    x = np.linspace(-150, 150, 40)
-    y = np.linspace(-100, 100, 40)
-    X, Y = np.meshgrid(x, y)
-    
-    # Cho'kish funksiyasi (Gauss krater)
-    subsidence = -s_max * np.exp(-(X**2 + Y**2) / (2 * (total_depth * 0.6)**2))
-    
+def generate_integrated_3d(h, layers, s_max):
+    grid_res = 30
+    x_i = np.linspace(-100, 100, grid_res)
+    y_i = np.linspace(-60, 60, grid_res)
+    gx, gy = np.meshgrid(x_i, y_i)
+    subs_map = -s_max * np.exp(-(gx ** 2 + gy ** 2) / 800)
     fig = go.Figure()
-    curr_z_top = 0.0
-    # Qatlamlar ranglari
-    layer_colors = ['#8B5A2B', '#A9A9A9', '#CD853F', '#BC8F8F', '#6B8E23']
-    
+    curr_z = 0.0
     for i, layer in enumerate(layers):
-        thickness = layer['t']
-        z_bottom = curr_z_top - thickness
-        # Deformatsiya chuqurlik bilan kamayadi
-        deform_factor = (1 - i/len(layers))
-        z_top_surface = curr_z_top + subsidence * deform_factor
-        z_bottom_surface = z_bottom + subsidence * (deform_factor * 0.8)
-        
-        color = layer_colors[i % len(layer_colors)]
-        # Yuza (top)
+        z_top    = -curr_z              + subs_map * (0.85 ** i)
+        z_bottom = -(curr_z + layer['t']) + subs_map * (0.85 ** (i + 1))
+        cs = [[0, layer['color']], [1, layer['color']]]
+        fig.add_trace(go.Surface(x=gx, y=gy, z=z_top, colorscale=cs,
+                                 opacity=0.9, showscale=False, name=layer['name'], hoverinfo='skip'))
+        fig.add_trace(go.Surface(x=gx, y=gy, z=z_bottom, colorscale=cs,
+                                 opacity=0.9, showscale=False, hoverinfo='skip'))
+        for sx, sy, szt, szb in [
+            (gx[:, 0],  gy[:, 0],  z_top[:, 0],  z_bottom[:, 0]),
+            (gx[:, -1], gy[:, -1], z_top[:, -1], z_bottom[:, -1]),
+            (gx[0, :],  gy[0, :],  z_top[0, :],  z_bottom[0, :]),
+            (gx[-1, :], gy[-1, :], z_top[-1, :], z_bottom[-1, :]),
+        ]:
+            fig.add_trace(go.Surface(
+                x=np.array([sx, sx]), y=np.array([sy, sy]),
+                z=np.array([szt, szb]),
+                colorscale=cs, opacity=1.0, showscale=False, hoverinfo='skip'
+            ))
+        curr_z += layer['t']
+    coal_z = -(sum(l['t'] for l in layers[:-1]) + layers[-1]['t'] / 2)
+    r_c = min(h / 10, 12)
+    if r_c > 1:
+        u_c, v_c = np.mgrid[0:2*np.pi:15j, 0:np.pi:15j]
         fig.add_trace(go.Surface(
-            x=X, y=Y, z=z_top_surface,
-            colorscale=[[0, color], [1, color]],
-            opacity=0.85, showscale=False, name=f"{layer['name']} (ustki)",
+            x=r_c * np.cos(u_c) * np.sin(v_c),
+            y=(r_c * 0.7) * np.sin(u_c) * np.sin(v_c),
+            z=(r_c * 0.5) * np.cos(v_c) + coal_z,
+            colorscale='Hot', opacity=1.0, showscale=False,
             lighting=dict(ambient=0.6, diffuse=0.8)
         ))
-        # Pastki yuza (bottom)
-        fig.add_trace(go.Surface(
-            x=X, y=Y, z=z_bottom_surface,
-            colorscale=[[0, color], [1, color]],
-            opacity=0.7, showscale=False, name=f"{layer['name']} (pastki)",
-            lighting=dict(ambient=0.5, diffuse=0.7)
-        ))
-        # Qirralar (chekka chiziqlar) – oddiy chiziqlar
-        # Top qirralar
-        for edge_x, edge_y in [(X[0,:], Y[0,:]), (X[-1,:], Y[-1,:]), (X[:,0], Y[:,0]), (X[:,-1], Y[:,-1])]:
-            z_edge = z_top_surface[0 if edge_x is X[0,:] else -1, :] if edge_x.ndim == 1 else z_top_surface[:, 0]
-            fig.add_trace(go.Scatter3d(
-                x=edge_x.flatten(), y=edge_y.flatten(), z=z_edge.flatten(),
-                mode='lines', line=dict(color='white', width=1), showlegend=False
-            ))
-        curr_z_top = z_bottom
-    
-    # 2. Ko'mir qatlami (eng pastki qatlam) – kub shaklida
-    coal_layer = layers[-1]
-    coal_z_center = curr_z_top + coal_layer['t']/2   # curr_z_top endi - (total_depth)
-    coal_half_x = total_depth * 0.8
-    coal_half_y = total_depth * 0.5
-    coal_half_z = coal_layer['t']/2
-    
-    corners = np.array([
-        [-coal_half_x, -coal_half_y, -coal_half_z],
-        [ coal_half_x, -coal_half_y, -coal_half_z],
-        [ coal_half_x,  coal_half_y, -coal_half_z],
-        [-coal_half_x,  coal_half_y, -coal_half_z],
-        [-coal_half_x, -coal_half_y,  coal_half_z],
-        [ coal_half_x, -coal_half_y,  coal_half_z],
-        [ coal_half_x,  coal_half_y,  coal_half_z],
-        [-coal_half_x,  coal_half_y,  coal_half_z]
-    ]) + np.array([0, 0, coal_z_center])
-    
-    faces = [
-        [0,1,2], [0,2,3],  # pastki
-        [4,5,6], [4,6,7],  # ustki
-        [0,1,5], [0,5,4],  # old
-        [2,3,7], [2,7,6],  # orqa
-        [0,3,7], [0,7,4],  # chap
-        [1,2,6], [1,6,5]   # o'ng
-    ]
-    fig.add_trace(go.Mesh3d(
-        x=corners[:,0], y=corners[:,1], z=corners[:,2],
-        i=[f[0] for f in faces], j=[f[1] for f in faces], k=[f[2] for f in faces],
-        color='darkorange', opacity=0.9, name="Ko'mir qatlami", lighting=dict(ambient=0.4)
-    ))
-    
-    # 3. Yonish kamerasi (silindr) – gorizontal, qizil
-    reactor_radius = min(coal_half_z * 0.8, 8.0)
-    reactor_length = coal_half_x * 0.6
-    theta = np.linspace(0, 2*np.pi, 20)
-    z_cyl = np.linspace(-reactor_length, reactor_length, 20)
-    theta, z_cyl = np.meshgrid(theta, z_cyl)
-    x_cyl = reactor_radius * np.cos(theta)
-    y_cyl = reactor_radius * np.sin(theta)
-    center_x, center_y, center_z = 0, 0, coal_z_center
-    x_cyl += center_x
-    y_cyl += center_y
-    z_cyl_surf = z_cyl + center_z
-    fig.add_trace(go.Surface(
-        x=x_cyl, y=y_cyl, z=z_cyl_surf,
-        colorscale='Hot', opacity=0.95, name="Yonish kamerasi", showscale=False,
-        lighting=dict(ambient=0.3, diffuse=0.9)
-    ))
-    
-    # 4. Issiqlik plume (yarim shaffof ellipsoid)
-    plume_rad_x = reactor_radius * 4
-    plume_rad_y = reactor_radius * 3
-    plume_rad_z = coal_half_z * 2.5
-    u = np.linspace(0, 2*np.pi, 30)
-    v = np.linspace(0, np.pi, 30)
-    u, v = np.meshgrid(u, v)
-    x_plume = plume_rad_x * np.sin(v) * np.cos(u) + center_x
-    y_plume = plume_rad_y * np.sin(v) * np.sin(u) + center_y
-    z_plume = plume_rad_z * np.cos(v) + center_z
-    fig.add_trace(go.Surface(
-        x=x_plume, y=y_plume, z=z_plume,
-        colorscale=[[0, 'rgba(255,0,0,0)'], [1, 'rgba(255,100,0,0.4)']],
-        opacity=0.3, showscale=False, name="Termal plume", hoverinfo='skip'
-    ))
-    
-    # 5. Yoriqlar / sinishlar (bir necha qizil chiziq)
-    fractures = [
-        [[-40, -20, coal_z_center-2], [40, 20, coal_z_center+2]],
-        [[-30, 30, coal_z_center-1], [30, -30, coal_z_center+3]],
-        [[-20, -10, coal_z_center], [20, 10, coal_z_center+5]],
-    ]
-    for f in fractures:
-        fig.add_trace(go.Scatter3d(
-            x=[f[0][0], f[1][0]], y=[f[0][1], f[1][1]], z=[f[0][2], f[1][2]],
-            mode='lines', line=dict(color='red', width=3), name='Yoriq', showlegend=False
-        ))
-    
-    # 6. Grafik sozlamalari
     fig.update_layout(
         scene=dict(
-            xaxis=dict(title='X (m)', backgroundcolor='rgb(20,20,20)', gridcolor='gray'),
-            yaxis=dict(title='Y (m)', backgroundcolor='rgb(20,20,20)', gridcolor='gray'),
-            zaxis=dict(title='Z (m)', backgroundcolor='rgb(20,20,20)', gridcolor='gray',
-                       range=[-total_depth-20, 20]),
-            aspectmode='manual', aspectratio=dict(x=1.2, y=0.8, z=0.6),
-            camera=dict(eye=dict(x=1.5, y=1.5, z=1.2))
+            xaxis=dict(backgroundcolor="rgb(20,20,20)", gridcolor="gray", showbackground=True),
+            yaxis=dict(backgroundcolor="rgb(20,20,20)", gridcolor="gray", showbackground=True),
+            zaxis=dict(backgroundcolor="rgb(20,20,20)", gridcolor="gray", showbackground=True,
+                       range=[-sum(l['t'] for l in layers) - 10, 20]),
+            aspectmode='manual', aspectratio=dict(x=1, y=0.6, z=0.5)
         ),
-        height=700, margin=dict(l=0, r=0, b=0, t=0),
-        template='plotly_dark', title="Realistik 3D Geomexanik Model"
+        height=700, margin=dict(l=0, r=0, b=0, t=0), template="plotly_dark"
     )
     return fig
 
 col_left, col_right = st.columns([2, 1])
 with col_left:
-    st.subheader("🌐 Realistik 3D Geomexanik Massiv")
-    # Yangi realistik 3D funksiyasini chaqirish
-    fig_3d = generate_realistic_3d(time_h, layers_data, s_max_3d, total_depth, source_z, H_seam)
-    st.plotly_chart(fig_3d, use_container_width=True)
+    st.subheader("🌐 3D Geomexanik Massiv")
+    st.plotly_chart(generate_integrated_3d(time_h, layers_data, s_max_3d), use_container_width=True)
 
 with col_right:
     st.subheader("📈 Dinamik Trendlar")
