@@ -602,108 +602,196 @@ mk4.metric("Jarayon bosqichi", "Faol" if time_h < 100 else "Sovish")
 
 st.markdown("---")
 
-import numpy as np
-import plotly.graph_objects as go
-import streamlit as st
-
+# ==============================================================================
+# --- 🌐 YANGI REALISTIK 3D GEOMEXANIK MODEL ---
+# ==============================================================================
 def generate_realistic_3d(h, layers, s_max, total_depth, source_z, H_seam):
     """
-    Yangi UCG Multi-Reactor modeli:
-    - Parallel yonish kameralari
-    - Vertikal va gorizontal quduqlar (Oxidant Supply & Syngas Product)
-    - Yer usti quvurlari va qatlamlar
+    Realistik 3D geomexanik model:
+    - Yer yuzasi cho'kish krateri
+    - Qatlamlar (deformatsiyalangan)
+    - Ko'mir qatlami (to'g'ri burchakli parallelepiped)
+    - Yonish kamerasi (silindr)
+    - Issiqlik plume (yarim shaffof ellipsoid)
+    - Yoriqlar (chiziqlar)
     """
     # 1. Grid yaratish
-    x_range, y_range = 150, 100
-    x = np.linspace(-x_range, x_range, 40)
-    y = np.linspace(-y_range, y_range, 40)
+    x = np.linspace(-150, 150, 40)
+    y = np.linspace(-100, 100, 40)
     X, Y = np.meshgrid(x, y)
     
-    # Cho'kish krateri
-    subsidence = -s_max * np.exp(-(X**2 + Y**2) / (2 * (total_depth * 0.7)**2))
+    # Cho'kish funksiyasi (Gauss krater)
+    subsidence = -s_max * np.exp(-(X**2 + Y**2) / (2 * (total_depth * 0.6)**2))
     
     fig = go.Figure()
     curr_z_top = 0.0
+    # Qatlamlar ranglari
     layer_colors = ['#8B5A2B', '#A9A9A9', '#CD853F', '#BC8F8F', '#6B8E23']
     
-    # 2. Qatlamlarni chizish
     for i, layer in enumerate(layers):
         thickness = layer['t']
         z_bottom = curr_z_top - thickness
+        # Deformatsiya chuqurlik bilan kamayadi
         deform_factor = (1 - i/len(layers))
-        z_top_s = curr_z_top + subsidence * deform_factor
-        z_bottom_s = z_bottom + subsidence * (deform_factor * 0.8)
+        z_top_surface = curr_z_top + subsidence * deform_factor
+        z_bottom_surface = z_bottom + subsidence * (deform_factor * 0.8)
         
         color = layer_colors[i % len(layer_colors)]
+        # Yuza (top)
         fig.add_trace(go.Surface(
-            x=X, y=Y, z=z_top_s,
+            x=X, y=Y, z=z_top_surface,
             colorscale=[[0, color], [1, color]],
-            opacity=0.4 if i < len(layers)-1 else 0.8, # Ichkarini ko'rish uchun ustki qatlamlar shaffof
-            showscale=False, name=layer['name'],
-            lighting=dict(ambient=0.6)
+            opacity=0.85, showscale=False, name=f"{layer['name']} (ustki)",
+            lighting=dict(ambient=0.6, diffuse=0.8)
         ))
-        curr_z_top = z_bottom
-
-    # 3. Parallel Yonish Kameralari (Reactors)
-    coal_z_center = curr_z_top + layers[-1]['t']/2
-    reactor_y_positions = [-60, -20, 20, 60] # Rasmda ko'rsatilganidek 4 ta parallel qator
-    reactor_rad = 7
-    reactor_len = 80
-    
-    for y_pos in reactor_y_positions:
-        # Har bir qatorda 3 tadan bo'laklangan kamera (segmentlangan)
-        for x_pos in [-60, 0, 60]:
-            u, v = np.mgrid[0:2*np.pi:20j, 0:np.pi:10j]
-            x_r = 15 * np.cos(u) * np.sin(v) + x_pos
-            y_r = 12 * np.sin(u) * np.sin(v) + y_pos
-            z_r = 6 * np.cos(v) + coal_z_center
-            
-            fig.add_trace(go.Mesh3d(
-                x=x_r.flatten(), y=y_r.flatten(), z=z_r.flatten(),
-                alphahull=0, color='darkred', opacity=0.8,
-                name="Yonish kamerasi", showlegend=False
+        # Pastki yuza (bottom)
+        fig.add_trace(go.Surface(
+            x=X, y=Y, z=z_bottom_surface,
+            colorscale=[[0, color], [1, color]],
+            opacity=0.7, showscale=False, name=f"{layer['name']} (pastki)",
+            lighting=dict(ambient=0.5, diffuse=0.7)
+        ))
+        # Qirralar (chekka chiziqlar) – oddiy chiziqlar
+        # Top qirralar
+        for edge_x, edge_y in [(X[0,:], Y[0,:]), (X[-1,:], Y[-1,:]), (X[:,0], Y[:,0]), (X[:,-1], Y[:,-1])]:
+            z_edge = z_top_surface[0 if edge_x is X[0,:] else -1, :] if edge_x.ndim == 1 else z_top_surface[:, 0]
+            fig.add_trace(go.Scatter3d(
+                x=edge_x.flatten(), y=edge_y.flatten(), z=z_edge.flatten(),
+                mode='lines', line=dict(color='white', width=1), showlegend=False
             ))
-
-    # 4. Quduqlar va Quvurlar (Wellbores & Pipes)
-    # Oxidant Supply Line (Yer usti)
-    fig.add_trace(go.Scatter3d(
-        x=[-120, 120], y=[-80, -80], z=[5, 5],
-        mode='lines', line=dict(color='silver', width=8), name="Oxidant Supply"
+        curr_z_top = z_bottom
+    
+    # 2. Ko'mir qatlami (eng pastki qatlam) – kub shaklida
+    coal_layer = layers[-1]
+    coal_z_center = curr_z_top + coal_layer['t']/2   # curr_z_top endi - (total_depth)
+    coal_half_x = total_depth * 0.8
+    coal_half_y = total_depth * 0.5
+    coal_half_z = coal_layer['t']/2
+    
+    corners = np.array([
+        [-coal_half_x, -coal_half_y, -coal_half_z],
+        [ coal_half_x, -coal_half_y, -coal_half_z],
+        [ coal_half_x,  coal_half_y, -coal_half_z],
+        [-coal_half_x,  coal_half_y, -coal_half_z],
+        [-coal_half_x, -coal_half_y,  coal_half_z],
+        [ coal_half_x, -coal_half_y,  coal_half_z],
+        [ coal_half_x,  coal_half_y,  coal_half_z],
+        [-coal_half_x,  coal_half_y,  coal_half_z]
+    ]) + np.array([0, 0, coal_z_center])
+    
+    faces = [
+        [0,1,2], [0,2,3],  # pastki
+        [4,5,6], [4,6,7],  # ustki
+        [0,1,5], [0,5,4],  # old
+        [2,3,7], [2,7,6],  # orqa
+        [0,3,7], [0,7,4],  # chap
+        [1,2,6], [1,6,5]   # o'ng
+    ]
+    fig.add_trace(go.Mesh3d(
+        x=corners[:,0], y=corners[:,1], z=corners[:,2],
+        i=[f[0] for f in faces], j=[f[1] for f in faces], k=[f[2] for f in faces],
+        color='darkorange', opacity=0.9, name="Ko'mir qatlami", lighting=dict(ambient=0.4)
     ))
     
-    # Syngas Product Line (Yer usti)
-    fig.add_trace(go.Scatter3d(
-        x=[-120, 120], y=[80, 80], z=[5, 5],
-        mode='lines', line=dict(color='gray', width=8), name="Syngas Product"
+    # 3. Yonish kamerasi (silindr) – gorizontal, qizil
+    reactor_radius = min(coal_half_z * 0.8, 8.0)
+    reactor_length = coal_half_x * 0.6
+    theta = np.linspace(0, 2*np.pi, 20)
+    z_cyl = np.linspace(-reactor_length, reactor_length, 20)
+    theta, z_cyl = np.meshgrid(theta, z_cyl)
+    x_cyl = reactor_radius * np.cos(theta)
+    y_cyl = reactor_radius * np.sin(theta)
+    center_x, center_y, center_z = 0, 0, coal_z_center
+    x_cyl += center_x
+    y_cyl += center_y
+    z_cyl_surf = z_cyl + center_z
+    fig.add_trace(go.Surface(
+        x=x_cyl, y=y_cyl, z=z_cyl_surf,
+        colorscale='Hot', opacity=0.95, name="Yonish kamerasi", showscale=False,
+        lighting=dict(ambient=0.3, diffuse=0.9)
     ))
-
-    # Vertikal quduqlar
-    for y_p in reactor_y_positions:
-        # Kirish quduqlari (Oxidant)
+    
+    # 4. Issiqlik plume (yarim shaffof ellipsoid)
+    plume_rad_x = reactor_radius * 4
+    plume_rad_y = reactor_radius * 3
+    plume_rad_z = coal_half_z * 2.5
+    u = np.linspace(0, 2*np.pi, 30)
+    v = np.linspace(0, np.pi, 30)
+    u, v = np.meshgrid(u, v)
+    x_plume = plume_rad_x * np.sin(v) * np.cos(u) + center_x
+    y_plume = plume_rad_y * np.sin(v) * np.sin(u) + center_y
+    z_plume = plume_rad_z * np.cos(v) + center_z
+    fig.add_trace(go.Surface(
+        x=x_plume, y=y_plume, z=z_plume,
+        colorscale=[[0, 'rgba(255,0,0,0)'], [1, 'rgba(255,100,0,0.4)']],
+        opacity=0.3, showscale=False, name="Termal plume", hoverinfo='skip'
+    ))
+    
+    # 5. Yoriqlar / sinishlar (bir necha qizil chiziq)
+    fractures = [
+        [[-40, -20, coal_z_center-2], [40, 20, coal_z_center+2]],
+        [[-30, 30, coal_z_center-1], [30, -30, coal_z_center+3]],
+        [[-20, -10, coal_z_center], [20, 10, coal_z_center+5]],
+    ]
+    for f in fractures:
         fig.add_trace(go.Scatter3d(
-            x=[-80, -80, -60], y=[y_p, y_p, y_p], z=[5, coal_z_center, coal_z_center],
-            mode='lines', line=dict(color='blue', width=4), showlegend=False
+            x=[f[0][0], f[1][0]], y=[f[0][1], f[1][1]], z=[f[0][2], f[1][2]],
+            mode='lines', line=dict(color='red', width=3), name='Yoriq', showlegend=False
         ))
-        # Chiqish quduqlari (Syngas)
-        fig.add_trace(go.Scatter3d(
-            x=[80, 80, 60], y=[y_p, y_p, y_p], z=[5, coal_z_center, coal_z_center],
-            mode='lines', line=dict(color='orange', width=4), showlegend=False
-        ))
-
-    # 5. Grafik sozlamalari
+    
+    # 6. Grafik sozlamalari
     fig.update_layout(
         scene=dict(
-            xaxis=dict(title='X (m)', range=[-150, 150]),
-            yaxis=dict(title='Y (m)', range=[-100, 100]),
-            zaxis=dict(title='Z (m)', range=[-total_depth-20, 20]),
-            aspectratio=dict(x=1.5, y=1, z=0.5)
+            xaxis=dict(title='X (m)', backgroundcolor='rgb(20,20,20)', gridcolor='gray'),
+            yaxis=dict(title='Y (m)', backgroundcolor='rgb(20,20,20)', gridcolor='gray'),
+            zaxis=dict(title='Z (m)', backgroundcolor='rgb(20,20,20)', gridcolor='gray',
+                       range=[-total_depth-20, 20]),
+            aspectmode='manual', aspectratio=dict(x=1.2, y=0.8, z=0.6),
+            camera=dict(eye=dict(x=1.5, y=1.5, z=1.2))
         ),
-        template='plotly_dark',
-        margin=dict(l=0, r=0, b=0, t=0)
+        height=700, margin=dict(l=0, r=0, b=0, t=0),
+        template='plotly_dark', title="Realistik 3D Geomexanik Model"
     )
     return fig
 
-# Streamlit interfeysi qismi o'zgarishsiz qoladi, faqat yangi funksiya chaqiriladi.
+col_left, col_right = st.columns([2, 1])
+with col_left:
+    st.subheader("🌐 Realistik 3D Geomexanik Massiv")
+    # Yangi realistik 3D funksiyasini chaqirish
+    fig_3d = generate_realistic_3d(time_h, layers_data, s_max_3d, total_depth, source_z, H_seam)
+    st.plotly_chart(fig_3d, use_container_width=True)
+
+with col_right:
+    st.subheader("📈 Dinamik Trendlar")
+    h_axis   = np.linspace(0, 150, 50)
+    st_trend = [calculate_live_metrics(v, layers_data, T_source_max)[0] for v in h_axis]
+    fig_trend = go.Figure()
+    fig_trend.add_trace(go.Scatter(x=h_axis, y=st_trend, name="Mustahkamlik",
+                                   line=dict(color='orange', width=3)))
+    fig_trend.add_vline(x=time_h, line_dash="dash", line_color="red")
+    fig_trend.update_layout(template="plotly_dark", height=250,
+                            title="Mustahkamlik pasayishi (MPa/h)",
+                            margin=dict(l=10, r=10, t=30, b=10))
+    st.plotly_chart(fig_trend, use_container_width=True)
+    st.write("**Qatlamlar tuzilishi:**")
+    for lyr in layers_data:
+        st.caption(f"• {lyr['name']}: {lyr['t']} m (UCS: {lyr['ucs']} MPa)")
+
+st.markdown("---")
+with st.expander("📝 Avtomatik Ilmiy Interpretatsiya", expanded=True):
+    risk_level    = "YUQORI" if p_str < 15 else "O'RTA" if p_str < 25 else "PAST"
+    ucs_initial   = layers_data[-1]['ucs']
+    reduction_pct = (1 - p_str / (ucs_initial + EPS)) * 100
+    st.write(f"""
+**Tahlil natijasi ({time_h}-soat):**
+1. **Termal degradatsiya:** Harorat {t_now:.1f} °C ga yetishi natijasida ko'mir mustahkamligi
+   boshlang'ich holatga nisbatan {reduction_pct:.1f}% ga kamaygan.
+2. **Yer yuzasi:** {s_max_3d * 100:.1f} cm lik vertikal cho'kish kutilmoqda.
+   Bu {layers_data[0]['name']} qatlamida plastik deformatsiyalarni yuzaga keltirishi mumkin.
+3. **Xavf darajasi:** **{risk_level}**. Tavsiya: Selek eni **{w_rec_live:.1f} m**
+   (AI optimizatsiya: **{optimal_width_ai:.1f} m**).
+""")
+
 # ==============================================================================
 # --- 📑 CHUQURLASHTIRILGAN ILMIY HISOBOT ---
 # ==============================================================================
