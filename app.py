@@ -158,10 +158,15 @@ for key, val in sources.items():
 # ==============================================================================
 # --- 🔥 PDE HEAT SOLVER (FDM) — time_h ga bog'liq iteratsiya ---
 # ==============================================================================
+# --- 🔥 PDE HEAT SOLVER (FDM) ---
+# Gaussan harorat (temp_2d) allaqachon to'g'ri hisoblangan.
+# FDM faqat qo'shimcha diffuziya effektini qo'shadi —
+# haroratni "o'chirish" emas, balki qatlamlar bo'yicha tarqatish uchun.
+# ==============================================================================
 def solve_heat_step(T: np.ndarray, Q: np.ndarray,
                     alpha: float, dx: float, dt: float) -> np.ndarray:
     """2D issiqlik diffuziya tenglamasi — sonli farqlar usuli.
-    Stability: r = alpha * dt / dx² ≤ 0.25 (2D)
+    Stability sharti: r = alpha * dt / dx² ≤ 0.25 (2D uchun)
     """
     Tn = T.copy()
     Tn[1:-1, 1:-1] = (
@@ -174,18 +179,27 @@ def solve_heat_step(T: np.ndarray, Q: np.ndarray,
     )
     return Tn
 
-# Heat source (UCG kamera joylashuvi)
+# Heat source: kamera markazlari atrofida intensiv issiqliq
 Q_heat = np.zeros_like(temp_2d)
 for val in sources.values():
-    cx, cz = val['x'], source_z
-    Q_heat += 500 * np.exp(-((grid_x - cx) ** 2 + (grid_z - cz) ** 2) / 200)
+    if time_h > val['start']:
+        cx, cz   = val['x'], source_z
+        elapsed  = time_h - val['start']
+        curr_T   = (T_source_max if elapsed <= burn_duration
+                    else 25 + (T_source_max - 25) * np.exp(-0.03 * (elapsed - burn_duration)))
+        # Q manba kuchi haroratga proportsional
+        Q_heat  += (curr_T / 10.0) * np.exp(
+            -((grid_x - cx) ** 2 + (grid_z - cz) ** 2) / (2 * 30 ** 2)
+        )
 
-# Stability: dx=5m, dt=100s → r = 1e-6*100/25 = 4e-6 ✅
-DX      = 5.0
-DT      = 100.0
-n_steps = min(max(1, int(time_h * 3600 / DT)), 200)
+# FDM parametrlari:
+# dx=1m, dt=0.1s → r = 1e-6 * 0.1 / 1 = 1e-7 ✅ (stability bajarilgan)
+# Faqat 20 qadam — Gaussan natijasiga kichik diffuziya effekti qo'shiladi
+DX      = 1.0
+DT      = 0.1
+N_STEPS = 20   # Ko'p qadam = harorat yo'qoladi; kam qadam = faqat silliqlashtirish
 
-for _ in range(n_steps):
+for _ in range(N_STEPS):
     temp_2d = solve_heat_step(temp_2d, Q_heat, alpha_rock, dx=DX, dt=DT)
 
 # Kumulativ maksimal harorat
@@ -426,28 +440,35 @@ with c2:
 
     # --- ROW 1: Gaz oqimi vektorlari (Scatter arrows — 2D subplot uchun) ---
     # go.Cone faqat 3D sahna uchun; 2D subplot uchun scatter marker "arrow" ishlatiladi
-    step  = 10
-    qx    = grid_x[::step, ::step].flatten()
-    qz    = grid_z[::step, ::step].flatten()
-    qu    = vx[::step, ::step].flatten()
-    qw    = vz[::step, ::step].flatten()
-    qmag  = gas_velocity[::step, ::step].flatten()
+    step     = 12
+    qx       = grid_x[::step, ::step].flatten()
+    qz       = grid_z[::step, ::step].flatten()
+    qu       = vx[::step, ::step].flatten()
+    qw       = vz[::step, ::step].flatten()
+    qmag     = gas_velocity[::step, ::step].flatten()
     qmag_max = qmag.max() + 1e-30
+    # Faqat ma'lum bir oqim tezligidan yuqori nuqtalarni ko'rsat
+    threshold = qmag_max * 0.05
+    mask_q    = qmag > threshold
+    angles    = np.degrees(np.arctan2(qw[mask_q], qu[mask_q]))
 
     fig_tm.add_trace(go.Scatter(
-        x=qx, y=qz,
+        x=qx[mask_q], y=qz[mask_q],
         mode='markers',
         marker=dict(
             symbol='arrow',
-            size=8,
-            color=qmag,
-            colorscale='Blues',
-            angle=np.degrees(np.arctan2(qw, qu)),
-            opacity=0.75,
+            size=10,
+            color=qmag[mask_q],
+            colorscale='ice',
+            cmin=0,
+            cmax=qmag_max,
+            angle=angles,
+            opacity=0.85,
             showscale=False,
+            line=dict(width=0),
         ),
         name="Gaz oqimi",
-        hovertemplate="x=%{x:.0f}m z=%{y:.0f}m<extra></extra>"
+        hovertemplate="x=%{x:.0f}m  z=%{y:.0f}m<extra></extra>"
     ), row=1, col=1)
 
     # --- ROW 2: FOS Contour ---
