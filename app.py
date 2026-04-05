@@ -602,195 +602,134 @@ mk4.metric("Jarayon bosqichi", "Faol" if time_h < 100 else "Sovish")
 
 st.markdown("---")
 
-# ==============================================================================
-# --- 🌐 YANGI REALISTIK 3D GEOMEXANIK MODEL ---
-# ==============================================================================
-def generate_realistic_3d(h, layers, s_max, total_depth, source_z, H_seam):
+def generate_realistic_3d_split(temp_field, x_coords, z_coords, total_depth, source_z, H_seam, time_h, T_max):
     """
-    Realistik 3D geomexanik model:
-    - Yer yuzasi cho'kish krateri
-    - Qatlamlar (deformatsiyalangan)
-    - Ko'mir qatlami (to'g'ri burchakli parallelepiped)
+    Realistik 3D model:
+    - Blokli geologik muhit (strata va ko'mir alohida bloklar)
+    - Haqiqiy harorat izosirtlari (isosurface) – 400°C va 800°C
     - Yonish kamerasi (silindr)
-    - Issiqlik plume (yarim shaffof ellipsoid)
-    - Yoriqlar (chiziqlar)
+    - Model o'rtasidan kesilgan (y >= 0 qismi ko'rinadi)
     """
-    # 1. Grid yaratish
-    x = np.linspace(-150, 150, 40)
-    y = np.linspace(-100, 100, 40)
-    X, Y = np.meshgrid(x, y)
-    
-    # Cho'kish funksiyasi (Gauss krater)
-    subsidence = -s_max * np.exp(-(X**2 + Y**2) / (2 * (total_depth * 0.6)**2))
-    
+    import plotly.graph_objects as go
+    import numpy as np
+    from scipy.interpolate import RegularGridInterpolator
+
+    # 1. 3D harorat maydonini yaratish (temp_2d -> 3D, Y o'qi bo'ylab simmetrik)
+    y_axis = np.linspace(-80, 80, 30)  # Y o'qi uchun tarmoq
+    # Interpolator tayyorlash (x, z) -> T
+    interp_T = RegularGridInterpolator((x_coords, z_coords), temp_field.T, bounds_error=False, fill_value=25)
+    # 3D grid yaratish
+    X3, Y3, Z3 = np.meshgrid(x_coords, y_axis, z_coords, indexing='ij')
+    # Faqat y >= 0 nuqtalar uchun harorat hisoblaymiz (kesik effekti)
+    T3 = np.zeros_like(X3)
+    # Faqat y >= 0 uchun hisoblash (tezlik uchun)
+    mask_y = Y3 >= 0
+    points = np.stack([X3[mask_y], Z3[mask_y]], axis=-1)
+    T3[mask_y] = interp_T(points).flatten()
+    T3[~mask_y] = np.nan  # y < 0 qismi ko'rinmaydi
+
     fig = go.Figure()
-    curr_z_top = 0.0
-    # Qatlamlar ranglari
-    layer_colors = ['#8B5A2B', '#A9A9A9', '#CD853F', '#BC8F8F', '#6B8E23']
-    
-    for i, layer in enumerate(layers):
-        thickness = layer['t']
-        z_bottom = curr_z_top - thickness
-        # Deformatsiya chuqurlik bilan kamayadi
-        deform_factor = (1 - i/len(layers))
-        z_top_surface = curr_z_top + subsidence * deform_factor
-        z_bottom_surface = z_bottom + subsidence * (deform_factor * 0.8)
-        
-        color = layer_colors[i % len(layer_colors)]
-        # Yuza (top)
-        fig.add_trace(go.Surface(
-            x=X, y=Y, z=z_top_surface,
-            colorscale=[[0, color], [1, color]],
-            opacity=0.85, showscale=False, name=f"{layer['name']} (ustki)",
-            lighting=dict(ambient=0.6, diffuse=0.8)
-        ))
-        # Pastki yuza (bottom)
-        fig.add_trace(go.Surface(
-            x=X, y=Y, z=z_bottom_surface,
-            colorscale=[[0, color], [1, color]],
-            opacity=0.7, showscale=False, name=f"{layer['name']} (pastki)",
-            lighting=dict(ambient=0.5, diffuse=0.7)
-        ))
-        # Qirralar (chekka chiziqlar) – oddiy chiziqlar
-        # Top qirralar
-        for edge_x, edge_y in [(X[0,:], Y[0,:]), (X[-1,:], Y[-1,:]), (X[:,0], Y[:,0]), (X[:,-1], Y[:,-1])]:
-            z_edge = z_top_surface[0 if edge_x is X[0,:] else -1, :] if edge_x.ndim == 1 else z_top_surface[:, 0]
-            fig.add_trace(go.Scatter3d(
-                x=edge_x.flatten(), y=edge_y.flatten(), z=z_edge.flatten(),
-                mode='lines', line=dict(color='white', width=1), showlegend=False
+
+    # 2. Harorat izosirtlari (400°C va 800°C)
+    for temp_val, color, opacity in [(400, 'red', 0.6), (800, 'orange', 0.4)]:
+        try:
+            fig.add_trace(go.Isosurface(
+                x=X3.flatten(), y=Y3.flatten(), z=Z3.flatten(),
+                value=T3.flatten(), isomin=temp_val, isomax=temp_val,
+                caps=dict(x_show=False, y_show=False, z_show=False),
+                surface_count=1, colorscale=[[0, color], [1, color]],
+                opacity=opacity, showscale=False, name=f"{temp_val}°C izosirt"
             ))
-        curr_z_top = z_bottom
-    
-    # 2. Ko'mir qatlami (eng pastki qatlam) – kub shaklida
-    coal_layer = layers[-1]
-    coal_z_center = curr_z_top + coal_layer['t']/2   # curr_z_top endi - (total_depth)
-    coal_half_x = total_depth * 0.8
-    coal_half_y = total_depth * 0.5
-    coal_half_z = coal_layer['t']/2
-    
-    corners = np.array([
-        [-coal_half_x, -coal_half_y, -coal_half_z],
-        [ coal_half_x, -coal_half_y, -coal_half_z],
-        [ coal_half_x,  coal_half_y, -coal_half_z],
-        [-coal_half_x,  coal_half_y, -coal_half_z],
-        [-coal_half_x, -coal_half_y,  coal_half_z],
-        [ coal_half_x, -coal_half_y,  coal_half_z],
-        [ coal_half_x,  coal_half_y,  coal_half_z],
-        [-coal_half_x,  coal_half_y,  coal_half_z]
-    ]) + np.array([0, 0, coal_z_center])
-    
-    faces = [
-        [0,1,2], [0,2,3],  # pastki
-        [4,5,6], [4,6,7],  # ustki
-        [0,1,5], [0,5,4],  # old
-        [2,3,7], [2,7,6],  # orqa
-        [0,3,7], [0,7,4],  # chap
-        [1,2,6], [1,6,5]   # o'ng
-    ]
-    fig.add_trace(go.Mesh3d(
-        x=corners[:,0], y=corners[:,1], z=corners[:,2],
-        i=[f[0] for f in faces], j=[f[1] for f in faces], k=[f[2] for f in faces],
-        color='darkorange', opacity=0.9, name="Ko'mir qatlami", lighting=dict(ambient=0.4)
-    ))
-    
-    # 3. Yonish kamerasi (silindr) – gorizontal, qizil
-    reactor_radius = min(coal_half_z * 0.8, 8.0)
-    reactor_length = coal_half_x * 0.6
+        except:
+            pass  # agar izosirt topilmasa
+
+    # 3. Blokli geologik muhit (to'rtburchak bloklar)
+    # Yuqori qatlam bloki
+    top_block = go.Mesh3d(
+        x=[-120, 120, 120, -120, -120, 120, 120, -120],
+        y=[0, 0, 80, 80, 0, 0, 80, 80],
+        z=[0, 0, 0, 0, -40, -40, -40, -40],
+        i=[0,0,0,1,1,2,2,3,4,4,4,5,5,6,6,7],
+        j=[1,2,3,2,3,3,1,0,5,6,7,6,7,7,5,4],
+        k=[2,3,1,3,1,1,0,1,6,7,5,7,5,5,4,5],
+        color='#8B5A2B', opacity=0.7, name='Yuqori qatlam', showlegend=True
+    )
+    fig.add_trace(top_block)
+
+    # Ko'mir bloki (markazda, qalinligi H_seam)
+    coal_z_top = -total_depth + H_seam
+    coal_z_bottom = -total_depth
+    coal_block = go.Mesh3d(
+        x=[-100, 100, 100, -100, -100, 100, 100, -100],
+        y=[0, 0, 80, 80, 0, 0, 80, 80],
+        z=[coal_z_top, coal_z_top, coal_z_top, coal_z_top, coal_z_bottom, coal_z_bottom, coal_z_bottom, coal_z_bottom],
+        i=[0,0,0,1,1,2,2,3,4,4,4,5,5,6,6,7],
+        j=[1,2,3,2,3,3,1,0,5,6,7,6,7,7,5,4],
+        k=[2,3,1,3,1,1,0,1,6,7,5,7,5,5,4,5],
+        color='darkorange', opacity=0.9, name='Ko\'mir qatlami', showlegend=True
+    )
+    fig.add_trace(coal_block)
+
+    # 4. Yonish kamerasi (silindr, faqat y>=0 qismi)
+    reactor_radius = min(H_seam * 0.4, 6.0)
+    reactor_length = 60.0
     theta = np.linspace(0, 2*np.pi, 20)
     z_cyl = np.linspace(-reactor_length, reactor_length, 20)
     theta, z_cyl = np.meshgrid(theta, z_cyl)
     x_cyl = reactor_radius * np.cos(theta)
     y_cyl = reactor_radius * np.sin(theta)
-    center_x, center_y, center_z = 0, 0, coal_z_center
-    x_cyl += center_x
-    y_cyl += center_y
-    z_cyl_surf = z_cyl + center_z
+    # Silindr markazi (0, 0, coal_z_center)
+    coal_z_center = (coal_z_top + coal_z_bottom) / 2
+    x_cyl += 0
+    y_cyl += 0
+    z_cyl_surf = z_cyl + coal_z_center
+    # Faqat y>=0 qismini ko'rsatish
+    mask_cyl = y_cyl >= 0
     fig.add_trace(go.Surface(
-        x=x_cyl, y=y_cyl, z=z_cyl_surf,
+        x=x_cyl[mask_cyl], y=y_cyl[mask_cyl], z=z_cyl_surf[mask_cyl],
         colorscale='Hot', opacity=0.95, name="Yonish kamerasi", showscale=False,
         lighting=dict(ambient=0.3, diffuse=0.9)
     ))
-    
-    # 4. Issiqlik plume (yarim shaffof ellipsoid)
-    plume_rad_x = reactor_radius * 4
-    plume_rad_y = reactor_radius * 3
-    plume_rad_z = coal_half_z * 2.5
-    u = np.linspace(0, 2*np.pi, 30)
-    v = np.linspace(0, np.pi, 30)
-    u, v = np.meshgrid(u, v)
-    x_plume = plume_rad_x * np.sin(v) * np.cos(u) + center_x
-    y_plume = plume_rad_y * np.sin(v) * np.sin(u) + center_y
-    z_plume = plume_rad_z * np.cos(v) + center_z
-    fig.add_trace(go.Surface(
-        x=x_plume, y=y_plume, z=z_plume,
-        colorscale=[[0, 'rgba(255,0,0,0)'], [1, 'rgba(255,100,0,0.4)']],
-        opacity=0.3, showscale=False, name="Termal plume", hoverinfo='skip'
-    ))
-    
-    # 5. Yoriqlar / sinishlar (bir necha qizil chiziq)
-    fractures = [
-        [[-40, -20, coal_z_center-2], [40, 20, coal_z_center+2]],
-        [[-30, 30, coal_z_center-1], [30, -30, coal_z_center+3]],
-        [[-20, -10, coal_z_center], [20, 10, coal_z_center+5]],
+
+    # 5. Gaz oqimi chiziqlari (bir necha yo'nalish)
+    # Foydalanuvchi tomonidan hisoblangan gaz oqimi vx, vz dan foydalanish mumkin, lekin bu funksiyaga uzatish kerak.
+    # Oddiy simulyatsiya uchun bir necha chiziq qo'shamiz:
+    flow_lines = [
+        [[0, 10, coal_z_center], [0, 30, coal_z_center-10], [0, 50, coal_z_center-20]],
+        [[-20, 10, coal_z_center], [-30, 30, coal_z_center-5], [-40, 50, coal_z_center-15]],
+        [[20, 10, coal_z_center], [30, 30, coal_z_center-5], [40, 50, coal_z_center-15]],
     ]
-    for f in fractures:
+    for line in flow_lines:
         fig.add_trace(go.Scatter3d(
-            x=[f[0][0], f[1][0]], y=[f[0][1], f[1][1]], z=[f[0][2], f[1][2]],
-            mode='lines', line=dict(color='red', width=3), name='Yoriq', showlegend=False
+            x=[p[0] for p in line], y=[p[1] for p in line], z=[p[2] for p in line],
+            mode='lines', line=dict(color='cyan', width=4), name='Gaz oqimi', showlegend=False
         ))
-    
-    # 6. Grafik sozlamalari
+
+    # 6. Kesik chizig'i (y=0 tekisligida qizil kontur)
+    # Y=0 da bir necha nuqta chizamiz
+    y0_line_x = np.linspace(-120, 120, 20)
+    y0_line_z = np.linspace(-total_depth-10, 20, 20)
+    fig.add_trace(go.Scatter3d(
+        x=y0_line_x, y=np.zeros_like(y0_line_x), z=np.full_like(y0_line_x, 0),
+        mode='lines', line=dict(color='red', width=2), name='Kesik chizig\'i', showlegend=True
+    ))
+
+    # 7. Grafik sozlamalari
     fig.update_layout(
         scene=dict(
-            xaxis=dict(title='X (m)', backgroundcolor='rgb(20,20,20)', gridcolor='gray'),
-            yaxis=dict(title='Y (m)', backgroundcolor='rgb(20,20,20)', gridcolor='gray'),
-            zaxis=dict(title='Z (m)', backgroundcolor='rgb(20,20,20)', gridcolor='gray',
+            xaxis=dict(title='X (m)', backgroundcolor='black', gridcolor='gray'),
+            yaxis=dict(title='Y (m)', backgroundcolor='black', gridcolor='gray',
+                       range=[0, 80]),  # faqat y>=0 ko'rinadi
+            zaxis=dict(title='Z (m)', backgroundcolor='black', gridcolor='gray',
                        range=[-total_depth-20, 20]),
-            aspectmode='manual', aspectratio=dict(x=1.2, y=0.8, z=0.6),
-            camera=dict(eye=dict(x=1.5, y=1.5, z=1.2))
+            aspectmode='manual', aspectratio=dict(x=1.2, y=0.6, z=0.8),
+            camera=dict(eye=dict(x=1.5, y=0.5, z=1.2))
         ),
         height=700, margin=dict(l=0, r=0, b=0, t=0),
-        template='plotly_dark', title="Realistik 3D Geomexanik Model"
+        template='plotly_dark',
+        title=f"Realistik 3D Model (Kesik ko'rinish, vaqt={time_h} soat)"
     )
     return fig
-
-col_left, col_right = st.columns([2, 1])
-with col_left:
-    st.subheader("🌐 Realistik 3D Geomexanik Massiv")
-    # Yangi realistik 3D funksiyasini chaqirish
-    fig_3d = generate_realistic_3d(time_h, layers_data, s_max_3d, total_depth, source_z, H_seam)
-    st.plotly_chart(fig_3d, use_container_width=True)
-
-with col_right:
-    st.subheader("📈 Dinamik Trendlar")
-    h_axis   = np.linspace(0, 150, 50)
-    st_trend = [calculate_live_metrics(v, layers_data, T_source_max)[0] for v in h_axis]
-    fig_trend = go.Figure()
-    fig_trend.add_trace(go.Scatter(x=h_axis, y=st_trend, name="Mustahkamlik",
-                                   line=dict(color='orange', width=3)))
-    fig_trend.add_vline(x=time_h, line_dash="dash", line_color="red")
-    fig_trend.update_layout(template="plotly_dark", height=250,
-                            title="Mustahkamlik pasayishi (MPa/h)",
-                            margin=dict(l=10, r=10, t=30, b=10))
-    st.plotly_chart(fig_trend, use_container_width=True)
-    st.write("**Qatlamlar tuzilishi:**")
-    for lyr in layers_data:
-        st.caption(f"• {lyr['name']}: {lyr['t']} m (UCS: {lyr['ucs']} MPa)")
-
-st.markdown("---")
-with st.expander("📝 Avtomatik Ilmiy Interpretatsiya", expanded=True):
-    risk_level    = "YUQORI" if p_str < 15 else "O'RTA" if p_str < 25 else "PAST"
-    ucs_initial   = layers_data[-1]['ucs']
-    reduction_pct = (1 - p_str / (ucs_initial + EPS)) * 100
-    st.write(f"""
-**Tahlil natijasi ({time_h}-soat):**
-1. **Termal degradatsiya:** Harorat {t_now:.1f} °C ga yetishi natijasida ko'mir mustahkamligi
-   boshlang'ich holatga nisbatan {reduction_pct:.1f}% ga kamaygan.
-2. **Yer yuzasi:** {s_max_3d * 100:.1f} cm lik vertikal cho'kish kutilmoqda.
-   Bu {layers_data[0]['name']} qatlamida plastik deformatsiyalarni yuzaga keltirishi mumkin.
-3. **Xavf darajasi:** **{risk_level}**. Tavsiya: Selek eni **{w_rec_live:.1f} m**
-   (AI optimizatsiya: **{optimal_width_ai:.1f} m**).
-""")
 
 # ==============================================================================
 # --- 📑 CHUQURLASHTIRILGAN ILMIY HISOBOT ---
