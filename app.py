@@ -606,7 +606,7 @@ st.markdown("---")
 # --- 🌐 YANGI REALISTIK 3D GEOMEXANIK MODEL ---
 # ==============================================================================
 # ==============================================================================
-# 🌐 PRO GEOMECHANICAL + THERMAL SIMULATOR
+# 🌐 PRO 3D GEOMECHANICAL + THERMAL SIMULATOR
 # ==============================================================================
 
 import streamlit as st
@@ -614,26 +614,25 @@ import numpy as np
 import plotly.graph_objects as go
 from scipy.ndimage import gaussian_filter
 
-# ------------------------------------------------------------------------------
+# ==============================================================================
 # ⚙️ PAGE SETTINGS
-# ------------------------------------------------------------------------------
+# ==============================================================================
 st.set_page_config(page_title="PRO Geomechanical Simulator", layout="wide")
 st.title("🌐 PRO 3D Geomechanical & Thermal Simulation")
 
-# ------------------------------------------------------------------------------
+# ==============================================================================
 # 🎛 SIDEBAR CONTROLS
-# ------------------------------------------------------------------------------
-st.sidebar.header("⚙️ Simulation Parameters")
-
-time_h = st.sidebar.slider("Time (hours)", 0, 200, 50)
-s_max = st.sidebar.slider("Max Subsidence (m)", 0.1, 5.0, 1.5)
-temp_max = st.sidebar.slider("Max Temperature (°C)", 100, 1200, 800)
-depth = st.sidebar.slider("Total Depth (m)", 50, 300, 150)
+# ==============================================================================
+st.sidebar.header("Simulation Parameters")
+time_h     = st.sidebar.slider("Time (hours)", 0, 200, 50)
+s_max      = st.sidebar.slider("Max Subsidence (m)", 0.1, 5.0, 1.5)
+temp_max   = st.sidebar.slider("Max Temperature (°C)", 100, 1200, 800)
+depth      = st.sidebar.slider("Total Depth (m)", 50, 300, 150)
 resolution = st.sidebar.slider("Grid Resolution", 20, 60, 35)
 
-# ------------------------------------------------------------------------------
-# 🪨 LAYERS
-# ------------------------------------------------------------------------------
+# ==============================================================================
+# 🪨 LAYERS DEFINITION
+# ==============================================================================
 layers = [
     {"name": "Top Soil", "t": 20, "ucs": 5},
     {"name": "Sandstone", "t": 30, "ucs": 25},
@@ -641,44 +640,45 @@ layers = [
     {"name": "Coal", "t": 20, "ucs": 10},
 ]
 
-# ------------------------------------------------------------------------------
-# 🌐 GRID
-# ------------------------------------------------------------------------------
+# ==============================================================================
+# 🌐 GRID CREATION
+# ==============================================================================
 x = np.linspace(-150, 150, resolution)
 y = np.linspace(-150, 150, resolution)
 X, Y = np.meshgrid(x, y)
 
-# ------------------------------------------------------------------------------
-# 🌍 SUBSIDENCE (ANISOTROPIC)
-# ------------------------------------------------------------------------------
-subsidence = -s_max * np.exp(
-    -((X**2)/(2*(depth*0.8)**2) + (Y**2)/(2*(depth*0.5)**2))
-)
+# ==============================================================================
+# 🧱 STRESS FIELD (Gauss-based)
+# ==============================================================================
+stress = np.exp(-(X**2 + Y**2)/(2*(depth*0.4)**2)) * (s_max*10)
 
-subsidence *= (time_h / 200)
-
-# ------------------------------------------------------------------------------
-# 🔥 TEMPERATURE FIELD (DIFFUSION)
-# ------------------------------------------------------------------------------
+# ==============================================================================
+# 🌡 TEMPERATURE FIELD
+# ==============================================================================
 temp = temp_max * np.exp(-(X**2 + Y**2)/(2*(depth*0.3)**2))
 temp = gaussian_filter(temp, sigma=3)
 
-# ------------------------------------------------------------------------------
-# 🧱 STRESS FIELD
-# ------------------------------------------------------------------------------
-stress = np.exp(-(X**2 + Y**2)/(2*(depth*0.4)**2)) * (s_max * 10)
+# ==============================================================================
+# 🔗 UCS REDUCTION DUE TO TEMP
+# ==============================================================================
+ucs_initial = layers[-1]["ucs"]
+ucs_reduced = ucs_initial * np.exp(-temp / 500)
 
-# ------------------------------------------------------------------------------
+# ==============================================================================
+# 🌀 SUBSIDENCE FROM STRESS (Hooke-like approximation)
+# ==============================================================================
+E_modulus = 30  # GPa, approximate
+subsidence = stress / E_modulus
+subsidence *= (time_h / 200)  # time-evolution
+
+# ==============================================================================
 # 🧠 RISK MODEL
-# ------------------------------------------------------------------------------
-ucs = layers[-1]["ucs"]
-
+# ==============================================================================
 risk_score = (
     (s_max / 5)*0.4 +
     (temp.max() / temp_max)*0.3 +
-    (1 - ucs/30)*0.3
+    (1 - ucs_reduced.mean()/ucs_initial)*0.3
 )
-
 if risk_score > 0.7:
     risk_level = "HIGH 🔴"
 elif risk_score > 0.4:
@@ -686,30 +686,25 @@ elif risk_score > 0.4:
 else:
     risk_level = "LOW 🟢"
 
-# ------------------------------------------------------------------------------
+# ==============================================================================
 # 📊 KPI PANEL
-# ------------------------------------------------------------------------------
+# ==============================================================================
 col1, col2, col3 = st.columns(3)
-
 col1.metric("Subsidence", f"{s_max:.2f} m")
 col2.metric("Max Temp", f"{temp.max():.1f} °C")
 col3.metric("Risk Level", risk_level)
 
-# ------------------------------------------------------------------------------
+# ==============================================================================
 # 🌐 3D MODEL
-# ------------------------------------------------------------------------------
+# ==============================================================================
 fig = go.Figure()
-
 current_z = 0
-
 colors = ["#8B5A2B", "#A9A9A9", "#CD853F", "#222222"]
 
 for i, layer in enumerate(layers):
     t = layer["t"]
     z_bottom = current_z - t
-
     deform = np.exp(-abs(current_z)/depth)
-
     z_top = current_z + subsidence * deform
     z_bot = z_bottom + subsidence * deform * 0.7
 
@@ -721,7 +716,6 @@ for i, layer in enumerate(layers):
         showscale=False,
         name=layer["name"]
     ))
-
     current_z = z_bottom
 
 # ------------------------------------------------------------------------------
@@ -729,11 +723,9 @@ for i, layer in enumerate(layers):
 # ------------------------------------------------------------------------------
 radius = 6
 length = 40 * (time_h / 200)
-
 theta = np.linspace(0, 2*np.pi, 20)
 z_cyl = np.linspace(-length, length, 20)
 theta, z_cyl = np.meshgrid(theta, z_cyl)
-
 x_cyl = radius * np.cos(theta)
 y_cyl = radius * np.sin(theta)
 z_cyl = z_cyl + current_z/2
@@ -742,7 +734,8 @@ fig.add_trace(go.Surface(
     x=x_cyl, y=y_cyl, z=z_cyl,
     colorscale="Hot",
     opacity=0.95,
-    showscale=False
+    showscale=False,
+    name="Combustion Chamber"
 ))
 
 # ------------------------------------------------------------------------------
@@ -750,11 +743,8 @@ fig.add_trace(go.Surface(
 # ------------------------------------------------------------------------------
 u = np.linspace(0, 2*np.pi, 30)
 v = np.linspace(0, np.pi, 30)
-
 u, v = np.meshgrid(u, v)
-
 rx, ry, rz = 30, 20, 40
-
 x_p = rx * np.sin(v) * np.cos(u)
 y_p = ry * np.sin(v) * np.sin(u)
 z_p = rz * np.cos(v) + current_z/2
@@ -764,19 +754,18 @@ fig.add_trace(go.Surface(
     surfacecolor=temp,
     colorscale="Hot",
     opacity=0.3,
-    showscale=False
+    showscale=False,
+    name="Thermal Plume"
 ))
 
 # ------------------------------------------------------------------------------
-# ⚠️ FRACTURES (STRESS BASED)
+# ⚠️ FRACTURES (STRESS-BASED)
 # ------------------------------------------------------------------------------
 threshold = np.percentile(stress, 90)
-
 for i in range(10):
     xi = np.random.uniform(-100, 100)
     yi = np.random.uniform(-100, 100)
-
-    if np.exp(-(xi**2 + yi**2)/(2*(depth*0.4)**2)) * (s_max * 10) > threshold:
+    if np.exp(-(xi**2 + yi**2)/(2*(depth*0.4)**2))*(s_max*10) > threshold:
         fig.add_trace(go.Scatter3d(
             x=[xi-10, xi+10],
             y=[yi-10, yi+10],
@@ -815,34 +804,28 @@ st.plotly_chart(fig, use_container_width=True)
 # ------------------------------------------------------------------------------
 h = np.linspace(0, 200, 50)
 trend = s_max * (h/200)
-
 fig2 = go.Figure()
-fig2.add_trace(go.Scatter(
-    x=h, y=trend,
-    fill='tozeroy'
-))
-fig2.add_vline(x=time_h)
-
-fig2.update_layout(template="plotly_dark", height=250)
-
+fig2.add_trace(go.Scatter(x=h, y=trend, fill='tozeroy', name="Subsidence Trend"))
+fig2.add_vline(x=time_h, line_dash="dash", line_color="red")
+fig2.update_layout(template="plotly_dark", height=250, title="Subsidence Trend")
 st.plotly_chart(fig2, use_container_width=True)
 
 # ------------------------------------------------------------------------------
 # 📝 INTERPRETATION
 # ------------------------------------------------------------------------------
 st.markdown("### 📝 Scientific Interpretation")
-
 st.write(f"""
 - Subsidence evolving with time: **{time_h} hours**
 - Maximum deformation: **{s_max:.2f} m**
 - Thermal field peak: **{temp.max():.1f} °C**
+- Material UCS reduced: **{ucs_reduced.mean():.1f} MPa**
 - System risk level: **{risk_level}**
-
-👉 Model includes:
-- Thermo-mechanical coupling
-- Stress-driven fractures
-- Dynamic combustion front
+- Model includes:
+    - Thermo-mechanical coupling
+    - Stress-driven fractures
+    - Dynamic combustion front
 """)
+
 
 # ==============================================================================
 # --- 📑 CHUQURLASHTIRILGAN ILMIY HISOBOT ---
