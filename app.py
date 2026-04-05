@@ -16,6 +16,9 @@ except ImportError:
     st.warning("⚠️ PyTorch o'rnatilmagan. RandomForestClassifier ishlatiladi.")
     from sklearn.ensemble import RandomForestClassifier
 
+# =========================== XAVFSIZLIK UCHUN KICHIK SON ===========================
+EPS = 1e-12
+
 # --- Sahifa sozlamalari ---
 st.set_page_config(page_title="Universal Geomechanical Monitor", layout="wide")
 st.title("🌐 Universal Yer yuzasi Deformatsiyasi Monitoringi")
@@ -57,7 +60,7 @@ if formula_option != "Yopish":
             st.info("**Geomexanika:** Selek barqarorligi, plastik zona va yer yuzasining gorizontal deformatsiyasi.")
 
 # ==============================================================================
-# --- ⚙️ SIDEBAR: PARAMETRLAR (o'zgarishsiz) ---
+# --- ⚙️ SIDEBAR: PARAMETRLAR ---
 # ==============================================================================
 st.sidebar.header("⚙️ Umumiy parametrlar")
 obj_name      = st.sidebar.text_input("Loyiha nomi:", value="Angren-UCG-001")
@@ -78,6 +81,19 @@ st.sidebar.subheader("🔥 Yonish va Termal")
 burn_duration = st.sidebar.number_input("Kamera yonish muddati (soat):", value=40)
 T_source_max  = st.sidebar.slider("Maksimal harorat (°C)", 600, 1200, 1075)
 
+# =========================== TIMELINE (LOYIHA BOSQICHLARI) ===========================
+with st.sidebar.expander("📅 Loyiha bosqichlari (Timeline)"):
+    st.markdown("""
+| Bosqich | Vaqti | Tavsif |
+|---------|-------|--------|
+| **Rejalashtirish** | 2026-04-01 | Validatsiya, xavfsiz bo‘lish funksiyalarini ishlab chiqish |
+| **Modellarni optimallashtirish** | 2026-05-15 | NN/RF testlash, FDM yaxshilash, keshlashtirish |
+| **Integratsiya va testlash** | 2026-06-30 | Unit testlar, yakuniy vizualizatsiya, deploy |
+    """)
+
+# ==============================================================================
+# --- QATLAM MA'LUMOTLARINI YIG'ISH ---
+# ==============================================================================
 strata_colors = ['#87CEEB', '#F4A460', '#D3D3D3', '#F5DEB3', '#555555']
 layers_data   = []
 total_depth   = 0.0
@@ -103,12 +119,33 @@ for i in range(int(num_layers)):
     })
     total_depth += thick
 
+# =========================== QATLAM VALIDATSIYASI ===========================
+def validate_layer(layer: dict) -> list:
+    errors = []
+    if layer['t'] <= 0:
+        errors.append("Qalinlik >0 bo‘lishi kerak")
+    if layer['ucs'] <= 0:
+        errors.append("UCS >0 MPa bo‘lishi kerak")
+    if layer['rho'] <= 0:
+        errors.append("Zichlik >0 kg/m³ bo‘lishi kerak")
+    if not (10 <= layer['gsi'] <= 100):
+        errors.append("GSI 10...100 oralig‘ida bo‘lishi kerak")
+    if layer['mi'] <= 0:
+        errors.append("mi >0 bo‘lishi kerak")
+    return errors
+
+for idx, lyr in enumerate(layers_data):
+    errs = validate_layer(lyr)
+    if errs:
+        st.error(f"❌ {lyr['name']} qatlamida xato: {', '.join(errs)}")
+        st.stop()
+
 if not layers_data:
     st.error("❌ Kamida 1 ta qatlam kiriting!")
     st.stop()
 
 # ==============================================================================
-# --- 📐 GRID VA MANBA HISOB-KITOBLARI (o'zgarishsiz) ---
+# --- 📐 GRID VA MANBA HISOB-KITOBLARI (xavfsiz bo'lish qo'shilgan) ---
 # ==============================================================================
 x_axis = np.linspace(-total_depth * 1.5, total_depth * 1.5, 150)
 z_axis = np.linspace(0, total_depth + 50, 120)
@@ -162,15 +199,15 @@ for key, val in sources.items():
         temp_2d  += (curr_T - 25) * np.exp(-dist_sq / (pen_depth ** 2 + 15 ** 2))
 
 # ==============================================================================
-# --- 🔥 PDE HEAT SOLVER (FDM) (o'zgarishsiz) ---
+# --- 🔥 PDE HEAT SOLVER (FDM) ---
 # ==============================================================================
 def solve_heat_step(T: np.ndarray, Q: np.ndarray, alpha: float, dx: float, dt: float) -> np.ndarray:
     Tn = T.copy()
     Tn[1:-1, 1:-1] = (
         T[1:-1, 1:-1]
         + alpha * dt * (
-            (T[2:,  1:-1] - 2 * T[1:-1, 1:-1] + T[:-2, 1:-1]) / dx ** 2
-            + (T[1:-1, 2:] - 2 * T[1:-1, 1:-1] + T[1:-1, :-2]) / dx ** 2
+            (T[2:,  1:-1] - 2 * T[1:-1, 1:-1] + T[:-2, 1:-1]) / (dx ** 2 + EPS)
+            + (T[1:-1, 2:] - 2 * T[1:-1, 1:-1] + T[1:-1, :-2]) / (dx ** 2 + EPS)
         )
         + Q[1:-1, 1:-1] * dt
     )
@@ -193,7 +230,7 @@ st.session_state.max_temp_map = np.maximum(st.session_state.max_temp_map, temp_2
 delta_T = temp_2d - 25.0
 
 # ==============================================================================
-# --- 🧱 TM TAHLIL: KUCHLANISH, DAMAGE, FAILURE (o'zgarishsiz) ---
+# --- 🧱 TM TAHLIL: KUCHLANISH, DAMAGE, FAILURE (xavfsiz bo'lish qo'shilgan) ---
 # ==============================================================================
 temp_eff  = np.maximum(st.session_state.max_temp_map - 100, 0)
 damage    = np.clip(1 - np.exp(-0.002 * temp_eff), 0, 0.95)
@@ -203,7 +240,7 @@ E_MODULUS, ALPHA_T_COEFF, CONSTRAINT_FACTOR = 5000.0, 1.0e-5, 0.7
 dT_dx, dT_dz = np.gradient(temp_2d, axis=1), np.gradient(temp_2d, axis=0)
 thermal_gradient = np.sqrt(dT_dx**2 + dT_dz**2)
 
-sigma_thermal  = CONSTRAINT_FACTOR * (E_MODULUS * ALPHA_T_COEFF * delta_T) / (1 - nu_poisson)
+sigma_thermal  = CONSTRAINT_FACTOR * (E_MODULUS * ALPHA_T_COEFF * delta_T) / (1 - nu_poisson + EPS)
 sigma_thermal += 0.3 * thermal_gradient
 
 grid_sigma_h = k_ratio * grid_sigma_v - sigma_thermal
@@ -213,23 +250,23 @@ sigma3_act   = np.minimum(grid_sigma_v, grid_sigma_h)
 if tensile_mode == "Empirical (UCS)":
     grid_sigma_t0_base = tensile_ratio * sigma_ci
 elif tensile_mode == "HB-based (auto)":
-    grid_sigma_t0_base = (sigma_ci * grid_s_hb) / (1 + grid_mb)
+    grid_sigma_t0_base = (sigma_ci * grid_s_hb) / (1 + grid_mb + EPS)
 else:
     grid_sigma_t0_base = grid_sigma_t0_manual
 
 sigma_t_field     = grid_sigma_t0_base * np.exp(-beta_thermal * (temp_2d - 20))
 thermal_boost     = 1 + 0.6 * (1 - np.exp(-delta_T / 200))
-sigma_t_field_eff = sigma_t_field / thermal_boost
+sigma_t_field_eff = sigma_t_field / (thermal_boost + EPS)
 
 tensile_failure = (sigma3_act <= -sigma_t_field_eff) & (delta_T > 50) & (sigma1_act > sigma3_act)
 sigma3_safe     = np.maximum(sigma3_act, 0.01)
-sigma1_limit    = sigma3_safe + sigma_ci * (grid_mb * sigma3_safe / (sigma_ci + 1e-6) + grid_s_hb) ** grid_a_hb
+sigma1_limit    = sigma3_safe + sigma_ci * (grid_mb * sigma3_safe / (sigma_ci + EPS) + grid_s_hb) ** grid_a_hb
 shear_failure = sigma1_act >= sigma1_limit
 
 spalling = tensile_failure & (temp_2d > 400)
 crushing  = shear_failure  & (temp_2d > 600)
 
-depth_factor     = np.exp(-grid_z / total_depth)
+depth_factor     = np.exp(-grid_z / (total_depth + EPS))
 local_collapse_T = np.clip((st.session_state.max_temp_map - 600) / 300, 0, 1)
 time_factor      = np.clip((time_h - 40) / 60, 0, 1)
 collapse_final   = local_collapse_T * time_factor * (1 - depth_factor)
@@ -246,7 +283,7 @@ sigma3_act = np.where(void_mask_permanent, 0.0, sigma3_act)
 sigma_ci   = np.where(void_mask_permanent, 0.01, sigma_ci)
 
 # ==============================================================================
-# --- 💨 GAS FLOW (DARCY QONUNI) (o'zgarishsiz) ---
+# --- 💨 GAS FLOW (DARCY QONUNI) ---
 # ==============================================================================
 pressure     = temp_2d * 10.0
 dp_dx, dp_dz = np.gradient(pressure, axis=1), np.gradient(pressure, axis=0)
@@ -300,27 +337,23 @@ def get_nn_model():
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
     loss_fn = nn.BCELoss()
 
-    # O'qitish (50 epoch)
     for epoch in range(50):
         pred = model(X)
         loss = loss_fn(pred, y)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-        # if epoch % 10 == 0: print(f"Epoch {epoch}, Loss: {loss.item():.4f}")
 
     model.eval()
     return model
 
 def predict_nn(model, temp, s1, s3, depth):
-    """Model orqali collapse ehtimolini hisoblash"""
     X = np.column_stack([temp.flatten(), s1.flatten(), s3.flatten(), depth.flatten()])
     X_t = torch.tensor(X, dtype=torch.float32)
     with torch.no_grad():
         pred = model(X_t).numpy()
     return pred.reshape(temp.shape)
 
-# Modelni olish (agar PyTorch mavjud bo'lsa)
 nn_model = get_nn_model()
 
 if nn_model is not None and PT_AVAILABLE:
@@ -330,7 +363,6 @@ if nn_model is not None and PT_AVAILABLE:
         st.warning(f"PyTorch modelida xatolik: {e}. RandomForest ishlatiladi.")
         nn_model = None
 
-# Agar PyTorch ishlamasa yoki o'rnatilmagan bo'lsa, RandomForest-ga qaytish
 if nn_model is None or not PT_AVAILABLE:
     from sklearn.ensemble import RandomForestClassifier
     X_ai = np.column_stack([temp_2d.flatten(), sigma1_act.flatten(), sigma3_act.flatten(), grid_z.flatten()])
@@ -343,7 +375,7 @@ if nn_model is None or not PT_AVAILABLE:
         collapse_pred = np.zeros_like(temp_2d)
 
 # ==============================================================================
-# --- ⚙️ SELEK OPTIMIZATSIYASI (o'zgarishsiz) ---
+# --- ⚙️ SELEK OPTIMIZATSIYASI (xavfsiz bo'lish qo'shilgan) ---
 # ==============================================================================
 avg_t_p      = np.mean(temp_2d[np.abs(z_axis - source_z).argmin(), :])
 strength_red = np.exp(-0.0025 * (avg_t_p - 20))
@@ -352,8 +384,8 @@ sv_seam      = grid_sigma_v[np.abs(z_axis - source_z).argmin(), :].max()
 
 w_sol = 20.0
 for _ in range(15):
-    p_strength  = (ucs_seam * strength_red) * (w_sol / H_seam) ** 0.5
-    y_zone_calc = (H_seam / 2) * (np.sqrt(sv_seam / (p_strength + 1e-6)) - 1)
+    p_strength  = (ucs_seam * strength_red) * (w_sol / (H_seam + EPS)) ** 0.5
+    y_zone_calc = (H_seam / 2) * (np.sqrt(sv_seam / (p_strength + EPS)) - 1)
     new_w       = 2 * max(y_zone_calc, 1.5) + 0.5 * H_seam
     if abs(new_w - w_sol) < 0.1:
         break
@@ -363,14 +395,14 @@ rec_width       = np.round(w_sol, 1)
 pillar_strength = p_strength
 y_zone          = max(y_zone_calc, 1.5)
 
-fos_2d = np.clip(sigma1_limit / (sigma1_act + 1e-6), 0, 3.0)
+fos_2d = np.clip(sigma1_limit / (sigma1_act + EPS), 0, 3.0)
 fos_2d = np.where(void_mask_permanent, 0.0, fos_2d)
 
 void_frac_base = float(np.mean(void_mask_permanent))
 
 def objective(w_arr: np.ndarray) -> float:
     w = w_arr[0]
-    strength = (ucs_seam * strength_red) * (w / H_seam) ** 0.5
+    strength = (ucs_seam * strength_red) * (w / (H_seam + EPS)) ** 0.5
     risk = void_frac_base * np.exp(-0.01 * (w - rec_width))
     return -(strength - 15.0 * risk)
 
@@ -378,7 +410,7 @@ opt_result       = minimize(objective, x0=[rec_width], bounds=[(5.0, 100.0)], me
 optimal_width_ai = float(np.clip(opt_result.x[0], 5.0, 100.0))
 
 # ==============================================================================
-# --- 📊 METRIKALAR (o'zgarishsiz) ---
+# --- 📊 METRIKALAR ---
 # ==============================================================================
 st.subheader(f"📊 {obj_name}: Monitoring va Ekspert Xulosasi")
 m1, m2, m3, m4, m5 = st.columns(5)
@@ -390,7 +422,7 @@ m5.metric("AI Tavsiya (Selek)",   f"{optimal_width_ai:.1f} m",
           delta=f"Klassik: {rec_width} m", delta_color="off")
 
 # ==============================================================================
-# --- 📈 CHO'KISH VA HOEK-BROWN GRAFIKLARI (o'zgarishsiz) ---
+# --- 📈 CHO'KISH VA HOEK-BROWN GRAFIKALARI ---
 # ==============================================================================
 st.markdown("---")
 col_g1, col_g2, col_g3 = st.columns([1.5, 1.5, 2])
@@ -418,11 +450,11 @@ with col_g2:
 with col_g3:
     sigma3_ax = np.linspace(0, ucs_seam * 0.5, 100)
     mb_s, s_s, a_s = grid_mb.max(), grid_s_hb.max(), grid_a_hb.max()
-    s1_20      = sigma3_ax + ucs_seam * (mb_s * sigma3_ax / (ucs_seam + 1e-6) + s_s) ** a_s
+    s1_20      = sigma3_ax + ucs_seam * (mb_s * sigma3_ax / (ucs_seam + EPS) + s_s) ** a_s
     ucs_burn   = ucs_seam * np.exp(-0.0025 * (T_source_max - 20))
-    s1_burning = sigma3_ax + ucs_burn * (mb_s * sigma3_ax / (ucs_burn + 1e-6) + s_s) ** a_s
+    s1_burning = sigma3_ax + ucs_burn * (mb_s * sigma3_ax / (ucs_burn + EPS) + s_s) ** a_s
     s1_sov     = sigma3_ax + (ucs_seam * strength_red) * (
-        mb_s * sigma3_ax / (ucs_seam * strength_red + 1e-6) + s_s) ** a_s
+        mb_s * sigma3_ax / (ucs_seam * strength_red + EPS) + s_s) ** a_s
     fig_hb = go.Figure()
     fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_20,      name='20°C',        line=dict(color='red',    width=2)))
     fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_sov,     name='Zararlangan', line=dict(color='cyan',   width=2, dash='dash')))
@@ -434,7 +466,7 @@ with col_g3:
     )
 
 # ==============================================================================
-# --- 🔥 TM MAYDONI (fig_tm) — kichik o'zgarish (AI nomi) ---
+# --- 🔥 TM MAYDONI (fig_tm) ---
 # ==============================================================================
 st.markdown("---")
 c1, c2 = st.columns([1, 2.5])
@@ -478,10 +510,10 @@ with c2:
     qx, qz = grid_x[::step, ::step].flatten(), grid_z[::step, ::step].flatten()
     qu, qw = vx[::step, ::step].flatten(), vz[::step, ::step].flatten()
     qmag = gas_velocity[::step, ::step].flatten()
-    qmag_max = qmag.max() + 1e-30
+    qmag_max = qmag.max() + EPS
     threshold = qmag_max * 0.05
     mask_q = qmag > threshold
-    angles = np.degrees(np.arctan2(qw[mask_q], qu[mask_q]))
+    angles = np.degrees(np.arctan2(qw[mask_q], qu[mask_q] + EPS))
     fig_tm.add_trace(go.Scatter(
         x=qx[mask_q], y=qz[mask_q], mode='markers',
         marker=dict(symbol='arrow', size=10, color=qmag[mask_q], colorscale='ice',
@@ -533,7 +565,7 @@ with c2:
             line=dict(color="lime", width=3), row=2, col=1
         )
 
-    # AI Collapse Prediction (yangilangan nom)
+    # AI Collapse Prediction
     fig_tm.add_trace(go.Heatmap(
         z=collapse_pred, x=x_axis, y=z_axis,
         colorscale='Viridis', opacity=0.4, showscale=False, name='AI Collapse (NN)'
@@ -548,7 +580,7 @@ with c2:
     st.plotly_chart(fig_tm, use_container_width=True)
 
 # ==============================================================================
-# --- 📊 KOMPLEKS MONITORING PANELI (o'zgarishsiz) ---
+# --- 📊 KOMPLEKS MONITORING PANELI ---
 # ==============================================================================
 st.header(f"📊 {obj_name}: Kompleks Monitoring Paneli")
 
@@ -559,7 +591,7 @@ def calculate_live_metrics(h, layers, T_max):
     curr_T    = (25 + (T_max - 25) * (min(h, 40) / 40) if h <= 40 else T_max * np.exp(-0.001 * (h - 40)))
     str_red   = np.exp(-0.0025 * (curr_T - 20))
     w_rec     = 15.0 + (h / 150) * 10
-    p_str     = (ucs_0 * str_red) * (w_rec / H_l) ** 0.5
+    p_str     = (ucs_0 * str_red) * (w_rec / (H_l + EPS)) ** 0.5
     max_sub   = (H_l * 0.05) * (min(h, 120) / 120)
     return p_str, w_rec, curr_T, max_sub
 
@@ -649,7 +681,7 @@ st.markdown("---")
 with st.expander("📝 Avtomatik Ilmiy Interpretatsiya", expanded=True):
     risk_level    = "YUQORI" if p_str < 15 else "O'RTA" if p_str < 25 else "PAST"
     ucs_initial   = layers_data[-1]['ucs']
-    reduction_pct = (1 - p_str / (ucs_initial + 1e-6)) * 100
+    reduction_pct = (1 - p_str / (ucs_initial + EPS)) * 100
     st.write(f"""
 **Tahlil natijasi ({time_h}-soat):**
 1. **Termal degradatsiya:** Harorat {t_now:.1f} °C ga yetishi natijasida ko'mir mustahkamligi
@@ -661,7 +693,7 @@ with st.expander("📝 Avtomatik Ilmiy Interpretatsiya", expanded=True):
 """)
 
 # ==============================================================================
-# --- 📑 CHUQURLASHTIRILGAN ILMIY HISOBOT (o'zgarishsiz) ---
+# --- 📑 CHUQURLASHTIRILGAN ILMIY HISOBOT ---
 # ==============================================================================
 st.markdown("---")
 st.header("🔍 Chuqurlashtirilgan Dinamik Tahlil va Metodik Asoslash")
@@ -676,8 +708,8 @@ sigma_v_tot = (gamma_kn * H_depth_tot) / 1000
 mb_dyn = mi_val * np.exp((gsi_val - 100) / (28 - 14 * D_factor))
 s_dyn  = np.exp((gsi_val - 100) / (9 - 3 * D_factor))
 ucs_t_dyn = ucs_0_r * np.exp(-BETA_CONST * (T_source_max - 20))
-p_str_final = ucs_t_dyn * (rec_width / H_seam) ** 0.5
-fos_final = p_str_final / (sigma_v_tot + 1e-6)
+p_str_final = ucs_t_dyn * (rec_width / (H_seam + EPS)) ** 0.5
+fos_final = p_str_final / (sigma_v_tot + EPS)
 
 t1, t2, t3 = st.tabs(["🏗️ Massiv Parametrlari", "🔥 Termal Degradatsiya", "⚖️ Barqarorlik & Manbalar"])
 
