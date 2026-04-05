@@ -81,7 +81,12 @@ st.sidebar.subheader("🔥 Yonish va Termal")
 burn_duration = st.sidebar.number_input("Kamera yonish muddati (soat):", value=40)
 T_source_max  = st.sidebar.slider("Maksimal harorat (°C)", 600, 1200, 1075)
 
-# =========================== TIMELINE (LOYIHA BOSQICHLARI) ===========================
+# ========== YANGI: Vaqt loopi sozlamalari ==========
+st.sidebar.subheader("⏱️ Dinamik vaqt loopi")
+time_steps = st.sidebar.slider("Vaqt qadamlari soni:", 10, 500, 100, help="Qancha ko'p bo'lsa, natija aniqroq, lekin sekinroq")
+dt = time_h * 3600 / time_steps   # sekundlarda vaqt qadami
+
+# =========================== TIMELINE ===========================
 with st.sidebar.expander("📅 Loyiha bosqichlari (Timeline)"):
     st.markdown("""
 | Bosqich | Vaqti | Tavsif |
@@ -145,7 +150,7 @@ if not layers_data:
     st.stop()
 
 # ==============================================================================
-# --- 📐 GRID VA MANBA HISOB-KITOBLARI (xavfsiz bo'lish qo'shilgan) ---
+# --- 📐 GRID VA MANBA HISOB-KITOBLARI ---
 # ==============================================================================
 x_axis = np.linspace(-total_depth * 1.5, total_depth * 1.5, 150)
 z_axis = np.linspace(0, total_depth + 50, 120)
@@ -186,8 +191,43 @@ sources = {
     '2': {'x': 0,                'start': 40},
     '3': {'x':  total_depth / 3, 'start': 80},
 }
-temp_2d = np.ones_like(grid_x) * 25.0
 
+# ========== YANGI: vaqtga bog'liq issiqlik manbai funksiyasi ==========
+def get_heat_source(t_hour):
+    """t_hour - vaqt (soat), qaytaradi Q_heat 2D array"""
+    Q = np.zeros_like(grid_x)
+    for val in sources.values():
+        if t_hour > val['start']:
+            elapsed = t_hour - val['start']
+            curr_T = (T_source_max if elapsed <= burn_duration
+                      else 25 + (T_source_max - 25) * np.exp(-0.03 * (elapsed - burn_duration)))
+            Q += (curr_T / 10.0) * np.exp(-((grid_x - val['x']) ** 2 + (grid_z - source_z) ** 2) / (2 * 30 ** 2))
+    return Q
+
+# ========== YANGI: diffuziya + konveksiya uchun to'liq issiqlik yechimi ==========
+def solve_heat_convection(T, Q, alpha, vx, vz, dx, dz, dt):
+    """Diffuziya (Laplas) + konveksiya (upwind) + manba"""
+    # 1. Diffuziya (to'liq Laplas)
+    Tn = T.copy()
+    # Laplas differensiallari (dx, dz farqli)
+    d2T_dx2 = (T[2:, 1:-1] - 2*T[1:-1, 1:-1] + T[:-2, 1:-1]) / (dx**2 + EPS)
+    d2T_dz2 = (T[1:-1, 2:] - 2*T[1:-1, 1:-1] + T[1:-1, :-2]) / (dz**2 + EPS)
+    Tn[1:-1, 1:-1] = T[1:-1, 1:-1] + alpha * dt * (d2T_dx2 + d2T_dz2) + Q[1:-1, 1:-1] * dt
+
+    # 2. Konveksiya (upwind)
+    dT_dx = np.zeros_like(T)
+    dT_dz = np.zeros_like(T)
+    dT_dx[1:-1, :] = (Tn[2:, :] - Tn[:-2, :]) / (2*dx)
+    dT_dz[:, 1:-1] = (Tn[:, 2:] - Tn[:, :-2]) / (2*dz)
+    conv = vx * dT_dx + vz * dT_dz
+    T_new = Tn - dt * conv
+    return T_new
+
+# ==============================================================================
+# --- 🔥 DINAMIK VAQT LOOPI (konveksiya, damage, o'tkazuvchanlik, stress) ---
+# ==============================================================================
+# Boshlang'ich maydonlar (oddiy diffuziya bilan oldindan hisoblangan)
+temp_2d_init = np.ones_like(grid_x) * 25.0
 for key, val in sources.items():
     if time_h > val['start']:
         dt_sec    = (time_h - val['start']) * 3600
@@ -196,44 +236,88 @@ for key, val in sources.items():
         curr_T    = (T_source_max if elapsed <= burn_duration
                      else 25 + (T_source_max - 25) * np.exp(-0.03 * (elapsed - burn_duration)))
         dist_sq   = (grid_x - val['x']) ** 2 + (grid_z - source_z) ** 2
-        temp_2d  += (curr_T - 25) * np.exp(-dist_sq / (pen_depth ** 2 + 15 ** 2))
+        temp_2d_init  += (curr_T - 25) * np.exp(-dist_sq / (pen_depth ** 2 + 15 ** 2))
 
-# ==============================================================================
-# --- 🔥 PDE HEAT SOLVER (FDM) ---
-# ==============================================================================
-def solve_heat_step(T: np.ndarray, Q: np.ndarray, alpha: float, dx: float, dt: float) -> np.ndarray:
-    Tn = T.copy()
-    Tn[1:-1, 1:-1] = (
-        T[1:-1, 1:-1]
-        + alpha * dt * (
-            (T[2:,  1:-1] - 2 * T[1:-1, 1:-1] + T[:-2, 1:-1]) / (dx ** 2 + EPS)
-            + (T[1:-1, 2:] - 2 * T[1:-1, 1:-1] + T[1:-1, :-2]) / (dx ** 2 + EPS)
-        )
-        + Q[1:-1, 1:-1] * dt
-    )
-    return Tn
+# Vaqt loopi uchun o'zgaruvchilar
+T_dyn = temp_2d_init.copy()
+D_dyn = np.zeros_like(T_dyn)
+k_dyn = np.zeros_like(T_dyn)
+sigma1_act = np.zeros_like(T_dyn)
+sigma3_act = np.zeros_like(T_dyn)
+# Boshlang'ich kuchlanishlar (geostatik)
+sigma1_act = grid_sigma_v.copy()
+sigma3_act = k_ratio * grid_sigma_v.copy()
 
-Q_heat = np.zeros_like(temp_2d)
-for val in sources.values():
-    if time_h > val['start']:
-        cx, cz   = val['x'], source_z
-        elapsed  = time_h - val['start']
-        curr_T   = (T_source_max if elapsed <= burn_duration
-                    else 25 + (T_source_max - 25) * np.exp(-0.03 * (elapsed - burn_duration)))
-        Q_heat  += (curr_T / 10.0) * np.exp(-((grid_x - cx) ** 2 + (grid_z - cz) ** 2) / (2 * 30 ** 2))
+# Grid qadamlari
+dx = x_axis[1] - x_axis[0]
+dz = z_axis[1] - z_axis[0]
 
-DX, DT, N_STEPS = 1.0, 0.1, 20
-for _ in range(N_STEPS):
-    temp_2d = solve_heat_step(temp_2d, Q_heat, alpha_rock, dx=DX, dt=DT)
+# CFL shartini tekshirish (konveksiya barqarorligi)
+max_vel_est = 1e-5  # taxminiy maksimal tezlik
+cfl = max_vel_est * dt / min(dx, dz)
+if cfl > 0.5:
+    st.warning(f"⚠️ CFL={cfl:.2f} > 0.5. Konveksiya beqaror bo'lishi mumkin. Vaqt qadamlarini ko'paytiring (time_steps).")
 
-st.session_state.max_temp_map = np.maximum(st.session_state.max_temp_map, temp_2d)
+progress_bar = st.progress(0, text="Dinamik hisob ketmoqda...")
+status_text = st.empty()
+
+# Vaqt loopi
+t_curr = 0.0  # sekund
+for step in range(time_steps):
+    t_curr += dt
+    t_hour = t_curr / 3600
+
+    # 1. Issiqlik manbasini yangilash
+    Q_heat = get_heat_source(t_hour)
+
+    # 2. Damage evolution (kumulyativ)
+    sigma_eq = np.maximum(sigma1_act - sigma3_act, 0)
+    T_K = T_dyn + 273.15
+    dD_dt = 0.0001 * sigma_eq**2 * np.exp(-2000 / (T_K + EPS))
+    D_dyn = D_dyn + dt * dD_dt
+    D_dyn = np.clip(D_dyn, 0, 0.95)
+
+    # 3. Permeability (damage + stress)
+    k_dyn = 1e-15 * (1 + 50 * D_dyn) * np.exp(0.1 * sigma_eq)
+
+    # 4. Gaz oqimi (Darcy)
+    P = T_dyn * 10.0
+    dp_dx, dp_dz = np.gradient(P, axis=1), np.gradient(P, axis=0)
+    vx = -k_dyn * dp_dx
+    vz = -k_dyn * dp_dz
+
+    # 5. Issiqlik konveksiyasi + diffuziyasi
+    T_dyn = solve_heat_convection(T_dyn, Q_heat, alpha_rock, vx, vz, dx, dz, dt)
+    T_dyn = np.maximum(T_dyn, 25.0)  # minimal harorat
+
+    # 6. Stress yangilanishi (termal)
+    delta_T = T_dyn - 25.0
+    dT_dx, dT_dz = np.gradient(T_dyn, axis=1), np.gradient(T_dyn, axis=0)
+    thermal_gradient = np.sqrt(dT_dx**2 + dT_dz**2)
+    sigma_thermal = 0.7 * (5000.0 * 1e-5 * delta_T) / (1 - nu_poisson + EPS) + 0.3 * thermal_gradient
+    sigma_h = k_ratio * grid_sigma_v - sigma_thermal
+    sigma1_act = np.maximum(grid_sigma_v, sigma_h)
+    sigma3_act = np.minimum(grid_sigma_v, sigma_h)
+
+    # 7. Maksimal haroratni saqlash
+    st.session_state.max_temp_map = np.maximum(st.session_state.max_temp_map, T_dyn)
+
+    # Progress
+    progress_bar.progress((step+1)/time_steps)
+    status_text.text(f"Qadam {step+1}/{time_steps} | t = {t_hour:.1f} soat | Maks T = {np.max(T_dyn):.0f}°C")
+
+progress_bar.empty()
+status_text.empty()
+
+# Yakuniy maydonlarni o'zlashtirish
+temp_2d = T_dyn.copy()
+damage = D_dyn.copy()
+perm = k_dyn.copy()
 delta_T = temp_2d - 25.0
 
 # ==============================================================================
-# --- 🧱 TM TAHLIL: KUCHLANISH, DAMAGE, FAILURE (xavfsiz bo'lish qo'shilgan) ---
+# --- 🧱 TM TAHLIL: KUCHLANISH, FAILURE, VOID (yangilangan damage asosida) ---
 # ==============================================================================
-temp_eff  = np.maximum(st.session_state.max_temp_map - 100, 0)
-damage    = np.clip(1 - np.exp(-0.002 * temp_eff), 0, 0.95)
 sigma_ci  = grid_ucs * (1 - damage)
 
 E_MODULUS, ALPHA_T_COEFF, CONSTRAINT_FACTOR = 5000.0, 1.0e-5, 0.7
@@ -275,15 +359,16 @@ void_mask_raw       = spalling | crushing | (st.session_state.max_temp_map > 900
 void_mask_smooth    = gaussian_filter(void_mask_raw.astype(float), sigma=1.5)
 void_mask_permanent = (void_mask_smooth > 0.3) & (collapse_final > 0.05)
 
-perm        = 1e-15 * (1 + 20 * damage + 50 * void_mask_permanent.astype(float))
-void_volume = np.sum(void_mask_permanent) * (x_axis[1] - x_axis[0]) * (z_axis[1] - z_axis[0])
+# O'tkazuvchanlikni yangilash (void hisobga olinadi)
+perm = 1e-15 * (1 + 20 * damage + 50 * void_mask_permanent.astype(float))
+void_volume = np.sum(void_mask_permanent) * dx * dz
 
 sigma1_act = np.where(void_mask_permanent, 0.0, sigma1_act)
 sigma3_act = np.where(void_mask_permanent, 0.0, sigma3_act)
 sigma_ci   = np.where(void_mask_permanent, 0.01, sigma_ci)
 
 # ==============================================================================
-# --- 💨 GAS FLOW (DARCY QONUNI) ---
+# --- 💨 GAS FLOW (yakuniy oqim) ---
 # ==============================================================================
 pressure     = temp_2d * 10.0
 dp_dx, dp_dz = np.gradient(pressure, axis=1), np.gradient(pressure, axis=0)
@@ -291,14 +376,12 @@ vx, vz       = -perm * dp_dx, -perm * dp_dz
 gas_velocity = np.sqrt(vx**2 + vz**2)
 
 # ==============================================================================
-# --- 🧠 AI MODEL — Neural Network (PyTorch) ---
+# --- 🧠 AI MODEL (o'zgarishsiz, faqat yakuniy natijalar asosida) ---
 # ==============================================================================
 @st.cache_resource(show_spinner=False)
 def get_nn_model():
-    """PyTorch modelini yaratish va o'qitish (faqat bir marta)"""
     if not PT_AVAILABLE:
         return None
-
     def generate_ucg_dataset(n=10000):
         data = []
         for _ in range(n):
@@ -316,31 +399,21 @@ def get_nn_model():
         def __init__(self):
             super().__init__()
             self.net = nn.Sequential(
-                nn.Linear(4, 32),
-                nn.ReLU(),
-                nn.Linear(32, 64),
-                nn.ReLU(),
-                nn.Linear(64, 1),
-                nn.Sigmoid()
+                nn.Linear(4, 32), nn.ReLU(),
+                nn.Linear(32, 64), nn.ReLU(),
+                nn.Linear(64, 1), nn.Sigmoid()
             )
-        def forward(self, x):
-            return self.net(x)
+        def forward(self, x): return self.net(x)
 
     data = generate_ucg_dataset()
     X = torch.tensor(data[:, :-1], dtype=torch.float32)
     y = torch.tensor(data[:, -1], dtype=torch.float32).view(-1, 1)
-
     model = CollapseNet()
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
     loss_fn = nn.BCELoss()
-
     for epoch in range(50):
-        pred = model(X)
-        loss = loss_fn(pred, y)
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-
+        pred = model(X); loss = loss_fn(pred, y)
+        optimizer.zero_grad(); loss.backward(); optimizer.step()
     model.eval()
     return model
 
@@ -352,12 +425,11 @@ def predict_nn(model, temp, s1, s3, depth):
     return pred.reshape(temp.shape)
 
 nn_model = get_nn_model()
-
 if nn_model is not None and PT_AVAILABLE:
     try:
         collapse_pred = predict_nn(nn_model, temp_2d, sigma1_act, sigma3_act, grid_z)
     except Exception as e:
-        st.warning(f"PyTorch modelida xatolik: {e}. RandomForest ishlatiladi.")
+        st.warning(f"PyTorch xatosi: {e}. RandomForest ishlatiladi.")
         nn_model = None
 
 if nn_model is None or not PT_AVAILABLE:
@@ -372,7 +444,7 @@ if nn_model is None or not PT_AVAILABLE:
         collapse_pred = np.zeros_like(temp_2d)
 
 # ==============================================================================
-# --- ⚙️ SELEK OPTIMIZATSIYASI (xavfsiz bo'lish qo'shilgan) ---
+# --- ⚙️ SELEK OPTIMIZATSIYASI (yangilangan harorat asosida) ---
 # ==============================================================================
 avg_t_p      = np.mean(temp_2d[np.abs(z_axis - source_z).argmin(), :])
 strength_red = np.exp(-0.0025 * (avg_t_p - 20))
@@ -384,8 +456,7 @@ for _ in range(15):
     p_strength  = (ucs_seam * strength_red) * (w_sol / (H_seam + EPS)) ** 0.5
     y_zone_calc = (H_seam / 2) * (np.sqrt(sv_seam / (p_strength + EPS)) - 1)
     new_w       = 2 * max(y_zone_calc, 1.5) + 0.5 * H_seam
-    if abs(new_w - w_sol) < 0.1:
-        break
+    if abs(new_w - w_sol) < 0.1: break
     w_sol = new_w
 
 rec_width       = np.round(w_sol, 1)
@@ -415,11 +486,10 @@ m1.metric("Pillar Strength (σp)", f"{pillar_strength:.1f} MPa")
 m2.metric("Plastik zona (y)",     f"{y_zone:.1f} m")
 m3.metric("Kamera Hajmi",         f"{void_volume:.1f} m²")
 m4.metric("Maks. O'tkazuvchanlik", f"{np.max(perm):.1e} m²")
-m5.metric("AI Tavsiya (Selek)",   f"{optimal_width_ai:.1f} m",
-          delta=f"Klassik: {rec_width} m", delta_color="off")
+m5.metric("AI Tavsiya (Selek)",   f"{optimal_width_ai:.1f} m", delta=f"Klassik: {rec_width} m", delta_color="off")
 
 # ==============================================================================
-# --- 📈 CHO'KISH VA HOEK-BROWN GRAFIKALARI ---
+# --- 📈 CHO'KISH VA HOEK-BROWN GRAFIKALARI (o'zgarishsiz) ---
 # ==============================================================================
 st.markdown("---")
 col_g1, col_g2, col_g3 = st.columns([1.5, 1.5, 2])
@@ -429,45 +499,27 @@ sub_p  = -s_max * np.exp(-(x_axis ** 2) / (2 * (total_depth / 2) ** 2))
 uplift = (total_depth * 1e-4) * np.exp(-(x_axis ** 2) / (total_depth * 10)) * (time_h / 150) * 100
 
 with col_g1:
-    st.plotly_chart(
-        go.Figure(go.Scatter(x=x_axis, y=sub_p * 100, fill='tozeroy',
-                             line=dict(color='magenta', width=3)))
-        .update_layout(title="📉 Yer yuzasi cho'kishi (cm)", template="plotly_dark", height=300),
-        use_container_width=True
-    )
-
+    st.plotly_chart(go.Figure(go.Scatter(x=x_axis, y=sub_p*100, fill='tozeroy', line=dict(color='magenta', width=3))).update_layout(title="📉 Yer yuzasi cho'kishi (cm)", template="plotly_dark", height=300), use_container_width=True)
 with col_g2:
-    st.plotly_chart(
-        go.Figure(go.Scatter(x=x_axis, y=uplift, fill='tozeroy',
-                             line=dict(color='cyan', width=3)))
-        .update_layout(title="🔥 Termal deformatsiya (cm)", template="plotly_dark", height=300),
-        use_container_width=True
-    )
-
+    st.plotly_chart(go.Figure(go.Scatter(x=x_axis, y=uplift, fill='tozeroy', line=dict(color='cyan', width=3))).update_layout(title="🔥 Termal deformatsiya (cm)", template="plotly_dark", height=300), use_container_width=True)
 with col_g3:
     sigma3_ax = np.linspace(0, ucs_seam * 0.5, 100)
     mb_s, s_s, a_s = grid_mb.max(), grid_s_hb.max(), grid_a_hb.max()
     s1_20      = sigma3_ax + ucs_seam * (mb_s * sigma3_ax / (ucs_seam + EPS) + s_s) ** a_s
     ucs_burn   = ucs_seam * np.exp(-0.0025 * (T_source_max - 20))
     s1_burning = sigma3_ax + ucs_burn * (mb_s * sigma3_ax / (ucs_burn + EPS) + s_s) ** a_s
-    s1_sov     = sigma3_ax + (ucs_seam * strength_red) * (
-        mb_s * sigma3_ax / (ucs_seam * strength_red + EPS) + s_s) ** a_s
+    s1_sov     = sigma3_ax + (ucs_seam * strength_red) * (mb_s * sigma3_ax / (ucs_seam * strength_red + EPS) + s_s) ** a_s
     fig_hb = go.Figure()
-    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_20,      name='20°C',        line=dict(color='red',    width=2)))
-    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_sov,     name='Zararlangan', line=dict(color='cyan',   width=2, dash='dash')))
-    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_burning, name='Yonish',      line=dict(color='orange', width=4)))
-    st.plotly_chart(
-        fig_hb.update_layout(title="🛡️ Hoek-Brown Envelopes", template="plotly_dark", height=300,
-                             legend=dict(orientation="h", y=-0.3, x=0.5, xanchor="center")),
-        use_container_width=True
-    )
+    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_20, name='20°C', line=dict(color='red', width=2)))
+    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_sov, name='Zararlangan', line=dict(color='cyan', width=2, dash='dash')))
+    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_burning, name='Yonish', line=dict(color='orange', width=4)))
+    st.plotly_chart(fig_hb.update_layout(title="🛡️ Hoek-Brown Envelopes", template="plotly_dark", height=300, legend=dict(orientation="h", y=-0.3, x=0.5, xanchor="center")), use_container_width=True)
 
 # ==============================================================================
-# --- 🔥 TM MAYDONI (fig_tm) ---
+# --- 🔥 TM MAYDONI (fig_tm) - o'zgarishsiz, faqat yangi maydonlar bilan ---
 # ==============================================================================
 st.markdown("---")
 c1, c2 = st.columns([1, 2.5])
-
 with c1:
     st.subheader("📋 Ilmiy Tahlil")
     st.error("🔴 FOS < 1.0: Failure")
@@ -475,33 +527,16 @@ with c1:
     st.success("🟢 FOS > 1.5: Stable")
     fig_s = go.Figure()
     for lyr in layers_data:
-        fig_s.add_trace(go.Bar(x=['Kesim'], y=[lyr['t']], name=lyr['name'],
-                               marker_color=lyr['color'], width=0.4))
-    st.plotly_chart(
-        fig_s.update_layout(barmode='stack', template="plotly_dark",
-                            yaxis=dict(autorange='reversed'), height=450, showlegend=False),
-        use_container_width=True
-    )
+        fig_s.add_trace(go.Bar(x=['Kesim'], y=[lyr['t']], name=lyr['name'], marker_color=lyr['color'], width=0.4))
+    st.plotly_chart(fig_s.update_layout(barmode='stack', template="plotly_dark", yaxis=dict(autorange='reversed'), height=450, showlegend=False), use_container_width=True)
 
 with c2:
     st.subheader("🔥 TM Maydoni va Selek Interferensiyasi")
-
-    fig_tm = make_subplots(
-        rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.15,
-        subplot_titles=(
-            "Harorat Maydoni (°C) + Gaz Oqimi",
-            "FOS + AI Collapse Prediction (NN) + Yielded Zones"
-        )
-    )
-
-    # Harorat heatmap
-    fig_tm.add_trace(go.Heatmap(
-        z=temp_2d, x=x_axis, y=z_axis,
-        colorscale='Hot', zmin=25, zmax=T_source_max,
-        colorbar=dict(title="T (°C)", title_side="top", x=1.05, y=0.78, len=0.42, thickness=15),
-        name="Harorat"
-    ), row=1, col=1)
-
+    fig_tm = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.15,
+                           subplot_titles=("Harorat Maydoni (°C) + Gaz Oqimi", "FOS + AI Collapse Prediction (NN) + Yielded Zones"))
+    # Harorat
+    fig_tm.add_trace(go.Heatmap(z=temp_2d, x=x_axis, y=z_axis, colorscale='Hot', zmin=25, zmax=T_source_max,
+                                colorbar=dict(title="T (°C)", title_side="top", x=1.05, y=0.78, len=0.42, thickness=15), name="Harorat"), row=1, col=1)
     # Gaz oqimi
     step = 12
     qx, qz = grid_x[::step, ::step].flatten(), grid_z[::step, ::step].flatten()
@@ -511,267 +546,116 @@ with c2:
     threshold = qmag_max * 0.05
     mask_q = qmag > threshold
     angles = np.degrees(np.arctan2(qw[mask_q], qu[mask_q] + EPS))
-    fig_tm.add_trace(go.Scatter(
-        x=qx[mask_q], y=qz[mask_q], mode='markers',
-        marker=dict(symbol='arrow', size=10, color=qmag[mask_q], colorscale='ice',
-                    cmin=0, cmax=qmag_max, angle=angles, opacity=0.85, showscale=False,
-                    line=dict(width=0)),
-        name="Gaz oqimi", hovertemplate="x=%{x:.0f}m  z=%{z:.0f}m<extra></extra>"
-    ), row=1, col=1)
-
-    # FOS Contour
-    fig_tm.add_trace(go.Contour(
-        z=fos_2d, x=x_axis, y=z_axis,
-        colorscale=[[0, 'red'], [0.33, 'yellow'], [0.5, 'green'], [1, 'darkgreen']],
-        zmin=0, zmax=3.0, contours_showlines=False,
-        colorbar=dict(title="FOS", title_side="top", x=1.05, y=0.22, len=0.42, thickness=15),
-        name="FOS"
-    ), row=2, col=1)
-
-    # Void (qora)
+    fig_tm.add_trace(go.Scatter(x=qx[mask_q], y=qz[mask_q], mode='markers',
+                                marker=dict(symbol='arrow', size=10, color=qmag[mask_q], colorscale='ice',
+                                            cmin=0, cmax=qmag_max, angle=angles, opacity=0.85, showscale=False,
+                                            line=dict(width=0)), name="Gaz oqimi"), row=1, col=1)
+    # FOS
+    fig_tm.add_trace(go.Contour(z=fos_2d, x=x_axis, y=z_axis, colorscale=[[0,'red'],[0.33,'yellow'],[0.5,'green'],[1,'darkgreen']],
+                                zmin=0, zmax=3.0, contours_showlines=False,
+                                colorbar=dict(title="FOS", title_side="top", x=1.05, y=0.22, len=0.42, thickness=15), name="FOS"), row=2, col=1)
+    # Void
     void_visual = np.where(void_mask_permanent > 0.1, 1.0, np.nan)
-    fig_tm.add_trace(go.Heatmap(
-        z=void_visual, x=x_axis, y=z_axis,
-        colorscale=[[0, 'black'], [1, 'black']], showscale=False, opacity=0.9, hoverinfo='skip'
-    ), row=2, col=1)
-
-    # Void kontur chegarasi
-    fig_tm.add_trace(go.Contour(
-        z=void_mask_permanent.astype(int), x=x_axis, y=z_axis,
-        showscale=False, contours=dict(coloring='lines'), line=dict(color='white', width=2), hoverinfo='skip'
-    ), row=2, col=1)
-
+    fig_tm.add_trace(go.Heatmap(z=void_visual, x=x_axis, y=z_axis, colorscale=[[0,'black'],[1,'black']], showscale=False, opacity=0.9, hoverinfo='skip'), row=2, col=1)
+    fig_tm.add_trace(go.Contour(z=void_mask_permanent.astype(int), x=x_axis, y=z_axis, showscale=False,
+                                contours=dict(coloring='lines'), line=dict(color='white', width=2), hoverinfo='skip'), row=2, col=1)
     # Failure nuqtalari
     shear_disp = np.copy(shear_failure); shear_disp[void_mask_permanent] = False
     tens_disp  = np.copy(tensile_failure); tens_disp[void_mask_permanent] = False
-    fig_tm.add_trace(go.Scatter(
-        x=grid_x[shear_disp][::2], y=grid_z[shear_disp][::2],
-        mode='markers', marker=dict(color='red', size=3, symbol='x'), name='Shear'
-    ), row=2, col=1)
-    fig_tm.add_trace(go.Scatter(
-        x=grid_x[tens_disp][::2], y=grid_z[tens_disp][::2],
-        mode='markers', marker=dict(color='blue', size=3, symbol='cross'), name='Tensile'
-    ), row=2, col=1)
-
+    fig_tm.add_trace(go.Scatter(x=grid_x[shear_disp][::2], y=grid_z[shear_disp][::2], mode='markers', marker=dict(color='red', size=3, symbol='x'), name='Shear'), row=2, col=1)
+    fig_tm.add_trace(go.Scatter(x=grid_x[tens_disp][::2], y=grid_z[tens_disp][::2], mode='markers', marker=dict(color='blue', size=3, symbol='cross'), name='Tensile'), row=2, col=1)
     # Selek to'rtburchagi
-    for px in [(sources['1']['x'] + sources['2']['x']) / 2,
-               (sources['2']['x'] + sources['3']['x']) / 2]:
-        fig_tm.add_shape(
-            type="rect", x0=px - rec_width/2, x1=px + rec_width/2,
-            y0=source_z - H_seam/2, y1=source_z + H_seam/2,
-            line=dict(color="lime", width=3), row=2, col=1
-        )
-
-    # AI Collapse Prediction
-    fig_tm.add_trace(go.Heatmap(
-        z=collapse_pred, x=x_axis, y=z_axis,
-        colorscale='Viridis', opacity=0.4, showscale=False, name='AI Collapse (NN)'
-    ), row=2, col=1)
-
-    fig_tm.update_layout(
-        template="plotly_dark", height=850, margin=dict(r=150, t=80, b=100),
-        showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=-0.12, xanchor="center", x=0.5)
-    )
+    for px in [(sources['1']['x']+sources['2']['x'])/2, (sources['2']['x']+sources['3']['x'])/2]:
+        fig_tm.add_shape(type="rect", x0=px-rec_width/2, x1=px+rec_width/2, y0=source_z-H_seam/2, y1=source_z+H_seam/2,
+                         line=dict(color="lime", width=3), row=2, col=1)
+    # AI Collapse
+    fig_tm.add_trace(go.Heatmap(z=collapse_pred, x=x_axis, y=z_axis, colorscale='Viridis', opacity=0.4, showscale=False, name='AI Collapse (NN)'), row=2, col=1)
+    fig_tm.update_layout(template="plotly_dark", height=850, margin=dict(r=150, t=80, b=100), showlegend=True,
+                         legend=dict(orientation="h", yanchor="bottom", y=-0.12, xanchor="center", x=0.5))
     fig_tm.update_yaxes(autorange='reversed', row=1, col=1)
     fig_tm.update_yaxes(autorange='reversed', row=2, col=1)
     st.plotly_chart(fig_tm, use_container_width=True)
 
 # ==============================================================================
-# --- 📊 KOMPLEKS MONITORING PANELI ---
+# --- 📊 KOMPLEKS MONITORING PANELI (o'zgarishsiz) ---
 # ==============================================================================
 st.header(f"📊 {obj_name}: Kompleks Monitoring Paneli")
-
 def calculate_live_metrics(h, layers, T_max):
-    target    = layers[-1]
-    ucs_0     = target['ucs']
-    H_l       = target['t']
-    curr_T    = (25 + (T_max - 25) * (min(h, 40) / 40) if h <= 40 else T_max * np.exp(-0.001 * (h - 40)))
-    str_red   = np.exp(-0.0025 * (curr_T - 20))
-    w_rec     = 15.0 + (h / 150) * 10
-    p_str     = (ucs_0 * str_red) * (w_rec / (H_l + EPS)) ** 0.5
-    max_sub   = (H_l * 0.05) * (min(h, 120) / 120)
+    target = layers[-1]
+    ucs_0, H_l = target['ucs'], target['t']
+    curr_T = (25 + (T_max-25)*(min(h,40)/40) if h<=40 else T_max*np.exp(-0.001*(h-40)))
+    str_red = np.exp(-0.0025*(curr_T-20))
+    w_rec = 15.0 + (h/150)*10
+    p_str = (ucs_0 * str_red) * (w_rec/(H_l+EPS))**0.5
+    max_sub = (H_l*0.05)*(min(h,120)/120)
     return p_str, w_rec, curr_T, max_sub
 
 p_str, w_rec_live, t_now, s_max_3d = calculate_live_metrics(time_h, layers_data, T_source_max)
-
 mk1, mk2, mk3, mk4 = st.columns(4)
 mk1.metric("Pillar Strength", f"{p_str:.1f} MPa", delta=f"{t_now:.0f} °C", delta_color="inverse")
 mk2.metric("Tavsiya: Selek Eni", f"{w_rec_live:.1f} m")
-mk3.metric("Maks. Cho'kish", f"{s_max_3d * 100:.1f} cm")
-mk4.metric("Jarayon bosqichi", "Faol" if time_h < 100 else "Sovish")
-
+mk3.metric("Maks. Cho'kish", f"{s_max_3d*100:.1f} cm")
+mk4.metric("Jarayon bosqichi", "Faol" if time_h<100 else "Sovish")
 st.markdown("---")
 
 # ==============================================================================
-# --- 🌐 YANGI REALISTIK 3D GEOMEXANIK MODEL ---
+# --- 🌐 REALISTIK 3D GEOMEXANIK MODEL (o'zgarishsiz) ---
 # ==============================================================================
 def generate_realistic_3d(h, layers, s_max, total_depth, source_z, H_seam):
-    """
-    Realistik 3D geomexanik model:
-    - Yer yuzasi cho'kish krateri
-    - Qatlamlar (deformatsiyalangan)
-    - Ko'mir qatlami (to'g'ri burchakli parallelepiped)
-    - Yonish kamerasi (silindr)
-    - Issiqlik plume (yarim shaffof ellipsoid)
-    - Yoriqlar (chiziqlar)
-    """
-    # 1. Grid yaratish
-    x = np.linspace(-150, 150, 40)
-    y = np.linspace(-100, 100, 40)
-    X, Y = np.meshgrid(x, y)
-    
-    # Cho'kish funksiyasi (Gauss krater)
-    subsidence = -s_max * np.exp(-(X**2 + Y**2) / (2 * (total_depth * 0.6)**2))
-    
+    x = np.linspace(-150,150,40); y = np.linspace(-100,100,40); X,Y = np.meshgrid(x,y)
+    subsidence = -s_max * np.exp(-(X**2+Y**2)/(2*(total_depth*0.6)**2))
     fig = go.Figure()
     curr_z_top = 0.0
-    # Qatlamlar ranglari
-    layer_colors = ['#8B5A2B', '#A9A9A9', '#CD853F', '#BC8F8F', '#6B8E23']
-    
-    for i, layer in enumerate(layers):
-        thickness = layer['t']
-        z_bottom = curr_z_top - thickness
-        # Deformatsiya chuqurlik bilan kamayadi
-        deform_factor = (1 - i/len(layers))
-        z_top_surface = curr_z_top + subsidence * deform_factor
-        z_bottom_surface = z_bottom + subsidence * (deform_factor * 0.8)
-        
-        color = layer_colors[i % len(layer_colors)]
-        # Yuza (top)
-        fig.add_trace(go.Surface(
-            x=X, y=Y, z=z_top_surface,
-            colorscale=[[0, color], [1, color]],
-            opacity=0.85, showscale=False, name=f"{layer['name']} (ustki)",
-            lighting=dict(ambient=0.6, diffuse=0.8)
-        ))
-        # Pastki yuza (bottom)
-        fig.add_trace(go.Surface(
-            x=X, y=Y, z=z_bottom_surface,
-            colorscale=[[0, color], [1, color]],
-            opacity=0.7, showscale=False, name=f"{layer['name']} (pastki)",
-            lighting=dict(ambient=0.5, diffuse=0.7)
-        ))
-        # Qirralar (chekka chiziqlar) – oddiy chiziqlar
-        # Top qirralar
-        for edge_x, edge_y in [(X[0,:], Y[0,:]), (X[-1,:], Y[-1,:]), (X[:,0], Y[:,0]), (X[:,-1], Y[:,-1])]:
-            z_edge = z_top_surface[0 if edge_x is X[0,:] else -1, :] if edge_x.ndim == 1 else z_top_surface[:, 0]
-            fig.add_trace(go.Scatter3d(
-                x=edge_x.flatten(), y=edge_y.flatten(), z=z_edge.flatten(),
-                mode='lines', line=dict(color='white', width=1), showlegend=False
-            ))
+    layer_colors = ['#8B5A2B','#A9A9A9','#CD853F','#BC8F8F','#6B8E23']
+    for i,layer in enumerate(layers):
+        thickness = layer['t']; z_bottom = curr_z_top - thickness
+        deform_factor = (1-i/len(layers))
+        z_top_surface = curr_z_top + subsidence*deform_factor
+        z_bottom_surface = z_bottom + subsidence*(deform_factor*0.8)
+        color = layer_colors[i%len(layer_colors)]
+        fig.add_trace(go.Surface(x=X,y=Y,z=z_top_surface, colorscale=[[0,color],[1,color]], opacity=0.85, showscale=False, name=f"{layer['name']} (ustki)", lighting=dict(ambient=0.6,diffuse=0.8)))
+        fig.add_trace(go.Surface(x=X,y=Y,z=z_bottom_surface, colorscale=[[0,color],[1,color]], opacity=0.7, showscale=False, name=f"{layer['name']} (pastki)", lighting=dict(ambient=0.5,diffuse=0.7)))
+        for edge_x,edge_y in [(X[0,:],Y[0,:]),(X[-1,:],Y[-1,:]),(X[:,0],Y[:,0]),(X[:,-1],Y[:,-1])]:
+            z_edge = z_top_surface[0 if edge_x is X[0,:] else -1,:] if edge_x.ndim==1 else z_top_surface[:,0]
+            fig.add_trace(go.Scatter3d(x=edge_x.flatten(),y=edge_y.flatten(),z=z_edge.flatten(), mode='lines', line=dict(color='white',width=1), showlegend=False))
         curr_z_top = z_bottom
-    
-    # 2. Ko'mir qatlami (eng pastki qatlam) – kub shaklida
     coal_layer = layers[-1]
-    coal_z_center = curr_z_top + coal_layer['t']/2   # curr_z_top endi - (total_depth)
-    coal_half_x = total_depth * 0.8
-    coal_half_y = total_depth * 0.5
-    coal_half_z = coal_layer['t']/2
-    
-    corners = np.array([
-        [-coal_half_x, -coal_half_y, -coal_half_z],
-        [ coal_half_x, -coal_half_y, -coal_half_z],
-        [ coal_half_x,  coal_half_y, -coal_half_z],
-        [-coal_half_x,  coal_half_y, -coal_half_z],
-        [-coal_half_x, -coal_half_y,  coal_half_z],
-        [ coal_half_x, -coal_half_y,  coal_half_z],
-        [ coal_half_x,  coal_half_y,  coal_half_z],
-        [-coal_half_x,  coal_half_y,  coal_half_z]
-    ]) + np.array([0, 0, coal_z_center])
-    
-    faces = [
-        [0,1,2], [0,2,3],  # pastki
-        [4,5,6], [4,6,7],  # ustki
-        [0,1,5], [0,5,4],  # old
-        [2,3,7], [2,7,6],  # orqa
-        [0,3,7], [0,7,4],  # chap
-        [1,2,6], [1,6,5]   # o'ng
-    ]
-    fig.add_trace(go.Mesh3d(
-        x=corners[:,0], y=corners[:,1], z=corners[:,2],
-        i=[f[0] for f in faces], j=[f[1] for f in faces], k=[f[2] for f in faces],
-        color='darkorange', opacity=0.9, name="Ko'mir qatlami", lighting=dict(ambient=0.4)
-    ))
-    
-    # 3. Yonish kamerasi (silindr) – gorizontal, qizil
-    reactor_radius = min(coal_half_z * 0.8, 8.0)
-    reactor_length = coal_half_x * 0.6
-    theta = np.linspace(0, 2*np.pi, 20)
-    z_cyl = np.linspace(-reactor_length, reactor_length, 20)
-    theta, z_cyl = np.meshgrid(theta, z_cyl)
-    x_cyl = reactor_radius * np.cos(theta)
-    y_cyl = reactor_radius * np.sin(theta)
-    center_x, center_y, center_z = 0, 0, coal_z_center
-    x_cyl += center_x
-    y_cyl += center_y
-    z_cyl_surf = z_cyl + center_z
-    fig.add_trace(go.Surface(
-        x=x_cyl, y=y_cyl, z=z_cyl_surf,
-        colorscale='Hot', opacity=0.95, name="Yonish kamerasi", showscale=False,
-        lighting=dict(ambient=0.3, diffuse=0.9)
-    ))
-    
-    # 4. Issiqlik plume (yarim shaffof ellipsoid)
-    plume_rad_x = reactor_radius * 4
-    plume_rad_y = reactor_radius * 3
-    plume_rad_z = coal_half_z * 2.5
-    u = np.linspace(0, 2*np.pi, 30)
-    v = np.linspace(0, np.pi, 30)
-    u, v = np.meshgrid(u, v)
-    x_plume = plume_rad_x * np.sin(v) * np.cos(u) + center_x
-    y_plume = plume_rad_y * np.sin(v) * np.sin(u) + center_y
-    z_plume = plume_rad_z * np.cos(v) + center_z
-    fig.add_trace(go.Surface(
-        x=x_plume, y=y_plume, z=z_plume,
-        colorscale=[[0, 'rgba(255,0,0,0)'], [1, 'rgba(255,100,0,0.4)']],
-        opacity=0.3, showscale=False, name="Termal plume", hoverinfo='skip'
-    ))
-    
-    # 5. Yoriqlar / sinishlar (bir necha qizil chiziq)
-    fractures = [
-        [[-40, -20, coal_z_center-2], [40, 20, coal_z_center+2]],
-        [[-30, 30, coal_z_center-1], [30, -30, coal_z_center+3]],
-        [[-20, -10, coal_z_center], [20, 10, coal_z_center+5]],
-    ]
+    coal_z_center = curr_z_top + coal_layer['t']/2
+    coal_half_x, coal_half_y, coal_half_z = total_depth*0.8, total_depth*0.5, coal_layer['t']/2
+    corners = np.array([[-coal_half_x,-coal_half_y,-coal_half_z],[ coal_half_x,-coal_half_y,-coal_half_z],[ coal_half_x, coal_half_y,-coal_half_z],[-coal_half_x, coal_half_y,-coal_half_z],[-coal_half_x,-coal_half_y, coal_half_z],[ coal_half_x,-coal_half_y, coal_half_z],[ coal_half_x, coal_half_y, coal_half_z],[-coal_half_x, coal_half_y, coal_half_z]]) + np.array([0,0,coal_z_center])
+    faces = [[0,1,2],[0,2,3],[4,5,6],[4,6,7],[0,1,5],[0,5,4],[2,3,7],[2,7,6],[0,3,7],[0,7,4],[1,2,6],[1,6,5]]
+    fig.add_trace(go.Mesh3d(x=corners[:,0],y=corners[:,1],z=corners[:,2], i=[f[0] for f in faces], j=[f[1] for f in faces], k=[f[2] for f in faces], color='darkorange', opacity=0.9, name="Ko'mir qatlami", lighting=dict(ambient=0.4)))
+    reactor_radius = min(coal_half_z*0.8,8.0); reactor_length = coal_half_x*0.6
+    theta = np.linspace(0,2*np.pi,20); z_cyl = np.linspace(-reactor_length,reactor_length,20); theta,z_cyl = np.meshgrid(theta,z_cyl)
+    x_cyl = reactor_radius*np.cos(theta); y_cyl = reactor_radius*np.sin(theta)
+    center_x,center_y,center_z = 0,0,coal_z_center
+    x_cyl+=center_x; y_cyl+=center_y; z_cyl_surf = z_cyl+center_z
+    fig.add_trace(go.Surface(x=x_cyl,y=y_cyl,z=z_cyl_surf, colorscale='Hot', opacity=0.95, name="Yonish kamerasi", showscale=False, lighting=dict(ambient=0.3,diffuse=0.9)))
+    plume_rad_x,plume_rad_y,plume_rad_z = reactor_radius*4, reactor_radius*3, coal_half_z*2.5
+    u = np.linspace(0,2*np.pi,30); v = np.linspace(0,np.pi,30); u,v = np.meshgrid(u,v)
+    x_plume = plume_rad_x*np.sin(v)*np.cos(u)+center_x
+    y_plume = plume_rad_y*np.sin(v)*np.sin(u)+center_y
+    z_plume = plume_rad_z*np.cos(v)+center_z
+    fig.add_trace(go.Surface(x=x_plume,y=y_plume,z=z_plume, colorscale=[[0,'rgba(255,0,0,0)'],[1,'rgba(255,100,0,0.4)']], opacity=0.3, showscale=False, name="Termal plume", hoverinfo='skip'))
+    fractures = [[[-40,-20,coal_z_center-2],[40,20,coal_z_center+2]],[[-30,30,coal_z_center-1],[30,-30,coal_z_center+3]],[[-20,-10,coal_z_center],[20,10,coal_z_center+5]]]
     for f in fractures:
-        fig.add_trace(go.Scatter3d(
-            x=[f[0][0], f[1][0]], y=[f[0][1], f[1][1]], z=[f[0][2], f[1][2]],
-            mode='lines', line=dict(color='red', width=3), name='Yoriq', showlegend=False
-        ))
-    
-    # 6. Grafik sozlamalari
-    fig.update_layout(
-        scene=dict(
-            xaxis=dict(title='X (m)', backgroundcolor='rgb(20,20,20)', gridcolor='gray'),
-            yaxis=dict(title='Y (m)', backgroundcolor='rgb(20,20,20)', gridcolor='gray'),
-            zaxis=dict(title='Z (m)', backgroundcolor='rgb(20,20,20)', gridcolor='gray',
-                       range=[-total_depth-20, 20]),
-            aspectmode='manual', aspectratio=dict(x=1.2, y=0.8, z=0.6),
-            camera=dict(eye=dict(x=1.5, y=1.5, z=1.2))
-        ),
-        height=700, margin=dict(l=0, r=0, b=0, t=0),
-        template='plotly_dark', title="Realistik 3D Geomexanik Model"
-    )
+        fig.add_trace(go.Scatter3d(x=[f[0][0],f[1][0]],y=[f[0][1],f[1][1]],z=[f[0][2],f[1][2]], mode='lines', line=dict(color='red',width=3), name='Yoriq', showlegend=False))
+    fig.update_layout(scene=dict(xaxis=dict(title='X (m)',backgroundcolor='rgb(20,20,20)',gridcolor='gray'), yaxis=dict(title='Y (m)',backgroundcolor='rgb(20,20,20)',gridcolor='gray'), zaxis=dict(title='Z (m)',backgroundcolor='rgb(20,20,20)',gridcolor='gray', range=[-total_depth-20,20]), aspectmode='manual', aspectratio=dict(x=1.2,y=0.8,z=0.6), camera=dict(eye=dict(x=1.5,y=1.5,z=1.2))), height=700, margin=dict(l=0,r=0,b=0,t=0), template='plotly_dark', title="Realistik 3D Geomexanik Model")
     return fig
 
-col_left, col_right = st.columns([2, 1])
+col_left, col_right = st.columns([2,1])
 with col_left:
     st.subheader("🌐 Realistik 3D Geomexanik Massiv")
-    # Yangi realistik 3D funksiyasini chaqirish
     fig_3d = generate_realistic_3d(time_h, layers_data, s_max_3d, total_depth, source_z, H_seam)
     st.plotly_chart(fig_3d, use_container_width=True)
-
 with col_right:
     st.subheader("📈 Dinamik Trendlar")
-    h_axis   = np.linspace(0, 150, 50)
+    h_axis = np.linspace(0,150,50)
     st_trend = [calculate_live_metrics(v, layers_data, T_source_max)[0] for v in h_axis]
     fig_trend = go.Figure()
-    fig_trend.add_trace(go.Scatter(x=h_axis, y=st_trend, name="Mustahkamlik",
-                                   line=dict(color='orange', width=3)))
+    fig_trend.add_trace(go.Scatter(x=h_axis, y=st_trend, name="Mustahkamlik", line=dict(color='orange', width=3)))
     fig_trend.add_vline(x=time_h, line_dash="dash", line_color="red")
-    fig_trend.update_layout(template="plotly_dark", height=250,
-                            title="Mustahkamlik pasayishi (MPa/h)",
-                            margin=dict(l=10, r=10, t=30, b=10))
+    fig_trend.update_layout(template="plotly_dark", height=250, title="Mustahkamlik pasayishi (MPa/h)", margin=dict(l=10,r=10,t=30,b=10))
     st.plotly_chart(fig_trend, use_container_width=True)
     st.write("**Qatlamlar tuzilishi:**")
     for lyr in layers_data:
@@ -779,31 +663,26 @@ with col_right:
 
 st.markdown("---")
 with st.expander("📝 Avtomatik Ilmiy Interpretatsiya", expanded=True):
-    risk_level    = "YUQORI" if p_str < 15 else "O'RTA" if p_str < 25 else "PAST"
-    ucs_initial   = layers_data[-1]['ucs']
-    reduction_pct = (1 - p_str / (ucs_initial + EPS)) * 100
+    risk_level = "YUQORI" if p_str<15 else "O'RTA" if p_str<25 else "PAST"
+    ucs_initial = layers_data[-1]['ucs']
+    reduction_pct = (1 - p_str/(ucs_initial+EPS))*100
     st.write(f"""
 **Tahlil natijasi ({time_h}-soat):**
-1. **Termal degradatsiya:** Harorat {t_now:.1f} °C ga yetishi natijasida ko'mir mustahkamligi
-   boshlang'ich holatga nisbatan {reduction_pct:.1f}% ga kamaygan.
-2. **Yer yuzasi:** {s_max_3d * 100:.1f} cm lik vertikal cho'kish kutilmoqda.
-   Bu {layers_data[0]['name']} qatlamida plastik deformatsiyalarni yuzaga keltirishi mumkin.
-3. **Xavf darajasi:** **{risk_level}**. Tavsiya: Selek eni **{w_rec_live:.1f} m**
-   (AI optimizatsiya: **{optimal_width_ai:.1f} m**).
+1. **Termal degradatsiya:** Harorat {t_now:.1f} °C ga yetishi natijasida ko'mir mustahkamligi boshlang'ich holatga nisbatan {reduction_pct:.1f}% ga kamaygan.
+2. **Yer yuzasi:** {s_max_3d*100:.1f} cm lik vertikal cho'kish kutilmoqda. Bu {layers_data[0]['name']} qatlamida plastik deformatsiyalarni yuzaga keltirishi mumkin.
+3. **Xavf darajasi:** **{risk_level}**. Tavsiya: Selek eni **{w_rec_live:.1f} m** (AI optimizatsiya: **{optimal_width_ai:.1f} m**).
 """)
 
 # ==============================================================================
-# --- 📑 CHUQURLASHTIRILGAN ILMIY HISOBOT ---
+# --- 📑 CHUQURLASHTIRILGAN ILMIY HISOBOT (o'zgarishsiz) ---
 # ==============================================================================
 st.markdown("---")
 st.header("🔍 Chuqurlashtirilgan Dinamik Tahlil va Metodik Asoslash")
-
 E_MODULUS_R, ALPHA_THERM, BETA_CONST = 5000.0, 1.0e-5, beta_thermal
 target_l = layers_data[-1]
 ucs_0_r, gsi_val, mi_val = target_l['ucs'], target_l['gsi'], target_l['mi']
 gamma_kn = target_l['rho'] * 9.81 / 1000
 H_depth_tot = sum(l['t'] for l in layers_data[:-1]) + target_l['t'] / 2
-
 sigma_v_tot = (gamma_kn * H_depth_tot) / 1000
 mb_dyn = mi_val * np.exp((gsi_val - 100) / (28 - 14 * D_factor))
 s_dyn  = np.exp((gsi_val - 100) / (9 - 3 * D_factor))
@@ -812,72 +691,37 @@ p_str_final = ucs_t_dyn * (rec_width / (H_seam + EPS)) ** 0.5
 fos_final = p_str_final / (sigma_v_tot + EPS)
 
 t1, t2, t3 = st.tabs(["🏗️ Massiv Parametrlari", "🔥 Termal Degradatsiya", "⚖️ Barqarorlik & Manbalar"])
-
 with t1:
     st.subheader("1. Hoek-Brown (2018) Klassifikatsiyasi")
-    c1r, c2r = st.columns(2)
+    c1r,c2r = st.columns(2)
     with c1r:
-        st.latex(r"m_b = " + f"{mb_dyn:.3f}")
-        st.caption(f"Massiv ishqalanish burchagi funksiyasi ($m_i={mi_val}$)")
-        st.latex(r"s = " + f"{s_dyn:.4f}")
-        st.caption(f"Yoriqlilik darajasi (GSI={gsi_val})")
+        st.latex(r"m_b = " + f"{mb_dyn:.3f}"); st.caption(f"Massiv ishqalanish burchagi funksiyasi ($m_i={mi_val}$)")
+        st.latex(r"s = " + f"{s_dyn:.4f}"); st.caption(f"Yoriqlilik darajasi (GSI={gsi_val})")
     with c2r:
-        st.markdown(f"""
-**Ilmiy izoh:** **Hoek & Brown (2018)** mezoniga ko'ra, $m_b$ va $s$
-koeffitsiyentlari laboratoriya namunasining butunligini massivdagi yoriqlarga
-nisbatini ko'rsatadi. GSI={gsi_val} bo'lishi massivning mustahkamligi
-laboratoriyaga nisbatan **{((1 - s_dyn) * 100):.1f}%** ga pastligini anglatadi.
-""")
-
+        st.markdown(f"**Ilmiy izoh:** Hoek & Brown (2018) mezoniga ko'ra, GSI={gsi_val} bo'lishi massiv mustahkamligi laboratoriyaga nisbatan **{((1 - s_dyn) * 100):.1f}%** ga pastligini anglatadi.")
 with t2:
     st.subheader("2. Termo-Mexanik Koeffitsiyentlar Tahlili")
-    params_df = pd.DataFrame({
-        "Parametr":         ["Elastiklik Moduli (E)", "Termal kengayish (α)", "Boshlang'ich T₀"],
-        "Qiymat":           [f"{E_MODULUS_R} MPa",   f"{ALPHA_THERM} 1/°C", "20 °C"],
-        "Tanlanish sababi": [
-            "Ko'mir uchun xos o'rtacha deformatsiya koeffitsiyenti.",
-            "Ko'mirning issiqlikdan chiziqli kengayish ko'rsatkichi (Yang, 2010).",
-            "Kon qatlamining boshlang'ich tabiiy harorati.",
-        ]
-    })
+    params_df = pd.DataFrame({"Parametr":["Elastiklik Moduli (E)","Termal kengayish (α)","Boshlang'ich T₀"], "Qiymat":[f"{E_MODULUS_R} MPa",f"{ALPHA_THERM} 1/°C","20 °C"], "Tanlanish sababi":["Ko'mir uchun xos o'rtacha deformatsiya koeffitsiyenti.","Ko'mirning issiqlikdan chiziqli kengayish ko'rsatkichi (Yang, 2010).","Kon qatlamining boshlang'ich tabiiy harorati."]})
     st.table(params_df)
     st.markdown("**A) Termal UCS pasayishi:**")
     st.latex(r"\sigma_{ci(T)} = \sigma_{ci(0)} \cdot e^{-\beta(T-T_0)} = " + f"{ucs_t_dyn:.2f}" + r" \text{ MPa}")
     st.write(f"**Interpretatsiya:** {T_source_max}°C haroratda jins mustahkamligi {((1 - ucs_t_dyn / ucs_0_r) * 100):.1f}% ga pasaydi.")
     st.markdown("**B) Termal kuchlanish ($\\sigma_{th}$):**")
     st.latex(r"\sigma_{th} \approx \frac{E \cdot \alpha \cdot \Delta T}{1 - \nu} = " + f"{sigma_thermal.max():.2f}" + r" \text{ MPa}")
-
 with t3:
     st.subheader("3. Selek Barqarorligi va Bibliografiya")
     st.latex(r"FOS = \frac{\sigma_p}{\sigma_v} = " + f"{fos_final:.2f}")
-    st.write(f"**Wilson (1972) Yield Pillar nazariyasiga binoan:**")
-    st.write(f"Selek o'lchami $w={rec_width}$ m bo'lganda, uning markaziy yadrosi "
-             f"{sigma_v_tot:.2f} MPa lik geostatik yukni ko'tarishga qodir. Plastik zona: $y = {y_zone:.1f}$ m.")
-    st.markdown("---")
-    st.write("#### 📚 Asosiy Ilmiy Manbalar:")
-    for ref in [
-        "**Hoek, E., & Brown, E. T. (2018).** The Hoek-Brown failure criterion and GSI – 2018 edition. *JRMGE*.",
-        "**Yang, D. (2010).** *Stability of Underground Coal Gasification*. PhD Thesis, TU Delft.",
-        "**Shao, S., et al. (2015).** A thermal damage constitutive model for rock. *IJRMMS*.",
-        "**Wilson, A. H. (1972).** Research into the determination of pillar size. *Mining Engineer*.",
-    ]:
+    st.write(f"**Wilson (1972) Yield Pillar nazariyasiga binoan:** Selek o'lchami $w={rec_width}$ m bo'lganda, uning markaziy yadrosi {sigma_v_tot:.2f} MPa lik geostatik yukni ko'tarishga qodir. Plastik zona: $y = {y_zone:.1f}$ m.")
+    st.markdown("---"); st.write("#### 📚 Asosiy Ilmiy Manbalar:")
+    for ref in ["**Hoek, E., & Brown, E. T. (2018).** The Hoek-Brown failure criterion and GSI – 2018 edition. *JRMGE*.","**Yang, D. (2010).** *Stability of Underground Coal Gasification*. PhD Thesis, TU Delft.","**Shao, S., et al. (2015).** A thermal damage constitutive model for rock. *IJRMMS*.","**Wilson, A. H. (1972).** Research into the determination of pillar size. *Mining Engineer*."]:
         st.markdown(f"📖 {ref}")
-    if fos_final < 1.3:
-        st.error(f"🔴 **Ilmiy Xulosa:** FOS={fos_final:.2f}. Termal degradatsiya yuqori. Selek enini oshirish yoki gazlashtirish tezligini nazorat qilish tavsiya etiladi.")
-    else:
-        st.success(f"🟢 **Ilmiy Xulosa:** FOS={fos_final:.2f}. Tanlangan parametrlar massiv barqarorligini ta'minlaydi.")
+    if fos_final < 1.3: st.error(f"🔴 **Ilmiy Xulosa:** FOS={fos_final:.2f}. Termal degradatsiya yuqori. Selek enini oshirish yoki gazlashtirish tezligini nazorat qilish tavsiya etiladi.")
+    else: st.success(f"🟢 **Ilmiy Xulosa:** FOS={fos_final:.2f}. Tanlangan parametrlar massiv barqarorligini ta'minlaydi.")
 
 st.markdown("---")
 with st.expander("📚 Ilmiy Metodologiya va Manbalar (PhD Research References)"):
     st.markdown("#### Ushbu model quyidagi fundamental ilmiy ishlar asosida tuzilgan:")
-    for r in [
-        "1. **Hoek, E., & Brown, E. T. (2018).** The Hoek-Brown failure criterion and GSI.",
-        "2. **Yang, D. (2010).** Stability of underground coal gasification. PhD Thesis.",
-        "3. **Shao, S. et al. (2015).** A thermal damage constitutive model for rock.",
-        "4. **Cui, X. et al. (2017).** Permeability evolution of coal under thermal-mechanical coupling.",
-        "5. **Kratzsch, H. (2012).** Mining Subsidence Engineering.",
-        "6. **Brady, B. H., & Brown, E. T. (2006).** Rock Mechanics for Underground Mining.",
-    ]:
+    for r in ["1. **Hoek, E., & Brown, E. T. (2018).** The Hoek-Brown failure criterion and GSI.","2. **Yang, D. (2010).** Stability of underground coal gasification. PhD Thesis.","3. **Shao, S. et al. (2015).** A thermal damage constitutive model for rock.","4. **Cui, X. et al. (2017).** Permeability evolution of coal under thermal-mechanical coupling.","5. **Kratzsch, H. (2012).** Mining Subsidence Engineering.","6. **Brady, B. H., & Brown, E. T. (2006).** Rock Mechanics for Underground Mining."]:
         st.write(r)
 
 st.sidebar.markdown("---")
