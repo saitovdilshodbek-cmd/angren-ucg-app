@@ -605,10 +605,6 @@ st.markdown("---")
 # ==============================================================================
 # --- 🌐 YANGI REALISTIK 3D GEOMEXANIK MODEL ---
 # ==============================================================================
-import numpy as np
-import plotly.graph_objects as go
-import streamlit as st
-
 def generate_realistic_3d(h, layers, s_max, total_depth, source_z, H_seam):
     """
     UCG 3D Qirqim Modeli:
@@ -648,7 +644,6 @@ def generate_realistic_3d(h, layers, s_max, total_depth, source_z, H_seam):
         ))
         
         # Qirqim devori (Y=0 dagi vertikal kesma)
-        # Bu qism modelni "hajmli qirqim" qilib ko'rsatadi
         wall_x = np.linspace(-150, 150, 50)
         wall_z = np.linspace(z_bottom_s[0, :], z_top_s[0, :], 2)
         WX, WZ = np.meshgrid(wall_x, wall_z)
@@ -686,14 +681,12 @@ def generate_realistic_3d(h, layers, s_max, total_depth, source_z, H_seam):
         ))
 
     # 4. Injection va Production Well (Quduqlar)
-    # Injection Well (Chapda)
     fig.add_trace(go.Scatter3d(
         x=[-80, -80], y=[0, 0], z=[10, coal_z-5],
         mode='lines+markers', line=dict(color='silver', width=10),
         marker=dict(size=4, symbol='circle'), name="Injection Well"
     ))
     
-    # Production Well (O'ngda)
     fig.add_trace(go.Scatter3d(
         x=[80, 80], y=[0, 0], z=[10, coal_z-5],
         mode='lines+markers', line=dict(color='silver', width=10),
@@ -722,7 +715,6 @@ def generate_realistic_3d(h, layers, s_max, total_depth, source_z, H_seam):
         title="UCG Jarayonining Hajmli Qirqim Modeli"
     )
     return fig
-
 # ==============================================================================
 # --- 📑 CHUQURLASHTIRILGAN ILMIY HISOBOT ---
 # ==============================================================================
