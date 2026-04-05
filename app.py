@@ -605,191 +605,243 @@ st.markdown("---")
 # ==============================================================================
 # --- 🌐 YANGI REALISTIK 3D GEOMEXANIK MODEL ---
 # ==============================================================================
-def generate_realistic_3d(h, layers, s_max, total_depth, source_z, H_seam):
-    """
-    Realistik 3D geomexanik model:
-    - Yer yuzasi cho'kish krateri
-    - Qatlamlar (deformatsiyalangan)
-    - Ko'mir qatlami (to'g'ri burchakli parallelepiped)
-    - Yonish kamerasi (silindr)
-    - Issiqlik plume (yarim shaffof ellipsoid)
-    - Yoriqlar (chiziqlar)
-    """
-    # 1. Grid yaratish
-    x = np.linspace(-150, 150, 40)
-    y = np.linspace(-100, 100, 40)
-    X, Y = np.meshgrid(x, y)
-    
-    # Cho'kish funksiyasi (Gauss krater)
-    subsidence = -s_max * np.exp(-(X**2 + Y**2) / (2 * (total_depth * 0.6)**2))
-    
-    fig = go.Figure()
-    curr_z_top = 0.0
-    # Qatlamlar ranglari
-    layer_colors = ['#8B5A2B', '#A9A9A9', '#CD853F', '#BC8F8F', '#6B8E23']
-    
-    for i, layer in enumerate(layers):
-        thickness = layer['t']
-        z_bottom = curr_z_top - thickness
-        # Deformatsiya chuqurlik bilan kamayadi
-        deform_factor = (1 - i/len(layers))
-        z_top_surface = curr_z_top + subsidence * deform_factor
-        z_bottom_surface = z_bottom + subsidence * (deform_factor * 0.8)
-        
-        color = layer_colors[i % len(layer_colors)]
-        # Yuza (top)
-        fig.add_trace(go.Surface(
-            x=X, y=Y, z=z_top_surface,
-            colorscale=[[0, color], [1, color]],
-            opacity=0.85, showscale=False, name=f"{layer['name']} (ustki)",
-            lighting=dict(ambient=0.6, diffuse=0.8)
-        ))
-        # Pastki yuza (bottom)
-        fig.add_trace(go.Surface(
-            x=X, y=Y, z=z_bottom_surface,
-            colorscale=[[0, color], [1, color]],
-            opacity=0.7, showscale=False, name=f"{layer['name']} (pastki)",
-            lighting=dict(ambient=0.5, diffuse=0.7)
-        ))
-        # Qirralar (chekka chiziqlar) – oddiy chiziqlar
-        # Top qirralar
-        for edge_x, edge_y in [(X[0,:], Y[0,:]), (X[-1,:], Y[-1,:]), (X[:,0], Y[:,0]), (X[:,-1], Y[:,-1])]:
-            z_edge = z_top_surface[0 if edge_x is X[0,:] else -1, :] if edge_x.ndim == 1 else z_top_surface[:, 0]
-            fig.add_trace(go.Scatter3d(
-                x=edge_x.flatten(), y=edge_y.flatten(), z=z_edge.flatten(),
-                mode='lines', line=dict(color='white', width=1), showlegend=False
-            ))
-        curr_z_top = z_bottom
-    
-    # 2. Ko'mir qatlami (eng pastki qatlam) – kub shaklida
-    coal_layer = layers[-1]
-    coal_z_center = curr_z_top + coal_layer['t']/2   # curr_z_top endi - (total_depth)
-    coal_half_x = total_depth * 0.8
-    coal_half_y = total_depth * 0.5
-    coal_half_z = coal_layer['t']/2
-    
-    corners = np.array([
-        [-coal_half_x, -coal_half_y, -coal_half_z],
-        [ coal_half_x, -coal_half_y, -coal_half_z],
-        [ coal_half_x,  coal_half_y, -coal_half_z],
-        [-coal_half_x,  coal_half_y, -coal_half_z],
-        [-coal_half_x, -coal_half_y,  coal_half_z],
-        [ coal_half_x, -coal_half_y,  coal_half_z],
-        [ coal_half_x,  coal_half_y,  coal_half_z],
-        [-coal_half_x,  coal_half_y,  coal_half_z]
-    ]) + np.array([0, 0, coal_z_center])
-    
-    faces = [
-        [0,1,2], [0,2,3],  # pastki
-        [4,5,6], [4,6,7],  # ustki
-        [0,1,5], [0,5,4],  # old
-        [2,3,7], [2,7,6],  # orqa
-        [0,3,7], [0,7,4],  # chap
-        [1,2,6], [1,6,5]   # o'ng
-    ]
-    fig.add_trace(go.Mesh3d(
-        x=corners[:,0], y=corners[:,1], z=corners[:,2],
-        i=[f[0] for f in faces], j=[f[1] for f in faces], k=[f[2] for f in faces],
-        color='darkorange', opacity=0.9, name="Ko'mir qatlami", lighting=dict(ambient=0.4)
-    ))
-    
-    # 3. Yonish kamerasi (silindr) – gorizontal, qizil
-    reactor_radius = min(coal_half_z * 0.8, 8.0)
-    reactor_length = coal_half_x * 0.6
-    theta = np.linspace(0, 2*np.pi, 20)
-    z_cyl = np.linspace(-reactor_length, reactor_length, 20)
-    theta, z_cyl = np.meshgrid(theta, z_cyl)
-    x_cyl = reactor_radius * np.cos(theta)
-    y_cyl = reactor_radius * np.sin(theta)
-    center_x, center_y, center_z = 0, 0, coal_z_center
-    x_cyl += center_x
-    y_cyl += center_y
-    z_cyl_surf = z_cyl + center_z
+# ==============================================================================
+# 🌐 PRO GEOMECHANICAL + THERMAL SIMULATOR
+# ==============================================================================
+
+import streamlit as st
+import numpy as np
+import plotly.graph_objects as go
+from scipy.ndimage import gaussian_filter
+
+# ------------------------------------------------------------------------------
+# ⚙️ PAGE SETTINGS
+# ------------------------------------------------------------------------------
+st.set_page_config(page_title="PRO Geomechanical Simulator", layout="wide")
+st.title("🌐 PRO 3D Geomechanical & Thermal Simulation")
+
+# ------------------------------------------------------------------------------
+# 🎛 SIDEBAR CONTROLS
+# ------------------------------------------------------------------------------
+st.sidebar.header("⚙️ Simulation Parameters")
+
+time_h = st.sidebar.slider("Time (hours)", 0, 200, 50)
+s_max = st.sidebar.slider("Max Subsidence (m)", 0.1, 5.0, 1.5)
+temp_max = st.sidebar.slider("Max Temperature (°C)", 100, 1200, 800)
+depth = st.sidebar.slider("Total Depth (m)", 50, 300, 150)
+resolution = st.sidebar.slider("Grid Resolution", 20, 60, 35)
+
+# ------------------------------------------------------------------------------
+# 🪨 LAYERS
+# ------------------------------------------------------------------------------
+layers = [
+    {"name": "Top Soil", "t": 20, "ucs": 5},
+    {"name": "Sandstone", "t": 30, "ucs": 25},
+    {"name": "Clay", "t": 25, "ucs": 15},
+    {"name": "Coal", "t": 20, "ucs": 10},
+]
+
+# ------------------------------------------------------------------------------
+# 🌐 GRID
+# ------------------------------------------------------------------------------
+x = np.linspace(-150, 150, resolution)
+y = np.linspace(-150, 150, resolution)
+X, Y = np.meshgrid(x, y)
+
+# ------------------------------------------------------------------------------
+# 🌍 SUBSIDENCE (ANISOTROPIC)
+# ------------------------------------------------------------------------------
+subsidence = -s_max * np.exp(
+    -((X**2)/(2*(depth*0.8)**2) + (Y**2)/(2*(depth*0.5)**2))
+)
+
+subsidence *= (time_h / 200)
+
+# ------------------------------------------------------------------------------
+# 🔥 TEMPERATURE FIELD (DIFFUSION)
+# ------------------------------------------------------------------------------
+temp = temp_max * np.exp(-(X**2 + Y**2)/(2*(depth*0.3)**2))
+temp = gaussian_filter(temp, sigma=3)
+
+# ------------------------------------------------------------------------------
+# 🧱 STRESS FIELD
+# ------------------------------------------------------------------------------
+stress = np.exp(-(X**2 + Y**2)/(2*(depth*0.4)**2)) * (s_max * 10)
+
+# ------------------------------------------------------------------------------
+# 🧠 RISK MODEL
+# ------------------------------------------------------------------------------
+ucs = layers[-1]["ucs"]
+
+risk_score = (
+    (s_max / 5)*0.4 +
+    (temp.max() / temp_max)*0.3 +
+    (1 - ucs/30)*0.3
+)
+
+if risk_score > 0.7:
+    risk_level = "HIGH 🔴"
+elif risk_score > 0.4:
+    risk_level = "MEDIUM 🟡"
+else:
+    risk_level = "LOW 🟢"
+
+# ------------------------------------------------------------------------------
+# 📊 KPI PANEL
+# ------------------------------------------------------------------------------
+col1, col2, col3 = st.columns(3)
+
+col1.metric("Subsidence", f"{s_max:.2f} m")
+col2.metric("Max Temp", f"{temp.max():.1f} °C")
+col3.metric("Risk Level", risk_level)
+
+# ------------------------------------------------------------------------------
+# 🌐 3D MODEL
+# ------------------------------------------------------------------------------
+fig = go.Figure()
+
+current_z = 0
+
+colors = ["#8B5A2B", "#A9A9A9", "#CD853F", "#222222"]
+
+for i, layer in enumerate(layers):
+    t = layer["t"]
+    z_bottom = current_z - t
+
+    deform = np.exp(-abs(current_z)/depth)
+
+    z_top = current_z + subsidence * deform
+    z_bot = z_bottom + subsidence * deform * 0.7
+
     fig.add_trace(go.Surface(
-        x=x_cyl, y=y_cyl, z=z_cyl_surf,
-        colorscale='Hot', opacity=0.95, name="Yonish kamerasi", showscale=False,
-        lighting=dict(ambient=0.3, diffuse=0.9)
+        x=X, y=Y, z=z_top,
+        surfacecolor=stress,
+        colorscale="Jet",
+        opacity=0.9,
+        showscale=False,
+        name=layer["name"]
     ))
-    
-    # 4. Issiqlik plume (yarim shaffof ellipsoid)
-    plume_rad_x = reactor_radius * 4
-    plume_rad_y = reactor_radius * 3
-    plume_rad_z = coal_half_z * 2.5
-    u = np.linspace(0, 2*np.pi, 30)
-    v = np.linspace(0, np.pi, 30)
-    u, v = np.meshgrid(u, v)
-    x_plume = plume_rad_x * np.sin(v) * np.cos(u) + center_x
-    y_plume = plume_rad_y * np.sin(v) * np.sin(u) + center_y
-    z_plume = plume_rad_z * np.cos(v) + center_z
-    fig.add_trace(go.Surface(
-        x=x_plume, y=y_plume, z=z_plume,
-        colorscale=[[0, 'rgba(255,0,0,0)'], [1, 'rgba(255,100,0,0.4)']],
-        opacity=0.3, showscale=False, name="Termal plume", hoverinfo='skip'
-    ))
-    
-    # 5. Yoriqlar / sinishlar (bir necha qizil chiziq)
-    fractures = [
-        [[-40, -20, coal_z_center-2], [40, 20, coal_z_center+2]],
-        [[-30, 30, coal_z_center-1], [30, -30, coal_z_center+3]],
-        [[-20, -10, coal_z_center], [20, 10, coal_z_center+5]],
-    ]
-    for f in fractures:
+
+    current_z = z_bottom
+
+# ------------------------------------------------------------------------------
+# 🔥 REACTOR (DYNAMIC)
+# ------------------------------------------------------------------------------
+radius = 6
+length = 40 * (time_h / 200)
+
+theta = np.linspace(0, 2*np.pi, 20)
+z_cyl = np.linspace(-length, length, 20)
+theta, z_cyl = np.meshgrid(theta, z_cyl)
+
+x_cyl = radius * np.cos(theta)
+y_cyl = radius * np.sin(theta)
+z_cyl = z_cyl + current_z/2
+
+fig.add_trace(go.Surface(
+    x=x_cyl, y=y_cyl, z=z_cyl,
+    colorscale="Hot",
+    opacity=0.95,
+    showscale=False
+))
+
+# ------------------------------------------------------------------------------
+# 🔥 THERMAL PLUME
+# ------------------------------------------------------------------------------
+u = np.linspace(0, 2*np.pi, 30)
+v = np.linspace(0, np.pi, 30)
+
+u, v = np.meshgrid(u, v)
+
+rx, ry, rz = 30, 20, 40
+
+x_p = rx * np.sin(v) * np.cos(u)
+y_p = ry * np.sin(v) * np.sin(u)
+z_p = rz * np.cos(v) + current_z/2
+
+fig.add_trace(go.Surface(
+    x=x_p, y=y_p, z=z_p,
+    surfacecolor=temp,
+    colorscale="Hot",
+    opacity=0.3,
+    showscale=False
+))
+
+# ------------------------------------------------------------------------------
+# ⚠️ FRACTURES (STRESS BASED)
+# ------------------------------------------------------------------------------
+threshold = np.percentile(stress, 90)
+
+for i in range(10):
+    xi = np.random.uniform(-100, 100)
+    yi = np.random.uniform(-100, 100)
+
+    if np.exp(-(xi**2 + yi**2)/(2*(depth*0.4)**2)) * (s_max * 10) > threshold:
         fig.add_trace(go.Scatter3d(
-            x=[f[0][0], f[1][0]], y=[f[0][1], f[1][1]], z=[f[0][2], f[1][2]],
-            mode='lines', line=dict(color='red', width=3), name='Yoriq', showlegend=False
+            x=[xi-10, xi+10],
+            y=[yi-10, yi+10],
+            z=[0, -depth/2],
+            mode='lines',
+            line=dict(color='red', width=3),
+            showlegend=False
         ))
-    
-    # 6. Grafik sozlamalari
-    fig.update_layout(
-        scene=dict(
-            xaxis=dict(title='X (m)', backgroundcolor='rgb(20,20,20)', gridcolor='gray'),
-            yaxis=dict(title='Y (m)', backgroundcolor='rgb(20,20,20)', gridcolor='gray'),
-            zaxis=dict(title='Z (m)', backgroundcolor='rgb(20,20,20)', gridcolor='gray',
-                       range=[-total_depth-20, 20]),
-            aspectmode='manual', aspectratio=dict(x=1.2, y=0.8, z=0.6),
-            camera=dict(eye=dict(x=1.5, y=1.5, z=1.2))
-        ),
-        height=700, margin=dict(l=0, r=0, b=0, t=0),
-        template='plotly_dark', title="Realistik 3D Geomexanik Model"
-    )
-    return fig
 
-col_left, col_right = st.columns([2, 1])
-with col_left:
-    st.subheader("🌐 Realistik 3D Geomexanik Massiv")
-    # Yangi realistik 3D funksiyasini chaqirish
-    fig_3d = generate_realistic_3d(time_h, layers_data, s_max_3d, total_depth, source_z, H_seam)
-    st.plotly_chart(fig_3d, use_container_width=True)
+# ------------------------------------------------------------------------------
+# 🎥 LAYOUT
+# ------------------------------------------------------------------------------
+fig.update_layout(
+    scene=dict(
+        xaxis_title="X (m)",
+        yaxis_title="Y (m)",
+        zaxis_title="Depth (m)",
+        zaxis=dict(range=[-depth-20, 20]),
+        camera=dict(
+            eye=dict(
+                x=1.5*np.cos(time_h/50),
+                y=1.5*np.sin(time_h/50),
+                z=1.2
+            )
+        )
+    ),
+    height=700,
+    template="plotly_dark",
+    title="🔥 PRO 3D Geomechanical Model"
+)
 
-with col_right:
-    st.subheader("📈 Dinamik Trendlar")
-    h_axis   = np.linspace(0, 150, 50)
-    st_trend = [calculate_live_metrics(v, layers_data, T_source_max)[0] for v in h_axis]
-    fig_trend = go.Figure()
-    fig_trend.add_trace(go.Scatter(x=h_axis, y=st_trend, name="Mustahkamlik",
-                                   line=dict(color='orange', width=3)))
-    fig_trend.add_vline(x=time_h, line_dash="dash", line_color="red")
-    fig_trend.update_layout(template="plotly_dark", height=250,
-                            title="Mustahkamlik pasayishi (MPa/h)",
-                            margin=dict(l=10, r=10, t=30, b=10))
-    st.plotly_chart(fig_trend, use_container_width=True)
-    st.write("**Qatlamlar tuzilishi:**")
-    for lyr in layers_data:
-        st.caption(f"• {lyr['name']}: {lyr['t']} m (UCS: {lyr['ucs']} MPa)")
+st.plotly_chart(fig, use_container_width=True)
 
-st.markdown("---")
-with st.expander("📝 Avtomatik Ilmiy Interpretatsiya", expanded=True):
-    risk_level    = "YUQORI" if p_str < 15 else "O'RTA" if p_str < 25 else "PAST"
-    ucs_initial   = layers_data[-1]['ucs']
-    reduction_pct = (1 - p_str / (ucs_initial + EPS)) * 100
-    st.write(f"""
-**Tahlil natijasi ({time_h}-soat):**
-1. **Termal degradatsiya:** Harorat {t_now:.1f} °C ga yetishi natijasida ko'mir mustahkamligi
-   boshlang'ich holatga nisbatan {reduction_pct:.1f}% ga kamaygan.
-2. **Yer yuzasi:** {s_max_3d * 100:.1f} cm lik vertikal cho'kish kutilmoqda.
-   Bu {layers_data[0]['name']} qatlamida plastik deformatsiyalarni yuzaga keltirishi mumkin.
-3. **Xavf darajasi:** **{risk_level}**. Tavsiya: Selek eni **{w_rec_live:.1f} m**
-   (AI optimizatsiya: **{optimal_width_ai:.1f} m**).
+# ------------------------------------------------------------------------------
+# 📈 TREND
+# ------------------------------------------------------------------------------
+h = np.linspace(0, 200, 50)
+trend = s_max * (h/200)
+
+fig2 = go.Figure()
+fig2.add_trace(go.Scatter(
+    x=h, y=trend,
+    fill='tozeroy'
+))
+fig2.add_vline(x=time_h)
+
+fig2.update_layout(template="plotly_dark", height=250)
+
+st.plotly_chart(fig2, use_container_width=True)
+
+# ------------------------------------------------------------------------------
+# 📝 INTERPRETATION
+# ------------------------------------------------------------------------------
+st.markdown("### 📝 Scientific Interpretation")
+
+st.write(f"""
+- Subsidence evolving with time: **{time_h} hours**
+- Maximum deformation: **{s_max:.2f} m**
+- Thermal field peak: **{temp.max():.1f} °C**
+- System risk level: **{risk_level}**
+
+👉 Model includes:
+- Thermo-mechanical coupling
+- Stress-driven fractures
+- Dynamic combustion front
 """)
 
 # ==============================================================================
