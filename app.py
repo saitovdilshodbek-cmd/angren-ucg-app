@@ -293,7 +293,7 @@ try:
     rf_model = RandomForestClassifier(
         n_estimators=30, max_depth=10, random_state=42, n_jobs=-1
     )
-    rf_model.fit(X_ai, y_ai)
+  train_test_split
     # predict_proba → collapse ehtimoli (0–1)
     collapse_pred = rf_model.predict_proba(X_ai)[:, 1].reshape(temp_2d.shape)
 except Exception:
