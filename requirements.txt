@@ -6,3 +6,16 @@ scipy>=1.10.0
 scikit-learn>=1.2.0
 python-docx>=1.1.0
 torch>=2.0.0
+pip 
+install 
+streamlit
+numpy 
+pandas 
+plotly 
+scipy 
+scikit-learn 
+torch 
+python-docx 
+fastapi 
+uvicorn 
+requests
