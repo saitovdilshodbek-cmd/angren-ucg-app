@@ -950,23 +950,22 @@ with tab_live:
         # Save last surface figure in session state for download
         st.session_state.last_surface_fig = last_surface_fig
     
-    # Download buttons for live data and plots (outside the run loop)
+      # Download buttons for live data and plots (outside the run loop)
     if not st.session_state.live_history_df.empty:
         st.markdown("---")
         st.subheader("📥 Download Monitoring Results")
         csv_data = st.session_state.live_history_df.to_csv(index=False).encode('utf-8')
         st.download_button(t('download_data'), data=csv_data, file_name="ucg_live_monitoring.csv", mime="text/csv")
-        
+
         # Download trend plot (regenerate from history if available)
         if 'live_history_df' in st.session_state and len(st.session_state.live_history_df) > 0:
-            # We can create a fresh trend figure from the saved data
             trend_df = st.session_state.live_history_df
             fig_trend_dl = go.Figure()
             fig_trend_dl.add_trace(go.Scatter(x=trend_df['step'], y=trend_df['mean_subsidence_cm'], mode='lines+markers', name='Subsidence (cm)'))
             fig_trend_dl.update_layout(title='Subsidence Trend', xaxis_title='Time step', yaxis_title='Subsidence (cm)')
-           img_bytes_trend = fig_trend_dl.to_image(format="png", width=800, height=400)
+            img_bytes_trend = fig_trend_dl.to_image(format="png", width=800, height=400)
             st.download_button(t('download_trend_plot'), data=img_bytes_trend, file_name="subsidence_trend.png", mime="image/png")
-        
+
         # Download 3D plot if available
         if 'last_surface_fig' in st.session_state and st.session_state.last_surface_fig is not None:
             img_3d = st.session_state.last_surface_fig.to_image(format="png", width=800, height=500)
