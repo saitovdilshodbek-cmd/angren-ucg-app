@@ -958,8 +958,92 @@ with st.expander("🌪️ Sezgirlik Tahlili (Tornado Plot)"):
     fig_tornado.update_layout(title=f"FOS sezgirligi (asosiy FOS={fos_base:.2f})", barmode='overlay', template='plotly_dark', height=350, xaxis_title='ΔFOS', bargap=0.3)
     st.plotly_chart(fig_tornado, use_container_width=True)
 
-# 7. ISO 9001:2015 hisobot generatori (.docx)
-# (Yordamchi funksiyalar tayyor, asosiy generator funksiyasi yuqorida berilgan. Quyida UI qismi)
+# =========================== ISO 9001 HISOBOT GENERATORI (YANGI QO'SHILDI) ===========================
+def generate_iso_report_docx(obj_name, lang, layers_data, time_h, T_source_max, burn_duration,
+                              D_factor, nu_poisson, k_ratio, tensile_ratio, beta_thermal,
+                              pillar_strength, y_zone, void_volume, rec_width, optimal_width_ai,
+                              fos_2d, risk_map, perm, sub_p, x_axis,
+                              prepared_by="UCG Team", approved_by="Chief Engineer",
+                              doc_number="UCG-2026-001", revision="A"):
+    """ISO 9001:2015 asosida Word hisobot yaratadi"""
+    doc = Document()
+    # Sarlavha
+    title = doc.add_heading(f"ISO 9001:2015 Compliant Report – {obj_name}", level=1)
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    doc.add_paragraph(f"Document No: {doc_number} | Revision: {revision}")
+    doc.add_paragraph(f"Date: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}")
+    doc.add_paragraph(f"Prepared by: {prepared_by}")
+    doc.add_paragraph(f"Approved by: {approved_by}")
+    doc.add_heading("1. Project Overview", level=2)
+    doc.add_paragraph(f"Project: {obj_name}")
+    doc.add_paragraph(f"Process time: {time_h} hours")
+    doc.add_paragraph(f"Maximum temperature: {T_source_max} °C")
+    doc.add_paragraph(f"Burn duration: {burn_duration} hours")
+    doc.add_heading("2. Rock Mass Properties", level=2)
+    table = doc.add_table(rows=1, cols=5)
+    table.style = 'Table Grid'
+    hdr = table.rows[0].cells
+    hdr[0].text = "Layer"
+    hdr[1].text = "Thickness (m)"
+    hdr[2].text = "UCS (MPa)"
+    hdr[3].text = "GSI"
+    hdr[4].text = "mi"
+    for layer in layers_data:
+        row = table.add_row().cells
+        row[0].text = layer['name']
+        row[1].text = f"{layer['t']:.1f}"
+        row[2].text = f"{layer['ucs']:.1f}"
+        row[3].text = f"{layer['gsi']}"
+        row[4].text = f"{layer['mi']:.1f}"
+    doc.add_heading("3. Pillar Design & Stability", level=2)
+    doc.add_paragraph(f"Recommended pillar width (classical): {rec_width} m")
+    doc.add_paragraph(f"AI-optimized pillar width: {optimal_width_ai:.1f} m")
+    doc.add_paragraph(f"Pillar strength: {pillar_strength:.2f} MPa")
+    doc.add_paragraph(f"Plastic zone width: {y_zone:.1f} m")
+    doc.add_paragraph(f"Cavity volume (2D area): {void_volume:.1f} m²")
+    doc.add_paragraph(f"Maximum permeability: {np.max(perm):.1e} m²")
+    doc.add_heading("4. Risk Assessment", level=2)
+    avg_risk = np.mean(risk_map)
+    max_risk = np.max(risk_map)
+    doc.add_paragraph(f"Average composite risk index: {avg_risk:.3f}")
+    doc.add_paragraph(f"Maximum composite risk index: {max_risk:.3f}")
+    if max_risk > 0.75:
+        doc.add_paragraph("⚠️ Critical risk zones detected. Immediate action required.")
+    elif max_risk > 0.5:
+        doc.add_paragraph("🟡 Moderate risk zones present. Monitor closely.")
+    else:
+        doc.add_paragraph("🟢 Overall risk level acceptable.")
+    doc.add_heading("5. Conclusions & Recommendations", level=2)
+    # FOS
+    fos_val = np.nanmean(fos_2d)
+    if fos_val < 1.0:
+        doc.add_paragraph(f"🔴 FOS = {fos_val:.2f} → Unstable. Increase pillar width or reduce thermal load.")
+    elif fos_val < 1.5:
+        doc.add_paragraph(f"🟡 FOS = {fos_val:.2f} → Marginally stable. Consider design improvements.")
+    else:
+        doc.add_paragraph(f"🟢 FOS = {fos_val:.2f} → Stable design.")
+    doc.add_paragraph("Based on the analysis, the following actions are recommended:")
+    if optimal_width_ai > rec_width + 2:
+        doc.add_paragraph(f"- Increase pillar width to at least {optimal_width_ai:.1f} m (AI recommendation).")
+    else:
+        doc.add_paragraph("- Current pillar width is adequate per AI analysis.")
+    if max_risk > 0.6:
+        doc.add_paragraph("- Implement real-time temperature and stress monitoring in high-risk zones.")
+    doc.add_paragraph("- Continue thermal-mechanical simulations for each stage of UCG.")
+    doc.add_page_break()
+    doc.add_heading("Appendix A: Key Formulas", level=2)
+    doc.add_paragraph("Hoek-Brown failure criterion:")
+    doc.add_paragraph("σ₁ = σ₃ + σ_ci (m_b σ₃/σ_ci + s)^a")
+    doc.add_paragraph("Thermal damage: D(T) = 1 - exp(-β (T - T₀))")
+    doc.add_paragraph("Pillar strength: σ_p = (UCS·η) · (w/H)^0.5")
+    doc.add_paragraph("Factor of Safety: FOS = σ_p / σ_v")
+    # Faylni baytlarga aylantirish
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+# ISO 9001 UI qismi (avvalgidek qoladi, lekin funksiya endi mavjud)
 with st.expander("📄 ISO 9001:2015 Standart Hujjat (.docx)"):
     d1, d2 = st.columns(2)
     with d1:
@@ -972,11 +1056,6 @@ with st.expander("📄 ISO 9001:2015 Standart Hujjat (.docx)"):
     if st.button("📄 ISO hujjat yaratish", type="primary", use_container_width=True):
         with st.spinner("ISO 9001 shablon tayyorlanmoqda..."):
             try:
-                # generate_iso_report_docx funksiyasi (yuqorida ta'riflangan) import qilinishi kerak
-                # Biz bu funksiyani oldingi qismda yozgan edik. Uni shu yerga ko'chirish kerak.
-                # Qisqalik uchun funksiyani bu yerga qayta yozmadim, lekin siz asl kodda mavjud.
-                # Eslatma: Asl kodda generate_iso_report_docx funksiyasi to'liq berilgan edi.
-                # Agar sizda funksiya mavjud bo'lmasa, iltimos, avvalgi xabardan ko'chiring.
                 docx_bytes = generate_iso_report_docx(
                     obj_name=obj_name, lang=iso_lang, layers_data=layers_data,
                     time_h=time_h, T_source_max=T_source_max, burn_duration=burn_duration,
@@ -992,8 +1071,8 @@ with st.expander("📄 ISO 9001:2015 Standart Hujjat (.docx)"):
                                    file_name=f"{doc_num_input}_Rev{revision_inp}_{pd.Timestamp.now().strftime('%Y%m%d')}.docx",
                                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                                    use_container_width=True)
-            except ImportError:
-                st.error("Kerakli kutubxona: pip install python-docx")
+            except Exception as e:
+                st.error(f"Hisobot yaratishda xatolik: {e}")
 
 # ====================== ORIGINAL AI MONITORING (o'zgarishsiz) ======================
 st.header("🔄 Live 3D Monitoring (Real-time)")
@@ -1205,4 +1284,3 @@ with tab_advanced:
 
 st.sidebar.markdown("---")
 st.sidebar.write(f"Tuzuvchi: Saitov Dilshodbek")
-
