@@ -6,9 +6,7 @@ from plotly.subplots import make_subplots
 from scipy.ndimage import gaussian_filter
 from scipy.optimize import minimize
 import time
-import io
-from PIL import Image
-from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor   # <-- FIX: import both
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 
 # =========================== TIL QO'LLAB-QUVVATLASH ===========================
 if 'language' not in st.session_state:
@@ -144,9 +142,7 @@ def t(key, **kwargs):
 | **Integratsiya va testlash** | 2026-06-30 | Unit testlar, yakuniy vizualizatsiya, deploy |
             """,
             'live_monitoring_tab': "🔄 Live 3D Monitoring",
-            'download_data': "📥 Monitoring ma'lumotlarini yuklab olish (CSV)",
-            'download_3d_plot': "📸 3D plotni yuklab olish (PNG)",
-            'download_trend_plot': "📈 Trend plotni yuklab olish (PNG)"
+            'download_data': "📥 Monitoring ma'lumotlarini yuklab olish (CSV)"
         },
         'en': {
             'app_title': "Universal Surface Deformation Monitoring",
@@ -262,9 +258,7 @@ def t(key, **kwargs):
 | **Integration & testing** | 2026-06-30 | Unit tests, final visualization, deploy |
             """,
             'live_monitoring_tab': "🔄 Live 3D Monitoring",
-            'download_data': "📥 Download monitoring data (CSV)",
-            'download_3d_plot': "📸 Download 3D plot (PNG)",
-            'download_trend_plot': "📈 Download trend plot (PNG)"
+            'download_data': "📥 Download monitoring data (CSV)"
         },
         'ru': {
             'app_title': "Универсальный мониторинг деформации земной поверхности",
@@ -380,9 +374,7 @@ def t(key, **kwargs):
 | **Интеграция и тестирование** | 2026-06-30 | Модульные тесты, финальная визуализация, деплой |
             """,
             'live_monitoring_tab': "🔄 Live 3D Monitoring",
-            'download_data': "📥 Скачать данные мониторинга (CSV)",
-            'download_3d_plot': "📸 Скачать 3D график (PNG)",
-            'download_trend_plot': "📈 Скачать график тренда (PNG)"
+            'download_data': "📥 Скачать данные мониторинга (CSV)"
         }
     }
     current = translations.get(st.session_state.language, translations['uz'])
@@ -391,7 +383,7 @@ def t(key, **kwargs):
         return text.format(**kwargs)
     return text
 
-# =========================== PYTORCH ===========================
+# =========================== PYTORCH (ixtiyoriy) ===========================
 try:
     import torch
     import torch.nn as nn
@@ -507,8 +499,8 @@ if not layers_data:
     st.stop()
 
 # =========================== GRID VA MANBA ===========================
-x_axis = np.linspace(-total_depth * 1.5, total_depth * 1.5, 150)
-z_axis = np.linspace(0, total_depth + 50, 120)
+x_axis = np.linspace(-total_depth * 1.5, total_depth * 1.5, 100)   # kamaytirildi (150->100)
+z_axis = np.linspace(0, total_depth + 50, 80)                      # kamaytirildi (120->80)
 grid_x, grid_z = np.meshgrid(x_axis, z_axis)
 source_z = total_depth - (layers_data[-1]['t'] / 2)
 H_seam   = layers_data[-1]['t']
@@ -633,7 +625,7 @@ dp_dx, dp_dz = np.gradient(pressure, axis=1), np.gradient(pressure, axis=0)
 vx, vz = -perm * dp_dx, -perm * dp_dz
 gas_velocity = np.sqrt(vx**2 + vz**2)
 
-# =========================== AI MODEL ===========================
+# =========================== AI MODEL (Collapse prediction) ===========================
 @st.cache_resource(show_spinner=False)
 def get_nn_model():
     if not PT_AVAILABLE:
@@ -815,13 +807,12 @@ mk3.metric(t('max_subsidence_live'), f"{s_max_3d*100:.1f} cm")
 mk4.metric(t('process_stage'), t('stage_active') if time_h<100 else t('stage_cooling'))
 st.markdown("---")
 
-# ====================== YANGI: LIVE 3D MONITORING TAB (integrated from second code) ======================
+# ====================== YANGI: LIVE 3D MONITORING TAB ======================
 st.header("🔄 Live 3D Monitoring (Real-time)")
 tab_live, tab_ai_orig, tab_advanced = st.tabs([t('live_monitoring_tab'), t('ai_monitor_title'), t('advanced_analysis')])
 
 with tab_live:
     st.markdown("### Real-time subsidence, temperature, anomalies and alerts")
-    # Parameters for live simulation
     TIME_STEPS = st.slider("Simulation steps", 10, 200, 50, key="live_steps")
     run_live = st.button("▶️ Run Live Monitoring", key="run_live")
     stop_live = st.button("⏹ Stop Monitoring", key="stop_live")
@@ -829,8 +820,7 @@ with tab_live:
         st.session_state.stop_flag_live = False
     if stop_live:
         st.session_state.stop_flag_live = True
-    
-    # Placeholders for live plots
+
     col_live1, col_live2 = st.columns(2)
     subs_plot_live = col_live1.empty()
     temp_plot_live = col_live2.empty()
@@ -839,14 +829,12 @@ with tab_live:
     trend_plot_live = col_live4.empty()
     surface_3d_plot_live = st.empty()
     alert_box_live = st.empty()
-    
-    # Data storage for download
+
     if 'live_history_df' not in st.session_state:
         st.session_state.live_history_df = pd.DataFrame(columns=['step', 'mean_subsidence_cm', 'max_temp_c', 'FOS', 'pillar_width_m'])
-    
+
     if run_live:
         st.session_state.stop_flag_live = False
-        # Prepare grid for 3D
         X_live = np.linspace(-20, 20, 50)
         Y_live = np.linspace(-20, 20, 50)
         X_grid_live, Y_grid_live = np.meshgrid(X_live, Y_live)
@@ -855,43 +843,34 @@ with tab_live:
         width_history_live = []
         temp_history_live = []
         steps_done = 0
-        last_surface_fig = None   # <-- FIX: store last surface figure
-        
-        # Train a simple RandomForest for pillar width prediction (as in second code)
+
         rf_live = RandomForestRegressor(n_estimators=10, random_state=42)
-        # dummy training
         dummy_X = np.random.rand(10,3)
         dummy_y = np.random.rand(10)
         rf_live.fit(dummy_X, dummy_y)
-        
+
         for t_step in range(TIME_STEPS):
             if st.session_state.stop_flag_live:
                 break
-            # Simulate subsidence and temperature fields (using Gaussian shapes)
             Z_subs = np.exp(-(X_grid_live**2 + Y_grid_live**2) / (2*(5 + t_step*0.1)**2)) * 5 * t_step / TIME_STEPS
             Z_temp = np.exp(-(X_grid_live**2 + Y_grid_live**2) / (2*8**2)) * T_source_max * t_step / TIME_STEPS
-            
-            # Anomaly detection via Gaussian filter
+
             Z_filtered = gaussian_filter(Z_subs, sigma=1)
             anomalies = Z_subs - Z_filtered
             anomaly_thresh = 0.2
             anomaly_points = np.where(np.abs(anomalies) > anomaly_thresh)
-            
-            # AI prediction for pillar width (using current burn_time, max_temp, avg UCS)
+
             avg_ucs = np.mean([l['ucs'] for l in layers_data])
             X_feat = np.array([[burn_duration, T_source_max, avg_ucs]]).reshape(1,-1)
             pillar_width_pred = rf_live.predict(X_feat)[0]
-            # Simulate FOS decreasing over time
             FOS_live = np.clip(2.5 - t_step * 0.03, 0.8, 2.5)
-            
-            # Store history
+
             mean_subs = np.mean(Z_subs)
             subs_history_live.append(mean_subs)
             fos_history_live.append(FOS_live)
             width_history_live.append(pillar_width_pred)
             temp_history_live.append(np.mean(Z_temp))
-            
-            # Update Dataframe for download
+
             new_row = pd.DataFrame({
                 'step': [t_step+1],
                 'mean_subsidence_cm': [mean_subs*100],
@@ -900,26 +879,22 @@ with tab_live:
                 'pillar_width_m': [pillar_width_pred]
             })
             st.session_state.live_history_df = pd.concat([st.session_state.live_history_df, new_row], ignore_index=True)
-            
-            # 2D Heatmaps
+
             fig_subs = go.Figure(go.Heatmap(z=Z_subs*100, x=X_live, y=Y_live, colorscale='Viridis'))
             fig_subs.update_layout(title='Surface Subsidence (cm)', xaxis_title='X (m)', yaxis_title='Y (m)', height=350)
             subs_plot_live.plotly_chart(fig_subs, use_container_width=True)
-            
+
             fig_temp = go.Figure(go.Heatmap(z=Z_temp, x=X_live, y=Y_live, colorscale='Hot'))
             fig_temp.update_layout(title='Temperature Field (°C)', xaxis_title='X (m)', yaxis_title='Y (m)', height=350)
             temp_plot_live.plotly_chart(fig_temp, use_container_width=True)
-            
-            # Metrics
+
             pillar_plot_live.metric(label="Recommended Pillar Width (m)", value=f"{pillar_width_pred:.2f}", delta=f"FOS = {FOS_live:.2f}")
-            
-            # Trend chart
+
             trend_fig = go.Figure()
             trend_fig.add_trace(go.Scatter(y=subs_history_live, mode='lines+markers', name='Subsidence (cm)'))
             trend_fig.update_layout(title='Subsidence Trend', xaxis_title='Time step', yaxis_title='Mean subsidence (cm)', height=350)
             trend_plot_live.plotly_chart(trend_fig, use_container_width=True)
-            
-            # 3D Surface with anomalies
+
             surface_fig = go.Figure(data=[go.Surface(z=Z_subs*100, x=X_live, y=Y_live, colorscale='Viridis', opacity=0.9)])
             if anomaly_points[0].size > 0:
                 surface_fig.add_trace(go.Scatter3d(
@@ -928,9 +903,7 @@ with tab_live:
                 ))
             surface_fig.update_layout(title='3D Surface & Anomalies', scene=dict(zaxis_title='Subsidence (cm)'), height=500)
             surface_3d_plot_live.plotly_chart(surface_fig, use_container_width=True)
-            last_surface_fig = surface_fig   # store for later download
-            
-            # Alerts
+
             alerts = []
             if FOS_live < 1.2:
                 alerts.append("⚠️ FOS Critical!")
@@ -942,70 +915,53 @@ with tab_live:
                 alert_box_live.markdown("### 🔴 ALERTS\n" + "\n".join(alerts))
             else:
                 alert_box_live.markdown("### 🟢 All systems normal")
-            
+
             time.sleep(0.1)
             steps_done += 1
-        
+
         st.success(f"✅ Live monitoring completed after {steps_done} steps.")
-        # Save last surface figure in session state for download
-        st.session_state.last_surface_fig = last_surface_fig
-    
-      # Download buttons for live data and plots (outside the run loop)
+
+    # CSV yuklab olish (PNG olib tashlandi)
     if not st.session_state.live_history_df.empty:
         st.markdown("---")
-        st.subheader("📥 Download Monitoring Results")
+        st.subheader("📥 Download Monitoring Results (CSV)")
         csv_data = st.session_state.live_history_df.to_csv(index=False).encode('utf-8')
-        st.download_button(t('download_data'), data=csv_data, file_name="ucg_live_monitoring.csv", mime="text/csv")
+        st.download_button(
+            label=t('download_data'),
+            data=csv_data,
+            file_name="ucg_live_monitoring.csv",
+            mime="text/csv"
+        )
 
-        # Download trend plot (regenerate from history if available)
-        if 'live_history_df' in st.session_state and len(st.session_state.live_history_df) > 0:
-            trend_df = st.session_state.live_history_df
-            fig_trend_dl = go.Figure()
-            fig_trend_dl.add_trace(go.Scatter(x=trend_df['step'], y=trend_df['mean_subsidence_cm'], mode='lines+markers', name='Subsidence (cm)'))
-            fig_trend_dl.update_layout(title='Subsidence Trend', xaxis_title='Time step', yaxis_title='Subsidence (cm)')
-            img_bytes_trend = fig_trend_dl.to_image(format="png", width=800, height=400)
-            st.download_button(t('download_trend_plot'), data=img_bytes_trend, file_name="subsidence_trend.png", mime="image/png")
-
-        # Download 3D plot if available
-        if 'last_surface_fig' in st.session_state and st.session_state.last_surface_fig is not None:
-            img_3d = st.session_state.last_surface_fig.to_image(format="png", width=800, height=500)
-            st.download_button(t('download_3d_plot'), data=img_3d, file_name="3d_surface.png", mime="image/png")
-
-# ====================== ORIGINAL AI MONITORING (from first code) ======================
+# ====================== ORIGINAL AI MONITORING ======================
 with tab_ai_orig:
     st.markdown(f"*{t('ai_monitor_desc')}*")
-    # ---- Umumiy yordamchi funksiyalar ----
     def get_sensor_data_sim(base_temp=None):
-        """Sensor ma'lumotlarini simulyatsiya qiladi (UCG parametrlariga bog'liq)"""
         base = base_temp if base_temp else T_source_max * 0.6
         return {
             "temperature": np.random.uniform(base * 0.4, min(base * 1.1, T_source_max)),
             "gas_pressure": np.random.uniform(1, 8),
             "stress": np.random.uniform(5, min(15, sv_seam * 10))
         }
-    
+
     def compute_effective_stress(sensor):
-        """Digital Twin: effektiv kuchlanish hisoblash"""
         thermo    = sensor["stress"] + 0.01 * sensor["temperature"]
         effective = thermo - sensor["gas_pressure"]
         return effective
-    
+
     def detect_anomaly_z(history, value, threshold=2.0):
-        """Z-score asosida anomaliya aniqlash"""
         if len(history) < 10:
             return False
         std = np.std(history)
         if std < 1e-9:
             return False
         return abs(value - np.mean(history)) > threshold * std
-    
+
     def simulate_sensors_fos(n_steps):
-        """FOS Prediction uchun sensor ma'lumotlari"""
         T      = np.linspace(20, min(1100, T_source_max), n_steps) + np.random.normal(0, 10, n_steps)
         sigma_v = np.linspace(5, min(15, sv_seam * 10), n_steps) + np.random.normal(0, 0.5, n_steps)
         return pd.DataFrame({'Temperature': T, 'VerticalStress': sigma_v})
-    
-    # ---- SimpleNN (FOS Prediction uchun) ----
+
     if PT_AVAILABLE:
         class SimpleNN(nn.Module):
             def __init__(self):
@@ -1021,16 +977,10 @@ with tab_ai_orig:
         fos_criterion = nn.MSELoss()
         fos_optimizer = torch.optim.Adam(fos_nn_model.parameters(), lr=0.01)
     else:
-        from sklearn.ensemble import RandomForestRegressor
         fos_rf_model = RandomForestRegressor(n_estimators=50, random_state=42)
-    
-    # ---- Ikkita tab: birinchisi Anomaly Detection, ikkinchisi FOS Prediction ----
-    ai_tab1, ai_tab2 = st.tabs([
-        "📡 Anomaliya Aniqlash (Digital Twin)",
-        "📊 FOS Prediction (SimpleNN / RF)"
-    ])
-    
-    # ==== TAB 1: Anomaliya aniqlash ====
+
+    ai_tab1, ai_tab2 = st.tabs(["📡 Anomaliya Aniqlash (Digital Twin)", "📊 FOS Prediction (SimpleNN / RF)"])
+
     with ai_tab1:
         st.markdown("#### Sensor ma'lumotlari asosida real-vaqt anomaliya aniqlash")
         t1_col1, t1_col2, t1_col3 = st.columns([1, 1, 2])
@@ -1040,7 +990,7 @@ with tab_ai_orig:
             anomaly_threshold = st.slider("Anomaliya chegarasi (σ)", 1.0, 4.0, 2.0, 0.5, key="thresh_1")
         with t1_col3:
             run_ai_1 = st.button(t('ai_run_btn'), type="primary", use_container_width=True, key="run_ai_1")
-    
+
         if run_ai_1:
             placeholder_1  = st.empty()
             history_eff    = []
@@ -1048,18 +998,18 @@ with tab_ai_orig:
             temp_history   = []
             gas_history    = []
             stress_history = []
-    
+
             for step in range(int(ai_steps_1)):
                 sensor     = get_sensor_data_sim(base_temp=T_source_max * 0.6)
                 effective  = compute_effective_stress(sensor)
                 is_anomaly = detect_anomaly_z(history_eff, effective, threshold=anomaly_threshold)
-    
+
                 history_eff.append(effective)
                 anomalies_eff.append(effective if is_anomaly else None)
                 temp_history.append(sensor["temperature"])
                 gas_history.append(sensor["gas_pressure"])
                 stress_history.append(sensor["stress"])
-    
+
                 with placeholder_1.container():
                     acol1, acol2, acol3, acol4 = st.columns(4)
                     acol1.metric("🌡 Harorat", f"{sensor['temperature']:.1f} °C",
@@ -1069,7 +1019,7 @@ with tab_ai_orig:
                                  delta_color="inverse",
                                  delta="⚠️ Anomaliya!" if is_anomaly else "Normal")
                     acol4.metric("📈 Qadam", f"{step+1}/{int(ai_steps_1)}")
-    
+
                     fig_a = make_subplots(
                         rows=2, cols=2,
                         subplot_titles=(
@@ -1094,7 +1044,7 @@ with tab_ai_orig:
                                         legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5),
                                         margin=dict(t=60, b=60))
                     st.plotly_chart(fig_a, use_container_width=True)
-    
+
                     anomaly_count = sum(1 for a in anomalies_eff if a is not None)
                     if is_anomaly:
                         st.error(f"🚨 ANOMALIYA ANIQLANDI! (Jami: {anomaly_count}) — Collapse ehtimoli yuqori!")
@@ -1102,35 +1052,33 @@ with tab_ai_orig:
                         st.warning(f"⚠️ Kuchlanish Pillar Strength ({pillar_strength:.1f} MPa) ning 80% dan oshdi!")
                     else:
                         st.success(f"✅ Normal holat — Effektiv σ: {effective:.2f} MPa")
-    
+
                     st.progress((step + 1) / int(ai_steps_1))
-    
+
                 time.sleep(0.15)
-    
+
             st.balloons()
             st.success(f"✅ Monitoring yakunlandi! Jami anomaliyalar: {sum(1 for a in anomalies_eff if a is not None)}")
-    
-    # ==== TAB 2: FOS Prediction ====
+
     with ai_tab2:
         st.markdown("#### SimpleNN yoki RandomForest yordamida FOS (Factor of Safety) bashorati")
-    
         t2_col1, t2_col2 = st.columns([1, 3])
         with t2_col1:
             ai_steps_2 = st.number_input(t('ai_steps'), min_value=10, max_value=500, value=50, step=10, key="ai_steps_2")
             fos_target = st.number_input("Maqsad FOS qiymati", min_value=5.0, max_value=30.0, value=12.0, step=0.5)
         with t2_col2:
             run_ai_2 = st.button(t('ai_run_btn'), type="primary", use_container_width=True, key="run_ai_2")
-    
+
         if run_ai_2:
             placeholder_2       = st.empty()
             sensor_data_fos     = simulate_sensors_fos(int(ai_steps_2))
             pillar_strength_pred = []
             fos_rf_trained       = False
-    
+
             for i in range(int(ai_steps_2)):
                 row = sensor_data_fos.iloc[i]
                 X   = np.array([[row.Temperature, row.VerticalStress]])
-    
+
                 if PT_AVAILABLE:
                     X_t    = torch.tensor(X, dtype=torch.float32)
                     y_pred = fos_nn_model(X_t).detach().numpy()[0][0]
@@ -1144,23 +1092,22 @@ with tab_ai_orig:
                         fos_rf_model.fit(X, [fos_target])
                         fos_rf_trained = True
                     y_pred = fos_rf_model.predict(X)[0]
-    
+
                 pillar_strength_pred.append(float(y_pred))
-    
-                # FOS rangini aniqlash
+
                 if y_pred < 10:
                     fos_color = t('fos_red')
                 elif y_pred <= 15:
                     fos_color = t('fos_yellow')
                 else:
                     fos_color = t('fos_green')
-    
+
                 with placeholder_2.container():
                     p2c1, p2c2, p2c3 = st.columns(3)
                     p2c1.metric("🌡 Harorat", f"{row.Temperature:.1f} °C")
                     p2c2.metric("🧱 Vertikal Stress", f"{row.VerticalStress:.2f} MPa")
                     p2c3.metric("📊 Bashorat FOS", f"{y_pred:.2f}", delta=fos_color)
-    
+
                     fig_fos = make_subplots(
                         rows=1, cols=2,
                         subplot_titles=("FOS Bashorati (Tarixiy)", "Sensor: Harorat vs Stress")
@@ -1171,10 +1118,8 @@ with tab_ai_orig:
                         line=dict(color='lime', width=2),
                         marker=dict(size=5)
                     ), row=1, col=1)
-                    # Maqsad chizig'i
                     fig_fos.add_hline(y=fos_target, line_dash="dash", line_color="yellow",
                                       annotation_text=f"Maqsad: {fos_target}", row=1, col=1)
-                    # Harorat vs Stress scatter
                     fig_fos.add_trace(go.Scatter(
                         x=sensor_data_fos['Temperature'].iloc[:i+1].tolist(),
                         y=sensor_data_fos['VerticalStress'].iloc[:i+1].tolist(),
@@ -1187,7 +1132,7 @@ with tab_ai_orig:
                             showscale=False
                         )
                     ), row=1, col=2)
-    
+
                     fig_fos.update_layout(
                         template="plotly_dark", height=420,
                         showlegend=True,
@@ -1199,12 +1144,12 @@ with tab_ai_orig:
                     fig_fos.update_xaxes(title_text="Harorat (°C)", row=1, col=2)
                     fig_fos.update_yaxes(title_text="Vertikal Stress (MPa)", row=1, col=2)
                     st.plotly_chart(fig_fos, use_container_width=True)
-    
+
                     st.info(f"Qadam {i+1}/{int(ai_steps_2)} | Model: {'PyTorch SimpleNN' if PT_AVAILABLE else 'RandomForest'} | {fos_color}")
                     st.progress((i + 1) / int(ai_steps_2))
-    
+
                 time.sleep(0.05)
-    
+
             st.balloons()
             final_fos = pillar_strength_pred[-1] if pillar_strength_pred else 0
             if final_fos < 10:
@@ -1214,7 +1159,7 @@ with tab_ai_orig:
             else:
                 st.success(f"🟢 Yakuniy FOS: {final_fos:.2f} — Barqaror!")
 
-# =========================== ILMIY HISOBOT (Advanced Analysis) ===========================
+# =========================== ILMIY HISOBOT ===========================
 with tab_advanced:
     st.header(t('advanced_analysis'))
     E_MODULUS_R, ALPHA_THERM, BETA_CONST = 5000.0, 1.0e-5, beta_thermal
@@ -1228,7 +1173,7 @@ with tab_advanced:
     ucs_t_dyn = ucs_0_r * np.exp(-BETA_CONST*(T_source_max-20))
     p_str_final = ucs_t_dyn * (rec_width/(H_seam+EPS))**0.5
     fos_final = p_str_final/(sigma_v_tot+EPS)
-    
+
     t1,t2,t3 = st.tabs([t('tab_mass'), t('tab_thermal'), t('tab_stability')])
     with t1:
         st.subheader(t('hb_class'))
@@ -1265,7 +1210,7 @@ with tab_advanced:
             st.error(t('conclusion_danger', fos=fos_final))
         else:
             st.success(t('conclusion_safe', fos=fos_final))
-    
+
     st.markdown("---")
     with st.expander(t('methodology_expander')):
         st.markdown("#### Ushbu model quyidagi fundamental ilmiy ishlar asosida tuzilgan:")
