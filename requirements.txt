@@ -22,4 +22,11 @@ plotly>=5.14.0
 scipy>=1.10.0
 scikit-learn>=1.2.0
 pillow>=9.0.0
-pip install streamlit numpy pandas plotly scipy scikit-learn python-docx
+streamlit==1.32.0
+numpy==1.26.4
+pandas==2.2.1
+plotly==5.19.0
+scipy==1.12.0
+scikit-learn==1.4.1.post1
+python-docx==1.1.0
+torch==2.2.0
