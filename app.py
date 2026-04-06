@@ -964,7 +964,7 @@ with tab_live:
             fig_trend_dl = go.Figure()
             fig_trend_dl.add_trace(go.Scatter(x=trend_df['step'], y=trend_df['mean_subsidence_cm'], mode='lines+markers', name='Subsidence (cm)'))
             fig_trend_dl.update_layout(title='Subsidence Trend', xaxis_title='Time step', yaxis_title='Subsidence (cm)')
-            img_bytes_trend = fig_trend_dl.to_image(format="png", width=800, height=400)
+           img_bytes_trend = fig_trend_dl.to_image(format="png", width=800, height=400)
             st.download_button(t('download_trend_plot'), data=img_bytes_trend, file_name="subsidence_trend.png", mime="image/png")
         
         # Download 3D plot if available
