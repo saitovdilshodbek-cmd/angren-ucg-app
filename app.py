@@ -1205,4 +1205,4 @@ with tab_advanced:
 
 st.sidebar.markdown("---")
 st.sidebar.write(f"Tuzuvchi: Saitov Dilshodbek")
-pip install -r requirements.txt
+
