@@ -5,13 +5,14 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from scipy.ndimage import gaussian_filter
 from scipy.optimize import minimize
+import time
 
 # =========================== TIL QO'LLAB-QUVVATLASH ===========================
 if 'language' not in st.session_state:
     st.session_state.language = 'uz'
 
 LANGUAGES = {
-    'uz': '🇺🇿 O‘zbek',
+    'uz': '🇺🇿 O'zbek',
     'en': '🇬🇧 English',
     'ru': '🇷🇺 Русский'
 }
@@ -54,11 +55,11 @@ def t(key, **kwargs):
             'gsi': "GSI:",
             'mi': "mi:",
             'manual_st0': "σt0 (MPa):",
-            'error_thick_positive': "Qalinlik >0 bo‘lishi kerak",
-            'error_ucs_positive': "UCS >0 MPa bo‘lishi kerak",
-            'error_density_positive': "Zichlik >0 kg/m³ bo‘lishi kerak",
-            'error_gsi_range': "GSI 10...100 oralig‘ida bo‘lishi kerak",
-            'error_mi_positive': "mi >0 bo‘lishi kerak",
+            'error_thick_positive': "Qalinlik >0 bo'lishi kerak",
+            'error_ucs_positive': "UCS >0 MPa bo'lishi kerak",
+            'error_density_positive': "Zichlik >0 kg/m³ bo'lishi kerak",
+            'error_gsi_range': "GSI 10...100 oralig'ida bo'lishi kerak",
+            'error_mi_positive': "mi >0 bo'lishi kerak",
             'error_min_layers': "❌ Kamida 1 ta qatlam kiriting!",
             'warning_pytorch': "⚠️ PyTorch o'rnatilmagan. RandomForestClassifier ishlatiladi.",
             'pillar_strength': "Pillar Strength (σp)",
@@ -88,7 +89,11 @@ def t(key, **kwargs):
             'process_stage': "Jarayon bosqichi",
             'stage_active': "Faol",
             'stage_cooling': "Sovish",
-            '3d_model_title': "🌐 UCG Jarayonining Hajmli Qirqim Modeli",
+            'ai_monitor_title': "🧠 UCG AI Predictive Monitoring",
+            'ai_monitor_desc': "Real-vaqt sensor ma'lumotlari va anomaliya aniqlash",
+            'ai_steps': "Simulyatsiya qadamlari soni:",
+            'ai_run_btn': "▶️ AI Monitoringni Ishga Tushirish",
+            'ai_stop_btn': "⏹ To'xtatish",
             'advanced_analysis': "🔍 Chuqurlashtirilgan Dinamik Tahlil va Metodik Asoslash",
             'tab_mass': "🏗️ Massiv Parametrlari",
             'tab_thermal': "🔥 Termal Degradatsiya",
@@ -131,7 +136,7 @@ def t(key, **kwargs):
             'timeline_table': """
 | Bosqich | Vaqti | Tavsif |
 |---------|-------|--------|
-| **Rejalashtirish** | 2026-04-01 | Validatsiya, xavfsiz bo‘lish funksiyalarini ishlab chiqish |
+| **Rejalashtirish** | 2026-04-01 | Validatsiya, xavfsiz bo'lish funksiyalarini ishlab chiqish |
 | **Modellarni optimallashtirish** | 2026-05-15 | NN/RF testlash, FDM yaxshilash, keshlashtirish |
 | **Integratsiya va testlash** | 2026-06-30 | Unit testlar, yakuniy vizualizatsiya, deploy |
             """,
@@ -198,7 +203,11 @@ def t(key, **kwargs):
             'process_stage': "Process stage",
             'stage_active': "Active",
             'stage_cooling': "Cooling",
-            '3d_model_title': "🌐 3D Cross-section Model of UCG Process",
+            'ai_monitor_title': "🧠 UCG AI Predictive Monitoring",
+            'ai_monitor_desc': "Real-time sensor data and anomaly detection",
+            'ai_steps': "Simulation steps:",
+            'ai_run_btn': "▶️ Run AI Monitoring",
+            'ai_stop_btn': "⏹ Stop",
             'advanced_analysis': "🔍 In-depth Dynamic Analysis and Methodological Justification",
             'tab_mass': "🏗️ Rock Mass Parameters",
             'tab_thermal': "🔥 Thermal Degradation",
@@ -308,7 +317,11 @@ def t(key, **kwargs):
             'process_stage': "Стадия процесса",
             'stage_active': "Активная",
             'stage_cooling': "Охлаждение",
-            '3d_model_title': "🌐 3D-модель сечения процесса ПГУ",
+            'ai_monitor_title': "🧠 UCG AI Predictive Monitoring",
+            'ai_monitor_desc': "Данные датчиков в реальном времени и обнаружение аномалий",
+            'ai_steps': "Шагов симуляции:",
+            'ai_run_btn': "▶️ Запустить AI мониторинг",
+            'ai_stop_btn': "⏹ Остановить",
             'advanced_analysis': "🔍 Углубленный динамический анализ и методологическое обоснование",
             'tab_mass': "🏗️ Параметры массива",
             'tab_thermal': "🔥 Термическая деградация",
@@ -789,64 +802,154 @@ mk3.metric(t('max_subsidence_live'), f"{s_max_3d*100:.1f} cm")
 mk4.metric(t('process_stage'), t('stage_active') if time_h<100 else t('stage_cooling'))
 st.markdown("---")
 
-# =========================== 3D QIRQIM MODELI ===========================
-def generate_realistic_3d(h, layers, s_max, total_depth, source_z, H_seam):
-    x = np.linspace(-150, 150, 50)
-    y = np.linspace(-100, 0, 25)
-    X, Y = np.meshgrid(x, y)
-    subsidence = -s_max * np.exp(-(X**2 + Y**2) / (2 * (total_depth * 0.7)**2))
-    fig = go.Figure()
-    curr_z_top = 0.0
-    layer_colors = ['#8B4513', '#A9A9A9', '#D2B48C', '#BC8F8F', '#2F4F4F']
-    for i, layer in enumerate(layers):
-        thickness = layer['t']
-        z_bottom = curr_z_top - thickness
-        deform_factor = (1 - i/len(layers))
-        z_top_s = curr_z_top + subsidence * deform_factor
-        z_bottom_s = z_bottom + subsidence * (deform_factor * 0.8)
-        color = layer_colors[i % len(layer_colors)]
-        fig.add_trace(go.Surface(x=X, y=Y, z=z_top_s, colorscale=[[0,color],[1,color]], opacity=0.9, showscale=False, name=layer['name'], lighting=dict(ambient=0.5)))
-        wall_x = np.linspace(-150, 150, 50)
-        wall_z = np.linspace(z_bottom_s[0,:], z_top_s[0,:], 2)
-        WX, WZ = np.meshgrid(wall_x, wall_z)
-        WY = np.zeros_like(WX)
-        fig.add_trace(go.Surface(x=WX, y=WY, z=WZ, colorscale=[[0,color],[1,color]], opacity=1.0, showscale=False, hoverinfo='skip'))
-        curr_z_top = z_bottom
-    coal_z = curr_z_top + layers[-1]['t']/2
-    zones = [
-        {'name': 'Combustion Front', 'x': -60, 'rad': 12, 'color': 'yellow'},
-        {'name': 'Gasification Zone', 'x': -30, 'rad': 11, 'color': 'orange'},
-        {'name': 'Coking Zone', 'x': 10, 'rad': 9, 'color': 'brown'},
-        {'name': 'Drying Zone', 'x': 40, 'rad': 7, 'color': 'gray'}
-    ]
-    for zone in zones:
-        u, v = np.mgrid[0:np.pi:15j, 0:np.pi:15j]
-        x_z = zone['rad'] * np.cos(u) * np.sin(v) + zone['x']
-        y_z = zone['rad'] * np.sin(u) * np.sin(v) - zone['rad']
-        z_z = zone['rad'] * 0.6 * np.cos(v) + coal_z
-        fig.add_trace(go.Mesh3d(x=x_z.flatten(), y=y_z.flatten(), z=z_z.flatten(), alphahull=0, color=zone['color'], opacity=0.8, name=zone['name']))
-    fig.add_trace(go.Scatter3d(x=[-80,-80], y=[0,0], z=[10, coal_z-5], mode='lines+markers', line=dict(color='silver',width=10), marker=dict(size=4,symbol='circle'), name="Injection Well"))
-    fig.add_trace(go.Scatter3d(x=[80,80], y=[0,0], z=[10, coal_z-5], mode='lines+markers', line=dict(color='silver',width=10), marker=dict(size=4,symbol='circle'), name="Production Well"))
-    fig.add_trace(go.Scatter3d(x=[-80,80], y=[0,0], z=[coal_z-4, coal_z-4], mode='lines', line=dict(color='black',width=6,dash='solid'), name="Permeable Link"))
-    fig.update_layout(
-        scene=dict(
-            xaxis=dict(title='Masofa (m)', backgroundcolor="black"),
-            yaxis=dict(title='Kesma chuqurligi', showticklabels=False),
-            zaxis=dict(title='Chuqurlik (m)', range=[-total_depth-10, 20]),
-            camera=dict(eye=dict(x=1.2, y=-1.8, z=0.8)),
-            aspectmode='manual', aspectratio=dict(x=2, y=1, z=0.8)
-        ),
-        template='plotly_dark', margin=dict(l=0,r=0,b=0,t=40),
-        title=t('3d_model_title')
-    )
-    return fig
+# ====================== AI PREDICTIVE MONITORING (yangi qo'shilgan) ======================
+st.header(t('ai_monitor_title'))
+st.markdown(f"*{t('ai_monitor_desc')}*")
 
-st.subheader(t('3d_model_title'))
-fig_3d = generate_realistic_3d(time_h, layers_data, s_max_3d, total_depth, source_z, H_seam)
-st.plotly_chart(fig_3d, use_container_width=True)
+# Sensor simulyatsiya funksiyalari
+def get_sensor_data_sim(base_temp=None):
+    """Sensor ma'lumotlarini simulyatsiya qiladi (UCG parametrlariga bog'liq)"""
+    base = base_temp if base_temp else T_source_max * 0.6
+    return {
+        "temperature": np.random.uniform(base * 0.4, min(base * 1.1, T_source_max)),
+        "gas_pressure": np.random.uniform(1, 8),
+        "stress": np.random.uniform(5, min(15, sv_seam * 10))
+    }
+
+def compute_effective_stress(sensor):
+    """Digital Twin: effektiv kuchlanish hisoblash"""
+    temp = sensor["temperature"]
+    gas  = sensor["gas_pressure"]
+    stress = sensor["stress"]
+    thermo   = stress + 0.01 * temp
+    effective = thermo - gas
+    return effective
+
+def detect_anomaly_z(history, value, threshold=2.0):
+    """Z-score asosida anomaliya aniqlash"""
+    if len(history) < 10:
+        return False
+    mean = np.mean(history)
+    std  = np.std(history)
+    if std < 1e-9:
+        return False
+    return abs(value - mean) > threshold * std
+
+# Sozlamalar
+ai_col1, ai_col2, ai_col3 = st.columns([1, 1, 2])
+with ai_col1:
+    ai_steps = st.number_input(t('ai_steps'), min_value=10, max_value=500, value=60, step=10)
+with ai_col2:
+    anomaly_threshold = st.slider("Anomaliya chegarasi (σ)", 1.0, 4.0, 2.0, 0.5)
+with ai_col3:
+    run_ai = st.button(t('ai_run_btn'), type="primary", use_container_width=True)
+
+if run_ai:
+    ai_placeholder = st.empty()
+    history_eff    = []
+    anomalies_eff  = []
+    temp_history   = []
+    gas_history    = []
+    stress_history = []
+
+    for step in range(int(ai_steps)):
+        sensor    = get_sensor_data_sim(base_temp=T_source_max * 0.6)
+        effective = compute_effective_stress(sensor)
+        is_anomaly = detect_anomaly_z(history_eff, effective, threshold=anomaly_threshold)
+
+        history_eff.append(effective)
+        anomalies_eff.append(effective if is_anomaly else None)
+        temp_history.append(sensor["temperature"])
+        gas_history.append(sensor["gas_pressure"])
+        stress_history.append(sensor["stress"])
+
+        with ai_placeholder.container():
+            # --- Metrikalar ---
+            acol1, acol2, acol3, acol4 = st.columns(4)
+            acol1.metric("🌡 Harorat", f"{sensor['temperature']:.1f} °C",
+                         delta=f"{sensor['temperature'] - np.mean(temp_history):.1f}" if len(temp_history) > 1 else None)
+            acol2.metric("💨 Gaz bosimi", f"{sensor['gas_pressure']:.2f} MPa")
+            acol3.metric("🧱 Effektiv kuchlanish", f"{effective:.2f} MPa",
+                         delta_color="inverse",
+                         delta=f"{'⚠️ Anomaliya!' if is_anomaly else 'Normal'}")
+            acol4.metric("📈 Qadam", f"{step+1}/{int(ai_steps)}")
+
+            # --- Grafiklar ---
+            fig_ai = make_subplots(
+                rows=2, cols=2,
+                subplot_titles=(
+                    "Effektiv Kuchlanish & Anomaliyalar",
+                    "Harorat Tarixi (°C)",
+                    "Gaz Bosimi (MPa)",
+                    "Stress Tarixi (MPa)"
+                ),
+                vertical_spacing=0.15,
+                horizontal_spacing=0.1
+            )
+
+            # 1: Effektiv kuchlanish
+            fig_ai.add_trace(go.Scatter(
+                y=history_eff, mode='lines',
+                name='Effektiv σ',
+                line=dict(color='cyan', width=2)
+            ), row=1, col=1)
+            fig_ai.add_trace(go.Scatter(
+                y=anomalies_eff, mode='markers',
+                name='Anomaliya',
+                marker=dict(color='red', size=10, symbol='x')
+            ), row=1, col=1)
+
+            # 2: Harorat
+            fig_ai.add_trace(go.Scatter(
+                y=temp_history, mode='lines',
+                name='Harorat',
+                line=dict(color='orange', width=2)
+            ), row=1, col=2)
+
+            # 3: Gaz bosimi
+            fig_ai.add_trace(go.Scatter(
+                y=gas_history, mode='lines+markers',
+                name='Gaz bosimi',
+                line=dict(color='lime', width=1),
+                marker=dict(size=4)
+            ), row=2, col=1)
+
+            # 4: Stress
+            fig_ai.add_trace(go.Scatter(
+                y=stress_history, mode='lines',
+                name='Stress',
+                line=dict(color='magenta', width=2)
+            ), row=2, col=2)
+
+            fig_ai.update_layout(
+                template="plotly_dark",
+                height=500,
+                showlegend=True,
+                legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5),
+                margin=dict(t=60, b=60)
+            )
+            st.plotly_chart(fig_ai, use_container_width=True)
+
+            # --- Alert tizimi ---
+            anomaly_count = sum(1 for a in anomalies_eff if a is not None)
+            if is_anomaly:
+                st.error(f"🚨 ANOMALIYA ANIQLANDI! (Jami: {anomaly_count}) — Collapse ehtimoli yuqori!")
+            elif effective > pillar_strength * 0.8:
+                st.warning(f"⚠️ Kuchlanish Pillar Strength ({pillar_strength:.1f} MPa) ning 80% dan oshdi!")
+            else:
+                st.success(f"✅ Normal holat — Effektiv σ: {effective:.2f} MPa")
+
+            # Progress bar
+            st.progress((step + 1) / int(ai_steps))
+
+        time.sleep(0.15)
+
+    st.balloons()
+    st.success(f"✅ AI Monitoring yakunlandi! Jami anomaliyalar: {sum(1 for a in anomalies_eff if a is not None)}")
+
+st.markdown("---")
 
 # =========================== ILMIY HISOBOT ===========================
-st.markdown("---")
 st.header(t('advanced_analysis'))
 E_MODULUS_R, ALPHA_THERM, BETA_CONST = 5000.0, 1.0e-5, beta_thermal
 target_l = layers_data[-1]
