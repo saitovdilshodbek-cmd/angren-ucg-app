@@ -22,3 +22,4 @@ plotly>=5.14.0
 scipy>=1.10.0
 scikit-learn>=1.2.0
 pillow>=9.0.0
+kaleido>=0.2.1
