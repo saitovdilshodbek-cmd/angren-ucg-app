@@ -16,7 +16,6 @@ LANGUAGES = {
     'ru': '🇷🇺 Русский'
 }
 
-# Til tanlash menyusi
 lang = st.sidebar.selectbox(
     "Til / Language / Язык",
     options=list(LANGUAGES.keys()),
@@ -26,10 +25,8 @@ lang = st.sidebar.selectbox(
 st.session_state.language = lang
 
 def t(key, **kwargs):
-    """Tarjima funksiyasi"""
     translations = {
         'uz': {
-            # Asosiy sarlavhalar
             'app_title': "Universal Yer yuzasi Deformatsiyasi Monitoringi",
             'app_subtitle': "Termo-Mexanik (TM) tahlil va Selek O'lchami Optimizatsiyasi",
             'sidebar_header_params': "⚙️ Umumiy parametrlar",
@@ -57,7 +54,6 @@ def t(key, **kwargs):
             'gsi': "GSI:",
             'mi': "mi:",
             'manual_st0': "σt0 (MPa):",
-            # Xatoliklar
             'error_thick_positive': "Qalinlik >0 bo‘lishi kerak",
             'error_ucs_positive': "UCS >0 MPa bo‘lishi kerak",
             'error_density_positive': "Zichlik >0 kg/m³ bo‘lishi kerak",
@@ -65,14 +61,12 @@ def t(key, **kwargs):
             'error_mi_positive': "mi >0 bo‘lishi kerak",
             'error_min_layers': "❌ Kamida 1 ta qatlam kiriting!",
             'warning_pytorch': "⚠️ PyTorch o'rnatilmagan. RandomForestClassifier ishlatiladi.",
-            # Metrikalar
             'pillar_strength': "Pillar Strength (σp)",
             'plastic_zone': "Plastik zona (y)",
             'cavity_volume': "Kamera Hajmi",
             'max_permeability': "Maks. O'tkazuvchanlik",
             'ai_recommendation': "AI Tavsiya (Selek)",
             'monitoring_header': "📊 {obj_name}: Monitoring va Ekspert Xulosasi",
-            # Grafik sarlavhalari
             'subsidence_title': "📉 Yer yuzasi cho'kishi (cm)",
             'thermal_deform_title': "🔥 Termal deformatsiya (cm)",
             'hb_envelopes_title': "🛡️ Hoek-Brown Envelopes",
@@ -100,10 +94,10 @@ def t(key, **kwargs):
             'tab_thermal': "🔥 Termal Degradatsiya",
             'tab_stability': "⚖️ Barqarorlik & Manbalar",
             'hb_class': "1. Hoek-Brown (2018) Klassifikatsiyasi",
-            'hb_mb': "m_b = {:.3f}",
-            'hb_s': "s = {:.4f}",
-            'hb_caption_mb': "Massiv ishqalanish burchagi funksiyasi (m_i={})",
-            'hb_caption_s': "Yoriqlilik darajasi (GSI={})",
+            'hb_mb': "m_b = {mb:.3f}",
+            'hb_s': "s = {s:.4f}",
+            'hb_caption_mb': "Massiv ishqalanish burchagi funksiyasi (m_i={mi})",
+            'hb_caption_s': "Yoriqlilik darajasi (GSI={gsi})",
             'hb_interpret': "**Ilmiy izoh:** Hoek & Brown (2018) mezoniga ko'ra, GSI={gsi} bo'lishi massiv mustahkamligi laboratoriyaga nisbatan **{perc:.1f}%** ga pastligini anglatadi.",
             'thermal_params': "2. Termo-Mexanik Koeffitsiyentlar Tahlili",
             'param_table_param': "Parametr",
@@ -116,12 +110,12 @@ def t(key, **kwargs):
             'alpha_reason': "Ko'mirning issiqlikdan chiziqli kengayish ko'rsatkichi (Yang, 2010).",
             'temp0_reason': "Kon qatlamining boshlang'ich tabiiy harorati.",
             'ucs_decay': "**A) Termal UCS pasayishi:**",
-            'ucs_decay_eq': r"\sigma_{{ci(T)}} = \sigma_{{ci(0)}} \cdot e^{{-\beta(T-T_0)}} = {:.2f} \text{{ MPa}}",
+            'ucs_decay_eq': r"\sigma_{{ci(T)}} = \sigma_{{ci(0)}} \cdot e^{{-\beta(T-T_0)}} = {ucs:.2f} \text{{ MPa}}",
             'ucs_interpret': "**Interpretatsiya:** {temp}°C haroratda jins mustahkamligi {perc:.1f}% ga pasaydi.",
             'thermal_stress': "**B) Termal kuchlanish ($\\sigma_{{th}}$):**",
-            'thermal_stress_eq': r"\sigma_{{th}} \approx \frac{{E \cdot \alpha \cdot \Delta T}}{{1 - \nu}} = {:.2f} \text{{ MPa}}",
+            'thermal_stress_eq': r"\sigma_{{th}} \approx \frac{{E \cdot \alpha \cdot \Delta T}}{{1 - \nu}} = {sigma:.2f} \text{{ MPa}}",
             'pillar_stability': "3. Selek Barqarorligi va Bibliografiya",
-            'fos_eq': r"FOS = \frac{{\sigma_p}}{{\sigma_v}} = {:.2f}",
+            'fos_eq': r"FOS = \frac{{\sigma_p}}{{\sigma_v}} = {fos:.2f}",
             'pillar_wilson': "**Wilson (1972) Yield Pillar nazariyasiga binoan:** Selek o'lchami $w={w}$ m bo'lganda, uning markaziy yadrosi {sv:.2f} MPa lik geostatik yukni ko'tarishga qodir. Plastik zona: $y = {y:.1f}$ m.",
             'references': "#### 📚 Asosiy Ilmiy Manbalar:",
             'ref1': "**Hoek, E., & Brown, E. T. (2018).** The Hoek-Brown failure criterion and GSI – 2018 edition. *JRMGE*.",
@@ -210,10 +204,10 @@ def t(key, **kwargs):
             'tab_thermal': "🔥 Thermal Degradation",
             'tab_stability': "⚖️ Stability & References",
             'hb_class': "1. Hoek-Brown (2018) Classification",
-            'hb_mb': "m_b = {:.3f}",
-            'hb_s': "s = {:.4f}",
-            'hb_caption_mb': "Mass friction angle function (m_i={})",
-            'hb_caption_s': "Fracturing degree (GSI={})",
+            'hb_mb': "m_b = {mb:.3f}",
+            'hb_s': "s = {s:.4f}",
+            'hb_caption_mb': "Mass friction angle function (m_i={mi})",
+            'hb_caption_s': "Fracturing degree (GSI={gsi})",
             'hb_interpret': "**Scientific comment:** According to Hoek & Brown (2018), GSI={gsi} means rock mass strength is **{perc:.1f}%** lower than laboratory values.",
             'thermal_params': "2. Thermo-Mechanical Coefficient Analysis",
             'param_table_param': "Parameter",
@@ -226,12 +220,12 @@ def t(key, **kwargs):
             'alpha_reason': "Linear thermal expansion coefficient of coal (Yang, 2010).",
             'temp0_reason': "Initial natural temperature of the coal seam.",
             'ucs_decay': "**A) Thermal UCS reduction:**",
-            'ucs_decay_eq': r"\sigma_{{ci(T)}} = \sigma_{{ci(0)}} \cdot e^{{-\beta(T-T_0)}} = {:.2f} \text{{ MPa}}",
+            'ucs_decay_eq': r"\sigma_{{ci(T)}} = \sigma_{{ci(0)}} \cdot e^{{-\beta(T-T_0)}} = {ucs:.2f} \text{{ MPa}}",
             'ucs_interpret': "**Interpretation:** At {temp}°C, rock strength decreased by {perc:.1f}%.",
             'thermal_stress': "**B) Thermal stress ($\\sigma_{{th}}$):**",
-            'thermal_stress_eq': r"\sigma_{{th}} \approx \frac{{E \cdot \alpha \cdot \Delta T}}{{1 - \nu}} = {:.2f} \text{{ MPa}}",
+            'thermal_stress_eq': r"\sigma_{{th}} \approx \frac{{E \cdot \alpha \cdot \Delta T}}{{1 - \nu}} = {sigma:.2f} \text{{ MPa}}",
             'pillar_stability': "3. Pillar Stability and Bibliography",
-            'fos_eq': r"FOS = \frac{{\sigma_p}}{{\sigma_v}} = {:.2f}",
+            'fos_eq': r"FOS = \frac{{\sigma_p}}{{\sigma_v}} = {fos:.2f}",
             'pillar_wilson': "**According to Wilson (1972) Yield Pillar theory:** With pillar width $w={w}$ m, the central core can sustain a geostatic load of {sv:.2f} MPa. Plastic zone: $y = {y:.1f}$ m.",
             'references': "#### 📚 Main Scientific References:",
             'ref1': "**Hoek, E., & Brown, E. T. (2018).** The Hoek-Brown failure criterion and GSI – 2018 edition. *JRMGE*.",
@@ -320,10 +314,10 @@ def t(key, **kwargs):
             'tab_thermal': "🔥 Термическая деградация",
             'tab_stability': "⚖️ Устойчивость и источники",
             'hb_class': "1. Классификация Хука-Брауна (2018)",
-            'hb_mb': "m_b = {:.3f}",
-            'hb_s': "s = {:.4f}",
-            'hb_caption_mb': "Функция угла трения массива (m_i={})",
-            'hb_caption_s': "Степень трещиноватости (GSI={})",
+            'hb_mb': "m_b = {mb:.3f}",
+            'hb_s': "s = {s:.4f}",
+            'hb_caption_mb': "Функция угла трения массива (m_i={mi})",
+            'hb_caption_s': "Степень трещиноватости (GSI={gsi})",
             'hb_interpret': "**Научный комментарий:** Согласно критерию Хука-Брауна (2018), GSI={gsi} означает, что прочность массива **на {perc:.1f}%** ниже лабораторных значений.",
             'thermal_params': "2. Анализ термо-механических коэффициентов",
             'param_table_param': "Параметр",
@@ -336,12 +330,12 @@ def t(key, **kwargs):
             'alpha_reason': "Коэффициент линейного теплового расширения угля (Yang, 2010).",
             'temp0_reason': "Начальная естественная температура угольного пласта.",
             'ucs_decay': "**A) Термическое снижение UCS:**",
-            'ucs_decay_eq': r"\sigma_{{ci(T)}} = \sigma_{{ci(0)}} \cdot e^{{-\beta(T-T_0)}} = {:.2f} \text{{ МПа}}",
+            'ucs_decay_eq': r"\sigma_{{ci(T)}} = \sigma_{{ci(0)}} \cdot e^{{-\beta(T-T_0)}} = {ucs:.2f} \text{{ МПа}}",
             'ucs_interpret': "**Интерпретация:** При температуре {temp}°C прочность породы снизилась на {perc:.1f}%.",
             'thermal_stress': "**B) Термическое напряжение ($\\sigma_{{th}}$):**",
-            'thermal_stress_eq': r"\sigma_{{th}} \approx \frac{{E \cdot \alpha \cdot \Delta T}}{{1 - \nu}} = {:.2f} \text{{ МПа}}",
+            'thermal_stress_eq': r"\sigma_{{th}} \approx \frac{{E \cdot \alpha \cdot \Delta T}}{{1 - \nu}} = {sigma:.2f} \text{{ МПа}}",
             'pillar_stability': "3. Устойчивость целика и библиография",
-            'fos_eq': r"FOS = \frac{{\sigma_p}}{{\sigma_v}} = {:.2f}",
+            'fos_eq': r"FOS = \frac{{\sigma_p}}{{\sigma_v}} = {fos:.2f}",
             'pillar_wilson': "**Согласно теории текучести целика Wilson (1972):** При ширине целика $w={w}$ м его центральное ядро выдерживает геостатическую нагрузку {sv:.2f} МПа. Пластическая зона: $y = {y:.1f}$ м.",
             'references': "#### 📚 Основные научные источники:",
             'ref1': "**Hoek, E., & Brown, E. T. (2018).** The Hoek-Brown failure criterion and GSI – 2018 edition. *JRMGE*.",
@@ -369,7 +363,7 @@ def t(key, **kwargs):
         return text.format(**kwargs)
     return text
 
-# =========================== PYTORCH (agar mavjud bo'lsa) ===========================
+# =========================== PYTORCH ===========================
 try:
     import torch
     import torch.nn as nn
@@ -379,17 +373,13 @@ except ImportError:
     st.warning(t('warning_pytorch'))
     from sklearn.ensemble import RandomForestClassifier
 
-# =========================== XAVFSIZLIK UCHUN KICHIK SON ===========================
 EPS = 1e-12
 
-# --- Sahifa sozlamalari ---
 st.set_page_config(page_title=t('app_title'), layout="wide")
 st.title(t('app_title'))
 st.markdown(f"### {t('app_subtitle')}")
 
-# ==============================================================================
-# --- 🧮 MATEMATIK METODOLOGIYA ---
-# ==============================================================================
+# =========================== MATEMATIK METODOLOGIYA ===========================
 st.sidebar.header(t('sidebar_header_params'))
 formula_option = st.sidebar.selectbox(
     "Formulalarni ko'rish:",
@@ -422,9 +412,7 @@ if formula_option != "Yopish":
             st.latex(r"S(x) = S_{max} \cdot \exp\left( -\frac{x^2}{2i^2} \right); \quad \epsilon = 1.52 \frac{S(x)}{R}")
             st.info("**Geomexanika:** Selek barqarorligi, plastik zona va yer yuzasining gorizontal deformatsiyasi.")
 
-# ==============================================================================
-# --- ⚙️ SIDEBAR: PARAMETRLAR ---
-# ==============================================================================
+# =========================== SIDEBAR PARAMETRLAR ===========================
 obj_name      = st.sidebar.text_input(t('project_name'), value="Angren-UCG-001")
 time_h        = st.sidebar.slider(t('process_time'), 1, 150, 24)
 num_layers    = st.sidebar.number_input(t('num_layers'), min_value=1, max_value=5, value=3)
@@ -443,13 +431,10 @@ st.sidebar.subheader(t('combustion'))
 burn_duration = st.sidebar.number_input(t('burn_duration'), value=40)
 T_source_max  = st.sidebar.slider(t('max_temp'), 600, 1200, 1075)
 
-# =========================== TIMELINE ===========================
 with st.sidebar.expander(t('timeline')):
     st.markdown(t('timeline_table'))
 
-# ==============================================================================
-# --- QATLAM MA'LUMOTLARINI YIG'ISH ---
-# ==============================================================================
+# =========================== QATLAM MA'LUMOTLARI ===========================
 strata_colors = ['#87CEEB', '#F4A460', '#D3D3D3', '#F5DEB3', '#555555']
 layers_data   = []
 total_depth   = 0.0
@@ -494,9 +479,7 @@ if not layers_data:
     st.error(t('error_min_layers'))
     st.stop()
 
-# ==============================================================================
-# --- GRID VA MANBA ---
-# ==============================================================================
+# =========================== GRID VA MANBA ===========================
 x_axis = np.linspace(-total_depth * 1.5, total_depth * 1.5, 150)
 z_axis = np.linspace(0, total_depth + 50, 120)
 grid_x, grid_z = np.meshgrid(x_axis, z_axis)
@@ -546,9 +529,7 @@ for val in sources.values():
         dist_sq = (grid_x - val['x'])**2 + (grid_z - source_z)**2
         temp_2d += (curr_T - 25) * np.exp(-dist_sq / (pen_depth**2 + 15**2))
 
-# ==============================================================================
-# --- HEAT SOLVER ---
-# ==============================================================================
+# =========================== HEAT SOLVER ===========================
 def solve_heat_step(T, Q, alpha, dx, dt):
     Tn = T.copy()
     Tn[1:-1,1:-1] = (T[1:-1,1:-1] + alpha*dt*((T[2:,1:-1]-2*T[1:-1,1:-1]+T[:-2,1:-1])/(dx**2+EPS) + (T[1:-1,2:]-2*T[1:-1,1:-1]+T[1:-1,:-2])/(dx**2+EPS)) + Q[1:-1,1:-1]*dt)
@@ -568,9 +549,7 @@ for _ in range(N_STEPS):
 st.session_state.max_temp_map = np.maximum(st.session_state.max_temp_map, temp_2d)
 delta_T = temp_2d - 25.0
 
-# ==============================================================================
-# --- TM TAHLIL ---
-# ==============================================================================
+# =========================== TM TAHLIL ===========================
 temp_eff = np.maximum(st.session_state.max_temp_map - 100, 0)
 damage = np.clip(1 - np.exp(-0.002 * temp_eff), 0, 0.95)
 sigma_ci = grid_ucs * (1 - damage)
@@ -621,17 +600,13 @@ sigma1_act = np.where(void_mask_permanent, 0.0, sigma1_act)
 sigma3_act = np.where(void_mask_permanent, 0.0, sigma3_act)
 sigma_ci = np.where(void_mask_permanent, 0.01, sigma_ci)
 
-# ==============================================================================
-# --- GAS FLOW ---
-# ==============================================================================
+# =========================== GAS FLOW ===========================
 pressure = temp_2d * 10.0
 dp_dx, dp_dz = np.gradient(pressure, axis=1), np.gradient(pressure, axis=0)
 vx, vz = -perm * dp_dx, -perm * dp_dz
 gas_velocity = np.sqrt(vx**2 + vz**2)
 
-# ==============================================================================
-# --- AI MODEL ---
-# ==============================================================================
+# =========================== AI MODEL ===========================
 @st.cache_resource(show_spinner=False)
 def get_nn_model():
     if not PT_AVAILABLE:
@@ -690,9 +665,7 @@ if nn_model is None or not PT_AVAILABLE:
     else:
         collapse_pred = np.zeros_like(temp_2d)
 
-# ==============================================================================
-# --- SELEK OPTIMIZATSIYASI ---
-# ==============================================================================
+# =========================== SELEK OPTIMIZATSIYASI ===========================
 avg_t_p = np.mean(temp_2d[np.abs(z_axis-source_z).argmin(), :])
 strength_red = np.exp(-0.0025*(avg_t_p-20))
 ucs_seam = layers_data[-1]['ucs']
@@ -722,9 +695,7 @@ def objective(w_arr):
 opt_result = minimize(objective, x0=[rec_width], bounds=[(5.0,100.0)], method='SLSQP')
 optimal_width_ai = float(np.clip(opt_result.x[0],5.0,100.0))
 
-# ==============================================================================
-# --- METRIKALAR ---
-# ==============================================================================
+# =========================== METRIKALAR ===========================
 st.subheader(t('monitoring_header', obj_name=obj_name))
 m1,m2,m3,m4,m5 = st.columns(5)
 m1.metric(t('pillar_strength'), f"{pillar_strength:.1f} MPa")
@@ -733,9 +704,7 @@ m3.metric(t('cavity_volume'), f"{void_volume:.1f} m²")
 m4.metric(t('max_permeability'), f"{np.max(perm):.1e} m²")
 m5.metric(t('ai_recommendation'), f"{optimal_width_ai:.1f} m", delta=f"Klassik: {rec_width} m", delta_color="off")
 
-# ==============================================================================
-# --- CHO'KISH VA HOEK-BROWN GRAFIKALARI ---
-# ==============================================================================
+# =========================== CHO'KISH VA HOEK-BROWN GRAFIKALARI ===========================
 st.markdown("---")
 col_g1, col_g2, col_g3 = st.columns([1.5,1.5,2])
 s_max = (H_seam*0.04)*(min(time_h,120)/120)
@@ -759,9 +728,7 @@ with col_g3:
     fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_burning, name=t('combustion'), line=dict(color='orange',width=4)))
     st.plotly_chart(fig_hb.update_layout(title=t('hb_envelopes_title'), template="plotly_dark", height=300, legend=dict(orientation="h", y=-0.3, x=0.5, xanchor="center")), use_container_width=True)
 
-# ==============================================================================
-# --- TM MAYDONI ---
-# ==============================================================================
+# =========================== TM MAYDONI ===========================
 st.markdown("---")
 c1, c2 = st.columns([1,2.5])
 with c1:
@@ -802,9 +769,7 @@ with c2:
     fig_tm.update_yaxes(autorange='reversed', row=2, col=1)
     st.plotly_chart(fig_tm, use_container_width=True)
 
-# ==============================================================================
-# --- KOMPLEKS MONITORING PANELI ---
-# ==============================================================================
+# =========================== KOMPLEKS MONITORING PANELI ===========================
 st.header(t('monitoring_panel', obj_name=obj_name))
 def calculate_live_metrics(h, layers, T_max):
     target = layers[-1]
@@ -824,9 +789,7 @@ mk3.metric(t('max_subsidence_live'), f"{s_max_3d*100:.1f} cm")
 mk4.metric(t('process_stage'), t('stage_active') if time_h<100 else t('stage_cooling'))
 st.markdown("---")
 
-# ==============================================================================
-# --- 3D QIRQIM MODELI (Cross-section) ---
-# ==============================================================================
+# =========================== 3D QIRQIM MODELI ===========================
 def generate_realistic_3d(h, layers, s_max, total_depth, source_z, H_seam):
     x = np.linspace(-150, 150, 50)
     y = np.linspace(-100, 0, 25)
@@ -882,9 +845,7 @@ st.subheader(t('3d_model_title'))
 fig_3d = generate_realistic_3d(time_h, layers_data, s_max_3d, total_depth, source_z, H_seam)
 st.plotly_chart(fig_3d, use_container_width=True)
 
-# ==============================================================================
-# --- ILMIY HISOBOT ---
-# ==============================================================================
+# =========================== ILMIY HISOBOT ===========================
 st.markdown("---")
 st.header(t('advanced_analysis'))
 E_MODULUS_R, ALPHA_THERM, BETA_CONST = 5000.0, 1.0e-5, beta_thermal
@@ -904,10 +865,10 @@ with t1:
     st.subheader(t('hb_class'))
     c1r,c2r = st.columns(2)
     with c1r:
-        st.latex(t('hb_mb', mb_dyn))
-        st.caption(t('hb_caption_mb', mi_val))
-        st.latex(t('hb_s', s_dyn))
-        st.caption(t('hb_caption_s', gsi_val))
+        st.latex(t('hb_mb', mb=mb_dyn))
+        st.caption(t('hb_caption_mb', mi=mi_val))
+        st.latex(t('hb_s', s=s_dyn))
+        st.caption(t('hb_caption_s', gsi=gsi_val))
     with c2r:
         st.markdown(t('hb_interpret', gsi=gsi_val, perc=((1 - s_dyn)*100)))
 with t2:
@@ -919,13 +880,13 @@ with t2:
     })
     st.table(params_df)
     st.markdown(t('ucs_decay'))
-    st.latex(t('ucs_decay_eq', ucs_t_dyn))
+    st.latex(t('ucs_decay_eq', ucs=ucs_t_dyn))
     st.write(t('ucs_interpret', temp=T_source_max, perc=((1 - ucs_t_dyn/ucs_0_r)*100)))
     st.markdown(t('thermal_stress'))
-    st.latex(t('thermal_stress_eq', sigma_thermal.max()))
+    st.latex(t('thermal_stress_eq', sigma=sigma_thermal.max()))
 with t3:
     st.subheader(t('pillar_stability'))
-    st.latex(t('fos_eq', fos_final))
+    st.latex(t('fos_eq', fos=fos_final))
     st.write(t('pillar_wilson', w=rec_width, sv=sigma_v_tot, y=y_zone))
     st.markdown("---")
     st.write(t('references'))
