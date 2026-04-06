@@ -1329,3 +1329,11 @@ with tab_advanced:
 
 st.sidebar.markdown("---")
 st.sidebar.write(f"Tuzuvchi: Saitov Dilshodbek | Device: {device}")
+import streamlit as st
+from PIL import Image
+import qrcode
+
+url = "https://your-fastapi-app-url.com/predict"
+img = qrcode.make(url)
+
+st.image(img, caption="Scan this QR to access API", use_column_width=True)
