@@ -802,11 +802,11 @@ mk3.metric(t('max_subsidence_live'), f"{s_max_3d*100:.1f} cm")
 mk4.metric(t('process_stage'), t('stage_active') if time_h<100 else t('stage_cooling'))
 st.markdown("---")
 
-# ====================== AI PREDICTIVE MONITORING (yangi qo'shilgan) ======================
+# ====================== AI PREDICTIVE MONITORING ======================
 st.header(t('ai_monitor_title'))
 st.markdown(f"*{t('ai_monitor_desc')}*")
 
-# Sensor simulyatsiya funksiyalari
+# ---- Umumiy yordamchi funksiyalar ----
 def get_sensor_data_sim(base_temp=None):
     """Sensor ma'lumotlarini simulyatsiya qiladi (UCG parametrlariga bog'liq)"""
     base = base_temp if base_temp else T_source_max * 0.6
@@ -818,134 +818,233 @@ def get_sensor_data_sim(base_temp=None):
 
 def compute_effective_stress(sensor):
     """Digital Twin: effektiv kuchlanish hisoblash"""
-    temp = sensor["temperature"]
-    gas  = sensor["gas_pressure"]
-    stress = sensor["stress"]
-    thermo   = stress + 0.01 * temp
-    effective = thermo - gas
+    thermo    = sensor["stress"] + 0.01 * sensor["temperature"]
+    effective = thermo - sensor["gas_pressure"]
     return effective
 
 def detect_anomaly_z(history, value, threshold=2.0):
     """Z-score asosida anomaliya aniqlash"""
     if len(history) < 10:
         return False
-    mean = np.mean(history)
-    std  = np.std(history)
+    std = np.std(history)
     if std < 1e-9:
         return False
-    return abs(value - mean) > threshold * std
+    return abs(value - np.mean(history)) > threshold * std
 
-# Sozlamalar
-ai_col1, ai_col2, ai_col3 = st.columns([1, 1, 2])
-with ai_col1:
-    ai_steps = st.number_input(t('ai_steps'), min_value=10, max_value=500, value=60, step=10)
-with ai_col2:
-    anomaly_threshold = st.slider("Anomaliya chegarasi (σ)", 1.0, 4.0, 2.0, 0.5)
-with ai_col3:
-    run_ai = st.button(t('ai_run_btn'), type="primary", use_container_width=True)
+def simulate_sensors_fos(n_steps):
+    """FOS Prediction uchun sensor ma'lumotlari"""
+    T      = np.linspace(20, min(1100, T_source_max), n_steps) + np.random.normal(0, 10, n_steps)
+    sigma_v = np.linspace(5, min(15, sv_seam * 10), n_steps) + np.random.normal(0, 0.5, n_steps)
+    return pd.DataFrame({'Temperature': T, 'VerticalStress': sigma_v})
 
-if run_ai:
-    ai_placeholder = st.empty()
-    history_eff    = []
-    anomalies_eff  = []
-    temp_history   = []
-    gas_history    = []
-    stress_history = []
+# ---- SimpleNN (FOS Prediction uchun) ----
+if PT_AVAILABLE:
+    class SimpleNN(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.fc1 = nn.Linear(2, 16)
+            self.fc2 = nn.Linear(16, 16)
+            self.fc3 = nn.Linear(16, 1)
+        def forward(self, x):
+            x = torch.relu(self.fc1(x))
+            x = torch.relu(self.fc2(x))
+            return self.fc3(x)
+    fos_nn_model  = SimpleNN()
+    fos_criterion = nn.MSELoss()
+    fos_optimizer = torch.optim.Adam(fos_nn_model.parameters(), lr=0.01)
+else:
+    from sklearn.ensemble import RandomForestRegressor
+    fos_rf_model = RandomForestRegressor(n_estimators=50, random_state=42)
 
-    for step in range(int(ai_steps)):
-        sensor    = get_sensor_data_sim(base_temp=T_source_max * 0.6)
-        effective = compute_effective_stress(sensor)
-        is_anomaly = detect_anomaly_z(history_eff, effective, threshold=anomaly_threshold)
+# ---- Ikkita tab: birinchisi Anomaly Detection, ikkinchisi FOS Prediction ----
+ai_tab1, ai_tab2 = st.tabs([
+    "📡 Anomaliya Aniqlash (Digital Twin)",
+    "📊 FOS Prediction (SimpleNN / RF)"
+])
 
-        history_eff.append(effective)
-        anomalies_eff.append(effective if is_anomaly else None)
-        temp_history.append(sensor["temperature"])
-        gas_history.append(sensor["gas_pressure"])
-        stress_history.append(sensor["stress"])
+# ==== TAB 1: Anomaliya aniqlash ====
+with ai_tab1:
+    st.markdown("#### Sensor ma'lumotlari asosida real-vaqt anomaliya aniqlash")
+    t1_col1, t1_col2, t1_col3 = st.columns([1, 1, 2])
+    with t1_col1:
+        ai_steps_1 = st.number_input(t('ai_steps'), min_value=10, max_value=500, value=60, step=10, key="ai_steps_1")
+    with t1_col2:
+        anomaly_threshold = st.slider("Anomaliya chegarasi (σ)", 1.0, 4.0, 2.0, 0.5, key="thresh_1")
+    with t1_col3:
+        run_ai_1 = st.button(t('ai_run_btn'), type="primary", use_container_width=True, key="run_ai_1")
 
-        with ai_placeholder.container():
-            # --- Metrikalar ---
-            acol1, acol2, acol3, acol4 = st.columns(4)
-            acol1.metric("🌡 Harorat", f"{sensor['temperature']:.1f} °C",
-                         delta=f"{sensor['temperature'] - np.mean(temp_history):.1f}" if len(temp_history) > 1 else None)
-            acol2.metric("💨 Gaz bosimi", f"{sensor['gas_pressure']:.2f} MPa")
-            acol3.metric("🧱 Effektiv kuchlanish", f"{effective:.2f} MPa",
-                         delta_color="inverse",
-                         delta=f"{'⚠️ Anomaliya!' if is_anomaly else 'Normal'}")
-            acol4.metric("📈 Qadam", f"{step+1}/{int(ai_steps)}")
+    if run_ai_1:
+        placeholder_1  = st.empty()
+        history_eff    = []
+        anomalies_eff  = []
+        temp_history   = []
+        gas_history    = []
+        stress_history = []
 
-            # --- Grafiklar ---
-            fig_ai = make_subplots(
-                rows=2, cols=2,
-                subplot_titles=(
-                    "Effektiv Kuchlanish & Anomaliyalar",
-                    "Harorat Tarixi (°C)",
-                    "Gaz Bosimi (MPa)",
-                    "Stress Tarixi (MPa)"
-                ),
-                vertical_spacing=0.15,
-                horizontal_spacing=0.1
-            )
+        for step in range(int(ai_steps_1)):
+            sensor     = get_sensor_data_sim(base_temp=T_source_max * 0.6)
+            effective  = compute_effective_stress(sensor)
+            is_anomaly = detect_anomaly_z(history_eff, effective, threshold=anomaly_threshold)
 
-            # 1: Effektiv kuchlanish
-            fig_ai.add_trace(go.Scatter(
-                y=history_eff, mode='lines',
-                name='Effektiv σ',
-                line=dict(color='cyan', width=2)
-            ), row=1, col=1)
-            fig_ai.add_trace(go.Scatter(
-                y=anomalies_eff, mode='markers',
-                name='Anomaliya',
-                marker=dict(color='red', size=10, symbol='x')
-            ), row=1, col=1)
+            history_eff.append(effective)
+            anomalies_eff.append(effective if is_anomaly else None)
+            temp_history.append(sensor["temperature"])
+            gas_history.append(sensor["gas_pressure"])
+            stress_history.append(sensor["stress"])
 
-            # 2: Harorat
-            fig_ai.add_trace(go.Scatter(
-                y=temp_history, mode='lines',
-                name='Harorat',
-                line=dict(color='orange', width=2)
-            ), row=1, col=2)
+            with placeholder_1.container():
+                acol1, acol2, acol3, acol4 = st.columns(4)
+                acol1.metric("🌡 Harorat", f"{sensor['temperature']:.1f} °C",
+                             delta=f"{sensor['temperature'] - np.mean(temp_history):.1f}" if len(temp_history) > 1 else None)
+                acol2.metric("💨 Gaz bosimi", f"{sensor['gas_pressure']:.2f} MPa")
+                acol3.metric("🧱 Effektiv σ", f"{effective:.2f} MPa",
+                             delta_color="inverse",
+                             delta="⚠️ Anomaliya!" if is_anomaly else "Normal")
+                acol4.metric("📈 Qadam", f"{step+1}/{int(ai_steps_1)}")
 
-            # 3: Gaz bosimi
-            fig_ai.add_trace(go.Scatter(
-                y=gas_history, mode='lines+markers',
-                name='Gaz bosimi',
-                line=dict(color='lime', width=1),
-                marker=dict(size=4)
-            ), row=2, col=1)
+                fig_a = make_subplots(
+                    rows=2, cols=2,
+                    subplot_titles=(
+                        "Effektiv Kuchlanish & Anomaliyalar",
+                        "Harorat Tarixi (°C)",
+                        "Gaz Bosimi (MPa)",
+                        "Stress Tarixi (MPa)"
+                    ),
+                    vertical_spacing=0.15, horizontal_spacing=0.1
+                )
+                fig_a.add_trace(go.Scatter(y=history_eff, mode='lines', name='Effektiv σ',
+                                           line=dict(color='cyan', width=2)), row=1, col=1)
+                fig_a.add_trace(go.Scatter(y=anomalies_eff, mode='markers', name='Anomaliya',
+                                           marker=dict(color='red', size=10, symbol='x')), row=1, col=1)
+                fig_a.add_trace(go.Scatter(y=temp_history, mode='lines', name='Harorat',
+                                           line=dict(color='orange', width=2)), row=1, col=2)
+                fig_a.add_trace(go.Scatter(y=gas_history, mode='lines+markers', name='Gaz bosimi',
+                                           line=dict(color='lime', width=1), marker=dict(size=4)), row=2, col=1)
+                fig_a.add_trace(go.Scatter(y=stress_history, mode='lines', name='Stress',
+                                           line=dict(color='magenta', width=2)), row=2, col=2)
+                fig_a.update_layout(template="plotly_dark", height=500, showlegend=True,
+                                    legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5),
+                                    margin=dict(t=60, b=60))
+                st.plotly_chart(fig_a, use_container_width=True)
 
-            # 4: Stress
-            fig_ai.add_trace(go.Scatter(
-                y=stress_history, mode='lines',
-                name='Stress',
-                line=dict(color='magenta', width=2)
-            ), row=2, col=2)
+                anomaly_count = sum(1 for a in anomalies_eff if a is not None)
+                if is_anomaly:
+                    st.error(f"🚨 ANOMALIYA ANIQLANDI! (Jami: {anomaly_count}) — Collapse ehtimoli yuqori!")
+                elif effective > pillar_strength * 0.8:
+                    st.warning(f"⚠️ Kuchlanish Pillar Strength ({pillar_strength:.1f} MPa) ning 80% dan oshdi!")
+                else:
+                    st.success(f"✅ Normal holat — Effektiv σ: {effective:.2f} MPa")
 
-            fig_ai.update_layout(
-                template="plotly_dark",
-                height=500,
-                showlegend=True,
-                legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5),
-                margin=dict(t=60, b=60)
-            )
-            st.plotly_chart(fig_ai, use_container_width=True)
+                st.progress((step + 1) / int(ai_steps_1))
 
-            # --- Alert tizimi ---
-            anomaly_count = sum(1 for a in anomalies_eff if a is not None)
-            if is_anomaly:
-                st.error(f"🚨 ANOMALIYA ANIQLANDI! (Jami: {anomaly_count}) — Collapse ehtimoli yuqori!")
-            elif effective > pillar_strength * 0.8:
-                st.warning(f"⚠️ Kuchlanish Pillar Strength ({pillar_strength:.1f} MPa) ning 80% dan oshdi!")
+            time.sleep(0.15)
+
+        st.balloons()
+        st.success(f"✅ Monitoring yakunlandi! Jami anomaliyalar: {sum(1 for a in anomalies_eff if a is not None)}")
+
+# ==== TAB 2: FOS Prediction ====
+with ai_tab2:
+    st.markdown("#### SimpleNN yoki RandomForest yordamida FOS (Factor of Safety) bashorati")
+
+    t2_col1, t2_col2 = st.columns([1, 3])
+    with t2_col1:
+        ai_steps_2 = st.number_input(t('ai_steps'), min_value=10, max_value=500, value=50, step=10, key="ai_steps_2")
+        fos_target = st.number_input("Maqsad FOS qiymati", min_value=5.0, max_value=30.0, value=12.0, step=0.5)
+    with t2_col2:
+        run_ai_2 = st.button(t('ai_run_btn'), type="primary", use_container_width=True, key="run_ai_2")
+
+    if run_ai_2:
+        placeholder_2       = st.empty()
+        sensor_data_fos     = simulate_sensors_fos(int(ai_steps_2))
+        pillar_strength_pred = []
+        fos_rf_trained       = False
+
+        for i in range(int(ai_steps_2)):
+            row = sensor_data_fos.iloc[i]
+            X   = np.array([[row.Temperature, row.VerticalStress]])
+
+            if PT_AVAILABLE:
+                X_t    = torch.tensor(X, dtype=torch.float32)
+                y_pred = fos_nn_model(X_t).detach().numpy()[0][0]
+                target = torch.tensor([[fos_target]], dtype=torch.float32)
+                fos_optimizer.zero_grad()
+                loss = fos_criterion(fos_nn_model(X_t), target)
+                loss.backward()
+                fos_optimizer.step()
             else:
-                st.success(f"✅ Normal holat — Effektiv σ: {effective:.2f} MPa")
+                if not fos_rf_trained:
+                    fos_rf_model.fit(X, [fos_target])
+                    fos_rf_trained = True
+                y_pred = fos_rf_model.predict(X)[0]
 
-            # Progress bar
-            st.progress((step + 1) / int(ai_steps))
+            pillar_strength_pred.append(float(y_pred))
 
-        time.sleep(0.15)
+            # FOS rangini aniqlash
+            if y_pred < 10:
+                fos_color = t('fos_red')
+            elif y_pred <= 15:
+                fos_color = t('fos_yellow')
+            else:
+                fos_color = t('fos_green')
 
-    st.balloons()
-    st.success(f"✅ AI Monitoring yakunlandi! Jami anomaliyalar: {sum(1 for a in anomalies_eff if a is not None)}")
+            with placeholder_2.container():
+                p2c1, p2c2, p2c3 = st.columns(3)
+                p2c1.metric("🌡 Harorat", f"{row.Temperature:.1f} °C")
+                p2c2.metric("🧱 Vertikal Stress", f"{row.VerticalStress:.2f} MPa")
+                p2c3.metric("📊 Bashorat FOS", f"{y_pred:.2f}", delta=fos_color)
+
+                fig_fos = make_subplots(
+                    rows=1, cols=2,
+                    subplot_titles=("FOS Bashorati (Tarixiy)", "Sensor: Harorat vs Stress")
+                )
+                fig_fos.add_trace(go.Scatter(
+                    y=pillar_strength_pred, mode='lines+markers',
+                    name=t('pillar_live'),
+                    line=dict(color='lime', width=2),
+                    marker=dict(size=5)
+                ), row=1, col=1)
+                # Maqsad chizig'i
+                fig_fos.add_hline(y=fos_target, line_dash="dash", line_color="yellow",
+                                  annotation_text=f"Maqsad: {fos_target}", row=1, col=1)
+                # Harorat vs Stress scatter
+                fig_fos.add_trace(go.Scatter(
+                    x=sensor_data_fos['Temperature'].iloc[:i+1].tolist(),
+                    y=sensor_data_fos['VerticalStress'].iloc[:i+1].tolist(),
+                    mode='markers',
+                    name='Sensor yo\'li',
+                    marker=dict(
+                        color=list(range(i+1)),
+                        colorscale='Viridis',
+                        size=6,
+                        showscale=False
+                    )
+                ), row=1, col=2)
+
+                fig_fos.update_layout(
+                    template="plotly_dark", height=420,
+                    showlegend=True,
+                    legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5),
+                    margin=dict(t=60, b=60)
+                )
+                fig_fos.update_xaxes(title_text="Qadam", row=1, col=1)
+                fig_fos.update_yaxes(title_text="FOS / Strength", row=1, col=1)
+                fig_fos.update_xaxes(title_text="Harorat (°C)", row=1, col=2)
+                fig_fos.update_yaxes(title_text="Vertikal Stress (MPa)", row=1, col=2)
+                st.plotly_chart(fig_fos, use_container_width=True)
+
+                st.info(f"Qadam {i+1}/{int(ai_steps_2)} | Model: {'PyTorch SimpleNN' if PT_AVAILABLE else 'RandomForest'} | {fos_color}")
+                st.progress((i + 1) / int(ai_steps_2))
+
+            time.sleep(0.05)
+
+        st.balloons()
+        final_fos = pillar_strength_pred[-1] if pillar_strength_pred else 0
+        if final_fos < 10:
+            st.error(f"🔴 Yakuniy FOS: {final_fos:.2f} — Xavfli zona!")
+        elif final_fos <= 15:
+            st.warning(f"🟡 Yakuniy FOS: {final_fos:.2f} — Noaniq holat")
+        else:
+            st.success(f"🟢 Yakuniy FOS: {final_fos:.2f} — Barqaror!")
 
 st.markdown("---")
 
