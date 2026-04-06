@@ -126,11 +126,6 @@ TRANSLATIONS = {
         'live_monitoring_tab': "🔄 Live 3D Monitoring",
         'download_data': "📥 Monitoring ma'lumotlarini yuklab olish (CSV)",
         'formula_show': "Formulalarni ko'rish:",
-        'pdf_report': "📄 PDF Hisobot",
-        'pdf_lang': "Hisobot tili",
-        'pdf_create': "📄 PDF Yaratish",
-        'pdf_download': "⬇️ PDF yuklash",
-        'generating_pdf': "PDF tayyorlanmoqda...",
     },
     'en': {
         'app_title': "Universal Surface Deformation Monitoring",
@@ -248,11 +243,6 @@ TRANSLATIONS = {
         'live_monitoring_tab': "🔄 Live 3D Monitoring",
         'download_data': "📥 Download monitoring data (CSV)",
         'formula_show': "View formulas:",
-        'pdf_report': "📄 PDF Report",
-        'pdf_lang': "Report language",
-        'pdf_create': "📄 Generate PDF",
-        'pdf_download': "⬇️ Download PDF",
-        'generating_pdf': "Generating PDF...",
     },
     'ru': {
         'app_title': "Универсальный мониторинг деформации земной поверхности",
@@ -370,15 +360,9 @@ TRANSLATIONS = {
         'live_monitoring_tab': "🔄 Live 3D Monitoring",
         'download_data': "📥 Скачать данные мониторинга (CSV)",
         'formula_show': "Показать формулы:",
-        'pdf_report': "📄 PDF Отчёт",
-        'pdf_lang': "Язык отчёта",
-        'pdf_create': "📄 Создать PDF",
-        'pdf_download': "⬇️ Скачать PDF",
-        'generating_pdf': "Генерация PDF...",
     }
 }
 
-# Tilga oid variantlar (selectbox uchun)
 FORMULA_OPTIONS = {
     'uz': ["Yopish", "1. Hoek-Brown Failure (2018)", "2. Thermal Damage & Permeability",
            "3. Thermal Stress & Tension", "4. Pillar & Subsidence"],
@@ -395,7 +379,6 @@ TENSILE_MODES = {
 }
 
 def t(key, **kwargs):
-    """Tezkor tarjima funksiyasi – modul darajasidagi lug'atdan foydalanadi."""
     lang = st.session_state.get('language', 'uz')
     text = TRANSLATIONS.get(lang, TRANSLATIONS['uz']).get(key, key)
     if kwargs:
@@ -412,7 +395,7 @@ except ImportError:
     st.warning(t('warning_pytorch'))
 
 EPS = 1e-12
-MAX_HISTORY = 1000   # Live monitoring tarixini cheklash
+MAX_HISTORY = 1000
 
 st.set_page_config(page_title=t('app_title'), layout="wide")
 st.title(t('app_title'))
@@ -430,12 +413,12 @@ lang = st.sidebar.selectbox(
 )
 st.session_state.language = lang
 
-# =========================== MATEMATIK METODOLOGIYA (TARJIMA QILINGAN) ===========================
+# =========================== MATEMATIK METODOLOGIYA ===========================
 st.sidebar.header(t('sidebar_header_params'))
 formula_opts = FORMULA_OPTIONS[st.session_state.language]
 formula_option = st.sidebar.selectbox(t('formula_show'), formula_opts)
 
-if formula_option != formula_opts[0]:  # "Yopish" yoki "Close" yoki "Закрыть"
+if formula_option != formula_opts[0]:
     with st.expander(f"📚 Ilmiy asos: {formula_option}", expanded=True):
         if "Hoek-Brown" in formula_option:
             st.latex(r"\sigma_1 = \sigma_3 + \sigma_{ci} \left( m_b \frac{\sigma_3}{\sigma_{ci}} + s \right)^a")
@@ -480,7 +463,7 @@ T_source_max  = st.sidebar.slider(t('max_temp'), 600, 1200, 1075)
 with st.sidebar.expander(t('timeline')):
     st.markdown(t('timeline_table'))
 
-# =========================== QATLAM MA'LUMOTLARI (COLUMNS O'CHIRILDI) ===========================
+# =========================== QATLAM MA'LUMOTLARI ===========================
 strata_colors = ['#87CEEB', '#F4A460', '#D3D3D3', '#F5DEB3', '#555555']
 layers_data   = []
 total_depth   = 0.0
@@ -525,7 +508,6 @@ if not layers_data:
 # =========================== KESHLANGAN HARORAT MAYDONI ===========================
 @st.cache_data(show_spinner=False, max_entries=50)
 def compute_temperature_field(time_h, T_source_max, burn_duration, total_depth, source_z, grid_shape, n_steps=20):
-    """Harorat maydonini hisoblash – parametrlar o'zgarmasa qayta ishlamaydi."""
     x_axis = np.linspace(-total_depth * 1.5, total_depth * 1.5, grid_shape[1])
     z_axis = np.linspace(0, total_depth + 50, grid_shape[0])
     grid_x, grid_z = np.meshgrid(x_axis, z_axis)
@@ -575,19 +557,12 @@ def compute_temperature_field(time_h, T_source_max, burn_duration, total_depth, 
 
     return temp_2d, x_axis, z_axis, grid_x, grid_z
 
-# Grid o'lchamlarini kichraytirish (xotira uchun)
-grid_shape = (80, 100)   # (z, x)
-temp_2d, x_axis, z_axis, grid_x, grid_z = compute_temperature_field(
-    time_h, T_source_max, burn_duration, total_depth,
-    source_z=total_depth - (layers_data[-1]['t'] / 2),
-    grid_shape=grid_shape, n_steps=20
-)
-
+grid_shape = (80, 100)
 H_seam = layers_data[-1]['t']
 source_z = total_depth - (H_seam / 2)
-
-# Qolgan hisoblar (statik va termo-mexanik) – keshlanmagan, chunki ular tez
-# ... (keyingi qismlar avvalgidek, lekin grid_x, grid_z, x_axis, z_axis endi yuqoridan olinadi)
+temp_2d, x_axis, z_axis, grid_x, grid_z = compute_temperature_field(
+    time_h, T_source_max, burn_duration, total_depth, source_z, grid_shape, n_steps=20
+)
 
 # =========================== GRID VA KUCHLANISHLAR ===========================
 grid_sigma_v = np.zeros_like(grid_z)
@@ -616,11 +591,10 @@ for i, layer in enumerate(layers_data):
     grid_a_hb[mask]    = 0.5 + (1/6)*(np.exp(-layer['gsi']/15) - np.exp(-20/3))
     grid_sigma_t0_manual[mask] = layer['sigma_t0_manual']
 
-# Harorat maydonini yangilash (keshlangan)
 st.session_state.max_temp_map = np.maximum(st.session_state.max_temp_map, temp_2d)
 delta_T = temp_2d - 25.0
 
-# TM TAHLIL (qisqartirilgan, avvalgidek)
+# =========================== TM TAHLIL ===========================
 temp_eff = np.maximum(st.session_state.max_temp_map - 100, 0)
 damage = np.clip(1 - np.exp(-0.002 * temp_eff), 0, 0.95)
 sigma_ci = grid_ucs * (1 - damage)
@@ -636,12 +610,11 @@ grid_sigma_h = k_ratio * grid_sigma_v - sigma_thermal
 sigma1_act = np.maximum(grid_sigma_v, grid_sigma_h)
 sigma3_act = np.minimum(grid_sigma_v, grid_sigma_h)
 
-# Tensile model
-if tensile_mode == TENSILE_MODES[st.session_state.language][0]:   # Empirical
+if tensile_mode == TENSILE_MODES[st.session_state.language][0]:
     grid_sigma_t0_base = tensile_ratio * sigma_ci
-elif tensile_mode == TENSILE_MODES[st.session_state.language][1]: # HB-based
+elif tensile_mode == TENSILE_MODES[st.session_state.language][1]:
     grid_sigma_t0_base = (sigma_ci * grid_s_hb) / (1 + grid_mb + EPS)
-else:  # Manual
+else:
     grid_sigma_t0_base = grid_sigma_t0_manual
 
 sigma_t_field = grid_sigma_t0_base * np.exp(-beta_thermal * (temp_2d - 20))
@@ -672,13 +645,13 @@ sigma1_act = np.where(void_mask_permanent, 0.0, sigma1_act)
 sigma3_act = np.where(void_mask_permanent, 0.0, sigma3_act)
 sigma_ci = np.where(void_mask_permanent, 0.01, sigma_ci)
 
-# Gaz oqimi
+# =========================== GAS FLOW ===========================
 pressure = temp_2d * 10.0
 dp_dx, dp_dz = np.gradient(pressure, axis=1), np.gradient(pressure, axis=0)
 vx, vz = -perm * dp_dx, -perm * dp_dz
 gas_velocity = np.sqrt(vx**2 + vz**2)
 
-# =========================== AI MODEL (Collapse) – avvalgidek ===========================
+# =========================== AI MODEL ===========================
 @st.cache_resource(show_spinner=False)
 def get_nn_model():
     if not PT_AVAILABLE:
@@ -860,7 +833,7 @@ mk3.metric(t('max_subsidence_live'), f"{s_max_3d*100:.1f} cm")
 mk4.metric(t('process_stage'), t('stage_active') if time_h<100 else t('stage_cooling'))
 st.markdown("---")
 
-# ====================== LIVE 3D MONITORING TAB (CSV + PDF) ======================
+# ====================== LIVE 3D MONITORING TAB ======================
 st.header("🔄 Live 3D Monitoring (Real-time)")
 tab_live, tab_ai_orig, tab_advanced = st.tabs([t('live_monitoring_tab'), t('ai_monitor_title'), t('advanced_analysis')])
 
@@ -926,7 +899,6 @@ with tab_live:
             })
             st.session_state.live_history_df = pd.concat([st.session_state.live_history_df, new_row], ignore_index=True).tail(MAX_HISTORY)
 
-            # 2D Heatmaps
             fig_subs = go.Figure(go.Heatmap(z=Z_subs*100, x=X_live, y=Y_live, colorscale='Viridis'))
             fig_subs.update_layout(title='Surface Subsidence (cm)', xaxis_title='X (m)', yaxis_title='Y (m)', height=350)
             subs_plot_live.plotly_chart(fig_subs, use_container_width=True)
@@ -968,22 +940,86 @@ with tab_live:
 
         st.success(f"✅ Live monitoring completed after {steps_done} steps.")
 
-    # CSV yuklab olish
     if not st.session_state.live_history_df.empty:
         st.markdown("---")
         st.subheader("📥 Download Monitoring Results")
         csv_data = st.session_state.live_history_df.to_csv(index=False).encode('utf-8')
         st.download_button(t('download_data'), data=csv_data, file_name="ucg_live_monitoring.csv", mime="text/csv")
 
-# ====================== ORIGINAL AI MONITORING (qisqartirilgan) ======================
+# ====================== ORIGINAL AI MONITORING (soddalashtirilgan) ======================
 with tab_ai_orig:
     st.markdown(f"*{t('ai_monitor_desc')}*")
-    # ... (avvalgi AI monitoring kodi, o‘zgarishsiz, faqat `t()` ishlatilgan)
-    # Ushbu qism juda uzun bo‘lgani uchun, avvalgi to‘liq AI kodini qayta yozish o‘rniga,
-    # uni yuqoridagi to‘liq kod ichidan ko‘chirib olish mumkin. Qisqalik uchun bu yerga
-    # qayta yozilmadi, lekin ishlatuvchi avvalgi ishlaydigan AI kodini qo‘shishi mumkin.
-    # (Xatolikni oldini olish uchun placeholder qoldiriladi – amalda ishlaydi)
-    st.info("AI Monitoring kodi avvalgi versiyada to‘liq mavjud. Bu yerda takrorlanmaydi.")
+    def get_sensor_data_sim(base_temp=None):
+        base = base_temp if base_temp else T_source_max * 0.6
+        return {
+            "temperature": np.random.uniform(base * 0.4, min(base * 1.1, T_source_max)),
+            "gas_pressure": np.random.uniform(1, 8),
+            "stress": np.random.uniform(5, min(15, sv_seam * 10))
+        }
+    def compute_effective_stress(sensor):
+        return (sensor["stress"] + 0.01 * sensor["temperature"]) - sensor["gas_pressure"]
+    def detect_anomaly_z(history, value, threshold=2.0):
+        if len(history) < 10:
+            return False
+        std = np.std(history)
+        if std < 1e-9:
+            return False
+        return abs(value - np.mean(history)) > threshold * std
+    def simulate_sensors_fos(n_steps):
+        T = np.linspace(20, min(1100, T_source_max), n_steps) + np.random.normal(0, 10, n_steps)
+        sigma_v = np.linspace(5, min(15, sv_seam * 10), n_steps) + np.random.normal(0, 0.5, n_steps)
+        return pd.DataFrame({'Temperature': T, 'VerticalStress': sigma_v})
+
+    if PT_AVAILABLE:
+        class SimpleNN(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.net = nn.Sequential(nn.Linear(2, 16), nn.ReLU(), nn.Linear(16, 16), nn.ReLU(), nn.Linear(16, 1))
+            def forward(self, x): return self.net(x)
+        fos_nn_model = SimpleNN()
+        fos_optimizer = torch.optim.Adam(fos_nn_model.parameters(), lr=0.01)
+        fos_criterion = nn.MSELoss()
+    else:
+        fos_rf_model = RandomForestRegressor(n_estimators=50, random_state=42)
+
+    ai_tab1, ai_tab2 = st.tabs(["📡 Anomaliya Aniqlash", "📊 FOS Prediction"])
+    with ai_tab1:
+        ai_steps_1 = st.number_input(t('ai_steps'), 10, 500, 60, key="ai_steps_1")
+        anomaly_threshold = st.slider("Anomaliya chegarasi (σ)", 1.0, 4.0, 2.0, 0.5, key="thresh_1")
+        if st.button(t('ai_run_btn'), key="run_ai_1"):
+            ph = st.empty()
+            history_eff = []
+            for step in range(int(ai_steps_1)):
+                sensor = get_sensor_data_sim()
+                eff = compute_effective_stress(sensor)
+                is_anom = detect_anomaly_z(history_eff, eff, anomaly_threshold)
+                history_eff.append(eff)
+                with ph.container():
+                    st.metric("Effektiv σ", f"{eff:.2f} MPa", delta="Anomaliya" if is_anom else "Normal")
+                    st.progress((step+1)/ai_steps_1)
+                time.sleep(0.1)
+            st.success("Monitoring yakunlandi.")
+    with ai_tab2:
+        ai_steps_2 = st.number_input(t('ai_steps'), 10, 500, 50, key="ai_steps_2")
+        fos_target = st.number_input("Maqsad FOS", 5.0, 30.0, 12.0)
+        if st.button(t('ai_run_btn'), key="run_ai_2"):
+            sensor_data = simulate_sensors_fos(int(ai_steps_2))
+            preds = []
+            for i, row in sensor_data.iterrows():
+                X = np.array([[row.Temperature, row.VerticalStress]])
+                if PT_AVAILABLE:
+                    X_t = torch.tensor(X, dtype=torch.float32)
+                    y_pred = fos_nn_model(X_t).detach().numpy()[0][0]
+                    loss = fos_criterion(fos_nn_model(X_t), torch.tensor([[fos_target]], dtype=torch.float32))
+                    fos_optimizer.zero_grad(); loss.backward(); fos_optimizer.step()
+                else:
+                    if i == 0: fos_rf_model.fit(X, [fos_target])
+                    y_pred = fos_rf_model.predict(X)[0]
+                preds.append(y_pred)
+            fig = go.Figure(go.Scatter(y=preds, mode='lines+markers', name='FOS'))
+            fig.add_hline(y=fos_target, line_dash="dash", line_color="red")
+            st.plotly_chart(fig, use_container_width=True)
+            st.success(f"Yakuniy FOS: {preds[-1]:.2f}")
 
 # =========================== ILMIY HISOBOT ===========================
 with tab_advanced:
@@ -1042,105 +1078,6 @@ with tab_advanced:
         st.markdown("#### Ushbu model quyidagi fundamental ilmiy ishlar asosida tuzilgan:")
         for r in [t('ref1'), t('ref2'), t('ref3'), t('ref4'), "**Brady, B. H., & Brown, E. T. (2006).** Rock Mechanics for Underground Mining."]:
             st.write(r)
-
-# ====================== PDF HISOBOT (YANGI) ======================
-st.markdown("---")
-with st.expander(t('pdf_report')):
-    col_pdf1, col_pdf2 = st.columns([1, 2])
-    with col_pdf1:
-        pdf_lang = st.selectbox(t('pdf_lang'), ['uz', 'en', 'ru'], format_func=lambda x: LANGUAGES[x])
-    with col_pdf2:
-        if st.button(t('pdf_create'), type="primary"):
-            with st.spinner(t('generating_pdf')):
-                try:
-                    from reportlab.lib.pagesizes import A4
-                    from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer
-                    from reportlab.lib.styles import getSampleStyleSheet
-                    from reportlab.lib import colors
-                    import io
-
-                    buffer = io.BytesIO()
-                    doc = SimpleDocTemplate(buffer, pagesize=A4,
-                                            rightMargin=40, leftMargin=40,
-                                            topMargin=40, bottomMargin=40)
-                    styles = getSampleStyleSheet()
-                    story = []
-
-                    # Sarlavha
-                    title_text = {
-                        'uz': f"UCG Monitoring Hisoboti: {obj_name}",
-                        'en': f"UCG Monitoring Report: {obj_name}",
-                        'ru': f"Отчёт мониторинга UCG: {obj_name}"
-                    }.get(pdf_lang, obj_name)
-                    story.append(Paragraph(title_text, styles['Title']))
-                    story.append(Spacer(1, 12))
-
-                    # Asosiy metrikalar jadvali
-                    metrics_header = {
-                        'uz': ["Parametr", "Qiymat"],
-                        'en': ["Parameter", "Value"],
-                        'ru': ["Параметр", "Значение"]
-                    }.get(pdf_lang, ["Parameter", "Value"])
-                    data = [
-                        metrics_header,
-                        ["Pillar Strength (σp)", f"{pillar_strength:.1f} MPa"],
-                        ["Plastik zona (y)", f"{y_zone:.1f} m"],
-                        ["Kamera hajmi", f"{void_volume:.1f} m²"],
-                        ["Tavsiya selek eni", f"{rec_width:.1f} m"],
-                        ["FOS", f"{fos_final:.2f}"],
-                    ]
-                    tbl = Table(data, colWidths=[200, 150])
-                    tbl.setStyle(TableStyle([
-                        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2C3E50')),
-                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-                        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#ECF0F1')]),
-                        ('ALIGN', (1, 0), (1, -1), 'CENTER'),
-                    ]))
-                    story.append(tbl)
-                    story.append(Spacer(1, 16))
-
-                    # Qatlamlar jadvali
-                    layer_title = {
-                        'uz': "Qatlamlar parametrlari",
-                        'en': "Layer Parameters",
-                        'ru': "Параметры слоёв"
-                    }.get(pdf_lang, "Layers")
-                    story.append(Paragraph(layer_title, styles['Heading2']))
-                    layer_header = {
-                        'uz': ["Nomi", "Qalinlik (m)", "UCS (MPa)", "GSI", "Zichlik (kg/m³)"],
-                        'en': ["Name", "Thickness (m)", "UCS (MPa)", "GSI", "Density (kg/m³)"],
-                        'ru': ["Название", "Мощность (м)", "UCS (МПа)", "GSI", "Плотность (кг/м³)"]
-                    }.get(pdf_lang, ["Name", "Thickness", "UCS", "GSI", "Density"])
-                    layer_data = [layer_header] + [
-                        [l['name'], f"{l['t']:.1f}", f"{l['ucs']:.1f}", f"{l['gsi']}", f"{l['rho']:.0f}"]
-                        for l in layers_data
-                    ]
-                    tbl2 = Table(layer_data, colWidths=[100, 80, 80, 60, 100])
-                    tbl2.setStyle(TableStyle([
-                        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#27AE60')),
-                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-                        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#EAFAF1')]),
-                    ]))
-                    story.append(tbl2)
-
-                    doc.build(story)
-                    buffer.seek(0)
-                    pdf_bytes = buffer.getvalue()
-
-                    st.download_button(
-                        label=t('pdf_download'),
-                        data=pdf_bytes,
-                        file_name=f"ucg_report_{obj_name}.pdf",
-                        mime="application/pdf"
-                    )
-                except ImportError:
-                    st.error("❌ PDF yaratish uchun `reportlab` kutubxonasi o‘rnatilmagan. `pip install reportlab` bajaring.")
-                except Exception as e:
-                    st.error(f"PDF yaratishda xatolik: {e}")
 
 st.sidebar.markdown("---")
 st.sidebar.write(f"Tuzuvchi: Saitov Dilshodbek")
