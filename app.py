@@ -958,7 +958,7 @@ with st.expander("🌪️ Sezgirlik Tahlili (Tornado Plot)"):
     fig_tornado.update_layout(title=f"FOS sezgirligi (asosiy FOS={fos_base:.2f})", barmode='overlay', template='plotly_dark', height=350, xaxis_title='ΔFOS', bargap=0.3)
     st.plotly_chart(fig_tornado, use_container_width=True)
 
-# =========================== ISO 9001 HISOBOT GENERATORI (YANGI QO'SHILDI) ===========================
+# =========================== ISO 9001 HISOBOT GENERATORI ===========================
 def generate_iso_report_docx(obj_name, lang, layers_data, time_h, T_source_max, burn_duration,
                               D_factor, nu_poisson, k_ratio, tensile_ratio, beta_thermal,
                               pillar_strength, y_zone, void_volume, rec_width, optimal_width_ai,
@@ -1014,7 +1014,6 @@ def generate_iso_report_docx(obj_name, lang, layers_data, time_h, T_source_max, 
     else:
         doc.add_paragraph("🟢 Overall risk level acceptable.")
     doc.add_heading("5. Conclusions & Recommendations", level=2)
-    # FOS
     fos_val = np.nanmean(fos_2d)
     if fos_val < 1.0:
         doc.add_paragraph(f"🔴 FOS = {fos_val:.2f} → Unstable. Increase pillar width or reduce thermal load.")
@@ -1043,7 +1042,7 @@ def generate_iso_report_docx(obj_name, lang, layers_data, time_h, T_source_max, 
     buffer.seek(0)
     return buffer.getvalue()
 
-# ISO 9001 UI qismi (avvalgidek qoladi, lekin funksiya endi mavjud)
+# ISO 9001 UI qismi
 with st.expander("📄 ISO 9001:2015 Standart Hujjat (.docx)"):
     d1, d2 = st.columns(2)
     with d1:
