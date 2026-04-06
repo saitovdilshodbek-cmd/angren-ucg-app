@@ -592,4 +592,4 @@ with st.expander("📚 Ilmiy Metodologiya va Manbalar (PhD Research References)"
         st.write(r)
 
 st.sidebar.markdown("---")
-st.sidebar.write(f"Tuzuvchi: {obj_name.split('-')[0]} / Saitov Dilshodbek")
+st.sidebar.write(f"Tuzuvchi: Saitov Dilshodbek")
