@@ -1,6 +1,12 @@
-streamlit
-plotly
-numpy
-scipy
+torch
 scikit-learn
+scipy
+plotly
+python-docx
+qrcode
+joblib
+matplotlib
+requests
+numpy
 pandas
+streamlit
