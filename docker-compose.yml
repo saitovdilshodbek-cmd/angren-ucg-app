@@ -1,9 +1,1 @@
-version: '3.8'
-services:
-  ucg-app:
-    build: .
-    ports:
-      - "8501:8501"
-    volumes:
-      - ./ucg_sensors.db:/app/ucg_sensors.db
-    restart: unless-stopped
+
