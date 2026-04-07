@@ -1331,10 +1331,36 @@ st.sidebar.markdown("---")
 st.sidebar.write(f"Tuzuvchi: Saitov Dilshodbek | Device: {device}")
 
 import streamlit as st
-from PIL import Image
 import qrcode
+from io import BytesIO
 
-url = "https:https://angren-ucg-app-a7rxktm6usxqixabhaq576.streamlit.app/#ucg-termo-mexanik-dinamik-3-d-model"
-img = qrcode.make(url)
+# --- QR KOD GENERATORI ---
+st.sidebar.markdown("---")
+st.sidebar.subheader("📱 Mobil ilovaga o'tish")
 
-st.image(img, caption="Scan this QR to access API", use_column_width=True)
+# To'g'ri URL manzil
+url = "https://angren-ucg-app-a7rxktm6usxqixabhaq576.streamlit.app/#ucg-termo-mexanik-dinamik-3-d-model"
+
+# QR kod yaratish funksiyasi
+def generate_qr(link):
+    qr = qrcode.QRCode(
+        version=1,
+        error_correction=qrcode.constants.ERROR_CORRECT_L,
+        box_size=10,
+        border=4,
+    )
+    qr.add_data(link)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    
+    # Rasmni Streamlit'da ko'rsatish uchun buferga saqlash
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+# QR kodni ko'rsatish
+qr_img_bytes = generate_qr(url)
+st.sidebar.image(qr_img_bytes, caption="Scan QR: Angren UCG API", use_container_width=True)
+
+# Muallif haqida ma'lumot (Pastki qismda)
+st.sidebar.info(f"Tuzuvchi: Saitov Dilshodbek")
