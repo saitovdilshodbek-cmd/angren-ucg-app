@@ -414,21 +414,6 @@ lang = st.sidebar.selectbox("Til / Language / Язык", options=list(LANGUAGES.
                             index=list(LANGUAGES.keys()).index(st.session_state.language))
 st.session_state.language = lang
 
-# =========================== QR KOD GENERATORI (YANGI) ===========================
-st.sidebar.markdown("---")
-st.sidebar.subheader("📱 Mobil ilovaga o'tish")
-url = "https://angren-ucg-app-a7rxktm6usxqixabhaq576.streamlit.app/#ucg-termo-mexanik-dinamik-3-d-model"
-def generate_qr(link):
-    qr = qrcode.QRCode(version=1, error_correction=qrcode.constants.ERROR_CORRECT_L, box_size=10, border=4)
-    qr.add_data(link)
-    qr.make(fit=True)
-    img = qr.make_image(fill_color="black", back_color="white")
-    buf = BytesIO()
-    img.save(buf, format="PNG")
-    return buf.getvalue()
-qr_img_bytes = generate_qr(url)
-st.sidebar.image(qr_img_bytes, caption="Scan QR: Angren UCG API", use_container_width=True)
-
 # =========================== MATEMATIK METODOLOGIYA ===========================
 st.sidebar.header(t('sidebar_header_params'))
 formula_opts = FORMULA_OPTIONS[st.session_state.language]
@@ -1046,14 +1031,14 @@ def sensitivity_analysis(base_ucs, base_gsi, base_d, base_nu, base_t, H_seam, ra
     return pd.DataFrame(results), base_fos
 
 with st.expander("🌪️ Sezgirlik Tahlili (Tornado Plot)"):
-    df_sens, fos_base = sensitivity_analysis(layers_data[-1]['ucs'], layers_data[-1]['gsi'], D_factor, nu_poisson, avg_t_p, H_seam)
-    df_sens = df_sens.sort_values('high', ascending=True)
-    fig_tornado = go.Figure()
-    fig_tornado.add_bar(y=df_sens['param'], x=df_sens['low'], orientation='h', name='−20%', marker_color='#E74C3C')
-    fig_tornado.add_bar(y=df_sens['param'], x=df_sens['high'], orientation='h', name='+20%', marker_color='#27AE60')
-    fig_tornado.add_vline(x=0, line_color='white', line_width=2)
-    fig_tornado.update_layout(title=f"FOS sezgirligi (asosiy FOS={fos_base:.2f})", barmode='overlay', template='plotly_dark', height=350, xaxis_title='ΔFOS', bargap=0.3)
-    st.plotly_chart(fig_tornado, use_container_width=True)
+ df_sens, base_fos = sensitivity_analysis_pro(base_params)
+        fig_tornado = go.Figure()
+        fig_tornado.add_bar(y=df_sens['param'], x=df_sens['low'], orientation='h', name='-20%', marker_color='#E74C3C')
+        fig_tornado.add_bar(y=df_sens['param'], x=df_sens['high'], orientation='h', name='+20%', marker_color='#27AE60')
+        fig_tornado.add_vline(x=0, line_color='white')
+        fig_tornado.update_layout(title=f"FOS Sensitivity (base FOS={base_fos:.2f})", barmode='overlay', height=400)
+        st.plotly_chart(fig_tornado, use_container_width=True)
+
 
 # =========================== KENGAYTIRILGAN ISO 9001 HISOBOT GENERATORI (YANGI) ===========================
 def generate_full_iso_report(obj_name, lang, layers_data, T_source_max, burn_duration,
