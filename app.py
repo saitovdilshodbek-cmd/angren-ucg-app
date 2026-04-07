@@ -8,15 +8,23 @@ from scipy.optimize import minimize
 from scipy.stats import linregress
 import time
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.ensemble import IsolationForest
 import io
 from docx import Document
-from docx.shared import Pt, Cm, RGBColor
+from docx.shared import Pt, Cm, RGBColor, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 import torch
 import torch.nn as nn
+import qrcode
+from io import BytesIO
+import matplotlib.pyplot as plt
+import joblib
+import requests
+import warnings
+warnings.filterwarnings('ignore')
 
 # =========================== GLOBAL TRANSLATIONS ===========================
 TRANSLATIONS = {
@@ -406,6 +414,21 @@ lang = st.sidebar.selectbox("Til / Language / Язык", options=list(LANGUAGES.
                             index=list(LANGUAGES.keys()).index(st.session_state.language))
 st.session_state.language = lang
 
+# =========================== QR KOD GENERATORI (YANGI) ===========================
+st.sidebar.markdown("---")
+st.sidebar.subheader("📱 Mobil ilovaga o'tish")
+url = "https://angren-ucg-app-a7rxktm6usxqixabhaq576.streamlit.app/#ucg-termo-mexanik-dinamik-3-d-model"
+def generate_qr(link):
+    qr = qrcode.QRCode(version=1, error_correction=qrcode.constants.ERROR_CORRECT_L, box_size=10, border=4)
+    qr.add_data(link)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+qr_img_bytes = generate_qr(url)
+st.sidebar.image(qr_img_bytes, caption="Scan QR: Angren UCG API", use_container_width=True)
+
 # =========================== MATEMATIK METODOLOGIYA ===========================
 st.sidebar.header(t('sidebar_header_params'))
 formula_opts = FORMULA_OPTIONS[st.session_state.language]
@@ -485,29 +508,50 @@ for lyr in layers_data:
     if lyr['mi'] <= 0: st.error(t('error_mi_positive')); st.stop()
 if not layers_data: st.error(t('error_min_layers')); st.stop()
 
-# =========================== KESHLANGAN HARORAT MAYDONI ===========================
+# =========================== KESHLANGAN HARORAT MAYDONI (HARAKATLANUVCHI MANBA BILAN) ===========================
 @st.cache_data(show_spinner=False, max_entries=50)
-def compute_temperature_field(time_h, T_source_max, burn_duration, total_depth, source_z, grid_shape, n_steps=20):
+def compute_temperature_field_moving(time_h, T_source_max, burn_duration, total_depth, source_z, grid_shape, n_steps=20):
     x_axis = np.linspace(-total_depth * 1.5, total_depth * 1.5, grid_shape[1])
     z_axis = np.linspace(0, total_depth + 50, grid_shape[0])
     grid_x, grid_z = np.meshgrid(x_axis, z_axis)
     alpha_rock = 1.0e-6
-    sources = {'1': {'x': -total_depth/3, 'start': 0}, '2': {'x': 0, 'start': 40}, '3': {'x': total_depth/3, 'start': 80}}
+    v_burn = 0.02  # m/s yonish tezligi (harakat)
+    # Uchta manba: statsionar + harakatlanuvchi
+    sources = [
+        {'x0': -total_depth/3, 'start': 0, 'moving': False},
+        {'x0': 0, 'start': 40, 'moving': True, 'v': v_burn},
+        {'x0': total_depth/3, 'start': 80, 'moving': False}
+    ]
     temp_2d = np.ones_like(grid_x) * 25.0
-    for val in sources.values():
-        if time_h > val['start']:
-            dt_sec = (time_h - val['start']) * 3600
+    for src in sources:
+        if time_h > src['start']:
+            dt_sec = (time_h - src['start']) * 3600
+            if src['moving']:
+                x_center = src['x0'] + src['v'] * dt_sec
+            else:
+                x_center = src['x0']
             pen_depth = np.sqrt(4 * alpha_rock * dt_sec)
-            elapsed = time_h - val['start']
-            curr_T = (T_source_max if elapsed <= burn_duration else 25 + (T_source_max-25)*np.exp(-0.03*(elapsed-burn_duration)))
-            dist_sq = (grid_x - val['x'])**2 + (grid_z - source_z)**2
+            elapsed = time_h - src['start']
+            if elapsed <= burn_duration:
+                curr_T = T_source_max
+            else:
+                curr_T = 25 + (T_source_max-25)*np.exp(-0.03*(elapsed-burn_duration))
+            dist_sq = (grid_x - x_center)**2 + (grid_z - source_z)**2
             temp_2d += (curr_T - 25) * np.exp(-dist_sq / (pen_depth**2 + 15**2))
     Q_heat = np.zeros_like(temp_2d)
-    for val in sources.values():
-        if time_h > val['start']:
-            elapsed = time_h - val['start']
-            curr_T = (T_source_max if elapsed <= burn_duration else 25 + (T_source_max-25)*np.exp(-0.03*(elapsed-burn_duration)))
-            Q_heat += (curr_T/10.0) * np.exp(-((grid_x - val['x'])**2 + (grid_z - source_z)**2)/(2*30**2))
+    for src in sources:
+        if time_h > src['start']:
+            elapsed = time_h - src['start']
+            if elapsed <= burn_duration:
+                curr_T = T_source_max
+            else:
+                curr_T = 25 + (T_source_max-25)*np.exp(-0.03*(elapsed-burn_duration))
+            if src['moving']:
+                x_center = src['x0'] + src['v'] * (time_h - src['start'])*3600
+            else:
+                x_center = src['x0']
+            Q_heat += (curr_T/10.0) * np.exp(-((grid_x - x_center)**2 + (grid_z - source_z)**2)/(2*30**2))
+    # Diffuziya
     DX, DT = 1.0, 0.1
     for _ in range(n_steps):
         Tn = temp_2d.copy()
@@ -519,7 +563,7 @@ def compute_temperature_field(time_h, T_source_max, burn_duration, total_depth, 
 grid_shape = (80, 100)
 source_z = total_depth - (layers_data[-1]['t'] / 2)
 H_seam   = layers_data[-1]['t']
-temp_2d, x_axis, z_axis, grid_x, grid_z = compute_temperature_field(
+temp_2d, x_axis, z_axis, grid_x, grid_z = compute_temperature_field_moving(
     time_h, T_source_max, burn_duration, total_depth, source_z, grid_shape, n_steps=20)
 
 # =========================== GEOMEXANIK HISOBI ===========================
@@ -581,7 +625,9 @@ void_mask_raw = spalling | crushing | (st.session_state.max_temp_map>900)
 void_mask_smooth = gaussian_filter(void_mask_raw.astype(float), sigma=1.5)
 void_mask_permanent = (void_mask_smooth>0.3) & (collapse_final>0.05)
 
-perm = 1e-15*(1+20*damage+50*void_mask_permanent.astype(float))
+# Yangi o'tkazuvchanlik formulasi (Kozeny-Carman)
+phi = 0.05 + 0.4 * void_mask_permanent.astype(float)
+perm = (phi**3) / ((1-phi+EPS)**2) * 1e-12
 void_volume = np.sum(void_mask_permanent)*(x_axis[1]-x_axis[0])*(z_axis[1]-z_axis[0])
 sigma1_act = np.where(void_mask_permanent, 0.0, sigma1_act)
 sigma3_act = np.where(void_mask_permanent, 0.0, sigma3_act)
@@ -743,7 +789,6 @@ mk4.metric(t('process_stage'), t('stage_active') if time_h<100 else t('stage_coo
 st.markdown("---")
 
 # ====================== YANGI QO'SHIMCHA: AI RISK PREDICTION (SENSOR CSV) ======================
-# SimpleRiskNN modeli
 class SimpleRiskNN(nn.Module):
     def __init__(self, input_dim=3):
         super().__init__()
@@ -798,7 +843,7 @@ with st.expander("🤖 AI Risk Prediction (Sensor CSV)", expanded=False):
             else:
                 st.success("✅ Xavf past. Hozircha xavfsiz.")
 
-# ====================== YANGI QO'SHIMCHA BLOKLAR (KOMPOZIT XAVF, FOS TREND, 3D, MONTE CARLO, SSENARIY, SEZGIRLIK, ISO) ======================
+# ====================== QO'SHIMCHA BLOKLAR (KOMPOZIT XAVF, FOS TREND, 3D, MONTE CARLO, SSENARIY, SEZGIRLIK, ISO) ======================
 # 1. Kompozit xavf indeksi
 @st.cache_data(show_spinner=False)
 def compute_risk_map(fos_arr, damage_arr, void_arr, temp_arr, T_max):
@@ -1010,82 +1055,99 @@ with st.expander("🌪️ Sezgirlik Tahlili (Tornado Plot)"):
     fig_tornado.update_layout(title=f"FOS sezgirligi (asosiy FOS={fos_base:.2f})", barmode='overlay', template='plotly_dark', height=350, xaxis_title='ΔFOS', bargap=0.3)
     st.plotly_chart(fig_tornado, use_container_width=True)
 
-# =========================== ISO 9001 HISOBOT GENERATORI ===========================
-def generate_iso_report_docx(obj_name, lang, layers_data, time_h, T_source_max, burn_duration,
-                              D_factor, nu_poisson, k_ratio, tensile_ratio, beta_thermal,
-                              pillar_strength, y_zone, void_volume, rec_width, optimal_width_ai,
-                              fos_2d, risk_map, perm, sub_p, x_axis,
-                              prepared_by="UCG Team", approved_by="Chief Engineer",
-                              doc_number="UCG-2026-001", revision="A"):
+# =========================== KENGAYTIRILGAN ISO 9001 HISOBOT GENERATORI (YANGI) ===========================
+def generate_full_iso_report(obj_name, lang, layers_data, T_source_max, burn_duration,
+                             pillar_strength, optimal_width_ai, fos_2d, risk_map,
+                             prepared_by, approved_by, doc_number, revision, fig_bytes=None):
+    texts = {
+        'uz': {
+            'h1': "ISO 9001:2015 MUVOFIQDAT HISOBOTI",
+            'sec1': "1. LOYIHA UMUMIY TAVSIFI",
+            'sec2': "2. GEOMEXANIK QATLAMLAR VA XOSSALARI",
+            'sec3': "3. BARQARORLIK VA PILLAR DIZAYNI",
+            'sec4': "4. XAVFNI BAHOLASH (RISK ASSESSMENT)",
+            'sec5': "5. MUHANDISLIK XULOSASI VA TAVSIYALAR",
+            'fos_label': "Xavfsizlik koeffitsienti (FOS):",
+            'ai_label': "AI tomonidan optimallashtirilgan kenglik:",
+            'conclusion_title': "Yakuniy qaror:",
+            'safe': "✅ TIZIM BARQAROR: Loyiha parametrlari xavfsizlik talablariga javob beradi.",
+            'warning': "⚠️ MARGINAL HOLAT: Monitoringni kuchaytirish va qo'shimcha mahkamlash tavsiya etiladi.",
+            'danger': "🚨 XAVFLI: O'pirilish xafvi yuqori! Pillar kengligini oshirish yoki termal yukni kamaytirish shart."
+        },
+        'en': {
+            'h1': "ISO 9001:2015 COMPLIANCE REPORT",
+            'sec1': "1. PROJECT OVERVIEW",
+            'sec2': "2. GEOMECHANICAL PROPERTIES",
+            'sec3': "3. STABILITY AND PILLAR DESIGN",
+            'sec4': "4. RISK ASSESSMENT",
+            'sec5': "5. ENGINEERING CONCLUSIONS",
+            'fos_label': "Factor of Safety (FOS):",
+            'ai_label': "AI Optimized Width:",
+            'conclusion_title': "Final Decision:",
+            'safe': "✅ SYSTEM STABLE: Project parameters meet safety requirements.",
+            'warning': "⚠️ MARGINAL STABILITY: Increased monitoring and support recommended.",
+            'danger': "🚨 DANGEROUS: High risk of collapse! Increase pillar width or reduce thermal load."
+        }
+    }
+    t = texts.get(lang, texts['en'])
     doc = Document()
-    title = doc.add_heading(f"ISO 9001:2015 Compliant Report – {obj_name}", level=1)
-    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    doc.add_paragraph(f"Document No: {doc_number} | Revision: {revision}")
-    doc.add_paragraph(f"Date: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}")
-    doc.add_paragraph(f"Prepared by: {prepared_by}")
-    doc.add_paragraph(f"Approved by: {approved_by}")
-    doc.add_heading("1. Project Overview", level=2)
-    doc.add_paragraph(f"Project: {obj_name}")
-    doc.add_paragraph(f"Process time: {time_h} hours")
-    doc.add_paragraph(f"Maximum temperature: {T_source_max} °C")
-    doc.add_paragraph(f"Burn duration: {burn_duration} hours")
-    doc.add_heading("2. Rock Mass Properties", level=2)
+    header = doc.add_heading(f"{t['h1']}\n{obj_name}", level=1)
+    header.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    meta_table = doc.add_table(rows=2, cols=2)
+    meta_table.style = 'Table Grid'
+    meta_table.cell(0,0).text = f"Doc No: {doc_number}"
+    meta_table.cell(0,1).text = f"Revision: {revision}"
+    meta_table.cell(1,0).text = f"Prepared: {prepared_by}"
+    meta_table.cell(1,1).text = f"Approved: {approved_by}"
+    doc.add_heading(t['sec1'], level=2)
+    p = doc.add_paragraph()
+    p.add_run(f"Ob'ekt nomi: ").bold = True
+    p.add_run(f"{obj_name}\n")
+    p.add_run(f"Maksimal harorat: ").bold = True
+    p.add_run(f"{T_source_max} °C\n")
+    p.add_run(f"Yonish davomiyligi: ").bold = True
+    p.add_run(f"{burn_duration} soat")
+    doc.add_heading(t['sec2'], level=2)
     table = doc.add_table(rows=1, cols=5)
     table.style = 'Table Grid'
-    hdr = table.rows[0].cells
-    hdr[0].text = "Layer"
-    hdr[1].text = "Thickness (m)"
-    hdr[2].text = "UCS (MPa)"
-    hdr[3].text = "GSI"
-    hdr[4].text = "mi"
+    hdrs = ["Layer Name", "Thick (m)", "UCS (MPa)", "GSI", "mi"]
+    for i, h in enumerate(hdrs): table.rows[0].cells[i].text = h
     for layer in layers_data:
         row = table.add_row().cells
         row[0].text = layer['name']
         row[1].text = f"{layer['t']:.1f}"
         row[2].text = f"{layer['ucs']:.1f}"
-        row[3].text = f"{layer['gsi']}"
+        row[3].text = str(layer['gsi'])
         row[4].text = f"{layer['mi']:.1f}"
-    doc.add_heading("3. Pillar Design & Stability", level=2)
-    doc.add_paragraph(f"Recommended pillar width (classical): {rec_width} m")
-    doc.add_paragraph(f"AI-optimized pillar width: {optimal_width_ai:.1f} m")
-    doc.add_paragraph(f"Pillar strength: {pillar_strength:.2f} MPa")
-    doc.add_paragraph(f"Plastic zone width: {y_zone:.1f} m")
-    doc.add_paragraph(f"Cavity volume (2D area): {void_volume:.1f} m²")
-    doc.add_paragraph(f"Maximum permeability: {np.max(perm):.1e} m²")
-    doc.add_heading("4. Risk Assessment", level=2)
-    avg_risk = np.mean(risk_map)
-    max_risk = np.max(risk_map)
-    doc.add_paragraph(f"Average composite risk index: {avg_risk:.3f}")
-    doc.add_paragraph(f"Maximum composite risk index: {max_risk:.3f}")
-    if max_risk > 0.75:
-        doc.add_paragraph("⚠️ Critical risk zones detected. Immediate action required.")
-    elif max_risk > 0.5:
-        doc.add_paragraph("🟡 Moderate risk zones present. Monitor closely.")
-    else:
-        doc.add_paragraph("🟢 Overall risk level acceptable.")
-    doc.add_heading("5. Conclusions & Recommendations", level=2)
+    if fig_bytes:
+        doc.add_heading("Visual Analysis (Spatial Model)", level=2)
+        image_stream = io.BytesIO(fig_bytes)
+        doc.add_picture(image_stream, width=Inches(5.5))
+        doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
+    doc.add_heading(t['sec5'], level=2)
     fos_val = np.nanmean(fos_2d)
-    if fos_val < 1.0:
-        doc.add_paragraph(f"🔴 FOS = {fos_val:.2f} → Unstable. Increase pillar width or reduce thermal load.")
+    conclusion_text = ""
+    color = RGBColor(0, 128, 0)
+    if fos_val < 1.1:
+        conclusion_text = t['danger']
+        color = RGBColor(255, 0, 0)
     elif fos_val < 1.5:
-        doc.add_paragraph(f"🟡 FOS = {fos_val:.2f} → Marginally stable. Consider design improvements.")
+        conclusion_text = t['warning']
+        color = RGBColor(255, 165, 0)
     else:
-        doc.add_paragraph(f"🟢 FOS = {fos_val:.2f} → Stable design.")
-    doc.add_paragraph("Based on the analysis, the following actions are recommended:")
-    if optimal_width_ai > rec_width + 2:
-        doc.add_paragraph(f"- Increase pillar width to at least {optimal_width_ai:.1f} m (AI recommendation).")
-    else:
-        doc.add_paragraph("- Current pillar width is adequate per AI analysis.")
-    if max_risk > 0.6:
-        doc.add_paragraph("- Implement real-time temperature and stress monitoring in high-risk zones.")
-    doc.add_paragraph("- Continue thermal-mechanical simulations for each stage of UCG.")
+        conclusion_text = t['safe']
+    res_p = doc.add_paragraph()
+    res_p.add_run(f"{t['fos_label']} {fos_val:.2f}\n").bold = True
+    res_p.add_run(f"{t['ai_label']} {optimal_width_ai:.1f} m\n\n")
+    final_run = res_p.add_run(f"{t['conclusion_title']}\n{conclusion_text}")
+    final_run.bold = True
+    final_run.font.color.rgb = color
     doc.add_page_break()
-    doc.add_heading("Appendix A: Key Formulas", level=2)
-    doc.add_paragraph("Hoek-Brown failure criterion:")
-    doc.add_paragraph("σ₁ = σ₃ + σ_ci (m_b σ₃/σ_ci + s)^a")
-    doc.add_paragraph("Thermal damage: D(T) = 1 - exp(-β (T - T₀))")
-    doc.add_paragraph("Pillar strength: σ_p = (UCS·η) · (w/H)^0.5")
-    doc.add_paragraph("Factor of Safety: FOS = σ_p / σ_v")
+    doc.add_heading("APPENDIX: Mathematical Models Used", level=2)
+    doc.add_paragraph("1. Hoek-Brown Failure Criterion (Rock Mass Strength)")
+    doc.add_paragraph("σ1 = σ3 + σci * (mb * σ3 / σci + s)^a", style='Intense Quote')
+    doc.add_paragraph("2. Thermal Strength Decay (Exponential Model)")
+    doc.add_paragraph("UCS(T) = UCS_0 * exp(-β * (T - T0))", style='Intense Quote')
     buffer = io.BytesIO()
     doc.save(buffer)
     buffer.seek(0)
@@ -1100,19 +1162,27 @@ with st.expander("📄 ISO 9001:2015 Standart Hujjat (.docx)"):
     with d2:
         prepared_inp = st.text_input("Prepared by", value="UCG Engineering Team")
         approved_inp = st.text_input("Approved by", value="Chief Engineer")
-    if st.button("📄 ISO hujjat yaratish", type="primary", use_container_width=True):
+    if st.button("📄 ISO hujjat yaratish (kengaytirilgan)", type="primary", use_container_width=True):
         with st.spinner("ISO 9001 shablon tayyorlanmoqda..."):
             try:
-                docx_bytes = generate_iso_report_docx(
+                # Xavf xaritasini rasm sifatida saqlash
+                fig, ax = plt.subplots(figsize=(6,4))
+                im = ax.imshow(risk_map, extent=[x_axis[0], x_axis[-1], z_axis[-1], z_axis[0]], cmap='hot', aspect='auto')
+                plt.colorbar(im, ax=ax, label='Risk Index')
+                ax.set_title('Composite Risk Map')
+                ax.set_xlabel('X (m)'); ax.set_ylabel('Depth (m)')
+                buf_img = io.BytesIO()
+                plt.savefig(buf_img, format='png', dpi=100)
+                buf_img.seek(0)
+                plt.close()
+                docx_bytes = generate_full_iso_report(
                     obj_name=obj_name, lang=iso_lang, layers_data=layers_data,
-                    time_h=time_h, T_source_max=T_source_max, burn_duration=burn_duration,
-                    D_factor=D_factor, nu_poisson=nu_poisson, k_ratio=k_ratio,
-                    tensile_ratio=tensile_ratio, beta_thermal=beta_thermal,
-                    pillar_strength=pillar_strength, y_zone=y_zone, void_volume=void_volume,
-                    rec_width=rec_width, optimal_width_ai=optimal_width_ai,
-                    fos_2d=fos_2d, risk_map=risk_map, perm=perm, sub_p=sub_p, x_axis=x_axis,
+                    T_source_max=T_source_max, burn_duration=burn_duration,
+                    pillar_strength=pillar_strength, optimal_width_ai=optimal_width_ai,
+                    fos_2d=fos_2d, risk_map=risk_map,
                     prepared_by=prepared_inp, approved_by=approved_inp,
-                    doc_number=doc_num_input, revision=revision_inp
+                    doc_number=doc_num_input, revision=revision_inp,
+                    fig_bytes=buf_img.getvalue()
                 )
                 st.download_button(label=f"⬇️ {doc_num_input}_Rev{revision_inp}.docx", data=docx_bytes,
                                    file_name=f"{doc_num_input}_Rev{revision_inp}_{pd.Timestamp.now().strftime('%Y%m%d')}.docx",
@@ -1155,17 +1225,17 @@ with tab_live:
             new_row = pd.DataFrame({'step':[t_step+1],'mean_subsidence_cm':[mean_subs*100],'max_temp_c':[np.max(Z_temp)],'FOS':[FOS_live],'pillar_width_m':[pillar_width_pred]})
             st.session_state.live_history_df = pd.concat([st.session_state.live_history_df, new_row], ignore_index=True).tail(MAX_HISTORY)
             fig_subs = go.Figure(go.Heatmap(z=Z_subs*100, x=X_live, y=Y_live, colorscale='Viridis')).update_layout(title='Surface Subsidence (cm)', xaxis_title='X (m)', yaxis_title='Y (m)', height=350)
-            subs_plot_live.plotly_chart(fig_subs, use_container_width=True)
+            subs_plot_live.plotly_chart(fig_subs, use_container_width=True, key=f"subs_{t_step}")
             fig_temp = go.Figure(go.Heatmap(z=Z_temp, x=X_live, y=Y_live, colorscale='Hot')).update_layout(title='Temperature Field (°C)', xaxis_title='X (m)', yaxis_title='Y (m)', height=350)
-            temp_plot_live.plotly_chart(fig_temp, use_container_width=True)
+            temp_plot_live.plotly_chart(fig_temp, use_container_width=True, key=f"temp_{t_step}")
             pillar_plot_live.metric(label="Recommended Pillar Width (m)", value=f"{pillar_width_pred:.2f}", delta=f"FOS = {FOS_live:.2f}")
             trend_fig = go.Figure(go.Scatter(y=subs_history_live, mode='lines+markers', name='Subsidence (cm)')).update_layout(title='Subsidence Trend', xaxis_title='Time step', yaxis_title='Mean subsidence (cm)', height=350)
-            trend_plot_live.plotly_chart(trend_fig, use_container_width=True)
+            trend_plot_live.plotly_chart(trend_fig, use_container_width=True, key=f"trend_{t_step}")
             surface_fig = go.Figure(data=[go.Surface(z=Z_subs*100, x=X_live, y=Y_live, colorscale='Viridis', opacity=0.9)])
             if anomaly_points[0].size>0:
                 surface_fig.add_trace(go.Scatter3d(x=X_grid_live[anomaly_points], y=Y_grid_live[anomaly_points], z=Z_subs[anomaly_points]*100, mode='markers', marker=dict(color='red', size=5), name='Anomaly'))
             surface_fig.update_layout(title='3D Surface & Anomalies', scene=dict(zaxis_title='Subsidence (cm)'), height=500)
-            surface_3d_plot_live.plotly_chart(surface_fig, use_container_width=True)
+            surface_3d_plot_live.plotly_chart(surface_fig, use_container_width=True, key=f"surf_{t_step}")
             alerts = []
             if FOS_live<1.2: alerts.append("⚠️ FOS Critical!")
             if mean_subs*100>3: alerts.append("⚠️ High Subsidence!")
@@ -1181,15 +1251,20 @@ with tab_live:
 
 with tab_ai_orig:
     st.markdown(f"*{t('ai_monitor_desc')}*")
-    def get_sensor_data_sim(base_temp=None):
-        base = base_temp if base_temp else T_source_max*0.6
-        return {"temperature": np.random.uniform(base*0.4, min(base*1.1,T_source_max)), "gas_pressure": np.random.uniform(1,8), "stress": np.random.uniform(5, min(15,sv_seam*10))}
-    def compute_effective_stress(sensor): return sensor["stress"]+0.01*sensor["temperature"]-sensor["gas_pressure"]
-    def detect_anomaly_z(history, value, threshold=2.0):
-        if len(history)<10: return False
-        std = np.std(history)
-        if std<1e-9: return False
-        return abs(value-np.mean(history))>threshold*std
+    def get_sensor_data_sim(step, total_steps, base_temp):
+        trend = step / total_steps
+        temp = base_temp * (0.5 + 0.7*trend) + np.random.normal(0, 10)
+        pressure = 2 + 5*trend + np.random.normal(0, 0.5)
+        stress = 5 + 10*trend + np.random.normal(0, 0.5)
+        return {"temperature": temp, "gas_pressure": pressure, "stress": stress}
+    def compute_effective_stress(sensor):
+        return sensor["stress"] - sensor["gas_pressure"] + 0.002 * sensor["temperature"]
+    def detect_anomaly_z(history, value, threshold=2.0, window=20):
+        if len(history) < window: return False
+        recent = history[-window:]
+        mean = np.mean(recent)
+        std = np.std(recent) + 1e-6
+        return abs(value - mean) > threshold * std
     def simulate_sensors_fos(n_steps):
         T = np.linspace(20,min(1100,T_source_max),n_steps)+np.random.normal(0,10,n_steps)
         sigma_v = np.linspace(5,min(15,sv_seam*10),n_steps)+np.random.normal(0,0.5,n_steps)
@@ -1212,7 +1287,7 @@ with tab_ai_orig:
             placeholder_1 = st.empty()
             history_eff = []; anomalies_eff = []; temp_history = []; gas_history = []; stress_history = []
             for step in range(int(ai_steps_1)):
-                sensor = get_sensor_data_sim(base_temp=T_source_max*0.6)
+                sensor = get_sensor_data_sim(step, int(ai_steps_1), T_source_max*0.6)
                 effective = compute_effective_stress(sensor)
                 is_anomaly = detect_anomaly_z(history_eff, effective, threshold=anomaly_threshold)
                 history_eff.append(effective); anomalies_eff.append(effective if is_anomaly else None)
@@ -1230,7 +1305,7 @@ with tab_ai_orig:
                     fig_a.add_trace(go.Scatter(y=gas_history, mode='lines+markers', name='Gaz bosimi', line=dict(color='lime',width=1), marker=dict(size=4)), row=2, col=1)
                     fig_a.add_trace(go.Scatter(y=stress_history, mode='lines', name='Stress', line=dict(color='magenta',width=2)), row=2, col=2)
                     fig_a.update_layout(template="plotly_dark", height=500, showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5), margin=dict(t=60,b=60))
-                    st.plotly_chart(fig_a, use_container_width=True)
+                    st.plotly_chart(fig_a, use_container_width=True, key=f"anom_{step}")
                     anomaly_count = sum(1 for a in anomalies_eff if a is not None)
                     if is_anomaly: st.error(f"🚨 ANOMALIYA ANIQLANDI! (Jami: {anomaly_count}) — Collapse ehtimoli yuqori!")
                     elif effective > pillar_strength*0.8: st.warning(f"⚠️ Kuchlanish Pillar Strength ({pillar_strength:.1f} MPa) ning 80% dan oshdi!")
@@ -1275,7 +1350,7 @@ with tab_ai_orig:
                     fig_fos.update_layout(template="plotly_dark", height=420, showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5), margin=dict(t=60,b=60))
                     fig_fos.update_xaxes(title_text="Qadam", row=1, col=1); fig_fos.update_yaxes(title_text="FOS / Strength", row=1, col=1)
                     fig_fos.update_xaxes(title_text="Harorat (°C)", row=1, col=2); fig_fos.update_yaxes(title_text="Vertikal Stress (MPa)", row=1, col=2)
-                    st.plotly_chart(fig_fos, use_container_width=True)
+                    st.plotly_chart(fig_fos, use_container_width=True, key=f"fospred_{i}")
                     st.info(f"Qadam {i+1}/{int(ai_steps_2)} | Model: {'PyTorch SimpleNN' if PT_AVAILABLE else 'RandomForest'} | {fos_color}")
                     st.progress((i+1)/int(ai_steps_2))
                 time.sleep(0.05)
