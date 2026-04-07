@@ -15,7 +15,6 @@ plotly
 scipy 
 scikit-learn 
 torch 
-python-docx 
 fastapi 
 uvicorn 
 requests
