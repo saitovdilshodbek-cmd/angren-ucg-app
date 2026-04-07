@@ -1,11 +1,1 @@
-name: Deploy UCG App
-on: [push]
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v3
-    - uses: actions/setup-python@v4
-      with: {python-version: '3.11'}
-    - run: pip install -r requirements.txt
-    - run: streamlit run app.py --headless --server.headless=true
+
