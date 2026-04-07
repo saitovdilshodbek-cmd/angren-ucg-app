@@ -414,6 +414,21 @@ lang = st.sidebar.selectbox("Til / Language / Язык", options=list(LANGUAGES.
                             index=list(LANGUAGES.keys()).index(st.session_state.language))
 st.session_state.language = lang
 
+# =========================== QR KOD GENERATORI (YANGI) ===========================
+st.sidebar.markdown("---")
+st.sidebar.subheader("📱 Mobil ilovaga o'tish")
+url = "https://angren-ucg-app-a7rxktm6usxqixabhaq576.streamlit.app/#ucg-termo-mexanik-dinamik-3-d-model"
+def generate_qr(link):
+    qr = qrcode.QRCode(version=1, error_correction=qrcode.constants.ERROR_CORRECT_L, box_size=10, border=4)
+    qr.add_data(link)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+qr_img_bytes = generate_qr(url)
+st.sidebar.image(qr_img_bytes, caption="Scan QR: Angren UCG API", use_container_width=True)
+
 # =========================== MATEMATIK METODOLOGIYA ===========================
 st.sidebar.header(t('sidebar_header_params'))
 formula_opts = FORMULA_OPTIONS[st.session_state.language]
@@ -500,7 +515,8 @@ def compute_temperature_field_moving(time_h, T_source_max, burn_duration, total_
     z_axis = np.linspace(0, total_depth + 50, grid_shape[0])
     grid_x, grid_z = np.meshgrid(x_axis, z_axis)
     alpha_rock = 1.0e-6
-    v_burn = 0.02
+    v_burn = 0.02  # m/s yonish tezligi (harakat)
+    # Uchta manba: statsionar + harakatlanuvchi
     sources = [
         {'x0': -total_depth/3, 'start': 0, 'moving': False},
         {'x0': 0, 'start': 40, 'moving': True, 'v': v_burn},
@@ -535,6 +551,7 @@ def compute_temperature_field_moving(time_h, T_source_max, burn_duration, total_
             else:
                 x_center = src['x0']
             Q_heat += (curr_T/10.0) * np.exp(-((grid_x - x_center)**2 + (grid_z - source_z)**2)/(2*30**2))
+    # Diffuziya
     DX, DT = 1.0, 0.1
     for _ in range(n_steps):
         Tn = temp_2d.copy()
@@ -608,6 +625,7 @@ void_mask_raw = spalling | crushing | (st.session_state.max_temp_map>900)
 void_mask_smooth = gaussian_filter(void_mask_raw.astype(float), sigma=1.5)
 void_mask_permanent = (void_mask_smooth>0.3) & (collapse_final>0.05)
 
+# Yangi o'tkazuvchanlik formulasi (Kozeny-Carman)
 phi = 0.05 + 0.4 * void_mask_permanent.astype(float)
 perm = (phi**3) / ((1-phi+EPS)**2) * 1e-12
 void_volume = np.sum(void_mask_permanent)*(x_axis[1]-x_axis[0])*(z_axis[1]-z_axis[0])
@@ -808,7 +826,6 @@ with st.expander("🤖 AI Risk Prediction (Sensor CSV)", expanded=False):
         else:
             risk_vals = predict_risk_from_sensor(risk_model, df_sensor['temp'].values, df_sensor['stress'].values, df_sensor['ucs_lab'].values)
             df_sensor['risk'] = risk_vals
-            st.session_state.sensor_risk_df = df_sensor
             st.subheader("Bashorat natijalari")
             st.dataframe(df_sensor, use_container_width=True)
             fig_risk_line = go.Figure()
@@ -826,7 +843,7 @@ with st.expander("🤖 AI Risk Prediction (Sensor CSV)", expanded=False):
             else:
                 st.success("✅ Xavf past. Hozircha xavfsiz.")
 
-# ====================== QO'SHIMCHA BLOKLAR ======================
+# ====================== QO'SHIMCHA BLOKLAR (KOMPOZIT XAVF, FOS TREND, 3D, MONTE CARLO, SSENARIY, SEZGIRLIK, ISO) ======================
 # 1. Kompozit xavf indeksi
 @st.cache_data(show_spinner=False)
 def compute_risk_map(fos_arr, damage_arr, void_arr, temp_arr, T_max):
@@ -899,14 +916,6 @@ with st.expander("📈 FOS Vaqt Bashorati (Trend)"):
     tc2.metric("R² (trend aniqligi)", f"{r_value**2:.4f}")
     tc3.metric("Hozirgi FOS", f"{fos_timeline[-1]:.3f}")
     st.info(critical_info)
-    st.session_state.trend_data = {
-        'time_points': time_points,
-        'fos_timeline': fos_timeline,
-        'future_times': future_times,
-        'fos_forecast': fos_forecast,
-        'slope': slope,
-        'r2': r_value**2
-    }
 
 # 3. 3D Litologik kesim
 with st.expander("🌍 3D Litologik Kesim"):
@@ -933,7 +942,6 @@ with st.expander("🌍 3D Litologik Kesim"):
     fig_3d.update_layout(scene=dict(xaxis_title='X (m)', yaxis_title='Y (m)', zaxis_title='Chuqurlik (m)', zaxis=dict(autorange='reversed'), camera=dict(eye=dict(x=1.5,y=1.5,z=1.0))), template='plotly_dark', height=600, title="3D Litologik Model + Yonish Kameralari", showlegend=True)
     st.plotly_chart(fig_3d, use_container_width=True)
     st.caption("Sariq/qizil sferalar — yonish kameralari joylashuvi")
-    st.session_state.fig_3d = fig_3d
 
 # 4. Monte Carlo noaniqlik tahlili
 @st.cache_data(show_spinner=False)
@@ -968,7 +976,6 @@ with st.expander("🎲 Monte Carlo Noaniqlik Tahlili"):
         fig_mc.add_vline(x=np.mean(fos_mc), line_color='cyan', line_dash='dot', annotation_text=f"O'rtacha={np.mean(fos_mc):.2f}")
         fig_mc.update_layout(template='plotly_dark', height=350, title=f"FOS taqsimoti | Failure ehtimoli: {pf*100:.1f}%", xaxis_title='FOS', yaxis_title='Chastota')
         st.plotly_chart(fig_mc, use_container_width=True)
-        st.session_state.mc_data = {'fos_mc': fos_mc, 'pf': pf}
     mc_stats = pd.DataFrame({'Ko\'rsatkich': ['O\'rtacha FOS', 'Mediana', 'Std og\'ish', '5-percentil', '95-percentil', 'Failure ehtimoli'],
                              'Qiymat': [f"{np.mean(fos_mc):.3f}", f"{np.median(fos_mc):.3f}", f"{np.std(fos_mc):.3f}", f"{np.percentile(fos_mc,5):.3f}", f"{np.percentile(fos_mc,95):.3f}", f"{pf*100:.2f}%"]})
     st.dataframe(mc_stats, hide_index=True, use_container_width=True)
@@ -1002,7 +1009,6 @@ with st.expander("⚖️ Ssenariy Taqqoslash (A vs B)"):
                             'Ssenariy B': [f"{b_ucs:.1f}", f"{b_gsi}", f"{fos_b:.2f}", f"{b_temp:.0f}"],
                             'Farq': [f"{b_ucs-a_ucs:+.1f}", f"{b_gsi-a_gsi:+d}", f"{fos_b-fos_a:+.2f}", f"{b_temp-a_temp:+.0f}"]})
     st.dataframe(comp_df, use_container_width=True, hide_index=True)
-    st.session_state.scenario_data = {'categories': categories, 'vals_a': vals_a, 'vals_b': vals_b}
 
 # 6. Sezgirlik tahlili (Tornado plot)
 @st.cache_data(show_spinner=False)
@@ -1048,17 +1054,11 @@ with st.expander("🌪️ Sezgirlik Tahlili (Tornado Plot)"):
     fig_tornado.add_vline(x=0, line_color='white', line_width=2)
     fig_tornado.update_layout(title=f"FOS sezgirligi (asosiy FOS={fos_base:.2f})", barmode='overlay', template='plotly_dark', height=350, xaxis_title='ΔFOS', bargap=0.3)
     st.plotly_chart(fig_tornado, use_container_width=True)
-    st.session_state.tornado_data = {'df': df_sens, 'fos_base': fos_base}
 
-# =========================== KENGAYTIRILGAN ISO 9001 HISOBOT GENERATORI ===========================
-import plotly.io as pio
-pio.kaleido.scope.default_format = "png"
-
+# =========================== KENGAYTIRILGAN ISO 9001 HISOBOT GENERATORI (YANGI) ===========================
 def generate_full_iso_report(obj_name, lang, layers_data, T_source_max, burn_duration,
                              pillar_strength, optimal_width_ai, fos_2d, risk_map,
-                             prepared_by, approved_by, doc_number, revision,
-                             trend_data, mc_data, scenario_data, tornado_data,
-                             fig_3d, live_history_df, sensor_risk_df=None):
+                             prepared_by, approved_by, doc_number, revision, fig_bytes=None):
     texts = {
         'uz': {
             'h1': "ISO 9001:2015 MUVOFIQDAT HISOBOTI",
@@ -1066,8 +1066,7 @@ def generate_full_iso_report(obj_name, lang, layers_data, T_source_max, burn_dur
             'sec2': "2. GEOMEXANIK QATLAMLAR VA XOSSALARI",
             'sec3': "3. BARQARORLIK VA PILLAR DIZAYNI",
             'sec4': "4. XAVFNI BAHOLASH (RISK ASSESSMENT)",
-            'sec5': "5. QO'SHIMCHA TAHLILLAR",
-            'sec6': "6. MUHANDISLIK XULOSASI",
+            'sec5': "5. MUHANDISLIK XULOSASI VA TAVSIYALAR",
             'fos_label': "Xavfsizlik koeffitsienti (FOS):",
             'ai_label': "AI tomonidan optimallashtirilgan kenglik:",
             'conclusion_title': "Yakuniy qaror:",
@@ -1081,8 +1080,7 @@ def generate_full_iso_report(obj_name, lang, layers_data, T_source_max, burn_dur
             'sec2': "2. GEOMECHANICAL PROPERTIES",
             'sec3': "3. STABILITY AND PILLAR DESIGN",
             'sec4': "4. RISK ASSESSMENT",
-            'sec5': "5. ADDITIONAL ANALYSES",
-            'sec6': "6. ENGINEERING CONCLUSIONS",
+            'sec5': "5. ENGINEERING CONCLUSIONS",
             'fos_label': "Factor of Safety (FOS):",
             'ai_label': "AI Optimized Width:",
             'conclusion_title': "Final Decision:",
@@ -1093,7 +1091,6 @@ def generate_full_iso_report(obj_name, lang, layers_data, T_source_max, burn_dur
     }
     t = texts.get(lang, texts['en'])
     doc = Document()
-    # Sarlavha
     header = doc.add_heading(f"{t['h1']}\n{obj_name}", level=1)
     header.alignment = WD_ALIGN_PARAGRAPH.CENTER
     meta_table = doc.add_table(rows=2, cols=2)
@@ -1102,7 +1099,6 @@ def generate_full_iso_report(obj_name, lang, layers_data, T_source_max, burn_dur
     meta_table.cell(0,1).text = f"Revision: {revision}"
     meta_table.cell(1,0).text = f"Prepared: {prepared_by}"
     meta_table.cell(1,1).text = f"Approved: {approved_by}"
-    # 1. Loyiha tavsifi
     doc.add_heading(t['sec1'], level=2)
     p = doc.add_paragraph()
     p.add_run(f"Ob'ekt nomi: ").bold = True
@@ -1111,7 +1107,6 @@ def generate_full_iso_report(obj_name, lang, layers_data, T_source_max, burn_dur
     p.add_run(f"{T_source_max} °C\n")
     p.add_run(f"Yonish davomiyligi: ").bold = True
     p.add_run(f"{burn_duration} soat")
-    # 2. Qatlamlar jadvali
     doc.add_heading(t['sec2'], level=2)
     table = doc.add_table(rows=1, cols=5)
     table.style = 'Table Grid'
@@ -1124,110 +1119,15 @@ def generate_full_iso_report(obj_name, lang, layers_data, T_source_max, burn_dur
         row[2].text = f"{layer['ucs']:.1f}"
         row[3].text = str(layer['gsi'])
         row[4].text = f"{layer['mi']:.1f}"
-    # 3. Pillar barqarorligi
-    doc.add_heading(t['sec3'], level=2)
-    doc.add_paragraph(f"Pillar mustahkamligi: {pillar_strength:.2f} MPa")
-    doc.add_paragraph(f"AI optimal kenglik: {optimal_width_ai:.1f} m")
-    doc.add_paragraph(f"Plastik zona kengligi: {y_zone:.1f} m")
-    # 4. Xavf xaritasi
-    doc.add_heading(t['sec4'], level=2)
-    fig, ax = plt.subplots(figsize=(6,4))
-    im = ax.imshow(risk_map, extent=[x_axis[0], x_axis[-1], z_axis[-1], z_axis[0]], cmap='hot', aspect='auto')
-    plt.colorbar(im, ax=ax, label='Risk Index')
-    ax.set_title('Composite Risk Map')
-    ax.set_xlabel('X (m)'); ax.set_ylabel('Depth (m)')
-    buf_img = io.BytesIO()
-    plt.savefig(buf_img, format='png')
-    buf_img.seek(0)
-    doc.add_picture(buf_img, width=Inches(5.5))
-    plt.close()
-    # 5. Qo'shimcha tahlillar
+    if fig_bytes:
+        doc.add_heading("Visual Analysis (Spatial Model)", level=2)
+        image_stream = io.BytesIO(fig_bytes)
+        doc.add_picture(image_stream, width=Inches(5.5))
+        doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
     doc.add_heading(t['sec5'], level=2)
-    # FOS trend
-    if trend_data:
-        doc.add_heading("FOS Vaqt Bashorati", level=3)
-        fig_trend = go.Figure()
-        fig_trend.add_trace(go.Scatter(x=trend_data['time_points'], y=trend_data['fos_timeline'], mode='lines+markers', name='Hisoblangan FOS'))
-        fig_trend.add_trace(go.Scatter(x=trend_data['future_times'], y=trend_data['fos_forecast'], mode='lines', name='Bashorat'))
-        fig_trend.add_hline(y=1.5, line_dash='dash', line_color='green')
-        fig_trend.add_hline(y=1.0, line_dash='dash', line_color='red')
-        fig_trend.update_layout(title=f"Trend: {trend_data['slope']:.4f} FOS/soat, R²={trend_data['r2']:.3f}", template='plotly_dark')
-        img_trend = pio.to_image(fig_trend, format='png')
-        doc.add_picture(io.BytesIO(img_trend), width=Inches(5.5))
-    # 3D kesim (statik rasm)
-    if fig_3d:
-        doc.add_heading("3D Litologik Kesim", level=3)
-        img_3d = pio.to_image(fig_3d, format='png')
-        doc.add_picture(io.BytesIO(img_3d), width=Inches(5.5))
-    # Monte Carlo
-    if mc_data:
-        doc.add_heading("Monte Carlo Noaniqlik Tahlili", level=3)
-        fig_mc = go.Figure()
-        fig_mc.add_histogram(x=mc_data['fos_mc'], nbinsx=40, marker_color='steelblue')
-        fig_mc.add_vline(x=1.0, line_dash='dash', line_color='red')
-        fig_mc.update_layout(title=f"Failure ehtimoli: {mc_data['pf']*100:.1f}%", xaxis_title='FOS')
-        img_mc = pio.to_image(fig_mc, format='png')
-        doc.add_picture(io.BytesIO(img_mc), width=Inches(5))
-        doc.add_paragraph(f"O'rtacha FOS: {np.mean(mc_data['fos_mc']):.2f}, 5% percentile: {np.percentile(mc_data['fos_mc'],5):.2f}, 95%: {np.percentile(mc_data['fos_mc'],95):.2f}")
-    # Ssenariy taqqoslash
-    if scenario_data:
-        doc.add_heading("Ssenariy Taqqoslash (A vs B)", level=3)
-        fig_radar = go.Figure()
-        fig_radar.add_trace(go.Scatterpolar(r=scenario_data['vals_a']+[scenario_data['vals_a'][0]], theta=scenario_data['categories']+[scenario_data['categories'][0]], fill='toself', name='Ssenariy A'))
-        fig_radar.add_trace(go.Scatterpolar(r=scenario_data['vals_b']+[scenario_data['vals_b'][0]], theta=scenario_data['categories']+[scenario_data['categories'][0]], fill='toself', name='Ssenariy B'))
-        fig_radar.update_layout(polar=dict(radialaxis=dict(visible=True,range=[0,1])), title="Radar diagramma")
-        img_radar = pio.to_image(fig_radar, format='png')
-        doc.add_picture(io.BytesIO(img_radar), width=Inches(5))
-    # Sezgirlik tahlili
-    if tornado_data:
-        doc.add_heading("Sezgirlik Tahlili (Tornado)", level=3)
-        df_t = tornado_data['df']
-        fig_tornado = go.Figure()
-        fig_tornado.add_bar(y=df_t['param'], x=df_t['low'], orientation='h', name='-20%')
-        fig_tornado.add_bar(y=df_t['param'], x=df_t['high'], orientation='h', name='+20%')
-        fig_tornado.update_layout(title=f"Asosiy FOS = {tornado_data['fos_base']:.2f}", barmode='overlay')
-        img_torn = pio.to_image(fig_tornado, format='png')
-        doc.add_picture(io.BytesIO(img_torn), width=Inches(5))
-    # Anomaliya aniqlash (Digital Twin) - qisqacha matn
-    doc.add_heading("Anomaliya Aniqlash (Digital Twin)", level=3)
-    doc.add_paragraph("Simulyatsiya davomida anomaliyalar real vaqtda kuzatilgan. Batafsil ma'lumotlar interaktiv ilovada mavjud.")
-    # FOS Prediction (NN/RF)
-    doc.add_heading("FOS Prediction (SimpleNN / RF)", level=3)
-    doc.add_paragraph(f"Joriy FOS: {np.nanmean(fos_2d):.2f}. AI bashorat modeli ishlatilgan.")
-    # Real-time monitoring natijalari
-    if live_history_df is not None and not live_history_df.empty:
-        doc.add_heading("Real-time monitoring natijalari", level=3)
-        doc.add_paragraph(f"Oxirgi {len(live_history_df)} qadam. Maks. cho'kish: {live_history_df['mean_subsidence_cm'].max():.1f} sm, maks. harorat: {live_history_df['max_temp_c'].max():.0f}°C.")
-        fig_live = go.Figure()
-        fig_live.add_trace(go.Scatter(y=live_history_df['mean_subsidence_cm'], name="Cho'kish (cm)"))
-        fig_live.add_trace(go.Scatter(y=live_history_df['FOS'], name='FOS', yaxis='y2'))
-        fig_live.update_layout(yaxis2=dict(overlaying='y', side='right'))
-        img_live = pio.to_image(fig_live, format='png')
-        doc.add_picture(io.BytesIO(img_live), width=Inches(5))
-    # Sensor risk prediction
-    if sensor_risk_df is not None and not sensor_risk_df.empty:
-        doc.add_heading("AI Risk Prediction (Sensor CSV)", level=3)
-        doc.add_paragraph(f"Yuklangan faylda {len(sensor_risk_df)} ta yozuv. O'rtacha risk: {sensor_risk_df['risk'].mean():.3f}")
-        table_risk = doc.add_table(rows=min(11, len(sensor_risk_df)+1), cols=len(sensor_risk_df.columns))
-        for j, col in enumerate(sensor_risk_df.columns):
-            table_risk.rows[0].cells[j].text = col
-        for i, row in sensor_risk_df.head(10).iterrows():
-            for j, val in enumerate(row):
-                table_risk.rows[i+1].cells[j].text = str(val)
-    # QR kod (faqat hujjatda)
-    doc.add_heading("Mobil ilovaga o'tish", level=3)
-    qr = qrcode.QRCode(box_size=5, border=2)
-    qr.add_data("https://angren-ucg-app-a7rxktm6usxqixabhaq576.streamlit.app/")
-    qr.make()
-    qr_img = qr.make_image(fill_color="black", back_color="white")
-    qr_bytes = io.BytesIO()
-    qr_img.save(qr_bytes, format="PNG")
-    qr_bytes.seek(0)
-    doc.add_picture(qr_bytes, width=Inches(2))
-    doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
-    # Xulosa
-    doc.add_heading(t['sec6'], level=2)
     fos_val = np.nanmean(fos_2d)
+    conclusion_text = ""
+    color = RGBColor(0, 128, 0)
     if fos_val < 1.1:
         conclusion_text = t['danger']
         color = RGBColor(255, 0, 0)
@@ -1236,14 +1136,12 @@ def generate_full_iso_report(obj_name, lang, layers_data, T_source_max, burn_dur
         color = RGBColor(255, 165, 0)
     else:
         conclusion_text = t['safe']
-        color = RGBColor(0, 128, 0)
     res_p = doc.add_paragraph()
     res_p.add_run(f"{t['fos_label']} {fos_val:.2f}\n").bold = True
     res_p.add_run(f"{t['ai_label']} {optimal_width_ai:.1f} m\n\n")
     final_run = res_p.add_run(f"{t['conclusion_title']}\n{conclusion_text}")
     final_run.bold = True
     final_run.font.color.rgb = color
-    # Ilova
     doc.add_page_break()
     doc.add_heading("APPENDIX: Mathematical Models Used", level=2)
     doc.add_paragraph("1. Hoek-Brown Failure Criterion (Rock Mass Strength)")
@@ -1255,8 +1153,7 @@ def generate_full_iso_report(obj_name, lang, layers_data, T_source_max, burn_dur
     buffer.seek(0)
     return buffer.getvalue()
 
-# =========================== ISO HISOBOTNI YUKLASH TUGBASI ===========================
-with st.expander("📄 ISO 9001:2015 Standart Hujjat (to'liq)", expanded=False):
+with st.expander("📄 ISO 9001:2015 Standart Hujjat (.docx)"):
     d1, d2 = st.columns(2)
     with d1:
         iso_lang = st.selectbox("Hujjat tili", ['uz','en','ru'], format_func=lambda x: {'uz':"🇺🇿 O'zbek",'en':"🇬🇧 English",'ru':"🇷🇺 Русский"}[x], key="iso_lang")
@@ -1265,16 +1162,19 @@ with st.expander("📄 ISO 9001:2015 Standart Hujjat (to'liq)", expanded=False):
     with d2:
         prepared_inp = st.text_input("Prepared by", value="UCG Engineering Team")
         approved_inp = st.text_input("Approved by", value="Chief Engineer")
-    if st.button("📄 ISO hujjat yaratish (to'liq)", type="primary", use_container_width=True):
-        with st.spinner("ISO 9001 hisobot tayyorlanmoqda..."):
+    if st.button("📄 ISO hujjat yaratish (kengaytirilgan)", type="primary", use_container_width=True):
+        with st.spinner("ISO 9001 shablon tayyorlanmoqda..."):
             try:
-                trend_data = st.session_state.get('trend_data', None)
-                mc_data = st.session_state.get('mc_data', None)
-                scenario_data = st.session_state.get('scenario_data', None)
-                tornado_data = st.session_state.get('tornado_data', None)
-                fig_3d = st.session_state.get('fig_3d', None)
-                live_history_df = st.session_state.get('live_history_df', None)
-                sensor_risk_df = st.session_state.get('sensor_risk_df', None)
+                # Xavf xaritasini rasm sifatida saqlash
+                fig, ax = plt.subplots(figsize=(6,4))
+                im = ax.imshow(risk_map, extent=[x_axis[0], x_axis[-1], z_axis[-1], z_axis[0]], cmap='hot', aspect='auto')
+                plt.colorbar(im, ax=ax, label='Risk Index')
+                ax.set_title('Composite Risk Map')
+                ax.set_xlabel('X (m)'); ax.set_ylabel('Depth (m)')
+                buf_img = io.BytesIO()
+                plt.savefig(buf_img, format='png', dpi=100)
+                buf_img.seek(0)
+                plt.close()
                 docx_bytes = generate_full_iso_report(
                     obj_name=obj_name, lang=iso_lang, layers_data=layers_data,
                     T_source_max=T_source_max, burn_duration=burn_duration,
@@ -1282,10 +1182,7 @@ with st.expander("📄 ISO 9001:2015 Standart Hujjat (to'liq)", expanded=False):
                     fos_2d=fos_2d, risk_map=risk_map,
                     prepared_by=prepared_inp, approved_by=approved_inp,
                     doc_number=doc_num_input, revision=revision_inp,
-                    trend_data=trend_data, mc_data=mc_data,
-                    scenario_data=scenario_data, tornado_data=tornado_data,
-                    fig_3d=fig_3d, live_history_df=live_history_df,
-                    sensor_risk_df=sensor_risk_df
+                    fig_bytes=buf_img.getvalue()
                 )
                 st.download_button(label=f"⬇️ {doc_num_input}_Rev{revision_inp}.docx", data=docx_bytes,
                                    file_name=f"{doc_num_input}_Rev{revision_inp}_{pd.Timestamp.now().strftime('%Y%m%d')}.docx",
