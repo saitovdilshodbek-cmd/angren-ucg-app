@@ -808,7 +808,7 @@ with st.expander("🤖 AI Risk Prediction (Sensor CSV)", expanded=False):
         else:
             risk_vals = predict_risk_from_sensor(risk_model, df_sensor['temp'].values, df_sensor['stress'].values, df_sensor['ucs_lab'].values)
             df_sensor['risk'] = risk_vals
-            st.session_state.sensor_risk_df = df_sensor  # saqlaymiz
+            st.session_state.sensor_risk_df = df_sensor
             st.subheader("Bashorat natijalari")
             st.dataframe(df_sensor, use_container_width=True)
             fig_risk_line = go.Figure()
@@ -899,7 +899,6 @@ with st.expander("📈 FOS Vaqt Bashorati (Trend)"):
     tc2.metric("R² (trend aniqligi)", f"{r_value**2:.4f}")
     tc3.metric("Hozirgi FOS", f"{fos_timeline[-1]:.3f}")
     st.info(critical_info)
-    # Save trend data for report
     st.session_state.trend_data = {
         'time_points': time_points,
         'fos_timeline': fos_timeline,
@@ -934,7 +933,6 @@ with st.expander("🌍 3D Litologik Kesim"):
     fig_3d.update_layout(scene=dict(xaxis_title='X (m)', yaxis_title='Y (m)', zaxis_title='Chuqurlik (m)', zaxis=dict(autorange='reversed'), camera=dict(eye=dict(x=1.5,y=1.5,z=1.0))), template='plotly_dark', height=600, title="3D Litologik Model + Yonish Kameralari", showlegend=True)
     st.plotly_chart(fig_3d, use_container_width=True)
     st.caption("Sariq/qizil sferalar — yonish kameralari joylashuvi")
-    # Save 3D figure for report
     st.session_state.fig_3d = fig_3d
 
 # 4. Monte Carlo noaniqlik tahlili
@@ -1133,7 +1131,6 @@ def generate_full_iso_report(obj_name, lang, layers_data, T_source_max, burn_dur
     doc.add_paragraph(f"Plastik zona kengligi: {y_zone:.1f} m")
     # 4. Xavf xaritasi
     doc.add_heading(t['sec4'], level=2)
-    # risk_map rasm sifatida
     fig, ax = plt.subplots(figsize=(6,4))
     im = ax.imshow(risk_map, extent=[x_axis[0], x_axis[-1], z_axis[-1], z_axis[0]], cmap='hot', aspect='auto')
     plt.colorbar(im, ax=ax, label='Risk Index')
@@ -1202,7 +1199,7 @@ def generate_full_iso_report(obj_name, lang, layers_data, T_source_max, burn_dur
         doc.add_heading("Real-time monitoring natijalari", level=3)
         doc.add_paragraph(f"Oxirgi {len(live_history_df)} qadam. Maks. cho'kish: {live_history_df['mean_subsidence_cm'].max():.1f} sm, maks. harorat: {live_history_df['max_temp_c'].max():.0f}°C.")
         fig_live = go.Figure()
-        fig_live.add_trace(go.Scatter(y=live_history_df['mean_subsidence_cm'], name='Cho'kish (cm)'))
+        fig_live.add_trace(go.Scatter(y=live_history_df['mean_subsidence_cm'], name="Cho'kish (cm)"))
         fig_live.add_trace(go.Scatter(y=live_history_df['FOS'], name='FOS', yaxis='y2'))
         fig_live.update_layout(yaxis2=dict(overlaying='y', side='right'))
         img_live = pio.to_image(fig_live, format='png')
@@ -1211,7 +1208,6 @@ def generate_full_iso_report(obj_name, lang, layers_data, T_source_max, burn_dur
     if sensor_risk_df is not None and not sensor_risk_df.empty:
         doc.add_heading("AI Risk Prediction (Sensor CSV)", level=3)
         doc.add_paragraph(f"Yuklangan faylda {len(sensor_risk_df)} ta yozuv. O'rtacha risk: {sensor_risk_df['risk'].mean():.3f}")
-        # Jadval (birinchi 10 qator)
         table_risk = doc.add_table(rows=min(11, len(sensor_risk_df)+1), cols=len(sensor_risk_df.columns))
         for j, col in enumerate(sensor_risk_df.columns):
             table_risk.rows[0].cells[j].text = col
@@ -1272,7 +1268,6 @@ with st.expander("📄 ISO 9001:2015 Standart Hujjat (to'liq)", expanded=False):
     if st.button("📄 ISO hujjat yaratish (to'liq)", type="primary", use_container_width=True):
         with st.spinner("ISO 9001 hisobot tayyorlanmoqda..."):
             try:
-                # Ma'lumotlarni yig'ish
                 trend_data = st.session_state.get('trend_data', None)
                 mc_data = st.session_state.get('mc_data', None)
                 scenario_data = st.session_state.get('scenario_data', None)
@@ -1495,34 +1490,6 @@ with tab_advanced:
                                   t('param_table_value'): [f"{E_MODULUS_R} MPa", f"{ALPHA_THERM} 1/°C", "20 °C"],
                                   t('param_table_reason'): [t('modulus_reason'), t('alpha_reason'), t('temp0_reason')]})
         st.table(params_df)
-        st.markdown(t('ucs_decay')); st.latex(t('ucs_decay_eq))
-       with tab_advanced:
-    st.header(t('advanced_analysis'))
-    E_MODULUS_R, ALPHA_THERM, BETA_CONST = 5000.0, 1.0e-5, beta_thermal
-    target_l = layers_data[-1]
-    ucs_0_r, gsi_val, mi_val = target_l['ucs'], target_l['gsi'], target_l['mi']
-    gamma_kn = target_l['rho'] * 9.81 / 1000
-    H_depth_tot = sum(l['t'] for l in layers_data[:-1]) + target_l['t']/2
-    sigma_v_tot = (gamma_kn * H_depth_tot) / 1000
-    mb_dyn = mi_val * np.exp((gsi_val-100)/(28-14*D_factor))
-    s_dyn = np.exp((gsi_val-100)/(9-3*D_factor))
-    ucs_t_dyn = ucs_0_r * np.exp(-BETA_CONST*(T_source_max-20))
-    p_str_final = ucs_t_dyn * (rec_width/(H_seam+EPS))**0.5
-    fos_final = p_str_final/(sigma_v_tot+EPS)
-    t1,t2,t3 = st.tabs([t('tab_mass'), t('tab_thermal'), t('tab_stability')])
-    with t1:
-        st.subheader(t('hb_class'))
-        c1r,c2r = st.columns(2)
-        with c1r:
-            st.latex(t('hb_mb', mb=mb_dyn)); st.caption(t('hb_caption_mb', mi=mi_val))
-            st.latex(t('hb_s', s=s_dyn)); st.caption(t('hb_caption_s', gsi=gsi_val))
-        with c2r: st.markdown(t('hb_interpret', gsi=gsi_val, perc=((1 - s_dyn)*100)))
-    with t2:
-        st.subheader(t('thermal_params'))
-        params_df = pd.DataFrame({t('param_table_param'): [t('modulus'), t('alpha'), t('temp0')],
-                                  t('param_table_value'): [f"{E_MODULUS_R} MPa", f"{ALPHA_THERM} 1/°C", "20 °C"],
-                                  t('param_table_reason'): [t('modulus_reason'), t('alpha_reason'), t('temp0_reason')]})
-        st.table(params_df)
         st.markdown(t('ucs_decay')); st.latex(t('ucs_decay_eq', ucs=ucs_t_dyn))
         st.write(t('ucs_interpret', temp=T_source_max, perc=((1 - ucs_t_dyn/ucs_0_r)*100)))
         st.markdown(t('thermal_stress')); st.latex(t('thermal_stress_eq', sigma=sigma_thermal.max()))
@@ -1539,4 +1506,4 @@ with tab_advanced:
         for r in [t('ref1'), t('ref2'), t('ref3'), t('ref4'), "**Brady, B. H., & Brown, E. T. (2006).** Rock Mechanics for Underground Mining."]: st.write(r)
 
 st.sidebar.markdown("---")
-st.sidebar.write(f"Tuzuvchi: Saitov Dilshodbek | Device: {device}")                                         
+st.sidebar.write(f"Tuzuvchi: Saitov Dilshodbek | Device: {device}")
