@@ -1337,7 +1337,6 @@ from io import BytesIO
 # --- QR KOD GENERATORI ---
 st.sidebar.markdown("---")
 st.sidebar.subheader("📱 Mobil ilovaga o'tish")
-
 # To'g'ri URL manzil
 url = "https://angren-ucg-app-a7rxktm6usxqixabhaq576.streamlit.app/#ucg-termo-mexanik-dinamik-3-d-model"
 
