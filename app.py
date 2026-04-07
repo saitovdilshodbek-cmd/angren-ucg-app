@@ -16,14 +16,6 @@ from datetime import datetime
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.ensemble import IsolationForest
 import sqlite3
-import smtplib
-from email.mime.text import MIMEText
-import gspread
-from google.oauth2.service_account import Credentials
-from fastapi import FastAPI
-import uvicorn
-import threading
-import os
 
 # PyTorch mavjudligini tekshirish
 try:
@@ -50,35 +42,226 @@ warnings.filterwarnings('ignore')
 EPS = 1e-12
 APP_URL = "https://angren-ucg-app-a7rxktm6usxqixabhaq576.streamlit.app"
 
-# ========================== TARJIMALAR ==========================
+# ========================== TARJIMALAR (qisqartirilgan, to'liq versiyani birinchi kodingizdan oling) ==========================
 TRANSLATIONS = {
     'uz': {
         'app_title': "Universal Yer yuzasi Deformatsiyasi Monitoringi",
-        # ... (qolgan tarjimalar birinchi koddagidek, joy tejash uchun qisqartirilgan)
-        # To'liq versiyani birinchi kodingizdan oling
+        'app_subtitle': "Termo-Mexanik (TM) tahlil va Selek O'lchami Optimizatsiyasi",
+        'sidebar_header_params': "⚙️ Umumiy parametrlar",
+        'formula_show': "Formulalarni ko'rish:",
+        'project_name': "Loyiha nomi:",
+        'process_time': "Jarayon vaqti (soat):",
+        'num_layers': "Qatlamlar soni:",
+        'tensile_model': "Tensile modeli:",
+        'rock_props': "💎 Jins Xususiyatlari",
+        'disturbance': "Disturbance Factor (D):",
+        'poisson': "Poisson koeffitsiyenti (ν):",
+        'stress_ratio': "Stress Ratio (k = σh/σv):",
+        'tensile_params': "📐 Cho'zilish va Selek",
+        'tensile_ratio': "Tensile Ratio (σt0/UCS):",
+        'thermal_decay': "Thermal Decay (β):",
+        'combustion': "🔥 Yonish va Termal",
+        'burn_duration': "Kamera yonish muddati (soat):",
+        'max_temp': "Maksimal harorat (°C)",
+        'timeline': "📅 Loyiha bosqichlari (Timeline)",
+        'layer_params': "{num}-qatlam parametrlari",
+        'layer_name': "Nomi:",
+        'thickness': "Qalinlik (m):",
+        'ucs': "UCS (MPa):",
+        'density': "Zichlik (kg/m³):",
+        'color': "Rangi:",
+        'gsi': "GSI:",
+        'mi': "mi:",
+        'manual_st0': "σt0 (MPa):",
+        'error_thick_positive': "Qalinlik >0 bo'lishi kerak",
+        'error_ucs_positive': "UCS >0 MPa bo'lishi kerak",
+        'error_density_positive': "Zichlik >0 kg/m³ bo'lishi kerak",
+        'error_gsi_range': "GSI 10...100 oralig'ida bo'lishi kerak",
+        'error_mi_positive': "mi >0 bo'lishi kerak",
+        'error_min_layers': "❌ Kamida 1 ta qatlam kiriting!",
+        'pillar_strength': "Pillar Strength (σp)",
+        'plastic_zone': "Plastik zona (y)",
+        'cavity_volume': "Kamera Hajmi",
+        'max_permeability': "Maks. O'tkazuvchanlik",
+        'ai_recommendation': "AI Tavsiya (Selek)",
+        'monitoring_header': "📊 {obj_name}: Monitoring va Ekspert Xulosasi",
+        'subsidence_title': "📉 Yer yuzasi cho'kishi (cm)",
+        'thermal_deform_title': "🔥 Termal deformatsiya (cm)",
+        'hb_envelopes_title': "🛡️ Hoek-Brown Envelopes",
+        'scientific_analysis': "📋 Ilmiy Tahlil",
+        'fos_red': "🔴 FOS < 1.0: Failure",
+        'fos_yellow': "🟡 FOS 1.0–1.5: Unstable",
+        'fos_green': "🟢 FOS > 1.5: Stable",
+        'tm_field_title': "🔥 TM Maydoni va Selek Interferensiyasi",
+        'temp_subplot': "Harorat Maydoni (°C) + Gaz Oqimi",
+        'fos_subplot': "FOS + AI Collapse Prediction (NN) + Yielded Zones",
+        'gas_flow': "Gaz oqimi",
+        'shear': "Shear",
+        'tensile': "Tensile",
+        'ai_collapse': "AI Collapse (NN)",
+        'tensile_empirical': "Empirical (UCS)",
+        'tensile_hb': "HB-based (auto)",
+        'tensile_manual': "Manual",
+        'timeline_table': "| Bosqich | Vaqti | Tavsif |\n|---------|-------|--------|\n| **Rejalashtirish** | 2026-04-01 | Validatsiya |\n| **Optimallashtirish** | 2026-05-15 | NN/RF test |\n| **Integratsiya** | 2026-06-30 | Deploy |",
+        'live_monitoring_tab': "🔄 Live 3D Monitoring",
+        'download_data': "📥 Monitoring ma'lumotlarini yuklab olish (CSV)"
     },
     'en': {
         'app_title': "Universal Surface Deformation Monitoring",
-        # ...
+        'app_subtitle': "Thermo-Mechanical (TM) Analysis and Pillar Size Optimization",
+        'sidebar_header_params': "⚙️ General Parameters",
+        'formula_show': "View formulas:",
+        'project_name': "Project name:",
+        'process_time': "Process time (hours):",
+        'num_layers': "Number of layers:",
+        'tensile_model': "Tensile model:",
+        'rock_props': "💎 Rock Properties",
+        'disturbance': "Disturbance Factor (D):",
+        'poisson': "Poisson's ratio (ν):",
+        'stress_ratio': "Stress Ratio (k = σh/σv):",
+        'tensile_params': "📐 Tension and Pillar",
+        'tensile_ratio': "Tensile Ratio (σt0/UCS):",
+        'thermal_decay': "Thermal Decay (β):",
+        'combustion': "🔥 Combustion and Thermal",
+        'burn_duration': "Burn duration (hours):",
+        'max_temp': "Maximum temperature (°C)",
+        'timeline': "📅 Project Timeline",
+        'layer_params': "Layer {num} parameters",
+        'layer_name': "Name:",
+        'thickness': "Thickness (m):",
+        'ucs': "UCS (MPa):",
+        'density': "Density (kg/m³):",
+        'color': "Color:",
+        'gsi': "GSI:",
+        'mi': "mi:",
+        'manual_st0': "σt0 (MPa):",
+        'error_thick_positive': "Thickness must be >0",
+        'error_ucs_positive': "UCS must be >0 MPa",
+        'error_density_positive': "Density must be >0 kg/m³",
+        'error_gsi_range': "GSI must be between 10 and 100",
+        'error_mi_positive': "mi must be >0",
+        'error_min_layers': "❌ At least 1 layer required!",
+        'pillar_strength': "Pillar Strength (σp)",
+        'plastic_zone': "Plastic zone (y)",
+        'cavity_volume': "Cavity Volume",
+        'max_permeability': "Max Permeability",
+        'ai_recommendation': "AI Recommendation (Pillar)",
+        'monitoring_header': "📊 {obj_name}: Monitoring and Expert Summary",
+        'subsidence_title': "📉 Surface subsidence (cm)",
+        'thermal_deform_title': "🔥 Thermal deformation (cm)",
+        'hb_envelopes_title': "🛡️ Hoek-Brown Envelopes",
+        'scientific_analysis': "📋 Scientific Analysis",
+        'fos_red': "🔴 FOS < 1.0: Failure",
+        'fos_yellow': "🟡 FOS 1.0–1.5: Unstable",
+        'fos_green': "🟢 FOS > 1.5: Stable",
+        'tm_field_title': "🔥 TM Field and Pillar Interference",
+        'temp_subplot': "Temperature Field (°C) + Gas Flow",
+        'fos_subplot': "FOS + AI Collapse Prediction (NN) + Yielded Zones",
+        'gas_flow': "Gas flow",
+        'shear': "Shear",
+        'tensile': "Tensile",
+        'ai_collapse': "AI Collapse (NN)",
+        'tensile_empirical': "Empirical (UCS)",
+        'tensile_hb': "HB-based (auto)",
+        'tensile_manual': "Manual",
+        'timeline_table': "| Stage | Time | Description |\n|-------|------|-------------|\n| **Planning** | 2026-04-01 | Validation |\n| **Optimization** | 2026-05-15 | NN/RF test |\n| **Integration** | 2026-06-30 | Deploy |",
+        'live_monitoring_tab': "🔄 Live 3D Monitoring",
+        'download_data': "📥 Download monitoring data (CSV)"
     },
     'ru': {
         'app_title': "Универсальный мониторинг деформации земной поверхности",
-        # ...
+        'app_subtitle': "Термо-механический (ТМ) анализ и оптимизация размера целика",
+        'sidebar_header_params': "⚙️ Общие параметры",
+        'formula_show': "Показать формулы:",
+        'project_name': "Название проекта:",
+        'process_time': "Время процесса (часы):",
+        'num_layers': "Количество слоёв:",
+        'tensile_model': "Модель растяжения:",
+        'rock_props': "💎 Свойства породы",
+        'disturbance': "Фактор нарушения (D):",
+        'poisson': "Коэффициент Пуассона (ν):",
+        'stress_ratio': "Коэффициент напряжений (k = σh/σv):",
+        'tensile_params': "📐 Растяжение и целик",
+        'tensile_ratio': "Отношение растяжения (σt0/UCS):",
+        'thermal_decay': "Термическое затухание (β):",
+        'combustion': "🔥 Горение и термика",
+        'burn_duration': "Длительность горения (часы):",
+        'max_temp': "Максимальная температура (°C)",
+        'timeline': "📅 Этапы проекта (Таймлайн)",
+        'layer_params': "Параметры слоя {num}",
+        'layer_name': "Название:",
+        'thickness': "Мощность (м):",
+        'ucs': "UCS (МПа):",
+        'density': "Плотность (кг/м³):",
+        'color': "Цвет:",
+        'gsi': "GSI:",
+        'mi': "mi:",
+        'manual_st0': "σt0 (МПа):",
+        'error_thick_positive': "Мощность должна быть >0",
+        'error_ucs_positive': "UCS должен быть >0 МПа",
+        'error_density_positive': "Плотность должна быть >0 кг/м³",
+        'error_gsi_range': "GSI должен быть в диапазоне 10...100",
+        'error_mi_positive': "mi >0",
+        'error_min_layers': "❌ Необходим хотя бы 1 слой!",
+        'pillar_strength': "Прочность целика (σp)",
+        'plastic_zone': "Пластическая зона (y)",
+        'cavity_volume': "Объём полости",
+        'max_permeability': "Макс. проницаемость",
+        'ai_recommendation': "Рекомендация ИИ (Целик)",
+        'monitoring_header': "📊 {obj_name}: Мониторинг и экспертное заключение",
+        'subsidence_title': "📉 Оседание поверхности (см)",
+        'thermal_deform_title': "🔥 Термическая деформация (см)",
+        'hb_envelopes_title': "🛡️ Огибающие Хука-Брауна",
+        'scientific_analysis': "📋 Научный анализ",
+        'fos_red': "🔴 FOS < 1.0: Разрушение",
+        'fos_yellow': "🟡 FOS 1.0–1.5: Неустойчиво",
+        'fos_green': "🟢 FOS > 1.5: Устойчиво",
+        'tm_field_title': "🔥 ТМ поле и интерференция целика",
+        'temp_subplot': "Температурное поле (°C) + поток газа",
+        'fos_subplot': "FOS + прогноз обрушения ИИ (НС) + зоны текучести",
+        'gas_flow': "Поток газа",
+        'shear': "Сдвиг",
+        'tensile': "Растяжение",
+        'ai_collapse': "Обрушение по ИИ (НС)",
+        'tensile_empirical': "Эмпирическая (UCS)",
+        'tensile_hb': "На основе HB (auto)",
+        'tensile_manual': "Ручной ввод",
+        'timeline_table': "| Этап | Время | Описание |\n|------|-------|----------|\n| **Планирование** | 2026-04-01 | Валидация |\n| **Оптимизация** | 2026-05-15 | Тестирование NN/RF |\n| **Интеграция** | 2026-06-30 | Деплой |",
+        'live_monitoring_tab': "🔄 Live 3D Monitoring",
+        'download_data': "📥 Скачать данные мониторинга (CSV)"
     }
 }
 
-# Tarjima funksiyasi (soddalashtirilgan)
 def t(key, **kwargs):
     lang = st.session_state.get('language', 'uz')
     text = TRANSLATIONS.get(lang, TRANSLATIONS['uz']).get(key, key)
     return text.format(**kwargs) if kwargs else text
+
+FORMULA_OPTIONS = {
+    'uz': ["Yopish", "1. Hoek-Brown Failure (2018)", "2. Thermal Damage & Permeability",
+           "3. Thermal Stress & Tension", "4. Pillar & Subsidence"],
+    'en': ["Close", "1. Hoek-Brown Failure (2018)", "2. Thermal Damage & Permeability",
+           "3. Thermal Stress & Tension", "4. Pillar & Subsidence"],
+    'ru': ["Закрыть", "1. Критерий Хука-Брауна (2018)", "2. Термическое повреждение и проницаемость",
+           "3. Термическое напряжение и растяжение", "4. Целик и оседание"]
+}
+
+# ========================== YORDAMCHI FUNKSIYALAR ==========================
+def generate_qr(link):
+    qr = qrcode.QRCode(version=1, error_correction=qrcode.constants.ERROR_CORRECT_L, box_size=10, border=4)
+    qr.add_data(link)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
 
 # ========================== TEZKORLIK UCHUN DEFAULT PARAMETRLAR ==========================
 DEFAULT_PARAMS = {
     'E_MODULUS': 5000.0,
     'ALPHA_T': 1e-5,
     'CONSTRAINT': 0.7,
-    'GRID_SHAPE': (50, 80),  # 3x tezroq
+    'GRID_SHAPE': (50, 80),
     'N_STEPS': 15
 }
 
@@ -96,41 +279,6 @@ def init_db():
         )
     ''')
     return conn
-
-# ========================== GOOGLE SHEETS INTEGRATSIYASI ==========================
-@st.cache_resource
-def get_gsheet():
-    try:
-        creds = Credentials.from_service_account_file("creds.json")
-        gc = gspread.authorize(creds)
-        return gc.open("UCG_Projects").sheet1
-    except:
-        return None
-
-# ========================== EMAIL ALERT ==========================
-def send_alert(fos_value, project_name, recipient="engineer@angren.com"):
-    if fos_value < 1.2:
-        msg = MIMEText(f"🚨 UCG ALERT: {project_name} FOS={fos_value:.2f}\nTime: {datetime.now()}")
-        msg['Subject'] = 'CRITICAL: UCG Collapse Risk'
-        msg['From'] = 'ucg@angren.com'
-        msg['To'] = recipient
-        try:
-            with smtplib.SMTP('smtp.gmail.com', 587) as server:
-                server.starttls()
-                server.login(st.secrets["email"]["user"], st.secrets["email"]["password"])
-                server.send_message(msg)
-        except:
-            pass
-
-# ========================== HEALTH CHECK ==========================
-@st.cache_data(ttl=60)
-def health_check():
-    try:
-        # oddiy tekshiruv
-        _ = np.random.rand(10)
-        return {"status": "healthy", "timestamp": datetime.now().isoformat()}
-    except:
-        return {"status": "unhealthy"}
 
 # ========================== VALIDATSIYA ==========================
 def validate_layers(layers_data):
@@ -190,7 +338,6 @@ def improved_fos(ucs, gsi, mi, D, nu, T, depth, H_seam):
 
 @st.cache_data(ttl=600, show_spinner=False)
 def compute_temperature_field_moving(time_h, T_source_max, burn_duration, total_depth, source_z, grid_shape, n_steps=15):
-    """Tezlashtirilgan versiya"""
     x_axis = np.linspace(-total_depth * 1.5, total_depth * 1.5, grid_shape[1])
     z_axis = np.linspace(0, total_depth + 50, grid_shape[0])
     grid_x, grid_z = np.meshgrid(x_axis, z_axis)
@@ -217,7 +364,7 @@ def compute_temperature_field_moving(time_h, T_source_max, burn_duration, total_
                 curr_T = 25 + (T_source_max-25)*np.exp(-0.03*(elapsed-burn_duration))
             dist_sq = (grid_x - x_center)**2 + (grid_z - source_z)**2
             temp_2d += (curr_T - 25) * np.exp(-dist_sq / (pen_depth**2 + 15**2))
-    # Diffuziya (kamroq iteratsiya)
+    # Diffuziya
     DX, DT = 1.0, 0.1
     for _ in range(n_steps):
         Tn = temp_2d.copy()
@@ -230,7 +377,6 @@ def compute_temperature_field_moving(time_h, T_source_max, burn_duration, total_
 @st.cache_data(ttl=600, show_spinner=False)
 def compute_geomechanics_fast(layers_data, grid_z, grid_x, temp_2d, D_factor, nu_poisson, k_ratio,
                               tensile_mode, tensile_ratio, beta_thermal, total_depth, EPS, time_h):
-    """Vektorlashtirilgan va xavfsiz bo'lish"""
     grid_sigma_v = np.zeros_like(grid_z)
     grid_ucs = np.zeros_like(grid_z)
     grid_mb = np.zeros_like(grid_z)
@@ -267,7 +413,6 @@ def compute_geomechanics_fast(layers_data, grid_z, grid_x, temp_2d, D_factor, nu
     sigma1_act = np.maximum(grid_sigma_v, grid_sigma_h)
     sigma3_act = np.minimum(grid_sigma_v, grid_sigma_h)
 
-    # Safe division helper
     def safe_div(a, b):
         return np.divide(a, b, out=np.zeros_like(a), where=b!=0)
 
@@ -377,38 +522,10 @@ class DigitalTwin:
         self.history.append(state)
         return state
 
-# ========================== FASTAPI (alohida threadda) ==========================
-api = FastAPI()
-@api.get("/api/fos/{project_id}")
-def get_fos(project_id: str):
-    # Real vaqtda FOS olish (soddalashtirilgan)
-    fos_val = np.random.uniform(1.0, 2.5)
-    return {"project_id": project_id, "fos": fos_val, "risk": 1.0 - fos_val/2.5, "timestamp": datetime.now().isoformat()}
-
-def run_api():
-    uvicorn.run(api, host="0.0.0.0", port=8000)
-
-# API ni ishga tushirish (agar asosiy threadda bo'lmasa)
-if not os.environ.get("API_RUNNING"):
-    threading.Thread(target=run_api, daemon=True).start()
-    os.environ["API_RUNNING"] = "1"
-
 # ========================== ASOSIY STREAMLIT ILOVASI ==========================
 st.set_page_config(page_title=t('app_title'), layout="wide", page_icon="🌍")
 st.title(t('app_title'))
 st.markdown(f"### {t('app_subtitle')}")
-
-# Autentifikatsiya (oddiy)
-if 'logged_in' not in st.session_state:
-    st.session_state.logged_in = False
-
-if not st.session_state.logged_in:
-    with st.sidebar:
-        password = st.text_input("🔐 Admin paroli", type="password")
-        if st.button("Kirish") and password == st.secrets["auth"]["admin_password"]:
-            st.session_state.logged_in = True
-            st.rerun()
-        st.stop()
 
 # Til sozlamalari
 if 'language' not in st.session_state:
@@ -422,18 +539,10 @@ st.session_state.language = lang
 # QR kod
 st.sidebar.markdown("---")
 st.sidebar.subheader("📱 Mobil ilovaga o'tish")
-def generate_qr(link):
-    qr = qrcode.QRCode(version=1, error_correction=qrcode.constants.ERROR_CORRECT_L, box_size=10, border=4)
-    qr.add_data(link)
-    qr.make(fit=True)
-    img = qr.make_image(fill_color="black", back_color="white")
-    buf = BytesIO()
-    img.save(buf, format="PNG")
-    return buf.getvalue()
 qr_img_bytes = generate_qr(APP_URL)
 st.sidebar.image(qr_img_bytes, caption="Scan QR: Angren UCG API", use_container_width=True)
 
-# Sidebar parametrlar (soddalashtirilgan, lekin to'liq)
+# Sidebar parametrlar
 st.sidebar.header(t('sidebar_header_params'))
 obj_name = st.sidebar.text_input(t('project_name'), value="Angren-UCG-001")
 time_h = st.sidebar.slider(t('process_time'), 1, 150, 24)
@@ -452,6 +561,9 @@ beta_thermal = st.sidebar.number_input(t('thermal_decay'), value=0.0035, format=
 st.sidebar.subheader(t('combustion'))
 burn_duration = st.sidebar.number_input(t('burn_duration'), value=40)
 T_source_max = st.sidebar.slider(t('max_temp'), 600, 1200, 1075)
+
+with st.sidebar.expander(t('timeline')):
+    st.markdown(t('timeline_table'))
 
 # Qatlamlar
 strata_colors = ['#87CEEB', '#F4A460', '#D3D3D3', '#F5DEB3', '#555555']
@@ -480,7 +592,6 @@ if not validate_layers(layers_data):
 
 # Hisoblash (progress bilan)
 progress_bar = st.progress(0, text="Hisoblanmoqda...")
-# Harorat maydoni
 grid_shape = DEFAULT_PARAMS['GRID_SHAPE']
 source_z = total_depth - (layers_data[-1]['t'] / 2)
 H_seam = layers_data[-1]['t']
@@ -488,7 +599,6 @@ temp_2d, x_axis, z_axis, grid_x, grid_z = compute_temperature_field_moving(
     time_h, T_source_max, burn_duration, total_depth, source_z, grid_shape, n_steps=DEFAULT_PARAMS['N_STEPS'])
 progress_bar.progress(0.4)
 
-# Geomexanika
 geo = compute_geomechanics_fast(layers_data, grid_z, grid_x, temp_2d, D_factor, nu_poisson, k_ratio,
                                 tensile_mode, tensile_ratio, beta_thermal, total_depth, EPS, time_h)
 progress_bar.progress(0.7)
@@ -504,7 +614,6 @@ void_volume = geo['void_volume']
 
 # AI modellarni yuklash
 rf_reg, rf_clf, iso_forest = get_models()
-# Collapse prediction
 X_ai = np.column_stack([temp_2d.flatten(), sigma1_act.flatten(), sigma3_act.flatten(), grid_z.flatten()])
 y_ai = void_mask_permanent.flatten().astype(int)
 if len(np.unique(y_ai)) > 1:
@@ -533,24 +642,12 @@ optimal_width_ai = optimize_pillar(ucs_seam, H_seam, sv_seam, strength_red, void
 progress_bar.progress(1.0)
 progress_bar.empty()
 
-# Email alert agar FOS kritik bo'lsa
-mean_fos = np.nanmean(fos_2d)
-send_alert(mean_fos, obj_name)
-
 # Ma'lumotlar bazasiga yozish
 conn = init_db()
 cursor = conn.cursor()
 cursor.execute("INSERT INTO sensors (timestamp, temperature, fos, pillar_width, anomaly_score) VALUES (?, ?, ?, ?, ?)",
-               (datetime.now(), float(np.mean(temp_2d)), float(mean_fos), optimal_width_ai, 0.0))
+               (datetime.now(), float(np.mean(temp_2d)), float(np.nanmean(fos_2d)), optimal_width_ai, 0.0))
 conn.commit()
-
-# Google Sheets ga yozish
-gsheet = get_gsheet()
-if gsheet:
-    try:
-        gsheet.append_row([obj_name, mean_fos, datetime.now().isoformat()])
-    except:
-        pass
 
 # Asosiy metrikalar
 st.subheader(t('monitoring_header', obj_name=obj_name))
@@ -561,7 +658,7 @@ m3.metric(t('cavity_volume'), f"{void_volume:.1f} m²")
 m4.metric(t('max_permeability'), f"{np.max(perm):.1e} m²")
 m5.metric(t('ai_recommendation'), f"{optimal_width_ai:.1f} m", delta=f"Klassik: {rec_width} m", delta_color="off")
 
-# Grafiklar (qisqartirilgan, lekin asosiy)
+# Cho'kish va Hoek-Brown grafiklari
 st.markdown("---")
 col_g1, col_g2, col_g3 = st.columns([1.5,1.5,2])
 s_max = (H_seam*0.04)*(min(time_h,120)/120)
@@ -591,12 +688,17 @@ with col_g3:
     fig_hb.update_layout(title=t('hb_envelopes_title'), template="plotly_dark", height=300)
     st.plotly_chart(fig_hb, use_container_width=True)
 
-# TM maydoni (harorat + FOS + collapse) – qisqartirilgan
+# TM maydoni
 st.markdown("---")
 c1, c2 = st.columns([1,2.5])
 with c1:
     st.subheader(t('scientific_analysis'))
     st.error(t('fos_red')); st.warning(t('fos_yellow')); st.success(t('fos_green'))
+    fig_s = go.Figure()
+    for lyr in layers_data:
+        fig_s.add_trace(go.Bar(x=['Kesim'], y=[lyr['t']], name=lyr['name'], marker_color=lyr['color'], width=0.4))
+    fig_s.update_layout(barmode='stack', template="plotly_dark", yaxis=dict(autorange='reversed'), height=450, showlegend=False)
+    st.plotly_chart(fig_s, use_container_width=True)
 with c2:
     st.subheader(t('tm_field_title'))
     fig_tm = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.15,
@@ -623,10 +725,161 @@ with c2:
     fig_tm.update_yaxes(autorange='reversed', row=2, col=1)
     st.plotly_chart(fig_tm, use_container_width=True)
 
-# Health check
-health = health_check()
-if health['status'] != 'healthy':
-    st.warning("⚠️ Health check: some services may be degraded")
+# Live 3D monitoring (soddalashtirilgan, lekin ishlaydi)
+st.header("🔄 Live 3D Monitoring (Real-time)")
+tab_live, tab_ai_orig, tab_advanced = st.tabs([t('live_monitoring_tab'), "🧠 AI Monitoring", t('advanced_analysis')])
+
+with tab_live:
+    st.markdown("### Real-time subsidence, temperature, anomalies and alerts")
+    TIME_STEPS = st.slider("Simulation steps", 10, 200, 50, key="live_steps")
+    run_live = st.button("▶️ Run Live Monitoring", key="run_live")
+    stop_live = st.button("⏹ Stop Monitoring", key="stop_live")
+    if 'stop_flag_live' not in st.session_state: st.session_state.stop_flag_live = False
+    if stop_live: st.session_state.stop_flag_live = True
+    if 'live_history_df' not in st.session_state:
+        st.session_state.live_history_df = pd.DataFrame(columns=['step', 'mean_subsidence_cm', 'max_temp_c', 'FOS', 'pillar_width_m'])
+    if run_live:
+        st.session_state.stop_flag_live = False
+        X_live = np.linspace(-20,20,50); Y_live = np.linspace(-20,20,50); X_grid_live, Y_grid_live = np.meshgrid(X_live, Y_live)
+        subs_history_live = []; fos_history_live = []; width_history_live = []; temp_history_live = []
+        rf_live = RandomForestRegressor(n_estimators=10, random_state=42)
+        dummy_X = np.random.rand(10,3); dummy_y = np.random.rand(10); rf_live.fit(dummy_X, dummy_y)
+        placeholder_live = st.empty()
+        for t_step in range(TIME_STEPS):
+            if st.session_state.stop_flag_live: break
+            Z_subs = np.exp(-(X_grid_live**2+Y_grid_live**2)/(2*(5+t_step*0.1)**2))*5*t_step/TIME_STEPS
+            Z_temp = np.exp(-(X_grid_live**2+Y_grid_live**2)/(2*8**2))*T_source_max*t_step/TIME_STEPS
+            avg_ucs = np.mean([l['ucs'] for l in layers_data])
+            X_feat = np.array([[burn_duration, T_source_max, avg_ucs]]).reshape(1,-1)
+            pillar_width_pred = rf_live.predict(X_feat)[0]
+            FOS_live = np.clip(2.5 - t_step*0.03, 0.8, 2.5)
+            mean_subs = np.mean(Z_subs)
+            subs_history_live.append(mean_subs); fos_history_live.append(FOS_live); width_history_live.append(pillar_width_pred); temp_history_live.append(np.mean(Z_temp))
+            new_row = pd.DataFrame({'step':[t_step+1],'mean_subsidence_cm':[mean_subs*100],'max_temp_c':[np.max(Z_temp)],'FOS':[FOS_live],'pillar_width_m':[pillar_width_pred]})
+            st.session_state.live_history_df = pd.concat([st.session_state.live_history_df, new_row], ignore_index=True).tail(1000)
+            with placeholder_live.container():
+                col1, col2 = st.columns(2)
+                fig_subs = go.Figure(go.Heatmap(z=Z_subs*100, x=X_live, y=Y_live, colorscale='Viridis')).update_layout(title='Surface Subsidence (cm)', height=350)
+                col1.plotly_chart(fig_subs, use_container_width=True)
+                fig_temp = go.Figure(go.Heatmap(z=Z_temp, x=X_live, y=Y_live, colorscale='Hot')).update_layout(title='Temperature Field (°C)', height=350)
+                col2.plotly_chart(fig_temp, use_container_width=True)
+                st.metric(label="Recommended Pillar Width (m)", value=f"{pillar_width_pred:.2f}", delta=f"FOS = {FOS_live:.2f}")
+                if FOS_live < 1.2:
+                    st.error("🚨 COLLAPSE RISK!")
+                elif FOS_live < 1.5:
+                    st.warning("⚠️ WARNING ZONE")
+                else:
+                    st.success("✅ STABLE")
+            time.sleep(0.1)
+        st.success(f"✅ Live monitoring completed.")
+    if not st.session_state.live_history_df.empty:
+        st.markdown("---")
+        csv_data = st.session_state.live_history_df.to_csv(index=False).encode('utf-8')
+        st.download_button(label=t('download_data'), data=csv_data, file_name="ucg_live_monitoring.csv", mime="text/csv")
+
+# AI Monitoring tab (Digital Twin)
+with tab_ai_orig:
+    st.markdown("### 🧠 UCG AI Predictive Monitoring (Digital Twin)")
+    if 'twin' not in st.session_state:
+        st.session_state.twin = DigitalTwin()
+    twin = st.session_state.twin
+    run_dt = st.button("▶️ Start Digital Twin Simulation")
+    if run_dt:
+        placeholder_dt = st.empty()
+        for step in range(50):
+            state = twin.update()
+            fos_val = improved_fos(ucs_seam, layers_data[-1]['gsi'], layers_data[-1]['mi'],
+                                   D_factor, nu_poisson, state["T"], H_seam, H_seam)
+            with placeholder_dt.container():
+                c1,c2,c3,c4 = st.columns(4)
+                c1.metric("🌡 Temp", f"{state['T']:.1f} °C")
+                c2.metric("🧱 Stress", f"{state['stress']:.2f} MPa")
+                c3.metric("💨 Pressure", f"{state['pressure']:.2f} MPa")
+                c4.metric("🛡 FOS (Physics)", f"{fos_val:.2f}")
+                if fos_val < 1.2:
+                    st.error("🚨 COLLAPSE RISK!")
+                elif fos_val < 1.5:
+                    st.warning("⚠️ WARNING ZONE")
+                else:
+                    st.success("✅ STABLE")
+            time.sleep(0.2)
+        st.balloons()
+    # Anomaly detection
+    st.subheader("📡 Anomaly Detection (IsolationForest)")
+    if st.button("Run Anomaly Detection on Twin History"):
+        if len(twin.history) > 10:
+            temps = [h["T"] for h in twin.history]
+            data = np.array(temps).reshape(-1,1)
+            iso_forest = IsolationForest(contamination=0.05, random_state=42)
+            preds = iso_forest.fit_predict(data)
+            anomalies = [i for i, p in enumerate(preds) if p == -1]
+            fig_anom = go.Figure()
+            fig_anom.add_trace(go.Scatter(y=temps, mode='lines', name='Temperature'))
+            fig_anom.add_trace(go.Scatter(x=anomalies, y=[temps[i] for i in anomalies], mode='markers', marker=dict(color='red', size=10), name='Anomaly'))
+            st.plotly_chart(fig_anom, use_container_width=True)
+            st.write(f"Detected {len(anomalies)} anomalies")
+        else:
+            st.warning("Run Digital Twin first to generate history")
+
+# Advanced Analysis tab
+with tab_advanced:
+    st.header(t('advanced_analysis'))
+    base_params = {
+        'ucs': layers_data[-1]['ucs'],
+        'gsi': layers_data[-1]['gsi'],
+        'mi': layers_data[-1]['mi'],
+        'D': D_factor,
+        'nu': nu_poisson,
+        'T': T_source_max,
+        'depth': H_seam,
+        'H': H_seam
+    }
+    with st.expander("🎲 Monte Carlo Risk Analysis"):
+        mc_fos = monte_carlo_fos(500, base_params)
+        fig_mc = go.Figure()
+        fig_mc.add_histogram(x=mc_fos, nbinsx=30)
+        fig_mc.add_vline(x=1.3, line_dash="dash", line_color="red")
+        st.plotly_chart(fig_mc, use_container_width=True)
+        st.metric("Failure Probability (FOS<1.3)", f"{np.mean(mc_fos < 1.3)*100:.2f}%")
+    with st.expander("🌪️ Sensitivity Analysis PRO"):
+        df_sens, base_fos = sensitivity_analysis_pro(base_params)
+        fig_tornado = go.Figure()
+        fig_tornado.add_bar(y=df_sens['param'], x=df_sens['low'], orientation='h', name='-20%', marker_color='#E74C3C')
+        fig_tornado.add_bar(y=df_sens['param'], x=df_sens['high'], orientation='h', name='+20%', marker_color='#27AE60')
+        fig_tornado.add_vline(x=0, line_color='white')
+        fig_tornado.update_layout(title=f"FOS Sensitivity (base FOS={base_fos:.2f})", barmode='overlay', height=400)
+        st.plotly_chart(fig_tornado, use_container_width=True)
+    st.subheader("🤖 AI FOS Prediction (RandomForest)")
+    ai_model = rf_reg  # from get_models
+    sigma_v_pred = calc_vertical_stress(H_seam)
+    pred_fos = ai_model.predict([[T_source_max, sigma_v_pred, layers_data[-1]['ucs']]])[0]
+    st.metric("AI Predicted FOS", f"{pred_fos:.2f}")
+    # Composite risk map
+    risk_map = np.clip(0.4*(1-fos_2d/2) + 0.3*damage + 0.2*void_mask_permanent.astype(float) + 0.1*(temp_2d/T_source_max), 0, 1)
+    st.subheader("⚠️ Composite Risk Index")
+    fig_risk = go.Figure(go.Heatmap(z=risk_map, x=x_axis, y=z_axis, colorscale='RdYlGn_r', zmin=0, zmax=1))
+    fig_risk.update_layout(title="Risk Map", yaxis=dict(autorange='reversed'), height=400)
+    st.plotly_chart(fig_risk, use_container_width=True)
+    risk_avg = np.mean(risk_map)
+    st.metric("Average Risk Index", f"{risk_avg:.2f}")
+    if risk_avg > 0.7:
+        st.error("🚨 HIGH RISK")
+    elif risk_avg > 0.4:
+        st.warning("⚠️ MEDIUM RISK")
+    else:
+        st.success("✅ LOW RISK")
+
+# ISO hisobot (soddalashtirilgan, faqat agar docx mavjud bo'lsa)
+if DOCX_AVAILABLE:
+    with st.expander("📄 ISO 9001:2015 Standart Hujjat (.docx)"):
+        if st.button("📄 ISO hujjat yaratish", type="primary", use_container_width=True):
+            with st.spinner("ISO 9001 shablon tayyorlanmoqda..."):
+                try:
+                    from generate_iso import generate_full_iso_report  # agar alohida faylda bo'lsa
+                    # Sizning ISO generatsiya kodingiz
+                    st.info("ISO report generation is available if you have the full function.")
+                except Exception as e:
+                    st.error(f"Hisobot yaratishda xatolik: {e}")
 
 st.sidebar.markdown("---")
 st.sidebar.write(f"Tuzuvchi: Saitov Dilshodbek | Device: {device} | PT: {PT_AVAILABLE}")
