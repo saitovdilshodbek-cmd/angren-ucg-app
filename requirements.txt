@@ -1,7 +1,12 @@
-python -m venv test_env
-test_env\Scripts\activate   # Windows
-# yoki
-source test_env/bin/activate   # Mac/Linux
-
-pip install -r requirements.txt
-streamlit run app.py
+torch
+scikit-learn
+scipy
+plotly
+python-docx
+qrcode
+joblib
+matplotlib
+requests
+numpy
+pandas
+streamlit
