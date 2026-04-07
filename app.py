@@ -1,9 +1,3 @@
-"""
-UCG ULTIMATE DIGITAL TWIN
-Barcha modullar bitta faylda (modullashtirilgan versiya alohida fayllarda ham mavjud)
-Streamlit ilovasi – Yer yuzasi deformatsiyasi monitoringi, AI, Digital Twin, Real-time 3D, ISO hisobot
-"""
-
 import streamlit as st
 import numpy as np
 import pandas as pd
@@ -14,21 +8,15 @@ from scipy.optimize import minimize
 from scipy.stats import linregress
 import time
 import io
-import warnings
-import json
-import threading
 import qrcode
 from io import BytesIO
 import matplotlib.pyplot as plt
-import joblib
-import requests
+import warnings
 from datetime import datetime
-
-# Machine Learning
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.ensemble import IsolationForest
 
-# Deep Learning (optional)
+# PyTorch mavjudligini tekshirish
 try:
     import torch
     import torch.nn as nn
@@ -38,46 +26,18 @@ except ImportError:
     PT_AVAILABLE = False
     device = "cpu"
 
-# Database (optional)
-try:
-    import sqlite3
-    SQLITE_AVAILABLE = True
-except ImportError:
-    SQLITE_AVAILABLE = False
-
-try:
-    import psycopg2
-    PG_AVAILABLE = True
-except ImportError:
-    PG_AVAILABLE = False
-
-# MQTT (optional)
-try:
-    import paho.mqtt.client as mqtt
-    MQTT_AVAILABLE = True
-except ImportError:
-    MQTT_AVAILABLE = False
-
-# 3D (optional)
-try:
-    import pyvista as pv
-    PV_AVAILABLE = True
-except ImportError:
-    PV_AVAILABLE = False
-
-# Word report
+# Word dokumenti uchun
 from docx import Document
 from docx.shared import Pt, Cm, RGBColor, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.enum.table import WD_TABLE_ALIGNMENT
 
 warnings.filterwarnings('ignore')
 
-# ========================== GLOBAL CONSTANTS ==========================
+# ========================== KONSTANTALAR ==========================
 EPS = 1e-12
 APP_URL = "https://angren-ucg-app-a7rxktm6usxqixabhaq576.streamlit.app"
 
-# ========================== TRANSLATIONS ==========================
+# ========================== TARJIMALAR ==========================
 TRANSLATIONS = {
     'uz': {
         'app_title': "Universal Yer yuzasi Deformatsiyasi Monitoringi",
@@ -446,7 +406,7 @@ def t(key, **kwargs):
     text = TRANSLATIONS.get(lang, TRANSLATIONS['uz']).get(key, key)
     return text.format(**kwargs) if kwargs else text
 
-# ========================== UTILS ==========================
+# ========================== YORDAMCHI FUNKSIYALAR ==========================
 def generate_qr(link):
     qr = qrcode.QRCode(version=1, error_correction=qrcode.constants.ERROR_CORRECT_L, box_size=10, border=4)
     qr.add_data(link)
@@ -456,9 +416,8 @@ def generate_qr(link):
     img.save(buf, format="PNG")
     return buf.getvalue()
 
-# ========================== PHYSICS (improved from PRO CORE) ==========================
+# ========================== FIZIKA (PRO CORE) ==========================
 def thermal_damage(T):
-    """Termal damage indeksi (0..0.95)"""
     if T < 100:
         return 0.0
     elif T < 400:
@@ -469,7 +428,7 @@ def thermal_damage(T):
         return min(0.95, 0.5 + 0.45 * (T - 800) / 400)
 
 def calc_vertical_stress(depth, density=2500):
-    gamma = density * 9.81 / 1e6  # MPa/m
+    gamma = density * 9.81 / 1e6
     return gamma * depth
 
 def hoek_brown_strength(ucs, gsi, mi, D, sigma3=0):
@@ -479,7 +438,6 @@ def hoek_brown_strength(ucs, gsi, mi, D, sigma3=0):
     return sigma3 + ucs * (mb * sigma3 / ucs + s)**a
 
 def improved_fos(ucs, gsi, mi, D, nu, T, depth, H_seam):
-    """Termal degradatsiya va Hoek-Brown asosida FOS"""
     damage = thermal_damage(T)
     ucs_eff = ucs * (1 - damage)
     sigma_strength = hoek_brown_strength(ucs_eff, gsi, mi, D, sigma3=0)
@@ -488,14 +446,14 @@ def improved_fos(ucs, gsi, mi, D, nu, T, depth, H_seam):
     fos = (sigma_strength * pillar_effect) / (sigma_v + EPS)
     return np.clip(fos, 0, 5)
 
-# ========================== SIMULATION (Temperature field) ==========================
+# ========================== TEMPERATURE FIELD ==========================
 @st.cache_data(show_spinner=False, max_entries=50)
 def compute_temperature_field_moving(time_h, T_source_max, burn_duration, total_depth, source_z, grid_shape, n_steps=20):
     x_axis = np.linspace(-total_depth * 1.5, total_depth * 1.5, grid_shape[1])
     z_axis = np.linspace(0, total_depth + 50, grid_shape[0])
     grid_x, grid_z = np.meshgrid(x_axis, z_axis)
     alpha_rock = 1.0e-6
-    v_burn = 0.02  # m/s yonish tezligi
+    v_burn = 0.02
     sources = [
         {'x0': -total_depth/3, 'start': 0, 'moving': False},
         {'x0': 0, 'start': 40, 'moving': True, 'v': v_burn},
@@ -527,10 +485,9 @@ def compute_temperature_field_moving(time_h, T_source_max, burn_duration, total_
         temp_2d = Tn
     return temp_2d, x_axis, z_axis, grid_x, grid_z
 
-# ========================== GEOMECHANICS (full from first code) ==========================
+# ========================== GEOMEXANIKA ==========================
 def compute_geomechanics(layers_data, grid_z, grid_x, temp_2d, D_factor, nu_poisson, k_ratio,
-                         tensile_mode, tensile_ratio, beta_thermal, total_depth, EPS):
-    # Qatlamlar bo'yicha sigma_v, ucs, mb, s, a, sigma_t0_manual
+                         tensile_mode, tensile_ratio, beta_thermal, total_depth, EPS, time_h):
     grid_sigma_v = np.zeros_like(grid_z)
     grid_ucs = np.zeros_like(grid_z)
     grid_mb = np.zeros_like(grid_z)
@@ -550,7 +507,7 @@ def compute_geomechanics(layers_data, grid_z, grid_x, temp_2d, D_factor, nu_pois
         grid_a_hb[mask] = 0.5 + (1/6)*(np.exp(-layer['gsi']/15)-np.exp(-20/3))
         grid_sigma_t0_manual[mask] = layer['sigma_t0_manual']
 
-    # Maksimal harorat xaritasi (kumulyativ)
+    # Maksimal harorat xaritasi
     if 'max_temp_map' not in st.session_state or st.session_state.max_temp_map.shape != grid_z.shape:
         st.session_state.max_temp_map = np.ones_like(grid_z)*25
     st.session_state.max_temp_map = np.maximum(st.session_state.max_temp_map, temp_2d)
@@ -588,7 +545,7 @@ def compute_geomechanics(layers_data, grid_z, grid_x, temp_2d, D_factor, nu_pois
     crushing = shear_failure & (temp_2d>600)
     depth_factor = np.exp(-grid_z/(total_depth+EPS))
     local_collapse_T = np.clip((st.session_state.max_temp_map-600)/300,0,1)
-    time_factor = np.clip((st.session_state.get('time_h', 24)-40)/60,0,1)
+    time_factor = np.clip((time_h-40)/60,0,1)
     collapse_final = local_collapse_T * time_factor * (1-depth_factor)
     void_mask_raw = spalling | crushing | (st.session_state.max_temp_map>900)
     void_mask_smooth = gaussian_filter(void_mask_raw.astype(float), sigma=1.5)
@@ -616,10 +573,9 @@ def compute_geomechanics(layers_data, grid_z, grid_x, temp_2d, D_factor, nu_pois
         'void_volume': void_volume
     }
 
-# ========================== AI MODELS ==========================
+# ========================== AI MODEL (FOS PREDICTION) ==========================
 @st.cache_resource(show_spinner=False)
 def load_ai_fos_model():
-    """RandomForestRegressor for FOS prediction (temp, stress, ucs)"""
     def generate_training_data(n=500):
         X, y = [], []
         for _ in range(n):
@@ -634,52 +590,6 @@ def load_ai_fos_model():
     model = RandomForestRegressor(n_estimators=100, random_state=42)
     model.fit(X, y)
     return model
-
-@st.cache_resource(show_spinner=False)
-def get_nn_collapse_model():
-    if not PT_AVAILABLE:
-        return None
-    class CollapseNet(nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.net = nn.Sequential(nn.Linear(4,32), nn.ReLU(), nn.Linear(32,64), nn.ReLU(), nn.Linear(64,1), nn.Sigmoid())
-        def forward(self,x): return self.net(x)
-    # Generate synthetic dataset
-    def generate_ucg_dataset(n=10000):
-        data = []
-        for _ in range(n):
-            T = np.random.uniform(20,1000)
-            s1 = np.random.uniform(0,50)
-            s3 = np.random.uniform(0,30)
-            d = np.random.uniform(0,300)
-            damage = 1 - np.exp(-0.002*max(T-100,0))
-            strength = 40*(1-damage)
-            collapse = 1 if (s1>strength or T>700) else 0
-            data.append([T,s1,s3,d,collapse])
-        return np.array(data)
-    data = generate_ucg_dataset()
-    X = torch.tensor(data[:,:-1], dtype=torch.float32)
-    y = torch.tensor(data[:,-1], dtype=torch.float32).view(-1,1)
-    model = CollapseNet()
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-    loss_fn = nn.BCELoss()
-    for epoch in range(50):
-        pred = model(X)
-        loss = loss_fn(pred, y)
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-    model.eval()
-    return model
-
-def predict_nn_collapse(model, temp, s1, s3, depth):
-    if model is None:
-        return np.zeros_like(temp)
-    X = np.column_stack([temp.flatten(), s1.flatten(), s3.flatten(), depth.flatten()])
-    X_t = torch.tensor(X, dtype=torch.float32)
-    with torch.no_grad():
-        pred = model(X_t).numpy()
-    return pred.reshape(temp.shape)
 
 # ========================== PILLAR OPTIMIZATION ==========================
 def optimize_pillar(ucs_seam, H_seam, sv_seam, strength_red, void_frac_base, rec_width_init):
@@ -721,38 +631,7 @@ def sensitivity_analysis_pro(base_params, range_pct=0.2):
         results.append({'param': name, 'low': fos_low - base_fos, 'high': fos_high - base_fos})
     return pd.DataFrame(results), base_fos
 
-# ========================== DATABASE (SQLite) ==========================
-def init_db():
-    if not SQLITE_AVAILABLE:
-        return
-    conn = sqlite3.connect("ucg_monitor.db")
-    c = conn.cursor()
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS monitoring (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            time TEXT,
-            temperature REAL,
-            stress REAL,
-            pressure REAL,
-            fos REAL
-        )
-    """)
-    conn.commit()
-    conn.close()
-
-def insert_data(temp, stress, pressure, fos):
-    if not SQLITE_AVAILABLE:
-        return
-    conn = sqlite3.connect("ucg_monitor.db")
-    c = conn.cursor()
-    c.execute("INSERT INTO monitoring (time, temperature, stress, pressure, fos) VALUES (?, ?, ?, ?, ?)",
-              (datetime.now().isoformat(), temp, stress, pressure, fos))
-    conn.commit()
-    conn.close()
-
-init_db()
-
-# ========================== DIGITAL TWIN CLASS ==========================
+# ========================== DIGITAL TWIN SINFI ==========================
 class DigitalTwin:
     def __init__(self):
         self.temperature = 20.0
@@ -769,7 +648,7 @@ class DigitalTwin:
         self.history.append(state)
         return state
 
-# ========================== ISO REPORT GENERATOR ==========================
+# ========================== ISO HISOBOT ==========================
 def generate_full_iso_report(obj_name, lang, layers_data, T_source_max, burn_duration,
                              pillar_strength, optimal_width_ai, fos_2d, risk_map,
                              prepared_by, approved_by, doc_number, revision, fig_bytes=None):
@@ -805,7 +684,8 @@ def generate_full_iso_report(obj_name, lang, layers_data, T_source_max, burn_dur
     }
     t_text = texts.get(lang, texts['en'])
     doc = Document()
-    doc.add_heading(f"{t_text['h1']}\n{obj_name}", level=1).alignment = WD_ALIGN_PARAGRAPH.CENTER
+    header = doc.add_heading(f"{t_text['h1']}\n{obj_name}", level=1)
+    header.alignment = WD_ALIGN_PARAGRAPH.CENTER
     meta_table = doc.add_table(rows=2, cols=2)
     meta_table.style = 'Table Grid'
     meta_table.cell(0,0).text = f"Doc No: {doc_number}"
@@ -813,12 +693,18 @@ def generate_full_iso_report(obj_name, lang, layers_data, T_source_max, burn_dur
     meta_table.cell(1,0).text = f"Prepared: {prepared_by}"
     meta_table.cell(1,1).text = f"Approved: {approved_by}"
     doc.add_heading(t_text['sec1'], level=2)
-    doc.add_paragraph(f"Ob'ekt nomi: {obj_name}\nMaksimal harorat: {T_source_max} °C\nYonish davomiyligi: {burn_duration} soat")
+    p = doc.add_paragraph()
+    p.add_run(f"Ob'ekt nomi: ").bold = True
+    p.add_run(f"{obj_name}\n")
+    p.add_run(f"Maksimal harorat: ").bold = True
+    p.add_run(f"{T_source_max} °C\n")
+    p.add_run(f"Yonish davomiyligi: ").bold = True
+    p.add_run(f"{burn_duration} soat")
     doc.add_heading(t_text['sec2'], level=2)
     table = doc.add_table(rows=1, cols=5)
     table.style = 'Table Grid'
-    for i, h in enumerate(["Layer Name", "Thick (m)", "UCS (MPa)", "GSI", "mi"]):
-        table.rows[0].cells[i].text = h
+    hdrs = ["Layer Name", "Thick (m)", "UCS (MPa)", "GSI", "mi"]
+    for i, h in enumerate(hdrs): table.rows[0].cells[i].text = h
     for layer in layers_data:
         row = table.add_row().cells
         row[0].text = layer['name']
@@ -827,9 +713,10 @@ def generate_full_iso_report(obj_name, lang, layers_data, T_source_max, burn_dur
         row[3].text = str(layer['gsi'])
         row[4].text = f"{layer['mi']:.1f}"
     if fig_bytes:
-        doc.add_heading("Visual Analysis", level=2)
+        doc.add_heading("Visual Analysis (Spatial Model)", level=2)
         image_stream = io.BytesIO(fig_bytes)
         doc.add_picture(image_stream, width=Inches(5.5))
+        doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
     doc.add_heading(t_text['sec5'], level=2)
     fos_val = np.nanmean(fos_2d)
     if fos_val < 1.1:
@@ -841,23 +728,29 @@ def generate_full_iso_report(obj_name, lang, layers_data, T_source_max, burn_dur
     else:
         conclusion_text = t_text['safe']
         color = RGBColor(0,128,0)
-    p = doc.add_paragraph()
-    p.add_run(f"{t_text['fos_label']} {fos_val:.2f}\n").bold = True
-    p.add_run(f"{t_text['ai_label']} {optimal_width_ai:.1f} m\n\n")
-    final_run = p.add_run(f"{t_text['conclusion_title']}\n{conclusion_text}")
+    res_p = doc.add_paragraph()
+    res_p.add_run(f"{t_text['fos_label']} {fos_val:.2f}\n").bold = True
+    res_p.add_run(f"{t_text['ai_label']} {optimal_width_ai:.1f} m\n\n")
+    final_run = res_p.add_run(f"{t_text['conclusion_title']}\n{conclusion_text}")
     final_run.bold = True
     final_run.font.color.rgb = color
+    doc.add_page_break()
+    doc.add_heading("APPENDIX: Mathematical Models Used", level=2)
+    doc.add_paragraph("1. Hoek-Brown Failure Criterion (Rock Mass Strength)")
+    doc.add_paragraph("σ1 = σ3 + σci * (mb * σ3 / σci + s)^a", style='Intense Quote')
+    doc.add_paragraph("2. Thermal Strength Decay (Exponential Model)")
+    doc.add_paragraph("UCS(T) = UCS_0 * exp(-β * (T - T0))", style='Intense Quote')
     buffer = io.BytesIO()
     doc.save(buffer)
     buffer.seek(0)
     return buffer.getvalue()
 
-# ========================== MAIN STREAMLIT APP ==========================
+# ========================== ASOSIY STREAMLIT ILOVA ==========================
 st.set_page_config(page_title=t('app_title'), layout="wide")
 st.title(t('app_title'))
 st.markdown(f"### {t('app_subtitle')}")
 
-# Language
+# Til sozlamalari
 if 'language' not in st.session_state:
     st.session_state.language = 'uz'
 LANGUAGES = {'uz': "🇺🇿 O'zbek", 'en': '🇬🇧 English', 'ru': '🇷🇺 Русский'}
@@ -866,13 +759,13 @@ lang = st.sidebar.selectbox("Til / Language / Язык", options=list(LANGUAGES.
                             index=list(LANGUAGES.keys()).index(st.session_state.language))
 st.session_state.language = lang
 
-# QR Code
+# QR kod
 st.sidebar.markdown("---")
 st.sidebar.subheader("📱 Mobil ilovaga o'tish")
 qr_img_bytes = generate_qr(APP_URL)
 st.sidebar.image(qr_img_bytes, caption="Scan QR: Angren UCG API", use_container_width=True)
 
-# Sidebar Parameters
+# Sidebar parametrlar
 st.sidebar.header(t('sidebar_header_params'))
 formula_opts = FORMULA_OPTIONS[st.session_state.language]
 formula_option = st.sidebar.selectbox(t('formula_show'), formula_opts)
@@ -909,7 +802,7 @@ T_source_max  = st.sidebar.slider(t('max_temp'), 600, 1200, 1075)
 with st.sidebar.expander(t('timeline')):
     st.markdown(t('timeline_table'))
 
-# Layers input
+# Qatlamlar ma'lumotlari
 strata_colors = ['#87CEEB', '#F4A460', '#D3D3D3', '#F5DEB3', '#555555']
 layers_data = []
 total_depth = 0.0
@@ -930,7 +823,7 @@ for i in range(int(num_layers)):
     })
     total_depth += thick
 
-# Validation
+# Validatsiya
 for lyr in layers_data:
     if lyr['t'] <= 0: st.error(t('error_thick_positive')); st.stop()
     if lyr['ucs'] <= 0: st.error(t('error_ucs_positive')); st.stop()
@@ -939,17 +832,16 @@ for lyr in layers_data:
     if lyr['mi'] <= 0: st.error(t('error_mi_positive')); st.stop()
 if not layers_data: st.error(t('error_min_layers')); st.stop()
 
-# Compute temperature field
+# Harorat maydoni
 grid_shape = (80, 100)
 source_z = total_depth - (layers_data[-1]['t'] / 2)
 H_seam = layers_data[-1]['t']
 temp_2d, x_axis, z_axis, grid_x, grid_z = compute_temperature_field_moving(
     time_h, T_source_max, burn_duration, total_depth, source_z, grid_shape, n_steps=20)
-st.session_state.time_h = time_h  # for geomechanics
 
-# Geomechanics
+# Geomexanika
 geo = compute_geomechanics(layers_data, grid_z, grid_x, temp_2d, D_factor, nu_poisson, k_ratio,
-                           tensile_mode, tensile_ratio, beta_thermal, total_depth, EPS)
+                           tensile_mode, tensile_ratio, beta_thermal, total_depth, EPS, time_h)
 
 sigma1_act = geo['sigma1']
 sigma3_act = geo['sigma3']
@@ -960,21 +852,17 @@ gas_velocity = geo['gas_velocity']
 damage = geo['damage']
 void_volume = geo['void_volume']
 
-# AI Collapse prediction
-nn_model = get_nn_collapse_model()
-if nn_model is not None and PT_AVAILABLE:
-    collapse_pred = predict_nn_collapse(nn_model, temp_2d, sigma1_act, sigma3_act, grid_z)
+# AI Collapse prediction (oddiy RandomForest)
+X_ai = np.column_stack([temp_2d.flatten(), sigma1_act.flatten(), sigma3_act.flatten(), grid_z.flatten()])
+y_ai = void_mask_permanent.flatten().astype(int)
+if len(np.unique(y_ai)) > 1:
+    rf_clf = RandomForestClassifier(n_estimators=30, max_depth=10, random_state=42)
+    rf_clf.fit(X_ai, y_ai)
+    collapse_pred = rf_clf.predict_proba(X_ai)[:,1].reshape(temp_2d.shape)
 else:
-    X_ai = np.column_stack([temp_2d.flatten(), sigma1_act.flatten(), sigma3_act.flatten(), grid_z.flatten()])
-    y_ai = void_mask_permanent.flatten().astype(int)
-    if len(np.unique(y_ai)) > 1:
-        rf_clf = RandomForestClassifier(n_estimators=30, max_depth=10, random_state=42)
-        rf_clf.fit(X_ai, y_ai)
-        collapse_pred = rf_clf.predict_proba(X_ai)[:,1].reshape(temp_2d.shape)
-    else:
-        collapse_pred = np.zeros_like(temp_2d)
+    collapse_pred = np.zeros_like(temp_2d)
 
-# Pillar optimization
+# Pillar optimizatsiyasi
 avg_t_p = np.mean(temp_2d[np.abs(z_axis-source_z).argmin(), :])
 strength_red = np.exp(-0.0025*(avg_t_p-20))
 ucs_seam = layers_data[-1]['ucs']
@@ -992,7 +880,7 @@ y_zone = max(y_zone_calc,1.5)
 void_frac_base = float(np.mean(void_mask_permanent))
 optimal_width_ai = optimize_pillar(ucs_seam, H_seam, sv_seam, strength_red, void_frac_base, rec_width)
 
-# Metrics row
+# Asosiy metrikalar
 st.subheader(t('monitoring_header', obj_name=obj_name))
 m1,m2,m3,m4,m5 = st.columns(5)
 m1.metric(t('pillar_strength'), f"{pillar_strength:.1f} MPa")
@@ -1001,7 +889,7 @@ m3.metric(t('cavity_volume'), f"{void_volume:.1f} m²")
 m4.metric(t('max_permeability'), f"{np.max(perm):.1e} m²")
 m5.metric(t('ai_recommendation'), f"{optimal_width_ai:.1f} m", delta=f"Klassik: {rec_width} m", delta_color="off")
 
-# Subsidence and Hoek-Brown plots
+# Cho'kish va Hoek-Brown grafiklari
 st.markdown("---")
 col_g1, col_g2, col_g3 = st.columns([1.5,1.5,2])
 s_max = (H_seam*0.04)*(min(time_h,120)/120)
@@ -1017,7 +905,9 @@ with col_g2:
     st.plotly_chart(fig_therm, use_container_width=True)
 with col_g3:
     sigma3_ax = np.linspace(0, ucs_seam*0.5, 100)
-    mb_s, s_s, a_s = geo['sigma1_limit'].max()/ucs_seam, 0.1, 0.5  # approximate
+    mb_s = layers_data[-1]['mi'] * np.exp((layers_data[-1]['gsi']-100)/(28-14*D_factor))
+    s_s = np.exp((layers_data[-1]['gsi']-100)/(9-3*D_factor))
+    a_s = 0.5 + (1/6)*(np.exp(-layers_data[-1]['gsi']/15)-np.exp(-20/3))
     s1_20 = sigma3_ax + ucs_seam*(mb_s*sigma3_ax/(ucs_seam+EPS)+s_s)**a_s
     ucs_burn = ucs_seam*np.exp(-0.0025*(T_source_max-20))
     s1_burning = sigma3_ax + ucs_burn*(mb_s*sigma3_ax/(ucs_burn+EPS)+s_s)**a_s
@@ -1029,7 +919,7 @@ with col_g3:
     fig_hb.update_layout(title=t('hb_envelopes_title'), template="plotly_dark", height=300)
     st.plotly_chart(fig_hb, use_container_width=True)
 
-# TM Field (temperature + FOS + collapse)
+# TM maydoni (harorat + FOS + collapse)
 st.markdown("---")
 c1, c2 = st.columns([1,2.5])
 with c1:
@@ -1068,7 +958,7 @@ with c2:
     fig_tm.update_yaxes(autorange='reversed', row=2, col=1)
     st.plotly_chart(fig_tm, use_container_width=True)
 
-# Live Monitoring Tab
+# Live 3D monitoring tab
 st.header("🔄 Live 3D Monitoring (Real-time)")
 tab_live, tab_ai_orig, tab_advanced = st.tabs([t('live_monitoring_tab'), t('ai_monitor_title'), t('advanced_analysis')])
 
@@ -1131,10 +1021,9 @@ with tab_live:
         csv_data = st.session_state.live_history_df.to_csv(index=False).encode('utf-8')
         st.download_button(label=t('download_data'), data=csv_data, file_name="ucg_live_monitoring.csv", mime="text/csv")
 
-# AI Monitoring Tab (Digital Twin + Anomaly + FOS prediction)
+# AI Monitoring tab (Digital Twin)
 with tab_ai_orig:
     st.markdown(f"*{t('ai_monitor_desc')}*")
-    # Digital Twin
     if 'twin' not in st.session_state:
         st.session_state.twin = DigitalTwin()
     twin = st.session_state.twin
@@ -1146,12 +1035,9 @@ with tab_ai_orig:
             state = twin.update()
             fos_val = improved_fos(ucs_seam, layers_data[-1]['gsi'], layers_data[-1]['mi'],
                                    D_factor, nu_poisson, state["T"], H_seam, H_seam)
-            # GPU prediction if available
-            if PT_AVAILABLE:
-                fos_ai = predict_fos_gpu(state["T"], state["stress"], ucs_seam)
-            else:
-                fos_ai = fos_val
-            insert_data(state["T"], state["stress"], state["pressure"], fos_val)
+            # AI FOS bashorati
+            ai_model = load_ai_fos_model()
+            fos_ai = ai_model.predict([[state["T"], state["stress"], ucs_seam]])[0]
             with placeholder_dt.container():
                 c1,c2,c3,c4 = st.columns(4)
                 c1.metric("🌡 Temp", f"{state['T']:.1f} °C")
@@ -1184,7 +1070,7 @@ with tab_ai_orig:
         else:
             st.warning("Run Digital Twin first to generate history")
 
-# Advanced Analysis Tab
+# Advanced Analysis tab
 with tab_advanced:
     st.header(t('advanced_analysis'))
     base_params = {
@@ -1235,7 +1121,7 @@ with tab_advanced:
     else:
         st.success("✅ LOW RISK")
 
-# ISO Report Section
+# ISO hisobot
 with st.expander("📄 ISO 9001:2015 Standart Hujjat (.docx)"):
     d1, d2 = st.columns(2)
     with d1:
