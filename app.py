@@ -802,10 +802,11 @@ with col_g3:
     st.plotly_chart(fig_hb.update_layout(title=t('hb_envelopes_title'), template="plotly_dark", height=300, legend=dict(orientation="h", y=-0.3, x=0.5, xanchor="center")), use_container_width=True)
 
 # =========================== TM MAYDONI (YANGI VERSIYA) ===========================
+# =========================== TM MAYDONI (INTEGRATSIYALANGAN VERSIYA) ===========================
 st.markdown("---")
-c1, c2 = st.columns([1,2.5])
+c1, c2 = st.columns([1, 2.5])
 
-# ----------- Left Panel: Layer Visualization (o'zgarishsiz) -----------
+# ----------- Left Panel: Layer Visualization -----------
 with c1:
     st.subheader(t('scientific_analysis'))
     st.error(t('fos_red')); st.warning(t('fos_yellow')); st.success(t('fos_green'))
@@ -821,40 +822,40 @@ with c1:
         ))
     st.plotly_chart(
         fig_layers.update_layout(
-            barmode='stack', 
-            template="plotly_dark", 
-            yaxis=dict(autorange='reversed'), 
-            height=450, 
+            barmode='stack',
+            template="plotly_dark",
+            yaxis=dict(autorange='reversed'),
+            height=450,
             showlegend=False
-        ), 
+        ),
         use_container_width=True
     )
 
-# ----------- Right Panel: Two Subplots (Temperature + Gas Flow / FOS + AI + Yielded + Interference) -----------
+# ----------- Right Panel: Optimized TM Field (2 rows) -----------
 with c2:
     st.subheader(t('tm_field_title'))
     
-    # Sliders for interactive FOS and burn parameters
-    col_s1, col_s2, col_s3 = st.columns(3)
-    with col_s1:
-        fos_thresh = st.slider("FOS Threshold (Yielded Zone)", 0.1, 3.0, 1.2, 0.05, key="fos_thresh_tm")
-    with col_s2:
-        burn_radius = st.slider("Burn Radius (m)", 5, 50, 20, 1, key="burn_radius_tm")
-    with col_s3:
-        safe_sep = st.slider("Safe Separation (m)", 20, 100, 45, 5, key="safe_sep_tm")
+    # Sliders
+    col_fos, col_burn, col_sep = st.columns(3)
+    with col_fos:
+        fos_thresh = st.slider("FOS chegarasi (Yielded Zone)", 0.1, 3.0, 1.2, 0.05, key="fos_thresh_tm")
+    with col_burn:
+        burn_radius = st.slider("Yonish radiusi (m)", 10, 120, 60, 5, key="burn_radius_tm")
+    with col_sep:
+        safe_sep = st.slider("Seleklar orasidagi xavfsiz masofa (m)", 30, 150, 80, 5, key="safe_sep_tm")
     
-    # Define pillar locations (same as in original code)
+    # Pillar locations (asosiy koddan)
     pillar_locations = [-total_depth/3, 0, total_depth/3]
     
-    # Create subplots: row1 = temperature + gas flow, row2 = FOS + AI + ...
+    # Subplots: 2 rows, 1 column
     fig_tm = make_subplots(
         rows=2, cols=1,
         shared_xaxes=True,
-        vertical_spacing=0.15,
+        vertical_spacing=0.12,
         subplot_titles=(t('temp_subplot'), "FOS + AI Collapse + Yielded Zones + Pillar Interference")
     )
     
-    # ---------- Row 1: Temperature field + gas flow (unchanged) ----------
+    # ---------- Row 1: Temperature field + gas flow (asl koddagidek) ----------
     fig_tm.add_trace(
         go.Heatmap(
             z=temp_2d, x=x_axis, y=z_axis,
@@ -864,7 +865,7 @@ with c2:
         ),
         row=1, col=1
     )
-    # Gas flow arrows
+    # Gaz oqimi strelkalari (asl koddan)
     step = 12
     qx, qz = grid_x[::step, ::step].flatten(), grid_z[::step, ::step].flatten()
     qu, qw = vx[::step, ::step].flatten(), vz[::step, ::step].flatten()
@@ -886,12 +887,12 @@ with c2:
         row=1, col=1
     )
     
-    # ---------- Row 2: FOS + AI Collapse + Yielded Zones + Interference ----------
-    # 2.1 FOS contour
+    # ---------- Row 2: FOS + AI + Yielded + Interference + Pillars ----------
+    # 2.1 FOS contour (real data)
     fig_tm.add_trace(
         go.Contour(
             z=fos_2d, x=x_axis, y=z_axis,
-            colorscale=[[0,'red'],[0.33,'yellow'],[0.5,'green'],[1,'darkgreen']],
+            colorscale=[[0, 'black'],[0.2, 'red'],[0.4, 'orange'],[0.6, 'yellow'],[0.8, 'lime'],[1, 'darkgreen']],
             zmin=0, zmax=3.0,
             contours_showlines=False,
             colorbar=dict(title="FOS", title_side="top", x=1.05, y=0.22, len=0.42, thickness=15),
@@ -905,27 +906,25 @@ with c2:
     fig_tm.add_trace(
         go.Heatmap(
             z=fracture_mask, x=x_axis, y=z_axis,
-            colorscale=[[0,'rgba(0,0,0,0)'],[1,'rgba(255,0,0,0.5)']],
+            colorscale=[[0, 'rgba(0,0,0,0)'],[1, 'rgba(255,0,0,0.5)']],
             showscale=False, opacity=0.6, hoverinfo='skip',
             name="Yielded Zones"
         ),
         row=2, col=1
     )
     
-    # 2.3 Burn radius circles and remaining void (optional)
-    remaining_void = np.zeros_like(fos_2d)
+    # 2.3 Burn radius circles (orange) + remaining void effect
     for px in pillar_locations:
-        distance_grid = np.sqrt((grid_x - px)**2 + (grid_z - source_z)**2)
-        burn_zone = distance_grid <= burn_radius
-        remaining_void[burn_zone] = np.nan
+        # Circle
         fig_tm.add_shape(
             type="circle",
             x0=px - burn_radius, x1=px + burn_radius,
             y0=source_z - burn_radius, y1=source_z + burn_radius,
             line=dict(color="orange", width=2),
-            fillcolor='rgba(255,165,0,0.2)',
+            fillcolor='rgba(255,165,0,0.15)',
             row=2, col=1
         )
+        # Optional: mark inside as void? We keep permanent void later.
     
     # 2.4 Pillar-to-pillar interference zones (when distance < safe_sep)
     for i in range(len(pillar_locations)):
@@ -941,7 +940,7 @@ with c2:
                     row=2, col=1
                 )
     
-    # 2.5 AI Collapse Prediction overlay
+    # 2.5 AI Collapse Prediction overlay (from main code)
     fig_tm.add_trace(
         go.Heatmap(
             z=collapse_pred, x=x_axis, y=z_axis,
@@ -951,7 +950,7 @@ with c2:
         row=2, col=1
     )
     
-    # 2.6 Shear and Tensile failure markers
+    # 2.6 Shear and Tensile failure markers (from main code)
     shear_disp = np.copy(shear_failure)
     shear_disp[void_mask_permanent] = False
     tens_disp = np.copy(tensile_failure)
@@ -974,7 +973,7 @@ with c2:
         row=2, col=1
     )
     
-    # 2.7 Permanent void overlay
+    # 2.7 Permanent void overlay (black)
     void_visual = np.where(void_mask_permanent > 0.1, 1.0, np.nan)
     fig_tm.add_trace(
         go.Heatmap(
@@ -984,17 +983,38 @@ with c2:
         row=2, col=1
     )
     
-    # 2.8 Pillar rectangles (lime)
+    # 2.8 Pillar rectangles (lime green)
     for px in pillar_locations:
         fig_tm.add_shape(
             type="rect",
             x0=px - rec_width/2, x1=px + rec_width/2,
             y0=source_z - H_seam/2, y1=source_z + H_seam/2,
             line=dict(color="lime", width=3),
+            fillcolor="rgba(0,255,0,0.1)",
             row=2, col=1
         )
     
-    # Final layout adjustments
+    # ---------- Annotatsiyalar (sizning misolingizdan olingan) ----------
+    annotations = [
+        dict(
+            x=0, y=source_z + 150,
+            text="YONISH MARKAZI", showarrow=True, arrowhead=2,
+            font=dict(color="white", size=12), row=1, col=1
+        ),
+        dict(
+            x=pillar_locations[1], y=source_z + 150,
+            text="SELEK (MUSTAHKAM)", showarrow=True, arrowhead=2,
+            font=dict(color="lime", size=12), row=2, col=1
+        ),
+        dict(
+            x=-total_depth/2, y=source_z,
+            text="KO'MIR QATLAMI", font=dict(color="white", size=11),
+            showarrow=False, row=2, col=1
+        )
+    ]
+    fig_tm.update_layout(annotations=annotations)
+    
+    # Final layout
     fig_tm.update_layout(
         template="plotly_dark",
         height=900,
