@@ -1044,7 +1044,7 @@ with st.expander("🌍 3D Litologik Kesim"):
     st.plotly_chart(fig_3d, use_container_width=True)
     st.caption("Sariq/qizil sferalar — yonish kameralari joylashuvi")
 
-# 4. Monte Carlo noaniqlik tahlili
+# 4. Monte Carlo noaniqlik tahlili (birlashtirilgan risk indeksi qo'shildi)
 @st.cache_data(show_spinner=False)
 def monte_carlo_fos(ucs_mean, ucs_std, gsi_mean, gsi_std, d_mean, temp_mean, H_seam, n_sim=2000):
     np.random.seed(42)
@@ -1060,7 +1060,10 @@ def monte_carlo_fos(ucs_mean, ucs_std, gsi_mean, gsi_std, d_mean, temp_mean, H_s
     sv_s = ucs_s*0.025
     fos_s = np.clip(p_str/(sv_s+1e-12),0,5)
     pf = float(np.mean(fos_s<1.0))
-    return fos_s, pf
+    # Qo'shimcha: risk index = pf * mean(damage) (ikkinchi koddan olingan)
+    mean_damage = np.mean(dmg_s)
+    risk_index = pf * mean_damage
+    return fos_s, pf, risk_index
 
 with st.expander("🎲 Monte Carlo Noaniqlik Tahlili"):
     mc_col1, mc_col2 = st.columns([1,2])
@@ -1069,17 +1072,18 @@ with st.expander("🎲 Monte Carlo Noaniqlik Tahlili"):
         gsi_std = st.number_input("GSI standart og'ish", value=5.0, min_value=0.1)
         n_mc = st.selectbox("Simulyatsiya soni", [500,1000,2000,5000], index=1)
     with mc_col2:
-        fos_mc, pf = monte_carlo_fos(layers_data[-1]['ucs'], ucs_std, layers_data[-1]['gsi'], gsi_std, D_factor, avg_t_p, H_seam, n_sim=n_mc)
+        fos_mc, pf, risk_index = monte_carlo_fos(layers_data[-1]['ucs'], ucs_std, layers_data[-1]['gsi'], gsi_std, D_factor, avg_t_p, H_seam, n_sim=n_mc)
         fig_mc = go.Figure()
         fig_mc.add_histogram(x=fos_mc, nbinsx=40, marker_color=np.where(fos_mc<1.0,'#E74C3C','#27AE60'), name='FOS taqsimoti')
         fig_mc.add_vline(x=1.0, line_color='red', line_dash='dash', annotation_text='FOS=1.0')
         fig_mc.add_vline(x=1.5, line_color='yellow', line_dash='dash', annotation_text='FOS=1.5')
         fig_mc.add_vline(x=np.mean(fos_mc), line_color='cyan', line_dash='dot', annotation_text=f"O'rtacha={np.mean(fos_mc):.2f}")
-        fig_mc.update_layout(template='plotly_dark', height=350, title=f"FOS taqsimoti | Failure ehtimoli: {pf*100:.1f}%", xaxis_title='FOS', yaxis_title='Chastota')
+        fig_mc.update_layout(template='plotly_dark', height=350, title=f"FOS taqsimoti | Failure ehtimoli: {pf*100:.1f}%")
         st.plotly_chart(fig_mc, use_container_width=True)
-    mc_stats = pd.DataFrame({'Ko\'rsatkich': ['O\'rtacha FOS', 'Mediana', 'Std og\'ish', '5-percentil', '95-percentil', 'Failure ehtimoli'],
-                             'Qiymat': [f"{np.mean(fos_mc):.3f}", f"{np.median(fos_mc):.3f}", f"{np.std(fos_mc):.3f}", f"{np.percentile(fos_mc,5):.3f}", f"{np.percentile(fos_mc,95):.3f}", f"{pf*100:.2f}%"]})
+    mc_stats = pd.DataFrame({'Ko\'rsatkich': ['O\'rtacha FOS', 'Mediana', 'Std og\'ish', '5-percentil', '95-percentil', 'Failure ehtimoli', 'Risk Index (pf × mean damage)'],
+                             'Qiymat': [f"{np.mean(fos_mc):.3f}", f"{np.median(fos_mc):.3f}", f"{np.std(fos_mc):.3f}", f"{np.percentile(fos_mc,5):.3f}", f"{np.percentile(fos_mc,95):.3f}", f"{pf*100:.2f}%", f"{risk_index:.4f}"]})
     st.dataframe(mc_stats, hide_index=True, use_container_width=True)
+    st.info(f"📊 **Risk Index (pf × mean damage) = {risk_index:.4f}** — bu qiymat ikkinchi koddagi `compute_risk` funksiyasiga mos keladi. Qiymat qancha katta bo‘lsa, xavf shuncha yuqori.")
 
 # 5. Ssenariy taqqoslash (A vs B)
 with st.expander("⚖️ Ssenariy Taqqoslash (A vs B)"):
