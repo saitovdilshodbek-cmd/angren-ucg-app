@@ -801,7 +801,7 @@ with col_g3:
     fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_burning, name=t('combustion'), line=dict(color='orange',width=4)))
     st.plotly_chart(fig_hb.update_layout(title=t('hb_envelopes_title'), template="plotly_dark", height=300, legend=dict(orientation="h", y=-0.3, x=0.5, xanchor="center")), use_container_width=True)
 
-# =========================== TM MAYDONI (INTERAKTIV BOSQICHLI VERSIYA) ===========================
+# =========================== TM MAYDONI (1-3-2 YONISH KETMA-KETLIGI BILAN) ===========================
 st.markdown("---")
 c1, c2 = st.columns([1, 2.5])
 
@@ -830,81 +830,59 @@ with c1:
         use_container_width=True
     )
 
-# ----------- Right Panel: Interactive UCG Combustion Stages -----------
+# ----------- Right Panel: Interactive UCG 1-3-2 Stages -----------
 with c2:
-    st.subheader("UCG Yonish Bosqichlari (1-3-2 sxemasi)")
+    st.subheader("UCG Yonish Bosqichlari (1 → 3 → 2 sxemasi)")
     
-    # Bosqichni tanlash slayderi
-    stage = st.select_slider(
-        "Yonish bosqichini tanlang:",
-        options=[1, 2, 3],
-        value=1,
-        key="ucg_stage"
-    )
+    # Bosqichni tanlash
+    stage = st.select_slider("Bosqichni tanlang:", options=[1, 2, 3], value=1, key="ucg_stage_132")
     
-    # 3 ta quduqning koordinatalari (asosiy koddagi pillar_locations dan olingan)
-    # Eslatma: asl kodingizda pillar_locations = [-total_depth/3, 0, total_depth/3]
-    # Biz bu yerda aniq qiymatlarni ishlatamiz (total_depth asl koddan mavjud)
-    pillar_x = [-total_depth/3, 0, total_depth/3]  # 1,2,3 - quduqlar
+    # Quduq koordinatalari (1,2,3 - asl koddagi pillar_locations)
+    well_x = [-total_depth/3, 0, total_depth/3]   # 1-chi, 2-chi, 3-chi quduq
     source_z = total_depth - (layers_data[-1]['t'] / 2)   # ko‘mir qatlami markazi
-    burn_radius = 60   # yonish radiusi (slayder orqali sozlanishi mumkin, ixtiyoriy)
+    burn_radius = 60   # yonish radiusi (slayder qo‘shish mumkin)
     
-    # Har bir bosqich uchun quduqlar holati: 0 - yonmagan, 1 - aktiv yonmoqda, 2 - yonib bo‘lgan (sovigan)
-    states = {
+    # 1-3-2 ketma-ketligi bo‘yicha quduqlar holati: 0 - yonmagan, 1 - aktiv yonmoqda, 2 - yonib bo‘lgan (sovigan)
+    states_132 = {
         1: [1, 0, 0],   # faqat 1-quduq yonmoqda
         2: [2, 0, 1],   # 1-quduq sovigan, 3-quduq yonmoqda (o‘rtada seleklik)
         3: [2, 1, 2]    # 2-quduq (markaziy) yonmoqda, 1 va 3 sovigan
     }
-    current_state = states[stage]
+    current_state = states_132[stage]
     
-    # Dinamik temperatura va FOS maydonlarini yaratish (namuna – haqiqiy ma’lumotlar o‘rniga)
-    # Asl kodingizda temp_2d va fos_2d mavjud, ammo bu interaktivlik uchun ularni qayta hisoblaymiz
-    # Shu bilan birga asl koddagi boshqa qatlamlarni (AI collapse, gas flow) ham qo‘shamiz
+    # Geomexanik tozalash funksiyasi (FOSni bosqichga mos hisoblaydi)
+    def compute_stage_fos(grid_x, grid_z, well_x, states, source_z, burn_rad):
+        fos = np.full_like(grid_x, 2.8)   # boshlang‘ich yashil (mustahkam)
+        for i, state in enumerate(states):
+            px = well_x[i]
+            dist = np.sqrt((grid_x - px)**2 + (grid_z - source_z)**2)
+            if state == 1:   # aktiv yonish
+                fos[dist < burn_rad] = 0.1          # qora bo‘shliq
+                fos[(dist >= burn_rad) & (dist < burn_rad * 2.2)] = 0.8   # qizil/sariq xavf zonasi
+            elif state == 2: # yonib bo‘lgan (sovigan)
+                fos[dist < burn_rad] = 0.05         # turg‘un bo‘shliq
+        # Ko‘mir qatlamidan pastki qismni mustahkam saqlash
+        fos[grid_z > (source_z + 40)] = 2.5
+        return fos
     
-    # 1. Temperatura maydonini hisoblash (faqat yonayotgan quduqlar asosida)
-    temp_2d_stage = np.zeros_like(temp_2d)  # temp_2d asl koddan mavjud (to‘liq maydon)
-    # Agar siz to‘liq qayta hisoblashni xohlasangiz, quyidagi koddan foydalaning:
-    # temp_2d_stage = np.zeros_like(grid_x)  (grid_x asl koddan mavjud)
-    # Hozircha temp_2d asl qiymatini o‘zgartirmasdan, faqat vizual effekt uchun namuna yaratamiz.
-    # Ammo asl kodingizdagi temp_2d allaqachon vaqt va manbalarga asoslangan. Shuning uchun
-    # biz uni to‘liq qayta yozmaymiz, balki ustiga bosqichga mos qo‘shimcha issiqlik qo‘yamiz.
-    
-    # Qulaylik uchun yangi temp_2d ni asl qiymatdan nusxa olamiz va bosqichga mos qo‘shimcha kiritamiz
-    temp_2d_stage = np.copy(temp_2d)
-    fos_2d_stage = np.copy(fos_2d)   # asl FOS maydonidan nusxa
-    
-    # Har bir quduq uchun uning holatiga qarab temperatura va FOSga ta’sir qilamiz
-    for i, state in enumerate(current_state):
-        px = pillar_x[i]
-        dist = np.sqrt((grid_x - px)**2 + (grid_z - source_z)**2)
-        if state == 1:   # aktiv yonish
-            # Temperatura qo‘shish (1200°C gacha)
-            temp_2d_stage += 1200 * np.exp(-dist / 80)
-            # FOSni pasaytirish (bo‘shliq va xavf zonasi)
-            fos_2d_stage[dist < burn_radius] = 0.1
-            fos_2d_stage[(dist >= burn_radius) & (dist < burn_radius * 1.8)] = 0.8
-        elif state == 2: # yonib bo‘lgan, sovigan
-            temp_2d_stage += 150 * np.exp(-dist / 100)
-            fos_2d_stage[dist < burn_radius] = 0.05
-    
-    # Qolgan barcha qatlamlarni (AI collapse, shear/tensile, void, gas flow) asl koddan olamiz
-    # Ular o‘zgarmaydi, faqat FOS va temperatura maydonlari dinamik.
+    # FOS maydonini hisoblash (asl koddagi fos_2d o‘rniga ishlatiladi)
+    fos_stage = compute_stage_fos(grid_x, grid_z, well_x, current_state, source_z, burn_radius)
     
     # Subplots yaratish (2 qator)
     fig_tm = make_subplots(
         rows=2, cols=1,
         shared_xaxes=True,
         vertical_spacing=0.12,
-        subplot_titles=("Issiqlik Tarqalishi (Temperatura)", "Geomexanik Holat va Seleklar (FOS + AI + Yielded)")
+        subplot_titles=(t('temp_subplot'), "Geomexanik Holat (FOS + AI + Seleklar)")
     )
     
-    # ----- Row 1: Temperatura maydoni (yangilangan) + gaz oqimi -----
+    # ----- Row 1: Temperatura maydoni (asl koddan) + gaz oqimi -----
     fig_tm.add_trace(
         go.Heatmap(
-            z=temp_2d_stage, x=x_axis, y=z_axis,
-            colorscale='Turbo', zmin=25, zmax=1200,
+            z=temp_2d, x=x_axis, y=z_axis,
+            colorscale='Hot', zmin=25, zmax=T_source_max,
             colorbar=dict(title="T (°C)", title_side="top", x=1.05, y=0.78, len=0.42, thickness=15),
-            name="Temperatura"
+            name=t('temp_subplot')
         ),
         row=1, col=1
     )
@@ -930,23 +908,23 @@ with c2:
         row=1, col=1
     )
     
-    # ----- Row 2: FOS (yangilangan) + AI collapse + Yielded + Pillars + Interference -----
-    # 2.1 FOS konturi (yangilangan)
+    # ----- Row 2: Geomexanik holat (bosqichga mos FOS + qo‘shimcha qatlamlar) -----
+    # 2.1 FOS konturi (bosqichga mos)
     fig_tm.add_trace(
         go.Contour(
-            z=fos_2d_stage, x=x_axis, y=z_axis,
+            z=fos_stage, x=x_axis, y=z_axis,
             colorscale=[[0, 'black'],[0.2, 'red'],[0.4, 'orange'],[0.6, 'yellow'],[0.8, 'lime'],[1, 'darkgreen']],
             zmin=0, zmax=3.0,
             contours_showlines=False,
             colorbar=dict(title="FOS", title_side="top", x=1.05, y=0.22, len=0.42, thickness=15),
-            name="FOS"
+            name="FOS (stage-based)"
         ),
         row=2, col=1
     )
     
-    # 2.2 Yielded zones (FOS < threshold) – slayder qo‘shish mumkin, ixtiyoriy
-    fos_thresh = 1.2  # yoki slayder qo‘shing
-    fracture_mask = np.where(fos_2d_stage < fos_thresh, 1.0, np.nan)
+    # 2.2 Yielded zones (FOS < 1.2) – ixtiyoriy, slayder qo‘shish mumkin
+    fos_thresh = 1.2
+    fracture_mask = np.where(fos_stage < fos_thresh, 1.0, np.nan)
     fig_tm.add_trace(
         go.Heatmap(
             z=fracture_mask, x=x_axis, y=z_axis,
@@ -957,10 +935,10 @@ with c2:
         row=2, col=1
     )
     
-    # 2.3 Yonish doiralari (aktiv quduqlar atrofida)
+    # 2.3 Yonish doiralari (faqat aktiv quduqlar atrofida)
     for i, state in enumerate(current_state):
-        if state == 1:  # faqat yonayotgan quduqlar atrofida doira chizamiz
-            px = pillar_x[i]
+        if state == 1:
+            px = well_x[i]
             fig_tm.add_shape(
                 type="circle",
                 x0=px - burn_radius, x1=px + burn_radius,
@@ -970,8 +948,8 @@ with c2:
                 row=2, col=1
             )
     
-    # 2.4 Seleklar (pillar) – to‘rtburchaklar (faqat 2-bosqichda markaziy selekni ajratib ko‘rsatamiz)
-    for px in pillar_x:
+    # 2.4 Seleklar (barcha quduqlar atrofidagi mustahkam to‘rtburchaklar)
+    for px in well_x:
         fig_tm.add_shape(
             type="rect",
             x0=px - rec_width/2, x1=px + rec_width/2,
@@ -979,6 +957,22 @@ with c2:
             line=dict(color="lime", width=3),
             fillcolor="rgba(0,255,0,0.1)",
             row=2, col=1
+        )
+    
+    # 2-bosqichda maxsus himoya seleki (2-quduq o‘rnida) – qalin chiziqli to‘rtburchak va annotatsiya
+    if stage == 2:
+        fig_tm.add_shape(
+            type="rect",
+            x0=well_x[1] - 80, x1=well_x[1] + 80,
+            y0=source_z - 30, y1=source_z + 30,
+            line=dict(color="cyan", width=4, dash="dash"),
+            fillcolor='rgba(0,255,255,0.1)',
+            row=2, col=1
+        )
+        fig_tm.add_annotation(
+            x=well_x[1], y=source_z + 100,
+            text="HIMOYA SELEGI (PILLAR)", showarrow=True, arrowhead=2,
+            font=dict(color="cyan", size=12), row=2, col=1
         )
     
     # 2.5 AI Collapse Prediction (asl koddan)
@@ -991,7 +985,7 @@ with c2:
         row=2, col=1
     )
     
-    # 2.6 Shear & Tensile markerlari
+    # 2.6 Shear & Tensile failure markerlari (asl koddan)
     shear_disp = np.copy(shear_failure)
     shear_disp[void_mask_permanent] = False
     tens_disp = np.copy(tensile_failure)
@@ -1014,7 +1008,7 @@ with c2:
         row=2, col=1
     )
     
-    # 2.7 Doimiy bo‘shliq (void)
+    # 2.7 Doimiy bo‘shliq (void) overlay (asl koddan)
     void_visual = np.where(void_mask_permanent > 0.1, 1.0, np.nan)
     fig_tm.add_trace(
         go.Heatmap(
@@ -1024,37 +1018,7 @@ with c2:
         row=2, col=1
     )
     
-    # ----- Annotatsiyalar (bosqichga mos matnlar) -----
-    if stage == 1:
-        fig_tm.add_annotation(
-            x=pillar_x[0], y=source_z + 150,
-            text="1-BOSQICH: 1-quduq yonmoqda", showarrow=True, arrowhead=2,
-            font=dict(color="white", size=12), row=1, col=1
-        )
-        fig_tm.add_annotation(
-            x=pillar_x[0], y=source_z,
-            text="AKTIV YONISH", font=dict(color="orange", size=11),
-            showarrow=False, row=2, col=1
-        )
-    elif stage == 2:
-        fig_tm.add_annotation(
-            x=0, y=source_z + 150,
-            text="2-BOSQICH: O‘RTADA SELEK (MUSTAHKAM)", showarrow=True, arrowhead=2,
-            font=dict(color="lime", size=12), row=2, col=1
-        )
-        fig_tm.add_annotation(
-            x=pillar_x[2], y=source_z,
-            text="3-quduq yonmoqda", font=dict(color="orange", size=11),
-            showarrow=True, arrowhead=1, row=2, col=1
-        )
-    else:
-        fig_tm.add_annotation(
-            x=0, y=source_z + 150,
-            text="3-BOSQICH: Markaziy selek yonmoqda", showarrow=True, arrowhead=2,
-            font=dict(color="red", size=12), row=2, col=1
-        )
-    
-    # Umumiy sozlamalar
+    # ----- Umumiy layout sozlamalari -----
     fig_tm.update_layout(
         template="plotly_dark",
         height=900,
@@ -1064,16 +1028,18 @@ with c2:
     )
     fig_tm.update_yaxes(autorange='reversed', row=1, col=1)
     fig_tm.update_yaxes(autorange='reversed', row=2, col=1)
+    # Grafikni faqat kerakli chuqurlik oralig‘ida ko‘rsatish
+    fig_tm.update_yaxes(range=[source_z + 150, source_z - 250], row=2, col=1)
     
     st.plotly_chart(fig_tm, use_container_width=True)
     
     # Bosqichga oid tushuntirish matni
-    if stage == 1:
-        st.info("**1-Bosqich:** Birinchi quduq (chap) yoqilgan. Dastlabki bo‘shliq hosil bo‘lmoqda, FOS past.")
-    elif stage == 2:
-        st.warning("**2-Bosqich (Muhim):** Chap quduq sovutilgan, o‘ng quduq yoqilgan. O‘rtadagi ko‘mir seleki (yashil to‘rtburchak) tom qulashini ushlab turadi.")
-    else:
-        st.success("**3-Bosqich:** Markaziy quduq (selek) gazlashtirilmoqda. Butun massiv barqaror cho‘kish holatida.")
+    msgs = {
+        1: "**1-Bosqich:** Birinchi quduq (chap) yoqilgan. Bo‘shliq shakllanmoqda, FOS past.",
+        2: "**2-Bosqich (Muhim):** 1-quduq sovigan, 3-quduq (o‘ng) yoqilgan. O‘rtadagi ko‘mir seleki (cyan chiziqli to‘rtburchak) tom qulashini ushlab turadi.",
+        3: "**3-Bosqich:** Markaziy quduq (selek) gazlashtirilmoqda. Butun massiv barqaror cho‘kish holatida."
+    }
+    st.info(msgs[stage])
 
 # =========================== KOMPLEKS MONITORING PANELI ===========================
 st.header(t('monitoring_panel', obj_name=obj_name))
