@@ -774,7 +774,7 @@ with col_g3:
     fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_burning, name=t('combustion'), line=dict(color='orange',width=4)))
     st.plotly_chart(fig_hb.update_layout(title=t('hb_envelopes_title'), template="plotly_dark", height=300, legend=dict(orientation="h", y=-0.3, x=0.5, xanchor="center")), use_container_width=True)
 
-# =========================== TM MAYDONI (ILMIY FOS + ANIMATSIYA) ===========================
+# =========================== TM MAYDONI (MANTIQIY FOS + ANIMATSIYA) ===========================
 st.markdown("---")
 c1, c2 = st.columns([1, 2.5])
 
@@ -803,16 +803,15 @@ with c1:
         use_container_width=True
     )
 
-# ----------- Right Panel: Interactive UCG 1-3-2 Stages (Scientific FOS) -----------
+# ----------- Right Panel: Interactive UCG 1-3-2 Stages (Logical FOS) -----------
 with c2:
     st.subheader("UCG Yonish Bosqichlari (1 → 3 → 2 sxemasi)")
     
     # Asosiy koddan kerakli parametrlarni olish
     coal_layer = layers_data[-1]
     h_seam = coal_layer['t']                 # ko'mir qatlami qalinligi (m)
-    ucs_val = coal_layer['ucs']              # UCS (MPa)
     
-    # Yonish haroratiga asoslangan issiqlik deformatsiya faktori
+    # Yonish haroratiga asoslangan issiqlik effekti
     heat_factor = (T_source_max - 25) / 800   # 600°C -> ~0.72, 1200°C -> ~1.47
     heat_factor = np.clip(heat_factor, 0.5, 2.0)
     
@@ -831,43 +830,43 @@ with c2:
     stage = st.select_slider("Bosqichni tanlang:", options=[1, 2, 3], value=1, key="ucg_stage_132")
     current_state = states_132[stage]
     
-    # ------------------- ILMIY FOS HISOBI (SIZNING KODINGIZ ASOSIDA) -------------------
-    def compute_scientific_fos(grid_x, grid_z, well_x, states, h, sz, ucs_val, h_f):
-        # Dastlab geostatik barqarorlik (Mustahkam)
-        fos = np.full_like(grid_x, 2.8)
+    # ------------------- MANTIQIY FOS HISOBI (SIZNING KODINGIZ ASOSIDA) -------------------
+    def compute_logical_fos(grid_x, grid_z, well_x, states, h, sz, h_f):
+        fos = np.full_like(grid_x, 2.8)   # Boshlang'ich: Mustahkam
         
-        # Fan bo'yicha radiuslar (Qalinlikka nisbatan gumbazsimon kengayish)
-        r_burn = h * 1.5 * h_f
-        r_influence = h * 4.2 * h_f
+        # Fizik chegaralar
+        r_burn = h * 1.4 * h_f            # Yonish radiusi
+        h_max = h * 5.0 * h_f             # MAKSIMAL deformatsiya balandligi
         
         for i, state in enumerate(states):
             px = well_x[i]
-            # Evklid masofasi (Radiusi bo'yicha tarqalish)
             dist = np.sqrt((grid_x - px)**2 + (grid_z - sz)**2)
-            dz = sz - grid_z   # Qatlamdan yuqoriga masofa
+            dz = sz - grid_z              # Tepaga masofa (musbat)
             
-            if state >= 1:   # Aktiv yoki sovigan quduq
-                # A. BO'SHLIQ (Cavity - Qora zona)
+            if state >= 1:               # Yonish aktiv yoki sovigan
+                # A. BO'SHLIQ (Cavity)
                 fos[dist < r_burn] = 0.05
                 
-                # B. DEFORMATSIYA GUMBAZI (Dome - Qizil/Sariq zona)
-                dome_mask = (dist < r_influence) & (dz > -h/2) & (dz < r_influence * 0.8)
+                # B. GUMBAZSIMON DEFORMATSIYA (Mantiqiy cheklov bilan)
+                # Faqat qatlam tepasida va h_max balandlikkacha
+                dome_mask = (dz > 0) & (dz < h_max) & (np.abs(grid_x - px) < r_burn * 1.8)
                 if np.any(dome_mask):
-                    # Gradientli so'nish (Eksponentsial mantiq)
-                    gradient = 0.2 + 1.2 * (1 - np.exp(-dz[dome_mask] / (r_influence * 0.6 + EPS)))
-                    fos[dome_mask] = np.minimum(fos[dome_mask], gradient)
+                    # So'nish mantiqi: Tepaga chiqqan sari bosim jinsni ushlab qoladi
+                    # FOS 0.2 dan boshlab 1.5 gacha silliq o'sib boradi
+                    decay = 0.2 + 1.3 * (dz[dome_mask] / (h_max + EPS))**0.7
+                    fos[dome_mask] = np.minimum(fos[dome_mask], decay)
             
-            # C. SELEKLAR (Pillar) - Yonmagan quduq atrofi mustahkam
+            # C. SELEK (Tayanch pillar) - yonmagan quduq atrofi mustahkam
             if state == 0:
-                pillar_mask = (np.abs(grid_x - px) < h * 1.8) & (np.abs(grid_z - sz) < h * 1.2)
-                fos[pillar_mask] = 2.5
+                pillar_zone = (np.abs(grid_x - px) < h*1.5) & (np.abs(grid_z - sz) < h*1.2)
+                fos[pillar_zone] = 2.5
         
-        # D. DABA (pastki qatlam) - Buzilish tepaga ta'sir qiladi, daba mustahkam qoladi
+        # D. YER OSTI (Daba qatlami o'zgarmaydi)
         fos[grid_z > (sz + h/2)] = 2.5
         return fos
     
     # FOS maydonini hisoblash
-    fos_stage = compute_scientific_fos(grid_x, grid_z, well_x, current_state, h_seam, source_z, ucs_val, heat_factor)
+    fos_stage = compute_logical_fos(grid_x, grid_z, well_x, current_state, h_seam, source_z, heat_factor)
     
     # ------------------- Grafik (2 qator) -------------------
     fig_tm = make_subplots(
@@ -899,7 +898,7 @@ with c2:
         row=1, col=1
     )
     
-    # Row 2: Geomexanika (yangi ilmiy FOS konturi)
+    # Row 2: Geomexanika (yangi mantiqiy FOS konturi)
     fig_tm.add_trace(
         go.Contour(z=fos_stage, x=x_axis, y=z_axis,
                    colorscale=[[0,'black'],[0.15,'red'],[0.4,'orange'],[0.6,'yellow'],[0.8,'lime'],[1,'darkgreen']],
@@ -918,7 +917,7 @@ with c2:
     )
     
     # Yonish doiralari (faqat aktiv quduqlar atrofida)
-    burn_rad_vis = h_seam * 1.5 * heat_factor
+    burn_rad_vis = h_seam * 1.4 * heat_factor
     for i, state in enumerate(current_state):
         if state == 1:
             px = well_x[i]
@@ -956,7 +955,7 @@ with c2:
                      line=dict(color="white", width=2, dash="dash"), row=2, col=1)
     
     # Layout sozlamalari
-    zoom_margin = h_seam * 10
+    zoom_margin = h_seam * 9   # dinamik vertikal masshtab (qatlamdan yuqori 9*H)
     fig_tm.update_layout(template="plotly_dark", height=900, margin=dict(r=150,t=80,b=100),
                          showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=-0.12, xanchor="center", x=0.5))
     fig_tm.update_yaxes(autorange='reversed', row=1, col=1)
@@ -970,7 +969,7 @@ with c2:
         anim_placeholder = st.empty()
         for s in [1, 2, 3]:
             state_s = states_132[s]
-            fos_s = compute_scientific_fos(grid_x, grid_z, well_x, state_s, h_seam, source_z, ucs_val, heat_factor)
+            fos_s = compute_logical_fos(grid_x, grid_z, well_x, state_s, h_seam, source_z, heat_factor)
             fig_s = go.Figure(go.Contour(z=fos_s, x=x_axis, y=z_axis,
                                          colorscale=[[0,'black'],[0.15,'red'],[0.4,'orange'],[0.6,'yellow'],[0.8,'lime'],[1,'darkgreen']],
                                          zmin=0, zmax=3, contours_showlines=False,
@@ -983,7 +982,7 @@ with c2:
     
     # Bosqichga oid tushuntirish
     msgs = {
-        1: f"**1-Bosqich:** Chap quduq yoqilgan. Qalinlik = {h_seam:.1f} m, UCS = {ucs_val:.1f} MPa.",
+        1: f"**1-Bosqich:** Chap quduq yoqilgan. Qalinlik = {h_seam:.1f} m.",
         2: f"**2-Bosqich (Muhim):** O‘ng quduq yoqilgan. O‘rtadagi selek (cyan chiziqli) tomni ushlab turadi.",
         3: f"**3-Bosqich:** Markaziy selek gazlashtirilmoqda. Barqaror cho‘kish."
     }
