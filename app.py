@@ -879,6 +879,46 @@ mk3.metric(t('max_subsidence_live'), f"{s_max_3d*100:.1f} cm")
 mk4.metric(t('process_stage'), t('stage_active') if time_h<100 else t('stage_cooling'))
 st.markdown("---")
 
+# ====================== QO'SHIMCHA: UCHINCHI KODDAN FOS LINE PLOT + YIELDED ZONES ======================
+st.header("📊 FOS Line Profile & Yielded Zones (Surface)")
+# Fos_2d ning yuqori qatorini olish (yer yuzasi)
+fos_surface = fos_2d[0, :]  # eng yuqori qatlam (z=0)
+yielded_surface = fos_surface < 1.0
+fig_fos_line = go.Figure()
+fig_fos_line.add_trace(go.Scatter(x=x_axis, y=fos_surface, mode='lines+markers', name="FOS", line=dict(color='orange', width=2), marker=dict(size=5)))
+fig_fos_line.add_trace(go.Scatter(x=x_axis[yielded_surface], y=fos_surface[yielded_surface], mode='markers', name="Yielded Zones (FOS<1)", marker=dict(color='red', size=10, symbol='x')))
+fig_fos_line.add_hline(y=1.0, line_dash="dash", line_color="red", annotation_text="FOS=1.0")
+fig_fos_line.add_hline(y=1.5, line_dash="dash", line_color="green", annotation_text="FOS=1.5")
+fig_fos_line.update_layout(title="Factor of Safety along Surface & Yielded Zones", xaxis_title="Gorizontal masofa (m)", yaxis_title="FOS", template="plotly_dark", height=450)
+st.plotly_chart(fig_fos_line, use_container_width=True)
+
+# ====================== QO'SHIMCHA: UCHINCHI KODDAN KO'P QATLAMLI GORIZONTAL/VERTIKAL SILJISH ======================
+st.header("🌍 Horizontal & Vertical Displacement (Multi-Depth Subsidence)")
+# Uch xil chuqurlik (misol sifatida 100, 500, 1000 m) – foydalanuvchi kiritgan qatlamlardan emas, balki illyustrativ
+depths_example = [100, 500, 1000]
+x_surface_example = np.linspace(0, total_depth*1.2, 150)  # kameraning atrofidagi masofa
+subsidence_data_example = {}
+for d in depths_example:
+    horizontal_disp = 5 * np.sin(np.pi * x_surface_example / total_depth) * (d / 100)
+    vertical_disp = 10 * (1 - np.cos(np.pi * x_surface_example / total_depth)) * (d / 100)
+    subsidence_data_example[d] = {'horizontal': horizontal_disp, 'vertical': vertical_disp}
+
+fig_subs_multi = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                               subplot_titles=("Gorizontal siljish (mm)", "Vertikal siljish (mm)"))
+colors_multi = ['blue', 'red', 'green']
+for i, d in enumerate(depths_example):
+    fig_subs_multi.add_trace(go.Scatter(x=x_surface_example, y=subsidence_data_example[d]['horizontal'], mode='lines',
+                                        name=f"{d} m chuqurlik", line=dict(color=colors_multi[i])), row=1, col=1)
+    fig_subs_multi.add_trace(go.Scatter(x=x_surface_example, y=subsidence_data_example[d]['vertical'], mode='lines',
+                                        name=f"{d} m chuqurlik", line=dict(color=colors_multi[i], dash='dot')), row=2, col=1)
+fig_subs_multi.update_layout(title="Bir nechta kameralar ta'sirida yer yuzasi siljishi (Model)",
+                             xaxis_title="Masofa (m)",
+                             yaxis_title="Gorizontal siljish (mm)",
+                             yaxis2_title="Vertikal siljish (mm)",
+                             template="plotly_dark",
+                             height=600)
+st.plotly_chart(fig_subs_multi, use_container_width=True)
+
 # ====================== YANGI QO'SHIMCHA: AI RISK PREDICTION (SENSOR CSV) ======================
 class SimpleRiskNN(nn.Module):
     def __init__(self, input_dim=3):
