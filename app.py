@@ -1593,7 +1593,7 @@ with tab_advanced:
 st.header("🕹️ Ultimate Interactive Dashboard (Real-time Animation)")
 st.markdown("Bu panelda FOS, siljish maydoni va vaqt bo‘yicha sirt siljishlarini interaktiv kuzatishingiz mumkin. Quyidagi slayderlar yordamida FOS chegarasini va rang sxemasini o‘zgartiring.")
 
-# Ikkinchi kodning funksiyasi (to‘liq moslashtirilgan)
+# Ikkinchi kodning funksiyasi (to‘liq moslashtirilgan, xato tuzatilgan)
 def draw_interactive_ucg_dashboard(x_axis, z_axis, fos_2d, displacement_2d, surface_x, surface_h_disp, surface_v_disp, time_steps=None, fos_threshold=1.0, disp_colorscale='Turbo'):
     if time_steps is None:
         time_steps = np.arange(surface_h_disp.shape[0])
@@ -1620,8 +1620,18 @@ def draw_interactive_ucg_dashboard(x_axis, z_axis, fos_2d, displacement_2d, surf
         fig.add_trace(go.Heatmap(z=surface_v_disp[i:i+1,:], x=surface_x, y=[t], colorscale='Viridis', zmin=np.min(surface_v_disp), zmax=np.max(surface_v_disp), showscale=False, visible=(i==0), name="V Disp"), row=2, col=2)
     # Pillars
     for pos in pillar_locations:
-        for col in [1,2]:
-            fig.add_shape(type="rect", x0=pos-25, x1=pos+25, y0=550, y1=600, line=dict(color="Lime", width=3), row=1, col=col)
+        fig.add_shape(type="rect", x0=pos-25, x1=pos+25, y0=550, y1=600, line=dict(color="Lime", width=3), row=1, col=1)
+        fig.add_shape(type="rect", x0=pos-25, x1=pos+25, y0=550, y1=600, line=dict(color="Lime", width=3), row=1, col=2)
+    # Axes updates - har biriga row va col qo'shildi
+    fig.update_xaxes(title_text="X (m)", gridcolor='rgba(255,255,255,0.1)', range=[x_axis.min(), x_axis.max()], row=1, col=1)
+    fig.update_xaxes(title_text="X (m)", gridcolor='rgba(255,255,255,0.1)', range=[x_axis.min(), x_axis.max()], row=1, col=2)
+    fig.update_yaxes(title_text="Depth (m)", gridcolor='rgba(255,255,255,0.1)', reverse=True, row=1, col=1)
+    fig.update_yaxes(title_text="Depth (m)", gridcolor='rgba(255,255,255,0.1)', reverse=True, row=1, col=2)
+    fig.update_xaxes(title_text="Masofa (m)", gridcolor='rgba(255,255,255,0.1)', row=2, col=1)
+    fig.update_xaxes(title_text="Masofa (m)", gridcolor='rgba(255,255,255,0.1)', row=2, col=2)
+    fig.update_yaxes(title_text="Vaqt bosqichi", gridcolor='rgba(255,255,255,0.1)', row=2, col=1)
+    fig.update_yaxes(title_text="Vaqt bosqichi", gridcolor='rgba(255,255,255,0.1)', row=2, col=2)
+    # Layout
     fig.update_layout(
         title=dict(text="Interactive Ultimate UCG Monitoring Dashboard", x=0.5, font=dict(size=22, color="white")),
         plot_bgcolor='black', paper_bgcolor='black', template='plotly_dark', height=900,
@@ -1632,10 +1642,6 @@ def draw_interactive_ucg_dashboard(x_axis, z_axis, fos_2d, displacement_2d, surf
                                    dict(label="Pause", method="animate",
                                         args=[[None], {"frame": {"duration":0, "redraw":False}, "mode":"immediate", "transition": {"duration":0}}])])]
     )
-    fig.update_xaxes(title_text="X (m)", gridcolor='rgba(255,255,255,0.1)', range=[x_axis.min(), x_axis.max()], row=1)
-    fig.update_yaxes(title_text="Depth (m)", gridcolor='rgba(255,255,255,0.1)', reverse=True, row=1)
-    fig.update_xaxes(title_text="Masofa (m)", gridcolor='rgba(255,255,255,0.1)', row=2)
-    fig.update_yaxes(title_text="Vaqt bosqichi / Qatlam", gridcolor='rgba(255,255,255,0.1)', row=2)
     return fig
 
 # Dashboard uchun kerakli ma'lumotlarni tayyorlash (mavjud ma'lumotlardan)
