@@ -801,11 +801,11 @@ with col_g3:
     fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_burning, name=t('combustion'), line=dict(color='orange',width=4)))
     st.plotly_chart(fig_hb.update_layout(title=t('hb_envelopes_title'), template="plotly_dark", height=300, legend=dict(orientation="h", y=-0.3, x=0.5, xanchor="center")), use_container_width=True)
 
-# =========================== TM MAYDONI (FOS + AI Collapse + Yielded Zones + Select Interference) ===========================
+# =========================== TM MAYDONI (YANGI VERSIYA) ===========================
 st.markdown("---")
 c1, c2 = st.columns([1,2.5])
 
-# ----------- Left Panel: Layer Visualization -----------
+# ----------- Left Panel: Layer Visualization (o'zgarishsiz) -----------
 with c1:
     st.subheader(t('scientific_analysis'))
     st.error(t('fos_red')); st.warning(t('fos_yellow')); st.success(t('fos_green'))
@@ -830,118 +830,182 @@ with c1:
         use_container_width=True
     )
 
-# ----------- Right Panel: Optimized FOS + AI Collapse + Yielded Zones + Select Interference -----------
+# ----------- Right Panel: Two Subplots (Temperature + Gas Flow / FOS + AI + Yielded + Interference) -----------
 with c2:
     st.subheader(t('tm_field_title'))
     
-    # Slider: FOS threshold for yielded zones
-    fos_thresh = st.slider("FOS Threshold (Yielded Zone)", min_value=0.1, max_value=3.0, value=1.2, step=0.05)
+    # Sliders for interactive FOS and burn parameters
+    col_s1, col_s2, col_s3 = st.columns(3)
+    with col_s1:
+        fos_thresh = st.slider("FOS Threshold (Yielded Zone)", 0.1, 3.0, 1.2, 0.05, key="fos_thresh_tm")
+    with col_s2:
+        burn_radius = st.slider("Burn Radius (m)", 5, 50, 20, 1, key="burn_radius_tm")
+    with col_s3:
+        safe_sep = st.slider("Safe Separation (m)", 20, 100, 45, 5, key="safe_sep_tm")
     
-    fig_fos_ai = go.Figure()
+    # Define pillar locations (same as in original code)
+    pillar_locations = [-total_depth/3, 0, total_depth/3]
     
-    # --- FOS heatmap ---
-    fig_fos_ai.add_trace(go.Contour(
-        z=fos_2d,
-        x=x_axis,
-        y=z_axis,
-        colorscale=[[0,'red'],[0.33,'yellow'],[0.5,'green'],[1,'darkgreen']],
-        zmin=0,
-        zmax=3,
-        contours_showlines=False,
-        colorbar=dict(title="FOS", title_side="top", x=1.05, y=0.5, len=0.4, thickness=15),
-        name="FOS"
-    ))
-    
-    # --- Yielded (fractured) zones ---
-    fracture_mask = np.where(fos_2d < fos_thresh, 1.0, np.nan)
-    fig_fos_ai.add_trace(go.Heatmap(
-        z=fracture_mask,
-        x=x_axis,
-        y=z_axis,
-        colorscale=[[0,'rgba(0,0,0,0)'],[1,'rgba(255,0,0,0.5)']],
-        showscale=False,
-        opacity=0.6,
-        hoverinfo='skip',
-        name="Yielded Zones"
-    ))
-    
-    # --- Burn radius + dynamic remaining void ---
-    remaining_void = np.zeros_like(fos_2d)
-    for i, px in enumerate(pillar_locations):
-        r_burn = burn_radius[i]  # individual burn radius per pillar
-        distance_grid = np.sqrt((grid_x - px)**2 + (grid_z - source_z)**2)
-        burn_zone = distance_grid <= r_burn
-        remaining_void[burn_zone] = np.nan  # mark burned area
-        # Draw burn circle overlay
-        fig_fos_ai.add_shape(type="circle",
-                             x0=px-r_burn, x1=px+r_burn,
-                             y0=source_z-r_burn, y1=source_z+r_burn,
-                             line=dict(color="orange", width=2),
-                             fillcolor='rgba(255,165,0,0.2)')
-    
-    # --- Select (pillar-to-pillar interference) zones ---
-    for i, px in enumerate(pillar_locations[:-1]):
-        for j, px2 in enumerate(pillar_locations[i+1:]):
-            sep_dist = abs(px2 - px)
-            if sep_dist < safe_separation:
-                mid_point = (px+px2)/2
-                fig_fos_ai.add_shape(type="rect",
-                                     x0=px, x1=px2,
-                                     y0=source_z-H_seam/2, y1=source_z+H_seam/2,
-                                     line=dict(color="magenta", width=2, dash="dot"),
-                                     fillcolor='rgba(255,0,255,0.2)')
-    
-    # --- AI Collapse Prediction overlay ---
-    fig_fos_ai.add_trace(go.Heatmap(
-        z=collapse_pred,
-        x=x_axis,
-        y=z_axis,
-        colorscale='Viridis',
-        opacity=0.4,
-        showscale=False,
-        name="AI Collapse Prediction"
-    ))
-    
-    # --- Shear & Tensile failure markers ---
-    shear_disp = np.copy(shear_failure); shear_disp[void_mask_permanent]=False
-    tens_disp = np.copy(tensile_failure); tens_disp[void_mask_permanent]=False
-    fig_fos_ai.add_trace(go.Scatter(
-        x=grid_x[shear_disp][::2],
-        y=grid_z[shear_disp][::2],
-        mode='markers',
-        marker=dict(color='red', size=3, symbol='x'),
-        name='Shear'
-    ))
-    fig_fos_ai.add_trace(go.Scatter(
-        x=grid_x[tens_disp][::2],
-        y=grid_z[tens_disp][::2],
-        mode='markers',
-        marker=dict(color='blue', size=3, symbol='cross'),
-        name='Tensile'
-    ))
-    
-    # --- Permanent void overlay ---
-    void_visual = np.where(void_mask_permanent>0.1, 1.0, np.nan)
-    fig_fos_ai.add_trace(go.Heatmap(
-        z=void_visual,
-        x=x_axis,
-        y=z_axis,
-        colorscale=[[0,'black'],[1,'black']],
-        showscale=False,
-        opacity=0.8,
-        hoverinfo='skip'
-    ))
-    
-    # --- Layout ---
-    fig_fos_ai.update_layout(
-        template="plotly_dark",
-        height=850,
-        title="FOS + AI Collapse + Yielded Zones + Select Interference",
-        showlegend=True
+    # Create subplots: row1 = temperature + gas flow, row2 = FOS + AI + ...
+    fig_tm = make_subplots(
+        rows=2, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.15,
+        subplot_titles=(t('temp_subplot'), "FOS + AI Collapse + Yielded Zones + Pillar Interference")
     )
-    fig_fos_ai.update_yaxes(autorange='reversed')
     
-    st.plotly_chart(fig_fos_ai, use_container_width=True)
+    # ---------- Row 1: Temperature field + gas flow (unchanged) ----------
+    fig_tm.add_trace(
+        go.Heatmap(
+            z=temp_2d, x=x_axis, y=z_axis,
+            colorscale='Hot', zmin=25, zmax=T_source_max,
+            colorbar=dict(title="T (°C)", title_side="top", x=1.05, y=0.78, len=0.42, thickness=15),
+            name=t('temp_subplot')
+        ),
+        row=1, col=1
+    )
+    # Gas flow arrows
+    step = 12
+    qx, qz = grid_x[::step, ::step].flatten(), grid_z[::step, ::step].flatten()
+    qu, qw = vx[::step, ::step].flatten(), vz[::step, ::step].flatten()
+    qmag = gas_velocity[::step, ::step].flatten()
+    qmag_max = qmag.max() + EPS
+    mask_q = qmag > qmag_max * 0.05
+    angles = np.degrees(np.arctan2(qw[mask_q], qu[mask_q] + EPS))
+    fig_tm.add_trace(
+        go.Scatter(
+            x=qx[mask_q], y=qz[mask_q],
+            mode='markers',
+            marker=dict(
+                symbol='arrow', size=10, color=qmag[mask_q],
+                colorscale='ice', cmin=0, cmax=qmag_max,
+                angle=angles, opacity=0.85, showscale=False, line=dict(width=0)
+            ),
+            name=t('gas_flow')
+        ),
+        row=1, col=1
+    )
+    
+    # ---------- Row 2: FOS + AI Collapse + Yielded Zones + Interference ----------
+    # 2.1 FOS contour
+    fig_tm.add_trace(
+        go.Contour(
+            z=fos_2d, x=x_axis, y=z_axis,
+            colorscale=[[0,'red'],[0.33,'yellow'],[0.5,'green'],[1,'darkgreen']],
+            zmin=0, zmax=3.0,
+            contours_showlines=False,
+            colorbar=dict(title="FOS", title_side="top", x=1.05, y=0.22, len=0.42, thickness=15),
+            name="FOS"
+        ),
+        row=2, col=1
+    )
+    
+    # 2.2 Yielded zones (where FOS < threshold)
+    fracture_mask = np.where(fos_2d < fos_thresh, 1.0, np.nan)
+    fig_tm.add_trace(
+        go.Heatmap(
+            z=fracture_mask, x=x_axis, y=z_axis,
+            colorscale=[[0,'rgba(0,0,0,0)'],[1,'rgba(255,0,0,0.5)']],
+            showscale=False, opacity=0.6, hoverinfo='skip',
+            name="Yielded Zones"
+        ),
+        row=2, col=1
+    )
+    
+    # 2.3 Burn radius circles and remaining void (optional)
+    remaining_void = np.zeros_like(fos_2d)
+    for px in pillar_locations:
+        distance_grid = np.sqrt((grid_x - px)**2 + (grid_z - source_z)**2)
+        burn_zone = distance_grid <= burn_radius
+        remaining_void[burn_zone] = np.nan
+        fig_tm.add_shape(
+            type="circle",
+            x0=px - burn_radius, x1=px + burn_radius,
+            y0=source_z - burn_radius, y1=source_z + burn_radius,
+            line=dict(color="orange", width=2),
+            fillcolor='rgba(255,165,0,0.2)',
+            row=2, col=1
+        )
+    
+    # 2.4 Pillar-to-pillar interference zones (when distance < safe_sep)
+    for i in range(len(pillar_locations)):
+        for j in range(i+1, len(pillar_locations)):
+            sep = abs(pillar_locations[j] - pillar_locations[i])
+            if sep < safe_sep:
+                fig_tm.add_shape(
+                    type="rect",
+                    x0=pillar_locations[i], x1=pillar_locations[j],
+                    y0=source_z - H_seam/2, y1=source_z + H_seam/2,
+                    line=dict(color="magenta", width=2, dash="dot"),
+                    fillcolor='rgba(255,0,255,0.2)',
+                    row=2, col=1
+                )
+    
+    # 2.5 AI Collapse Prediction overlay
+    fig_tm.add_trace(
+        go.Heatmap(
+            z=collapse_pred, x=x_axis, y=z_axis,
+            colorscale='Viridis', opacity=0.4, showscale=False,
+            name="AI Collapse Prediction"
+        ),
+        row=2, col=1
+    )
+    
+    # 2.6 Shear and Tensile failure markers
+    shear_disp = np.copy(shear_failure)
+    shear_disp[void_mask_permanent] = False
+    tens_disp = np.copy(tensile_failure)
+    tens_disp[void_mask_permanent] = False
+    
+    fig_tm.add_trace(
+        go.Scatter(
+            x=grid_x[shear_disp][::2], y=grid_z[shear_disp][::2],
+            mode='markers', marker=dict(color='red', size=3, symbol='x'),
+            name='Shear'
+        ),
+        row=2, col=1
+    )
+    fig_tm.add_trace(
+        go.Scatter(
+            x=grid_x[tens_disp][::2], y=grid_z[tens_disp][::2],
+            mode='markers', marker=dict(color='blue', size=3, symbol='cross'),
+            name='Tensile'
+        ),
+        row=2, col=1
+    )
+    
+    # 2.7 Permanent void overlay
+    void_visual = np.where(void_mask_permanent > 0.1, 1.0, np.nan)
+    fig_tm.add_trace(
+        go.Heatmap(
+            z=void_visual, x=x_axis, y=z_axis,
+            colorscale=[[0,'black'],[1,'black']], showscale=False, opacity=0.8, hoverinfo='skip'
+        ),
+        row=2, col=1
+    )
+    
+    # 2.8 Pillar rectangles (lime)
+    for px in pillar_locations:
+        fig_tm.add_shape(
+            type="rect",
+            x0=px - rec_width/2, x1=px + rec_width/2,
+            y0=source_z - H_seam/2, y1=source_z + H_seam/2,
+            line=dict(color="lime", width=3),
+            row=2, col=1
+        )
+    
+    # Final layout adjustments
+    fig_tm.update_layout(
+        template="plotly_dark",
+        height=900,
+        margin=dict(r=150, t=80, b=100),
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=-0.12, xanchor="center", x=0.5)
+    )
+    fig_tm.update_yaxes(autorange='reversed', row=1, col=1)
+    fig_tm.update_yaxes(autorange='reversed', row=2, col=1)
+    
+    st.plotly_chart(fig_tm, use_container_width=True)
 
 
 # =========================== KOMPLEKS MONITORING PANELI ===========================
