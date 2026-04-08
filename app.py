@@ -1064,7 +1064,7 @@ with st.expander("⚖️ Ssenariy Taqqoslash (A vs B)"):
                             'Farq': [f"{b_ucs-a_ucs:+.1f}", f"{b_gsi-a_gsi:+d}", f"{fos_b-fos_a:+.2f}", f"{b_temp-a_temp:+.0f}"]})
     st.dataframe(comp_df, use_container_width=True, hide_index=True)
 
-# 6. Sezgirlik tahlili (Tornado plot)
+# 6. Sezgirlik tahlili (Advanced Tornado Plot) - YANGI VERSIYA
 @st.cache_data(show_spinner=False)
 def sensitivity_analysis(base_ucs, base_gsi, base_d, base_nu, base_t, H_seam, range_pct=0.2):
     def quick_fos(ucs, gsi, d, nu, T):
@@ -1099,15 +1099,183 @@ def sensitivity_analysis(base_ucs, base_gsi, base_d, base_nu, base_t, H_seam, ra
         results.append({'param':name, 'low':fos_low-base_fos, 'high':fos_high-base_fos})
     return pd.DataFrame(results), base_fos
 
-with st.expander("🌪️ Sezgirlik Tahlili (Tornado Plot)"):
-    df_sens, fos_base = sensitivity_analysis(layers_data[-1]['ucs'], layers_data[-1]['gsi'], D_factor, nu_poisson, avg_t_p, H_seam)
-    df_sens = df_sens.sort_values('high', ascending=True)
+with st.expander("🌪️ Sezgirlik Tahlili (Advanced Tornado Plot)"):
+    df_sens, fos_base = sensitivity_analysis(
+        layers_data[-1]['ucs'],
+        layers_data[-1]['gsi'],
+        D_factor,
+        nu_poisson,
+        avg_t_p,
+        H_seam
+    )
+
+    # Absolyut ta'sir kattaligi bo‘yicha saralash
+    df_sens['impact'] = df_sens[['low','high']].abs().max(axis=1)
+    df_sens = df_sens.sort_values('impact', ascending=True)
+
+    # Rang gradientlari
+    colors_low = ['rgba(231,76,60,0.6)' if v < 0 else 'rgba(52,152,219,0.6)' for v in df_sens['low']]
+    colors_high = ['rgba(46,204,113,0.8)' if v > 0 else 'rgba(241,196,15,0.8)' for v in df_sens['high']]
+
     fig_tornado = go.Figure()
-    fig_tornado.add_bar(y=df_sens['param'], x=df_sens['low'], orientation='h', name='−20%', marker_color='#E74C3C')
-    fig_tornado.add_bar(y=df_sens['param'], x=df_sens['high'], orientation='h', name='+20%', marker_color='#27AE60')
-    fig_tornado.add_vline(x=0, line_color='white', line_width=2)
-    fig_tornado.update_layout(title=f"FOS sezgirligi (asosiy FOS={fos_base:.2f})", barmode='overlay', template='plotly_dark', height=350, xaxis_title='ΔFOS', bargap=0.3)
+
+    # LOW (-) variatsiya
+    fig_tornado.add_bar(
+        y=df_sens['param'],
+        x=df_sens['low'],
+        orientation='h',
+        name='− Variation',
+        marker_color=colors_low,
+        text=[f"{v:.2f}" for v in df_sens['low']],
+        textposition='auto'
+    )
+
+    # HIGH (+) variatsiya
+    fig_tornado.add_bar(
+        y=df_sens['param'],
+        x=df_sens['high'],
+        orientation='h',
+        name='+ Variation',
+        marker_color=colors_high,
+        text=[f"{v:.2f}" for v in df_sens['high']],
+        textposition='auto'
+    )
+
+    # Nol chizig'i
+    fig_tornado.add_vline(x=0, line_color='white', line_width=2, line_dash="dash")
+
+    fig_tornado.update_layout(
+        title=f"📊 FOS Sensitivity Analysis (Base FOS = {fos_base:.2f})",
+        barmode='relative',
+        template='plotly_dark',
+        height=450,
+        xaxis_title='ΔFOS',
+        yaxis_title='Parameters',
+        bargap=0.25,
+        legend=dict(orientation="h", y=-0.2, x=0.5, xanchor="center"),
+        margin=dict(l=40, r=40, t=60, b=60)
+    )
+
     st.plotly_chart(fig_tornado, use_container_width=True)
+
+    st.dataframe(
+        df_sens[['param','low','high','impact']].style.format("{:.3f}"),
+        use_container_width=True
+    )
+
+    top_param = df_sens.iloc[-1]
+    st.success(
+        f"🔝 Eng sezgir parametr: {top_param['param']} "
+        f"(ΔFOS ≈ {top_param['impact']:.2f})"
+    )
+
+# 7. Monte Carlo Sensitivity (Parametrik sezgirlik)
+@st.cache_data(show_spinner=False)
+def monte_carlo_sensitivity(n_sim, base_params, H_seam):
+    def quick_fos(ucs, gsi, d, nu, T):
+        mb = 10 * np.exp((gsi - 100) / (28 - 14 * d))
+        s = np.exp((gsi - 100) / (9 - 3 * d))
+        damage = np.clip(1 - np.exp(-0.002 * max(T - 100, 0)), 0, 0.95)
+        sigma_ci = ucs * (1 - damage)
+        str_red = np.exp(-0.0025 * (T - 20))
+        p_str = (sigma_ci * str_red) * (20 / (H_seam + 1e-12)) ** 0.5
+        sv = ucs * 0.025
+        return np.clip(p_str / (sv + 1e-12), 0, 5)
+
+    results = []
+    for _ in range(n_sim):
+        ucs = np.random.normal(base_params['ucs'], base_params['ucs'] * 0.1)
+        gsi = np.random.normal(base_params['gsi'], 5)
+        d   = np.clip(np.random.normal(base_params['d'], 0.1), 0, 1)
+        nu  = np.clip(np.random.normal(base_params['nu'], 0.03), 0.1, 0.4)
+        T   = np.random.normal(base_params['T'], base_params['T'] * 0.1)
+
+        fos = quick_fos(ucs, gsi, d, nu, T)
+        results.append({
+            'UCS': ucs,
+            'GSI': gsi,
+            'D': d,
+            'nu': nu,
+            'T': T,
+            'FOS': fos
+        })
+
+    return pd.DataFrame(results)
+
+with st.expander("🎲 Monte Carlo Sensitivity"):
+    n_sim = st.slider("Simulations", 100, 5000, 1000, key="mc_sens_slider")
+
+    base_params = {
+        'ucs': layers_data[-1]['ucs'],
+        'gsi': layers_data[-1]['gsi'],
+        'd': D_factor,
+        'nu': nu_poisson,
+        'T': avg_t_p
+    }
+
+    df_mc = monte_carlo_sensitivity(n_sim, base_params, H_seam)
+
+    st.write("📈 FOS Distribution")
+    fig_mc_hist = go.Figure()
+    fig_mc_hist.add_histogram(x=df_mc['FOS'], nbinsx=40, marker_color='#3498DB')
+    fig_mc_hist.update_layout(
+        template='plotly_dark',
+        title="FOS Distribution (Monte Carlo)",
+        xaxis_title="FOS",
+        yaxis_title="Frequency"
+    )
+    st.plotly_chart(fig_mc_hist, use_container_width=True)
+
+    # AI modelni o'rgatish (agar yetarlicha ma'lumot bo'lsa)
+    if len(df_mc) >= 50:
+        @st.cache_data
+        def train_ai_model(df):
+            X = df[['UCS','GSI','D','nu','T']]
+            y = df['FOS']
+            model = RandomForestRegressor(n_estimators=100, random_state=42)
+            model.fit(X, y)
+            return model
+
+        with st.expander("🤖 AI Sensitivity (Feature Importance)"):
+            model = train_ai_model(df_mc)
+            importances = model.feature_importances_
+            features = ['UCS','GSI','D','nu','T']
+
+            df_imp = pd.DataFrame({
+                'feature': features,
+                'importance': importances
+            }).sort_values('importance', ascending=True)
+
+            fig_imp = go.Figure(go.Bar(
+                x=df_imp['importance'],
+                y=df_imp['feature'],
+                orientation='h',
+                marker_color='#E67E22'
+            ))
+            fig_imp.update_layout(
+                template='plotly_dark',
+                title="AI-based Sensitivity (Feature Importance)",
+                xaxis_title="Importance"
+            )
+            st.plotly_chart(fig_imp, use_container_width=True)
+
+        with st.expander("🧠 Combined Insight"):
+            # Monte Carlo korrelyatsiyasi
+            top_mc = df_mc.corr()['FOS'].abs().sort_values(ascending=False)
+            st.write("📊 Correlation with FOS:")
+            st.dataframe(top_mc)
+
+            st.info(
+                f"""
+                🔍 Xulosa:
+                - Eng katta korrelyatsiya: **{top_mc.index[1]}** (|r| = {top_mc.iloc[1]:.3f})
+                - AI bo‘yicha eng muhim xususiyat: **{df_imp.iloc[-1]['feature']}** (importance = {df_imp.iloc[-1]['importance']:.3f})
+                
+                👉 Agar ikkalasi bir xil parametrni ko‘rsatsa — model juda ishonchli.
+                """
+            )
+    else:
+        st.warning("Monte Carlo simulyatsiyasi uchun kamida 50 ta namuna kerak. Iltimos, simulyatsiyalar sonini oshiring.")
 
 # =========================== KENGAYTIRILGAN ISO 9001 HISOBOT GENERATORI ===========================
 def generate_full_iso_report(obj_name, lang, layers_data, T_source_max, burn_duration,
