@@ -801,11 +801,11 @@ with col_g3:
     fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_burning, name=t('combustion'), line=dict(color='orange',width=4)))
     st.plotly_chart(fig_hb.update_layout(title=t('hb_envelopes_title'), template="plotly_dark", height=300, legend=dict(orientation="h", y=-0.3, x=0.5, xanchor="center")), use_container_width=True)
 
-# =========================== TM MAYDONI (1-3-2 YONISH, DINAMIK QALINLIK) ===========================
+# =========================== TM MAYDONI (1-3-2 BOSQICHLI, ASOSIY PARAMETRLARDAN FOYDALANADI) ===========================
 st.markdown("---")
 c1, c2 = st.columns([1, 2.5])
 
-# ----------- Left Panel: Layer Visualization -----------
+# ----------- Left Panel: Layer Visualization (o‘zgarishsiz) -----------
 with c1:
     st.subheader(t('scientific_analysis'))
     st.error(t('fos_red')); st.warning(t('fos_yellow')); st.success(t('fos_green'))
@@ -834,56 +834,92 @@ with c1:
 with c2:
     st.subheader("UCG Yonish Bosqichlari (1 → 3 → 2 sxemasi)")
     
-    # Ko'mir qalinligi oxirgi qatlamdan olinadi
-    H_seam = layers_data[-1]['t']
-    source_z = total_depth - (H_seam / 2)
-    
     # Bosqichni tanlash
     stage = st.select_slider("Bosqichni tanlang:", options=[1, 2, 3], value=1, key="ucg_stage_132")
     
-    # Quduq koordinatalari (asl koddagi pillar_locations bilan bir xil)
-    well_x = [-total_depth/3, 0, total_depth/3]
+    # Asosiy koddan kerakli parametrlarni olish
+    # Oxirgi qatlam (ko'mir) ma'lumotlari
+    coal_layer = layers_data[-1]
+    h_seam = coal_layer['t']                 # ko'mir qatlami qalinligi (m)
+    ucs_val = coal_layer['ucs']              # UCS (MPa)
+    gsi_val = coal_layer['gsi']              # GSI
+    mi_val = coal_layer['mi']                # mi (Hoek-Brown uchun)
     
-    # 1-3-2 ketma-ketligi: 1-quduq, 3-quduq, 2-quduq
+    # Boshqa geomexanik parametrlar
+    nu_val = nu_poisson                      # Puasson koeffitsiyenti
+    D_factor_local = D_factor                # Disturbance factor
+    T_max_local = T_source_max               # Maksimal yonish harorati (°C)
+    
+    # Quduq koordinatalari (asosiy koddagi pillar_locations bilan bir xil)
+    well_x = [-total_depth/3, 0, total_depth/3]   # 1-chi, 2-chi, 3-chi quduq
+    source_z = total_depth - (h_seam / 2)          # ko‘mir qatlami markazi
+    
+    # 1-3-2 ketma-ketligi bo‘yicha quduqlar holati: 0 - yonmagan, 1 - aktiv yonmoqda, 2 - yonib bo‘lgan (sovigan)
     states_132 = {
         1: [1, 0, 0],   # faqat 1-quduq yonmoqda
-        2: [2, 0, 1],   # 1-quduq sovigan, 3-quduq yonmoqda (o'rtada seleklik)
+        2: [2, 0, 1],   # 1-quduq sovigan, 3-quduq yonmoqda (o‘rtada seleklik)
         3: [2, 1, 2]    # 2-quduq (markaziy) yonmoqda, 1 va 3 sovigan
     }
     current_state = states_132[stage]
     
-    # Aqlli FOS hisoblash (qalinlikka bog'liq)
-    def compute_logical_fos(grid_x, grid_z, well_x, states, source_z, H_seam):
-        fos = np.full_like(grid_x, 2.8)   # hamma joy mustahkam (yashil)
+    # Harorat ta'sir koeffitsiyenti (issiqlik faktori) – yonish intensivligiga bog'liq
+    heat_factor = (T_max_local - 25) / 1000   # 0.6...1.2 oralig'ida
+    
+    # ------------------- Aqlli FOS hisoblash funksiyasi (parametrlar asosida) -------------------
+    def compute_advanced_fos(grid_x, grid_z, well_x, states, h, sz, ucs_val, gsi_val, nu_val, h_fact, stage):
+        # Boshlang'ich barqaror holat (yashil FOS=2.8)
+        fos = np.full_like(grid_x, 2.8)
         
-        influence_height = H_seam * 5      # deformatsiyaning vertikal ta'sir balandligi
-        burn_rad = H_seam * 1.5            # yonish radiusi (bo'shliq)
+        # Hoek-Brown parametrlarini soddalashtirilgan hisobi (asosiy koddagi formulalar asosida)
+        mb = mi_val * np.exp((gsi_val - 100) / (28 - 14 * D_factor_local))
+        s_hb = np.exp((gsi_val - 100) / (9 - 3 * D_factor_local))
+        a_hb = 0.5 + (1/6)*(np.exp(-gsi_val/15) - np.exp(-20/3))
+        # Kritik kuchlanish chegarasi (taxminiy)
+        sigma_ci_eff = ucs_val * np.exp(-0.0025 * (T_max_local - 20))  # termal degradatsiya
+        sigma_c = mb * (s_hb)**a_hb * sigma_ci_eff / 10   # MPa da, taxminiy
         
         for i, state in enumerate(states):
             px = well_x[i]
-            dist = np.sqrt((grid_x - px)**2 + (grid_z - source_z)**2)
-            vert_dist = np.abs(grid_z - source_z)
+            dist = np.sqrt((grid_x - px)**2 + (grid_z - sz)**2)
+            vert_dist = np.abs(grid_z - sz)
+            dz = sz - grid_z   # tepaga qarab masofa (musbat)
             
-            if state >= 1:   # yongan yoki yonayotgan quduq
-                # Bo'shliq (qora)
+            if state >= 1:   # yonish sodir bo'lgan yoki bo'layotgan joy
+                # Aktivlikka qarab radiusni aniqlash
+                temp_mult = (1 + 0.4 * h_fact) if state == 1 else 1.1
+                burn_rad = h * 1.5 * temp_mult
+                influence_h = h * 5 * temp_mult
+                
+                # A. BO'SHLIQ (cavity) – FOS nolga yaqin
                 fos[dist < burn_rad] = 0.05
                 
-                # Deformatsiya zonasi (qizil/sariq) - faqat ma'lum balandlikkacha
-                mask_influence = (dist < burn_rad * 2.5) & (vert_dist < influence_height)
-                fos[mask_influence] = np.minimum(fos[mask_influence], 0.8)
+                # B. DEFORMATSIYA ZONASI (xavfli) – faqat qatlam tepasida va yonish radiusi atrofida
+                mask_collapse = (dz > 0) & (dz < influence_h) & (np.abs(grid_x - px) < burn_rad * 1.8)
+                # Masofaga qarab FOS ortib boradi (so'nish mantiqi)
+                collapse_val = 0.2 + (0.6 * (dz / (influence_h + EPS)))
+                fos[mask_collapse] = np.minimum(fos[mask_collapse], collapse_val)
                 
-                # Atrofdagi kuchlanish zonasi (sariq)
-                mask_yield = (dist < burn_rad * 4) & (vert_dist < influence_height * 1.5)
-                fos[mask_yield] = np.minimum(fos[mask_yield], 1.5)
+                # C. KUCHLANISH ZONASI (yielded) – Hoek-Brown asosida
+                mask_yield = (dist < burn_rad * 3.5) & (dz < influence_h * 1.5)
+                # Jins mustahkamligi faktorini kiritamiz
+                hb_factor = np.clip(sigma_c / (ucs_val + EPS), 0.7, 1.8)
+                fos[mask_yield] = np.minimum(fos[mask_yield], hb_factor)
         
-        # Ko'mir qatlamidan pastdagi jinslar doim mustahkam
-        fos[grid_z > (source_z + H_seam/2)] = 2.5
+        # D. YER OSTI VA SELEK HIMOYASI – ko'mirdan pastdagi qatlam mustahkam
+        fos[grid_z > (sz + h/2)] = 2.5
+        
+        # 2-bosqichda markaziy selekni (pillar) sun'iy ravishda mustahkam saqlash
+        if stage == 2:
+            pillar_mask = (np.abs(grid_x - well_x[1]) < 80) & (np.abs(grid_z - sz) < h)
+            fos[pillar_mask] = 2.5
+        
         return fos
     
-    # FOS maydonini hisoblash
-    fos_stage = compute_logical_fos(grid_x, grid_z, well_x, current_state, source_z, H_seam)
+    # FOS maydonini hisoblash (bosqich va asosiy parametrlarga mos)
+    fos_stage = compute_advanced_fos(grid_x, grid_z, well_x, current_state, h_seam, source_z,
+                                     ucs_val, gsi_val, nu_val, heat_factor, stage)
     
-    # Subplots yaratish (2 qator)
+    # ------------------- Subplots yaratish (2 qator) -------------------
     fig_tm = make_subplots(
         rows=2, cols=1,
         shared_xaxes=True,
@@ -901,7 +937,7 @@ with c2:
         ),
         row=1, col=1
     )
-    # Gaz oqimi strelkalari
+    # Gaz oqimi strelkalari (asl koddan)
     step = 12
     qx, qz = grid_x[::step, ::step].flatten(), grid_z[::step, ::step].flatten()
     qu, qw = vx[::step, ::step].flatten(), vz[::step, ::step].flatten()
@@ -923,8 +959,8 @@ with c2:
         row=1, col=1
     )
     
-    # ----- Row 2: Geomexanik holat -----
-    # 2.1 FOS konturi (bosqichga va qalinlikka mos)
+    # ----- Row 2: Geomexanik holat (yangilangan FOS + qo‘shimcha qatlamlar) -----
+    # 2.1 FOS konturi (bosqichga va parametrlarga mos)
     fig_tm.add_trace(
         go.Contour(
             z=fos_stage, x=x_axis, y=z_axis,
@@ -937,7 +973,7 @@ with c2:
         row=2, col=1
     )
     
-    # 2.2 Yielded zones (FOS < 1.2) – ixtiyoriy
+    # 2.2 Yielded zones (FOS < 1.2) – ixtiyoriy, slayder qo'shish mumkin
     fos_thresh = 1.2
     fracture_mask = np.where(fos_stage < fos_thresh, 1.0, np.nan)
     fig_tm.add_trace(
@@ -951,7 +987,7 @@ with c2:
     )
     
     # 2.3 Yonish doiralari (faqat aktiv quduqlar atrofida)
-    burn_rad_vis = H_seam * 1.5
+    burn_rad_vis = h_seam * 1.5   # vizual doira radiusi
     for i, state in enumerate(current_state):
         if state == 1:
             px = well_x[i]
@@ -964,18 +1000,18 @@ with c2:
                 row=2, col=1
             )
     
-    # 2.4 Seleklar (barcha quduqlar atrofidagi mustahkam to'rtburchaklar)
+    # 2.4 Seleklar (barcha quduqlar atrofidagi mustahkam to‘rtburchaklar)
     for px in well_x:
         fig_tm.add_shape(
             type="rect",
             x0=px - rec_width/2, x1=px + rec_width/2,
-            y0=source_z - H_seam/2, y1=source_z + H_seam/2,
+            y0=source_z - h_seam/2, y1=source_z + h_seam/2,
             line=dict(color="lime", width=3),
             fillcolor="rgba(0,255,0,0.1)",
             row=2, col=1
         )
     
-    # 2-bosqichda maxsus himoya seleki (2-quduq o'rnida)
+    # 2-bosqichda maxsus himoya seleki (2-quduq o‘rnida) – qalin chiziqli to‘rtburchak va annotatsiya
     if stage == 2:
         fig_tm.add_shape(
             type="rect",
@@ -1001,7 +1037,7 @@ with c2:
         row=2, col=1
     )
     
-    # 2.6 Shear & Tensile failure markerlari
+    # 2.6 Shear & Tensile failure markerlari (asl koddan)
     shear_disp = np.copy(shear_failure)
     shear_disp[void_mask_permanent] = False
     tens_disp = np.copy(tensile_failure)
@@ -1024,7 +1060,7 @@ with c2:
         row=2, col=1
     )
     
-    # 2.7 Doimiy bo'shliq (void) overlay
+    # 2.7 Doimiy bo‘shliq (void) overlay (asl koddan)
     void_visual = np.where(void_mask_permanent > 0.1, 1.0, np.nan)
     fig_tm.add_trace(
         go.Heatmap(
@@ -1037,17 +1073,17 @@ with c2:
     # 2.8 Qatlam chegaralarini oq nuqtali chiziqlar bilan belgilash
     fig_tm.add_shape(
         type="line", x0=x_axis.min(), x1=x_axis.max(),
-        y0=source_z - H_seam/2, y1=source_z - H_seam/2,
+        y0=source_z - h_seam/2, y1=source_z - h_seam/2,
         line=dict(color="white", width=1, dash="dot"), row=2, col=1
     )
     fig_tm.add_shape(
         type="line", x0=x_axis.min(), x1=x_axis.max(),
-        y0=source_z + H_seam/2, y1=source_z + H_seam/2,
+        y0=source_z + h_seam/2, y1=source_z + h_seam/2,
         line=dict(color="white", width=1, dash="dot"), row=2, col=1
     )
     
     # ----- Umumiy layout sozlamalari -----
-    zoom_margin = H_seam * 15
+    zoom_margin = h_seam * 15   # dinamik vertikal masshtab
     fig_tm.update_layout(
         template="plotly_dark",
         height=900,
@@ -1057,18 +1093,19 @@ with c2:
     )
     fig_tm.update_yaxes(autorange='reversed', row=1, col=1)
     fig_tm.update_yaxes(autorange='reversed', row=2, col=1)
-    # Grafikni qatlam atrofidagi mantiqiy hududga cheklash
+    # Grafikni faqat qatlam atrofidagi mantiqiy hududga cheklash
     fig_tm.update_yaxes(range=[source_z + zoom_margin/2, source_z - zoom_margin], row=2, col=1)
     
     st.plotly_chart(fig_tm, use_container_width=True)
     
-    # Bosqichga oid tushuntirish matni
+    # Bosqichga oid tushuntirish matni (qalinlik va mustahkamlik bilan)
     msgs = {
-        1: f"**1-Bosqich:** Birinchi quduq (chap) yoqilgan. Bo'shliq shakllanmoqda. Yonish radiusi = {H_seam*1.5:.1f} m.",
-        2: f"**2-Bosqich (Muhim):** 1-quduq sovigan, 3-quduq (o'ng) yoqilgan. O'rtadagi ko'mir seleki (cyan chiziqli to'rtburchak) tom qulashini ushlab turadi.",
-        3: f"**3-Bosqich:** Markaziy quduq (selek) gazlashtirilmoqda. Butun massiv barqaror cho'kish holatida."
+        1: f"**1-Bosqich:** Birinchi quduq (chap) yoqilgan. Bo‘shliq shakllanmoqda. Qatlam qalinligi = {h_seam:.1f} m, UCS = {ucs_val:.1f} MPa.",
+        2: f"**2-Bosqich (Muhim):** 1-quduq sovigan, 3-quduq (o‘ng) yoqilgan. O‘rtadagi ko‘mir seleki (cyan chiziqli to‘rtburchak) tom qulashini ushlab turadi.",
+        3: f"**3-Bosqich:** Markaziy quduq (selek) gazlashtirilmoqda. Butun massiv barqaror cho‘kish holatida."
     }
     st.info(msgs[stage])
+    
 # =========================== KOMPLEKS MONITORING PANELI ===========================
 st.header(t('monitoring_panel', obj_name=obj_name))
 def calculate_live_metrics(h, layers, T_max):
