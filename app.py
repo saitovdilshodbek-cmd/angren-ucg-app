@@ -22,7 +22,7 @@ import matplotlib.pyplot as plt
 import warnings
 warnings.filterwarnings('ignore')
 
-# =========================== PYTORCH IMPORT ===========================
+# =========================== PYTORCH IMPORT (xatolikka chidamli) ===========================
 try:
     import torch
     import torch.nn as nn
@@ -149,16 +149,7 @@ TRANSLATIONS = {
 | **Integratsiya va testlash** | 2026-06-30 | Unit testlar, yakuniy vizualizatsiya, deploy |
         """,
         'live_monitoring_tab': "🔄 Live 3D Monitoring",
-        'download_data': "📥 Monitoring ma'lumotlarini yuklab olish (CSV)",
-        'ultimate_dashboard_title': "🕹️ Ultimate Interactive Dashboard (Real-time Animation)",
-        'fos_threshold': "FOS chegarasi (Yielded Zone)",
-        'burn_radius': "Faol yonish radiusi (m)",
-        'disp_colorscale': "Siljish ranglar palitrasi",
-        'pillar_info': "🟩 Yashil to‘rtburchaklar – Selek (Pillar)",
-        'interference_info': "🔴 Qizil chiziq – Selek interferensiya zonasi",
-        'burn_info': "🟠 To‘q sariq doira – Faol yonish radiusi",
-        'void_info': "⚪ Oq yarim shaffof – Bo‘shliq (siljish >3 sm)",
-        'coal_thickness_info': "Ko‘mir qatlami qalinligi = {thick} m (birinchi qatlam)"
+        'download_data': "📥 Monitoring ma'lumotlarini yuklab olish (CSV)"
     },
     'en': {
         'app_title': "Universal Surface Deformation Monitoring",
@@ -275,16 +266,7 @@ TRANSLATIONS = {
 | **Integration & testing** | 2026-06-30 | Unit tests, final visualization, deploy |
         """,
         'live_monitoring_tab': "🔄 Live 3D Monitoring",
-        'download_data': "📥 Download monitoring data (CSV)",
-        'ultimate_dashboard_title': "🕹️ Ultimate Interactive Dashboard (Real-time Animation)",
-        'fos_threshold': "FOS Threshold (Yielded Zone)",
-        'burn_radius': "Active Burn Radius (m)",
-        'disp_colorscale': "Displacement Color Scale",
-        'pillar_info': "🟩 Green rectangles – Pillars",
-        'interference_info': "🔴 Red dashed line – Pillar Interference Zone",
-        'burn_info': "🟠 Orange circle – Active Burn Radius",
-        'void_info': "⚪ White semi-transparent – Void (displacement >3 cm)",
-        'coal_thickness_info': "Coal seam thickness = {thick} m (first layer)"
+        'download_data': "📥 Download monitoring data (CSV)"
     },
     'ru': {
         'app_title': "Универсальный мониторинг деформации земной поверхности",
@@ -401,16 +383,7 @@ TRANSLATIONS = {
 | **Интеграция и тестирование** | 2026-06-30 | Модульные тесты, финальная визуализация, деплой |
         """,
         'live_monitoring_tab': "🔄 Live 3D Monitoring",
-        'download_data': "📥 Скачать данные мониторинга (CSV)",
-        'ultimate_dashboard_title': "🕹️ Ultimate Interactive Dashboard (Real-time Animation)",
-        'fos_threshold': "Порог FOS (зона текучести)",
-        'burn_radius': "Активный радиус горения (м)",
-        'disp_colorscale': "Цветовая шкала смещения",
-        'pillar_info': "🟩 Зелёные прямоугольники – Целики",
-        'interference_info': "🔴 Красная линия – Зона интерференции целиков",
-        'burn_info': "🟠 Оранжевый круг – Активный радиус горения",
-        'void_info': "⚪ Белая полупрозрачность – Пустота (смещение >3 см)",
-        'coal_thickness_info': "Мощность угольного пласта = {thick} м (первый слой)"
+        'download_data': "📥 Скачать данные мониторинга (CSV)"
     }
 }
 
@@ -1105,7 +1078,7 @@ with c2:
         3: f"**3-Bosqich:** Markaziy quduq (selek) gazlashtirilmoqda. Butun massiv barqaror cho‘kish holatida."
     }
     st.info(msgs[stage])
-    
+
 # =========================== KOMPLEKS MONITORING PANELI ===========================
 st.header(t('monitoring_panel', obj_name=obj_name))
 def calculate_live_metrics(h, layers, T_max):
@@ -1437,9 +1410,9 @@ def generate_full_iso_report(obj_name, lang, layers_data, T_source_max, burn_dur
             'danger': "🚨 DANGEROUS: High risk of collapse! Increase pillar width or reduce thermal load."
         }
     }
-    t_iso = texts.get(lang, texts['en'])
+    t = texts.get(lang, texts['en'])
     doc = Document()
-    header = doc.add_heading(f"{t_iso['h1']}\n{obj_name}", level=1)
+    header = doc.add_heading(f"{t['h1']}\n{obj_name}", level=1)
     header.alignment = WD_ALIGN_PARAGRAPH.CENTER
     meta_table = doc.add_table(rows=2, cols=2)
     meta_table.style = 'Table Grid'
@@ -1447,7 +1420,7 @@ def generate_full_iso_report(obj_name, lang, layers_data, T_source_max, burn_dur
     meta_table.cell(0,1).text = f"Revision: {revision}"
     meta_table.cell(1,0).text = f"Prepared: {prepared_by}"
     meta_table.cell(1,1).text = f"Approved: {approved_by}"
-    doc.add_heading(t_iso['sec1'], level=2)
+    doc.add_heading(t['sec1'], level=2)
     p = doc.add_paragraph()
     p.add_run(f"Ob'ekt nomi: ").bold = True
     p.add_run(f"{obj_name}\n")
@@ -1455,7 +1428,7 @@ def generate_full_iso_report(obj_name, lang, layers_data, T_source_max, burn_dur
     p.add_run(f"{T_source_max} °C\n")
     p.add_run(f"Yonish davomiyligi: ").bold = True
     p.add_run(f"{burn_duration} soat")
-    doc.add_heading(t_iso['sec2'], level=2)
+    doc.add_heading(t['sec2'], level=2)
     table = doc.add_table(rows=1, cols=5)
     table.style = 'Table Grid'
     hdrs = ["Layer Name", "Thick (m)", "UCS (MPa)", "GSI", "mi"]
@@ -1473,7 +1446,7 @@ def generate_full_iso_report(obj_name, lang, layers_data, T_source_max, burn_dur
         image_stream = io.BytesIO(fig_bytes)
         doc.add_picture(image_stream, width=Inches(5.5))
         doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
-    doc.add_heading(t_iso['sec5'], level=2)
+    doc.add_heading(t['sec5'], level=2)
     fos_val = np.nanmean(fos_2d)
     risk_level = "LOW"
     if np.max(risk_map) > 0.75:
@@ -1484,17 +1457,17 @@ def generate_full_iso_report(obj_name, lang, layers_data, T_source_max, burn_dur
     conclusion_text = ""
     color = RGBColor(0, 128, 0)
     if fos_val < 1.1:
-        conclusion_text = t_iso['danger']
+        conclusion_text = t['danger']
         color = RGBColor(255, 0, 0)
     elif fos_val < 1.5:
-        conclusion_text = t_iso['warning']
+        conclusion_text = t['warning']
         color = RGBColor(255, 165, 0)
     else:
-        conclusion_text = t_iso['safe']
+        conclusion_text = t['safe']
     res_p = doc.add_paragraph()
-    res_p.add_run(f"{t_iso['fos_label']} {fos_val:.2f}\n").bold = True
-    res_p.add_run(f"{t_iso['ai_label']} {optimal_width_ai:.1f} m\n\n")
-    final_run = res_p.add_run(f"{t_iso['conclusion_title']}\n{conclusion_text}")
+    res_p.add_run(f"{t['fos_label']} {fos_val:.2f}\n").bold = True
+    res_p.add_run(f"{t['ai_label']} {optimal_width_ai:.1f} m\n\n")
+    final_run = res_p.add_run(f"{t['conclusion_title']}\n{conclusion_text}")
     final_run.bold = True
     final_run.font.color.rgb = color
     doc.add_page_break()
@@ -1839,141 +1812,108 @@ with tab_advanced:
         for r in [t('ref1'), t('ref2'), t('ref3'), t('ref4'), "**Brady, B. H., & Brown, E. T. (2006).** Rock Mechanics for Underground Mining."]:
             st.write(r)
 
-# =========================== INTEGRATSIYA QISMI: INTERACTIVE UCG DASHBOARD (YANGI VERSIYA) ===========================
+# =========================== INTEGRATSIYA QISMI: INTERACTIVE UCG DASHBOARD (Tuzatilgan) ===========================
 st.header("🕹️ Ultimate Interactive Dashboard (Real-time Animation)")
-st.markdown("Bu panelda siz **yonish radiusi**, **FOS chegarasi** va **ranglar** kabi parametrlarni slayderlar bilan o‘zgartirib, real vaqtda 2D FOS, stress va siljish xaritalarini kuzatishingiz mumkin. Shuningdek, **selek interferensiyasi** va **faol yonish doiralari** vizualizatsiya qilingan.")
+st.markdown("Bu panelda FOS, siljish maydoni va vaqt bo‘yicha sirt siljishlarini interaktiv kuzatishingiz mumkin. Quyidagi slayderlar yordamida FOS chegarasini va rang sxemasini o‘zgartiring.")
 
-# Yangi dashboard uchun funksiyalar (ikkinchi koddan olingan)
-def generate_simulation_data(x_axis, z_axis, coal_thickness, pillar_locations, burn_radius, fos_thresh):
-    """Simulated FOS, displacement, stress based on inputs"""
-    X, Z = np.meshgrid(x_axis, z_axis)
-    # FOS: depends on distance to pillars and burn radius
-    fos = 1.5 * np.ones_like(X)
-    for p in pillar_locations:
-        dist_to_pillar = np.abs(X - p)
-        fos *= (1 + 0.3 * np.exp(-dist_to_pillar**2 / 100))
-    fos = fos * (1 - 0.2 * np.exp(-(Z - coal_thickness/2)**2 / 50))
-    fos += 0.2 * np.sin(X/15) - 0.1 * np.cos(Z/10)
-    fos = np.clip(fos, 0.2, 3.0)
-    
-    # Displacement (cm) - higher near burn radius and pillars
-    disp = 2 * np.exp(-((X - 100)**2 + (Z - coal_thickness/2)**2) / (2*burn_radius**2))
-    for p in pillar_locations:
-        disp += 0.5 * np.exp(-(X - p)**2 / 100)
-    disp = np.clip(disp, 0, 12)
-    
-    # Stress (MPa)
-    stress = 40 + 15 * np.sin(X/20) * np.cos(Z/12)
-    stress += 5 * np.exp(-((X - 100)**2 + (Z - 10)**2) / 200)
-    stress = np.clip(stress, 20, 80)
-    
-    return fos, disp, stress
-
-def draw_dashboard(x_axis, z_axis, fos, disp, stress, burn_radius, pillar_locations, 
-                   interference_pairs, fos_thresh, disp_colorscale, fracture_mask, void_mask):
-    fig = make_subplots(rows=1, cols=2, subplot_titles=("FOS & Yielded Zones", "Stress & Displacement"))
-    # Left: FOS
+# Tuzatilgan funksiya (to‘g‘ridan-to‘g‘ri layout orqali o‘qlarni sozlash)
+def draw_interactive_ucg_dashboard(x_axis, z_axis, fos_2d, displacement_2d, surface_x, surface_h_disp, surface_v_disp, time_steps=None, fos_threshold=1.0, disp_colorscale='Turbo'):
+    if time_steps is None:
+        time_steps = np.arange(surface_h_disp.shape[0])
+    pillar_locations = np.linspace(x_axis.min() + 50, x_axis.max() - 50, 3)
+    fig = make_subplots(rows=2, cols=2,
+                        subplot_titles=("A) FOS & Yielded Zones (2D)",
+                                        "B) Total Displacement (2D, cm)",
+                                        "C) Horizontal Surface Displacement (mm)",
+                                        "D) Vertical Surface Displacement (mm)"),
+                        horizontal_spacing=0.1, vertical_spacing=0.15)
+    # FOS Heatmap
     fig.add_trace(go.Heatmap(
-        z=fos, x=x_axis, y=z_axis,
-        colorscale=[[0,'rgb(255,0,0)'],[0.33,'rgb(255,165,0)'],[0.5,'rgb(173,255,47)'],[1,'rgb(0,128,0)']],
-        zmin=0, zmax=3, colorbar=dict(title="FOS")
+        z=fos_2d, x=x_axis, y=z_axis,
+        colorscale=[[0, 'rgb(255, 0, 0)'], [0.33, 'rgb(255, 165, 0)'], [0.5, 'rgb(173, 255, 47)'], [1, 'rgb(0, 128, 0)']],
+        zmin=0, zmax=3, colorbar=dict(title="FOS", x=0.45, y=0.78, thickness=12, len=0.42), name="FOS"
     ), row=1, col=1)
-    # Yielded zones overlay
-    fig.add_trace(go.Heatmap(
-        z=fracture_mask, x=x_axis, y=z_axis,
-        colorscale=[[0,'rgba(255,0,0,0)'],[1,'rgba(255,0,0,0.5)']],
-        showscale=False
-    ), row=1, col=1)
+    mask_fos = np.where(fos_2d < fos_threshold, 1, np.nan)
+    fig.add_trace(go.Heatmap(z=mask_fos, x=x_axis, y=z_axis, colorscale=[[0,'rgba(255,0,0,0.5)'],[1,'rgba(255,0,0,0.5)']], showscale=False, name="Yielded Zone"), row=1, col=1)
+    # 2D Displacement
+    fig.add_trace(go.Heatmap(z=displacement_2d, x=x_axis, y=z_axis, colorscale=disp_colorscale, colorbar=dict(title="Disp (cm)", x=1.0, y=0.78, thickness=12, len=0.42), name="2D Disp"), row=1, col=2)
+    # Surface displacement traces
+    for i, t in enumerate(time_steps):
+        fig.add_trace(go.Heatmap(z=surface_h_disp[i:i+1,:], x=surface_x, y=[t], colorscale='Turbo', zmin=np.min(surface_h_disp), zmax=np.max(surface_h_disp), showscale=False, visible=(i==0), name="H Disp"), row=2, col=1)
+        fig.add_trace(go.Heatmap(z=surface_v_disp[i:i+1,:], x=surface_x, y=[t], colorscale='Viridis', zmin=np.min(surface_v_disp), zmax=np.max(surface_v_disp), showscale=False, visible=(i==0), name="V Disp"), row=2, col=2)
     # Pillars
-    for p in pillar_locations:
-        fig.add_shape(type="rect", x0=p-5, x1=p+5, y0=0, y1=z_axis.max(),
-                      line=dict(color="lime", width=2), row=1, col=1)
-    # Selek interference lines
-    for pair in interference_pairs:
-        fig.add_shape(type="line", x0=pair[0], x1=pair[1], y0=z_axis.mean(), y1=z_axis.mean(),
-                      line=dict(color="red", width=3, dash="dash"), row=1, col=1)
-    # Burn radius circles
-    for p in pillar_locations:
-        fig.add_shape(type="circle", x0=p-burn_radius, x1=p+burn_radius,
-                      y0=z_axis.mean()-burn_radius, y1=z_axis.mean()+burn_radius,
-                      line=dict(color="orange", width=2), row=1, col=1)
-    # Right: Stress
-    fig.add_trace(go.Heatmap(
-        z=stress, x=x_axis, y=z_axis,
-        colorscale='Viridis', colorbar=dict(title="Stress (MPa)")
-    ), row=1, col=2)
-    # Displacement overlay
-    fig.add_trace(go.Heatmap(
-        z=disp, x=x_axis, y=z_axis,
-        colorscale=disp_colorscale, colorbar=dict(title="Disp (cm)"),
-        opacity=0.7
-    ), row=1, col=2)
-    # Void overlay
-    fig.add_trace(go.Heatmap(
-        z=void_mask, x=x_axis, y=z_axis,
-        colorscale=[[0,'rgba(0,0,0,0)'],[1,'rgba(255,255,255,0.5)']],
-        showscale=False
-    ), row=1, col=2)
-    fig.update_layout(template='plotly_dark', height=600, width=1200,
-                      title=dict(text="Ultimate 2D UCG Dashboard (Stress, Yield, Burn & Displacement)", x=0.5),
-                      showlegend=False)
-    fig.update_yaxes(autorange="reversed")
+    for pos in pillar_locations:
+        fig.add_shape(type="rect", x0=pos-25, x1=pos+25, y0=550, y1=600, line=dict(color="Lime", width=3), row=1, col=1)
+        fig.add_shape(type="rect", x0=pos-25, x1=pos+25, y0=550, y1=600, line=dict(color="Lime", width=3), row=1, col=2)
+    # ========== O‘QLARNI TO‘G‘RIDAN-TO‘G‘RI LAYOUT ORQALI SOZLASH ==========
+    # 1-qator, 1-ustun (FOS)
+    fig.layout.xaxis.title.text = "X (m)"
+    fig.layout.xaxis.gridcolor = 'rgba(255,255,255,0.1)'
+    fig.layout.xaxis.range = [x_axis.min(), x_axis.max()]
+    fig.layout.yaxis.title.text = "Depth (m)"
+    fig.layout.yaxis.gridcolor = 'rgba(255,255,255,0.1)'
+    fig.layout.yaxis.autorange = "reversed"
+    # 1-qator, 2-ustun (Displacement)
+    fig.layout.xaxis2.title.text = "X (m)"
+    fig.layout.xaxis2.gridcolor = 'rgba(255,255,255,0.1)'
+    fig.layout.xaxis2.range = [x_axis.min(), x_axis.max()]
+    fig.layout.yaxis2.title.text = "Depth (m)"
+    fig.layout.yaxis2.gridcolor = 'rgba(255,255,255,0.1)'
+    fig.layout.yaxis2.autorange = "reversed"
+    # 2-qator, 1-ustun (Horizontal displacement)
+    fig.layout.xaxis3.title.text = "Masofa (m)"
+    fig.layout.xaxis3.gridcolor = 'rgba(255,255,255,0.1)'
+    fig.layout.yaxis3.title.text = "Vaqt bosqichi"
+    fig.layout.yaxis3.gridcolor = 'rgba(255,255,255,0.1)'
+    # 2-qator, 2-ustun (Vertical displacement)
+    fig.layout.xaxis4.title.text = "Masofa (m)"
+    fig.layout.xaxis4.gridcolor = 'rgba(255,255,255,0.1)'
+    fig.layout.yaxis4.title.text = "Vaqt bosqichi"
+    fig.layout.yaxis4.gridcolor = 'rgba(255,255,255,0.1)'
+    # Layout
+    fig.update_layout(
+        title=dict(text="Interactive Ultimate UCG Monitoring Dashboard", x=0.5, font=dict(size=22, color="white")),
+        plot_bgcolor='black', paper_bgcolor='black', template='plotly_dark', height=900,
+        showlegend=False, margin=dict(l=50, r=50, t=100, b=50),
+        updatemenus=[dict(type="buttons", showactive=False, y=1.05, x=1.15, xanchor="right", yanchor="top",
+                          buttons=[dict(label="Play", method="animate",
+                                        args=[None, {"frame": {"duration":500, "redraw":True}, "fromcurrent":True, "transition": {"duration":0}}]),
+                                   dict(label="Pause", method="animate",
+                                        args=[[None], {"frame": {"duration":0, "redraw":False}, "mode":"immediate", "transition": {"duration":0}}])])]
+    )
     return fig
 
-def compute_selek_interference(pillars, burn_radius):
-    interference = []
-    optimal_dist = []
-    for i in range(len(pillars)-1):
-        for j in range(i+1, len(pillars)):
-            dist = abs(pillars[j]-pillars[i])
-            if dist < burn_radius*2:
-                interference.append((pillars[i], pillars[j]))
-                optimal_dist.append(burn_radius*2)
-    return interference, optimal_dist
+# Dashboard uchun kerakli ma'lumotlar
+if 'displacement_2d' not in locals():
+    sub_2d = np.tile(sub_p.reshape(1,-1)*100, (len(z_axis), 1))
+    uplift_2d = np.tile(uplift.reshape(1,-1), (len(z_axis), 1))
+    displacement_2d = np.sqrt(sub_2d**2 + uplift_2d**2) * (1 + 0.3 * np.random.rand(*sub_2d.shape))
 
-# Dashboard uchun kerakli o‘qlar va boshlang‘ich parametrlar
-dash_x_axis = np.linspace(0, 200, 100)
-dash_z_axis = np.linspace(0, 50, 50)
-coal_thickness = layers_data[0]['t']  # birinchi qatlam qalinligi
-pillar_locations = np.linspace(25, 175, 3)  # 3 ta selek
+time_steps_dash = np.arange(0, time_h+1, max(1, time_h//20))
+surface_x = x_axis
+surface_h_disp = []
+surface_v_disp = []
+for t in time_steps_dash:
+    v_disp = -s_max * np.exp(-(surface_x**2)/(2*(total_depth/2)**2)) * (min(t, burn_duration)/burn_duration) * 100
+    h_disp = np.gradient(v_disp) * 0.5
+    surface_v_disp.append(v_disp)
+    surface_h_disp.append(h_disp)
+surface_h_disp = np.array(surface_h_disp)
+surface_v_disp = np.array(surface_v_disp)
 
-# Slayderlar (interaktiv)
-col_fos, col_rad, col_cscale = st.columns(3)
-with col_fos:
-    fos_thresh_dash = st.slider(t('fos_threshold'), 0.1, 2.0, 1.0, 0.05, key="fos_dash")
-with col_rad:
-    burn_radius_dash = st.slider(t('burn_radius'), 5, 50, 15, 1, key="burn_rad_dash")
-with col_cscale:
-    disp_cscale_dash = st.selectbox(t('disp_colorscale'), ['Turbo','Viridis','Cividis'], index=0, key="disp_cscale_dash")
+col1, col2 = st.columns(2)
+with col1:
+    fos_thresh_dash = st.slider("FOS Threshold (Yielded Zone)", 0.1, 2.0, 1.0, 0.05, key="fos_thresh_dash")
+with col2:
+    disp_cscale = st.selectbox("Displacement Color Scale", ['Turbo','Viridis','Cividis'], index=0, key="disp_cscale")
 
-# Simulyatsiya ma'lumotlarini yangilash
-fos_dash, disp_dash, stress_dash = generate_simulation_data(
-    dash_x_axis, dash_z_axis, coal_thickness, pillar_locations, burn_radius_dash, fos_thresh_dash
+dash_fig = draw_interactive_ucg_dashboard(
+    x_axis=x_axis, z_axis=z_axis, fos_2d=fos_2d,
+    displacement_2d=displacement_2d, surface_x=surface_x,
+    surface_h_disp=surface_h_disp, surface_v_disp=surface_v_disp,
+    time_steps=time_steps_dash, fos_threshold=fos_thresh_dash, disp_colorscale=disp_cscale
 )
-fracture_mask_dash = np.where(fos_dash < fos_thresh_dash, 1, np.nan)
-void_mask_dash = np.where(disp_dash > 3, disp_dash, np.nan)
-interference_pairs, _ = compute_selek_interference(pillar_locations, burn_radius_dash)
-
-# Dashboardni chizish
-dash_fig = draw_dashboard(dash_x_axis, dash_z_axis, fos_dash, disp_dash, stress_dash,
-                          burn_radius_dash, pillar_locations, interference_pairs,
-                          fos_thresh_dash, disp_cscale_dash, fracture_mask_dash, void_mask_dash)
 st.plotly_chart(dash_fig, use_container_width=True)
-
-# Info panel
-st.markdown(f"""
-- {t('pillar_info')}
-- {t('interference_info')}
-- {t('burn_info')}
-- {t('void_info')}
-- {t('coal_thickness_info', thick=coal_thickness)}
-""")
-
-# =========================== ASOSIY ILMIY METODOLOGIYA (Yakuniy) ===========================
-with st.expander(t('methodology_expander')):
-    st.markdown("#### Ushbu model quyidagi fundamental ilmiy ishlar asosida tuzilgan:")
-    for r in [t('ref1'), t('ref2'), t('ref3'), t('ref4'), "**Brady, B. H., & Brown, E. T. (2006).** Rock Mechanics for Underground Mining."]:
-        st.write(r)
 
 st.sidebar.markdown("---")
 st.sidebar.write(f"Tuzuvchi: Saitov Dilshodbek | Device: {device}")
