@@ -1112,50 +1112,89 @@ with st.expander("⚖️ Ssenariy Taqqoslash (A vs B)"):
                             'Farq': [f"{b_ucs-a_ucs:+.1f}", f"{b_gsi-a_gsi:+d}", f"{fos_b-fos_a:+.2f}", f"{b_temp-a_temp:+.0f}"]})
     st.dataframe(comp_df, use_container_width=True, hide_index=True)
 
-# 6. Sezgirlik tahlili (Tornado plot)
-@st.cache_data(show_spinner=False)
-def sensitivity_analysis(base_ucs, base_gsi, base_d, base_nu, base_t, H_seam, range_pct=0.2):
-    def quick_fos(ucs, gsi, d, nu, T):
-        mb = 10*np.exp((gsi-100)/(28-14*d))
-        s = np.exp((gsi-100)/(9-3*d))
-        damage = np.clip(1-np.exp(-0.002*max(T-100,0)),0,0.95)
-        sigma_ci = ucs*(1-damage)
-        str_red = np.exp(-0.0025*(T-20))
-        p_str = (sigma_ci*str_red)*(20/(H_seam+1e-12))**0.5
-        sv = ucs*0.025
-        return np.clip(p_str/(sv+1e-12),0,5)
-    params = {
-        'UCS (MPa)': (base_ucs, base_ucs*(1-range_pct), base_ucs*(1+range_pct)),
-        'GSI': (base_gsi, base_gsi*(1-range_pct), min(100,base_gsi*(1+range_pct))),
-        'D factor': (base_d, max(0,base_d-0.2), min(1,base_d+0.2)),
-        'Poisson (ν)': (base_nu, max(0.1,base_nu-0.05), min(0.4,base_nu+0.05)),
-        'Harorat (°C)': (base_t, base_t*(1-range_pct), min(1200,base_t*(1+range_pct))),
-    }
-    base_fos = quick_fos(base_ucs, base_gsi, base_d, base_nu, base_t)
-    results = []
-    for name, (base, low, high) in params.items():
-        fos_low = quick_fos(low if name=='UCS (MPa)' else base_ucs,
-                            low if name=='GSI' else base_gsi,
-                            low if name=='D factor' else base_d,
-                            low if name=='Poisson (ν)' else base_nu,
-                            low if name=='Harorat (°C)' else base_t)
-        fos_high = quick_fos(high if name=='UCS (MPa)' else base_ucs,
-                             high if name=='GSI' else base_gsi,
-                             high if name=='D factor' else base_d,
-                             high if name=='Poisson (ν)' else base_nu,
-                             high if name=='Harorat (°C)' else base_t)
-        results.append({'param':name, 'low':fos_low-base_fos, 'high':fos_high-base_fos})
-    return pd.DataFrame(results), base_fos
-
-with st.expander("🌪️ Sezgirlik Tahlili (Tornado Plot)"):
-    df_sens, fos_base = sensitivity_analysis(layers_data[-1]['ucs'], layers_data[-1]['gsi'], D_factor, nu_poisson, avg_t_p, H_seam)
-    df_sens = df_sens.sort_values('high', ascending=True)
-    fig_tornado = go.Figure()
-    fig_tornado.add_bar(y=df_sens['param'], x=df_sens['low'], orientation='h', name='−20%', marker_color='#E74C3C')
-    fig_tornado.add_bar(y=df_sens['param'], x=df_sens['high'], orientation='h', name='+20%', marker_color='#27AE60')
-    fig_tornado.add_vline(x=0, line_color='white', line_width=2)
-    fig_tornado.update_layout(title=f"FOS sezgirligi (asosiy FOS={fos_base:.2f})", barmode='overlay', template='plotly_dark', height=350, xaxis_title='ΔFOS', bargap=0.3)
-    st.plotly_chart(fig_tornado, use_container_width=True)
+# ====================== INTERAKTIV SEZGIRLIK TORNADO PLOT (FOYDALANUVCHI PARAMETRLARI) ======================
+with st.expander("🌪️ Interaktiv Sezgirlik Tahlili (O‘z parametrlaringizni kiriting)", expanded=False):
+    st.markdown("Quyidagi slayderlar yordamida asosiy parametrlarni o‘zgartiring va ularning **FOS** ga ta’sirini tornado diagrammada kuzating.")
+    
+    # Foydalanuvchi kiritadigan parametrlar
+    col1, col2 = st.columns(2)
+    with col1:
+        base_ucs_interact = st.number_input("Base UCS (MPa)", value=float(layers_data[-1]['ucs']), step=5.0, key="interact_ucs")
+        base_gsi_interact = st.slider("Base GSI", 10, 100, layers_data[-1]['gsi'], key="interact_gsi")
+        base_d_interact = st.slider("Base D factor", 0.0, 1.0, D_factor, step=0.05, key="interact_d")
+    with col2:
+        base_nu_interact = st.slider("Base Poisson (ν)", 0.1, 0.4, nu_poisson, step=0.01, key="interact_nu")
+        base_t_interact = st.slider("Base Harorat (°C)", 20, 1200, int(avg_t_p), step=10, key="interact_t")
+        H_seam_interact = st.number_input("Qatlam qalinligi (m)", value=float(H_seam), step=2.0, key="interact_h")
+    
+    range_pct_interact = st.slider("Parametr o‘zgarish foizi (%)", 5, 50, 20, key="interact_range") / 100
+    
+    # Sezgirlik funksiyasi (yuqoridagi bilan bir xil, lekin keshni tozalash uchun alohida)
+    @st.cache_data(show_spinner=False)
+    def interactive_sensitivity(ucs, gsi, d, nu, T, H, range_pct):
+        def quick_fos(ucs, gsi, d, nu, T, H):
+            mb = 10 * np.exp((gsi - 100) / (28 - 14 * d))
+            s = np.exp((gsi - 100) / (9 - 3 * d))
+            damage = np.clip(1 - np.exp(-0.002 * max(T - 100, 0)), 0, 0.95)
+            sigma_ci = ucs * (1 - damage)
+            str_red = np.exp(-0.0025 * (T - 20))
+            p_str = (sigma_ci * str_red) * (20 / (H + 1e-12))**0.5
+            sv = ucs * 0.025
+            return p_str / (sv + 1e-12)
+        
+        params = {
+            'UCS (MPa)': (ucs, ucs*(1-range_pct), ucs*(1+range_pct)),
+            'GSI': (gsi, gsi*(1-range_pct), min(100, gsi*(1+range_pct))),
+            'D factor': (d, max(0, d-0.2), min(1, d+0.2)),
+            'Poisson (ν)': (nu, max(0.1, nu-0.05), min(0.4, nu+0.05)),
+            'Harorat (°C)': (T, T*(1-range_pct), min(1200, T*(1+range_pct))),
+        }
+        base_fos = quick_fos(ucs, gsi, d, nu, T, H)
+        results = []
+        for name, (base, low, high) in params.items():
+            f_low = quick_fos(low if name=='UCS (MPa)' else ucs,
+                              low if name=='GSI' else gsi,
+                              low if name=='D factor' else d,
+                              low if name=='Poisson (ν)' else nu,
+                              low if name=='Harorat (°C)' else T,
+                              H)
+            f_high = quick_fos(high if name=='UCS (MPa)' else ucs,
+                               high if name=='GSI' else gsi,
+                               high if name=='D factor' else d,
+                               high if name=='Poisson (ν)' else nu,
+                               high if name=='Harorat (°C)' else T,
+                               H)
+            results.append({'param': name, 'low': f_low - base_fos, 'high': f_high - base_fos, 'abs_diff': abs(f_high - f_low)})
+        df_results = pd.DataFrame(results).sort_values('abs_diff', ascending=True)
+        return df_results, base_fos
+    
+    df_sens_interact, fos_base_interact = interactive_sensitivity(
+        base_ucs_interact, base_gsi_interact, base_d_interact,
+        base_nu_interact, base_t_interact, H_seam_interact, range_pct_interact
+    )
+    
+    # Tornado plot
+    fig_tornado_interact = go.Figure()
+    fig_tornado_interact.add_trace(go.Bar(
+        y=df_sens_interact['param'], x=df_sens_interact['low'], orientation='h',
+        name='−', marker_color='#E74C3C', hovertemplate='%{y}: ΔFOS = %{x:.3f}<extra></extra>'
+    ))
+    fig_tornado_interact.add_trace(go.Bar(
+        y=df_sens_interact['param'], x=df_sens_interact['high'], orientation='h',
+        name='+', marker_color='#27AE60', hovertemplate='%{y}: ΔFOS = %{x:.3f}<extra></extra>'
+    ))
+    fig_tornado_interact.update_layout(
+        title=f"FOS Sezgirligi (Base FOS = {fos_base_interact:.2f})",
+        barmode='relative', template='plotly_dark', height=500,
+        xaxis_title='ΔFOS', yaxis_title='Parametr', showlegend=True,
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='center', x=0.5)
+    )
+    fig_tornado_interact.add_vline(x=0, line_color='white', line_width=1, line_dash='dash')
+    st.plotly_chart(fig_tornado_interact, use_container_width=True)
+    
+    # Natijalar jadvali
+    st.dataframe(df_sens_interact[['param', 'low', 'high', 'abs_diff']].round(4), use_container_width=True, hide_index=True)
+    st.caption("Eng sezgir parametrlar yuqorida (eng katta abs_diff). Salbiy ΔFOS – parametr oshganda FOS kamayadi.")
 
 # =========================== KENGAYTIRILGAN ISO 9001 HISOBOT GENERATORI ===========================
 def generate_full_iso_report(obj_name, lang, layers_data, T_source_max, burn_duration,
