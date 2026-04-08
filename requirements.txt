@@ -10,3 +10,6 @@ requests
 numpy
 pandas
 streamlit
+pip
+install
+openpyxl
