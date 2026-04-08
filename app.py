@@ -774,7 +774,7 @@ with col_g3:
     fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_burning, name=t('combustion'), line=dict(color='orange',width=4)))
     st.plotly_chart(fig_hb.update_layout(title=t('hb_envelopes_title'), template="plotly_dark", height=300, legend=dict(orientation="h", y=-0.3, x=0.5, xanchor="center")), use_container_width=True)
 
-# =========================== TM MAYDONI (ILMIY MODEL: K0, ELLIPS, DOME DECAY, YIELD ZONE) ===========================
+# =========================== TM MAYDONI (YANGI ILMIY MODEL BILAN) ===========================
 st.markdown("---")
 c1, c2 = st.columns([1, 2.5])
 
@@ -803,85 +803,85 @@ with c1:
         use_container_width=True
     )
 
-# ----------- Right Panel: Advanced UCG Model (1-3-2 Stages) -----------
+# ----------- Right Panel: Advanced UCG Geomechanical Model (1-3-2 Stages) -----------
 with c2:
-    st.subheader("UCG Yonish Bosqichlari (1 → 3 → 2 sxemasi) – Ilmiy Model")
+    st.subheader("UCG Yonish Bosqichlari (1 → 3 → 2 sxemasi) – Yangi Ilmiy Model")
     
     # Asosiy koddan kerakli parametrlarni olish
     coal_layer = layers_data[-1]
-    h_seam = coal_layer['t']                 # ko'mir qatlami qalinligi (m)
-    ucs_coal_pa = coal_layer['ucs'] * 1e6    # Pa
+    h_seam = coal_layer['t']                     # ko'mir qatlami qalinligi (m)
+    ucs_coal_pa = coal_layer['ucs'] * 1e6        # Pa
     rho_coal = coal_layer['rho']
     
-    # Quduq koordinatalari
+    # Quduqlar orasidagi masofa (pillar_locations asosida)
     well_x = [-total_depth/3, 0, total_depth/3]
-    source_z = total_depth - (h_seam / 2)    # qatlam markazi
+    dist_wells = well_x[2] - well_x[0]           # masofa (m)
     
-    # Quduqlar orasidagi masofa (chap va o'ng quduq)
-    dist_wells = well_x[2] - well_x[0]       # masofa, musbat
+    # Kamera kengligi (cavity_width) – dist_wells dan optimallashtirilgan pillar enini ayiramiz
+    cavity_width = dist_wells - rec_width
+    cavity_width = max(cavity_width, 10)         # minimal 10 m
     
-    # 1-3-2 ketma-ketligi (quduq indekslari: 0-chap, 1-markaz, 2-o'ng)
+    # Fizik doimiylar
+    E_MOD = 25e9          # 25 GPa (Pa)
+    ALPHA = 1.0e-5        # 1/°C
+    NU = nu_poisson        # asl koddan
+    K0 = NU / (1 - NU)    # yon bosim koeffitsiyenti
+    
+    # Qatlamlarning yuqori va pastki chegaralari (z_start asosida)
+    layer_bounds = []
+    for l in layers_data:
+        top = l['z_start']
+        bot = top + l['t']
+        layer_bounds.append((top, bot, l))
+    
+    # Ko'mir qatlamidagi o'rtacha vertikal kuchlanish (sigma_v_coal)
+    sigma_v_coal = 0.0
+    for l in layers_data[:-1]:   # ustki qatlamlar
+        sigma_v_coal += l['rho'] * 9.81 * l['t']
+    sigma_v_coal += rho_coal * 9.81 * (h_seam / 2)
+    sigma_v_coal = sigma_v_coal / 1e6   # MPa da (keyin ishlatiladi)
+    
+    # Kritik gumbaz balandligi Hc
+    Hc = h_seam * np.sqrt(sigma_v_coal / (coal_layer['ucs'] + 1e-5))
+    Hc = np.clip(Hc, h_seam, h_seam * 4)
+    
+    # 1-3-2 ketma-ketligi (quduq indekslari: 0-chap, 1-markaz, 2-o‘ng)
     states_132 = {
-        1: [0],      # faqat chap quduq
-        2: [0, 2],   # chap va o'ng (markaziy seleklik)
-        3: [0, 1, 2] # barcha uch quduq
+        1: [0],          # faqat chap quduq
+        2: [0, 2],       # chap va o‘ng (markaziy seleklik)
+        3: [0, 1, 2]     # barcha uch quduq
     }
     
+    # Bosqich tanlash slayderi
     stage = st.select_slider("Bosqichni tanlang:", options=[1, 2, 3], value=1, key="ucg_stage_132")
     active_wells = states_132[stage]
     
-    # Yonish bo'shlig'i kengligi – rec_width (optimallashtirilgan selek eni)
-    cavity_width = rec_width
-    selek_eni = dist_wells - cavity_width   # qolgan selek kengligi
-    
-    # Fizik doimiylar (SI)
-    E_MOD = 25e9          # 25 GPa (Pa)
-    ALPHA = 1.0e-5        # 1/°C
-    nu = nu_poisson
-    K0 = nu / (1 - nu) if nu < 1 else 0.5   # gorizontal kuchlanish koeffitsiyenti
-    
-    # ------------------- Ilmiy FOS hisoblash (sizning kodingiz asosida) -------------------
-    def compute_advanced_fos(grid_x, grid_z, active_wells, layers_data, source_z, cavity_width, dist_wells,
-                             temp_field, sigma_v_field, E, alpha, nu, K0, beta, D_factor):
+    # ------------------- Yangi FOS hisoblash (ilmiy model) -------------------
+    def compute_advanced_fos(grid_x, grid_z, active_wells, well_x, source_z, h_seam, cavity_width,
+                             temp_field, sigma_v_field, layers_data, layer_bounds,
+                             E, alpha, nu, K0, Hc, sigma_v_coal_MPa, ucs_coal_pa):
         fos = np.full_like(grid_x, 3.0)
-        
-        coal_layer = layers_data[-1]
-        coal_h = coal_layer['t']
-        
-        # Qatlam chegaralarini hisoblash (z_start mavjud)
-        layer_bounds = []
-        for l in layers_data:
-            top = l['z_start']
-            bot = top + l['t']
-            layer_bounds.append((top, bot, l))
-        
-        # 1. Ko'mir qatlamidagi o'rtacha vertikal kuchlanish (sigma_v_coal)
-        # Barcha ustki qatlamlarning to'liq bosimi + ko'mirning yarmi
-        sigma_v_coal = 0.0
-        for l in layers_data[:-1]:
-            sigma_v_coal += l['rho'] * 9.81 * l['t']
-        sigma_v_coal += coal_layer['rho'] * 9.81 * (coal_h / 2)
-        
-        # 2. Kritik balandlik Hc
-        Hc = coal_h * np.sqrt(sigma_v_coal / (coal_layer['ucs'] * 1e6 + 1e5))
-        Hc = np.clip(Hc, coal_h, coal_h * 4)
+        total_h = sum(l['t'] for l in layers_data)
         
         for px_idx in active_wells:
             px = well_x[px_idx]
             dist = np.sqrt((grid_x - px)**2 + (grid_z - source_z)**2)
-            dz = source_z - grid_z   # qatlamdan yuqoriga masofa (musbat)
-            dx = np.abs(grid_x - px)
+            dz = source_z - grid_z      # qatlamdan yuqoriga masofa (musbat)
             
-            # Harorat maydoni (asl koddan olinadi, lekin kerak bo'lsa qayta hisoblaymiz)
-            T = 20 + 900 * np.exp(-dist / (coal_h * 3))
+            # Harorat maydoni (asl koddan olingan)
+            T = temp_field
             delta_T = np.maximum(T - 20, 0)
-            thermal_zone = dist < (coal_h * 3)
             
+            # Termal zona (masofa coal_h * 3 dan kichik)
+            thermal_zone = dist < (h_seam * 3)
+            
+            # Har bir qatlam uchun alohida hisob
             for (top, bot, layer) in layer_bounds:
                 mask = (grid_z >= top) & (grid_z < bot)
                 if not np.any(mask):
                     continue
                 
+                # Qatlam parametrlari
                 ucs_pa = layer['ucs'] * 1e6
                 rho = layer['rho']
                 gsi = layer['gsi']
@@ -892,21 +892,22 @@ with c2:
                 s_hb = np.exp((gsi - 100) / (9 - 3 * D_factor))
                 a_hb = 0.5 + (1/6) * (np.exp(-gsi/15) - np.exp(-20/3))
                 
-                # Termal degradatsiya
-                D_T = 1 - np.exp(-beta * delta_T[mask])
-                sigma_ci_T = ucs_pa * (1 - D_T)
-                
                 # Vertikal kuchlanish (asl koddan)
                 sigma_v = sigma_v_field[mask]
                 
-                # Yangi sigma_3: K0 * sigma_v * (0.6 + 0.4*(1-D_T))
+                # Termal degradatsiya
+                delta_T_m = delta_T[mask]
+                D_T = 1 - np.exp(-beta_thermal * delta_T_m)
+                sigma_ci_T = ucs_pa * (1 - D_T)
+                
+                # Yon bosim (sigma_3) – yangi mantiq
                 sigma_3 = K0 * sigma_v * (0.6 + 0.4 * (1 - D_T))
                 
-                # Termal kuchlanish (faqat termal zonada, cheklangan)
+                # Termal kuchlanish (faqat termal zonada)
                 sigma_th = np.zeros_like(sigma_v)
                 local_thermal = thermal_zone[mask]
                 if np.any(local_thermal):
-                    th_vals = (E * alpha * delta_T[mask][local_thermal]) / (1 - nu)
+                    th_vals = (E * alpha * delta_T_m[local_thermal]) / (1 - nu)
                     sigma_th[local_thermal] = np.clip(th_vals, 0, sigma_ci_T[local_thermal] * 0.25)
                 
                 sigma_1 = sigma_v + sigma_th
@@ -916,9 +917,10 @@ with c2:
                 sigma_limit = sigma_3 + sigma_ci_T * (term) ** a_hb
                 
                 # FOS
-                fos_val = np.clip(sigma_limit / (sigma_1 + 1e6), 0, 3)
+                fos_val = sigma_limit / (sigma_1 + 1e6)
+                fos_val = np.clip(fos_val, 0, 3)
                 
-                # Yield zone (agar sigma_1 > 0.85 * sigma_limit, FOS <= 0.8)
+                # Yield zone (sigma_1 > 0.85 * sigma_limit)
                 yield_mask = sigma_1 > (sigma_limit * 0.85)
                 fos_val[yield_mask] = np.minimum(fos_val[yield_mask], 0.8)
                 
@@ -927,36 +929,31 @@ with c2:
                 fos_sub = np.minimum(fos_sub, fos_val)
                 fos[mask] = fos_sub
                 
-                # Gumbaz (dome) – faqat ko'mir qatlami uchun
-                if layer == coal_layer:
-                    # Dome width: cavity_width/2 * (1 - dz/Hc) (0 dan 1 gacha)
-                    dome_width = (cavity_width / 2) * np.clip(1 - dz[mask] / (Hc + EPS), 0, 1)
-                    failure_zone = fos_sub < 1.2
-                    dome_condition = (dz[mask] > 0) & (dz[mask] < Hc) & (dx[mask] < dome_width) & failure_zone
+                # Gumbaz (dome) – faqat ko'mir qatlami (oxirgi) uchun
+                if layer == layers_data[-1]:
+                    # Dome kengligi (cavity_width/2 * (1 - dz/Hc)) va faqat FOS < 1.2 bo'lgan zonalarda
+                    dome_width = (cavity_width / 2) * np.clip(1 - dz[mask] / (Hc + 1e-5), 0, 1)
+                    failure_zone = fos_val < 1.2
+                    dome_condition = (dz[mask] > 0) & (dz[mask] < Hc) & (np.abs(grid_x[mask] - px) < dome_width) & failure_zone
                     if np.any(dome_condition):
-                        decay = np.clip(1 - (dz[mask][dome_condition] / (Hc + EPS)), 0.3, 1.0)
+                        decay = np.clip(1 - (dz[mask][dome_condition] / (Hc + 1e-5)), 0.3, 1.0)
                         fos_sub[dome_condition] = np.minimum(fos_sub[dome_condition], decay)
                         fos[mask] = fos_sub
         
-        # Ellips cavity (bo'shliq)
-        a = cavity_width / 2
-        b = h_seam / 2
+        # Ellips shaklidagi bo'shliq (cavity)
         for px_idx in active_wells:
             px = well_x[px_idx]
-            cavity_ellipse = ((grid_x - px)**2 / a**2 + (grid_z - source_z)**2 / b**2) < 1
+            a = cavity_width / 2
+            b = h_seam / 2
+            cavity_ellipse = ((grid_x - px)**2 / (a**2 + EPS) + (grid_z - source_z)**2 / (b**2 + EPS)) < 1
             fos[cavity_ellipse] = 0.05
         
-        # Selek mustahkamligi (2-bosqichda markaziy selek)
-        if stage == 2:
-            pillar_mask = (np.abs(grid_x) < selek_eni/2) & (np.abs(grid_z - source_z) < h_seam)
-            pillar_strength = coal_layer['ucs'] * 1e6 * (selek_eni / (h_seam + EPS))**0.5
-            fos[pillar_mask] = np.maximum(fos[pillar_mask], pillar_strength / (sigma_v_coal + 1e5))
-        
-        # Pastki qatlam mustahkam
-        bottom_boundary = coal_layer['z_start'] + coal_layer['t']
+        # Pastki qatlam (daba) – har doim mustahkam
+        bottom_layer = layers_data[-1]
+        bottom_boundary = bottom_layer['z_start'] + bottom_layer['t']
         fos[grid_z > bottom_boundary] = 2.5
         
-        # Seleklar (faol bo'lmagan quduqlar atrofida)
+        # Seleklar (pillar) – faol bo'lmagan quduqlar atrofida mustahkam
         all_wells = [0, 1, 2]
         for i in all_wells:
             if i not in active_wells:
@@ -964,14 +961,25 @@ with c2:
                 pillar_mask = (np.abs(grid_x - px) < h_seam * 1.5) & (np.abs(grid_z - source_z) < h_seam * 1.2)
                 fos[pillar_mask] = 2.5
         
-        # NaN/Inf tozalash
+        # 2-bosqichda maxsus selek mustahkamligi (pillar strength)
+        if stage == 2:
+            selek_eni = dist_wells - cavity_width
+            pillar_strength = ucs_coal_pa * (selek_eni / (h_seam + EPS)) ** 0.5
+            sigma_v_coal_pa = sigma_v_coal_MPa * 1e6
+            fos_pillar = pillar_strength / (sigma_v_coal_pa + 1e5)
+            # Markaziy selek zonasini aniqlash (2-quduq atrofida)
+            pillar_zone = (np.abs(grid_x - well_x[1]) < selek_eni/2) & (np.abs(grid_z - source_z) < h_seam)
+            fos[pillar_zone] = np.maximum(fos[pillar_zone], fos_pillar)
+        
+        # NaN va Inf qiymatlarni tozalash
         fos = np.nan_to_num(fos, nan=3.0, posinf=3.0, neginf=0.0)
         return fos
     
-    # FOS hisoblash
+    source_z = total_depth - (h_seam / 2)
     fos_stage = compute_advanced_fos(
-        grid_x, grid_z, active_wells, layers_data, source_z, cavity_width, dist_wells,
-        temp_2d, grid_sigma_v, E_MOD, ALPHA, nu, K0, beta_thermal, D_factor
+        grid_x, grid_z, active_wells, well_x, source_z, h_seam, cavity_width,
+        temp_2d, grid_sigma_v, layers_data, layer_bounds,
+        E_MOD, ALPHA, NU, K0, Hc, sigma_v_coal, ucs_coal_pa
     )
     
     # ------------------- Grafik (2 qator) -------------------
@@ -979,7 +987,7 @@ with c2:
         rows=2, cols=1,
         shared_xaxes=True,
         vertical_spacing=0.12,
-        subplot_titles=(t('temp_subplot'), "Geomexanik Holat (Ilmiy Model: K0, Ellips, Dome Decay)")
+        subplot_titles=(t('temp_subplot'), "Geomexanik Holat (Yangi Ilmiy Model: FOS + AI + Seleklar)")
     )
     
     # Row 1: Temperatura maydoni + gaz oqimi (asl koddan)
@@ -1068,38 +1076,40 @@ with c2:
     
     st.plotly_chart(fig_tm, use_container_width=True)
     
-    # Selek xavfsizligi haqida ogohlantirish
-    if selek_eni < 18.5:
-        st.error(f"⚠️ KRITIK: Selek o'lchami ({selek_eni:.1f} m) xavfsiz chegaradan past (min. 18.5 m)!")
-    else:
-        st.success(f"✅ BARQAROR: Selek o'lchami ({selek_eni:.1f} m) me'yorda.")
-    
     # ------------------- Animatsiya (ixtiyoriy) -------------------
     if st.checkbox("Avtomatik animatsiya (1→2→3 bosqichlar)"):
         anim_placeholder = st.empty()
         for s in [1, 2, 3]:
             wells_s = states_132[s]
             fos_s = compute_advanced_fos(
-                grid_x, grid_z, wells_s, layers_data, source_z, cavity_width, dist_wells,
-                temp_2d, grid_sigma_v, E_MOD, ALPHA, nu, K0, beta_thermal, D_factor
+                grid_x, grid_z, wells_s, well_x, source_z, h_seam, cavity_width,
+                temp_2d, grid_sigma_v, layers_data, layer_bounds,
+                E_MOD, ALPHA, NU, K0, Hc, sigma_v_coal, ucs_coal_pa
             )
             fig_s = go.Figure(go.Contour(z=fos_s, x=x_axis, y=z_axis,
                                          colorscale=[[0,'black'],[0.1,'red'],[0.4,'orange'],[0.7,'yellow'],[0.85,'lime'],[1,'darkgreen']],
                                          zmin=0, zmax=3, contours_showlines=False,
                                          colorbar=dict(title="FOS")))
             fig_s.update_yaxes(range=[source_z + zoom_margin/2, source_z - zoom_margin], autorange=False)
-            fig_s.update_layout(template="plotly_dark", height=500, title=f"Bosqich {s} (1-3-2 sxemasi) – Ilmiy model")
+            fig_s.update_layout(template="plotly_dark", height=500, title=f"Bosqich {s} (1-3-2 sxemasi) – Yangi model")
             anim_placeholder.plotly_chart(fig_s, use_container_width=True)
             time.sleep(1.2)
         st.success("Animatsiya yakunlandi.")
     
     # Bosqichga oid tushuntirish
+    selek_eni = dist_wells - cavity_width
     msgs = {
-        1: f"**1-Bosqich:** Chap quduq yoqilgan. Qalinlik = {h_seam:.1f} m.",
+        1: f"**1-Bosqich:** Chap quduq yoqilgan. Qalinlik = {h_seam:.1f} m, Selek eni = {selek_eni:.1f} m.",
         2: f"**2-Bosqich (Muhim):** O‘ng quduq yoqilgan. O‘rtadagi selek (cyan chiziqli) tomni ushlab turadi. Selek eni = {selek_eni:.1f} m.",
         3: f"**3-Bosqich:** Markaziy selek gazlashtirilmoqda. Barqaror cho‘kish."
     }
     st.info(msgs[stage])
+    
+    # Xavfsizlik ogohlantirishi
+    if selek_eni < 18.5:
+        st.error(f"⚠️ KRITIK: Selek o'lchami ({selek_eni:.1f} m) xavfsiz chegaradan past!")
+    else:
+        st.success(f"✅ BARQAROR: Selek o'lchami ({selek_eni:.1f} m) me'yorda.")
 
 # =========================== KOMPLEKS MONITORING PANELI ===========================
 st.header(t('monitoring_panel', obj_name=obj_name))
