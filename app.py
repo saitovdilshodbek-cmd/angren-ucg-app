@@ -32,6 +32,11 @@ except:
     PT_AVAILABLE = False
     device = "cpu"
 
+# faqat kerak bo‘lganda import qil
+def load_ml_tools():
+    import joblib
+    return joblib
+
 # =========================== GLOBAL TRANSLATIONS ===========================
 TRANSLATIONS = {
     'uz': {
@@ -417,7 +422,7 @@ lang = st.sidebar.selectbox("Til / Language / Язык", options=list(LANGUAGES.
                             index=list(LANGUAGES.keys()).index(st.session_state.language))
 st.session_state.language = lang
 
-# =========================== QR KOD GENERATORI ===========================
+# =========================== QR KOD GENERATORI (KESHLANGAN) ===========================
 st.sidebar.markdown("---")
 st.sidebar.subheader("📱 Mobil ilovaga o'tish")
 url = "https://angren-ucg-app-a7rxktm6usxqixabhaq576.streamlit.app/#ucg-termo-mexanik-dinamik-3-d-model"
@@ -505,17 +510,25 @@ for i in range(int(num_layers)):
     })
     total_depth += thick
 
-# Validatsiya
+# Validatsiya - barcha xatolarni yig‘ib ko‘rsatish
 errors = []
 for lyr in layers_data:
-    if lyr['t'] <= 0: errors.append(t('error_thick_positive'))
-    if lyr['ucs'] <= 0: errors.append(t('error_ucs_positive'))
-    if lyr['rho'] <= 0: errors.append(t('error_density_positive'))
-    if not (10 <= lyr['gsi'] <= 100): errors.append(t('error_gsi_range'))
-    if lyr['mi'] <= 0: errors.append(t('error_mi_positive'))
-if not layers_data: errors.append(t('error_min_layers'))
+    if lyr['t'] <= 0:
+        errors.append(t('error_thick_positive'))
+    if lyr['ucs'] <= 0:
+        errors.append(t('error_ucs_positive'))
+    if lyr['rho'] <= 0:
+        errors.append(t('error_density_positive'))
+    if not (10 <= lyr['gsi'] <= 100):
+        errors.append(t('error_gsi_range'))
+    if lyr['mi'] <= 0:
+        errors.append(t('error_mi_positive'))
+if not layers_data:
+    errors.append(t('error_min_layers'))
+
 if errors:
-    for e in errors: st.error(e)
+    for e in errors:
+        st.error(e)
     st.stop()
 
 # =========================== KESHLANGAN HARORAT MAYDONI ===========================
@@ -525,29 +538,40 @@ def compute_temperature_field_moving(time_h, T_source_max, burn_duration, total_
     z_axis = np.linspace(0, total_depth + 50, grid_shape[0])
     grid_x, grid_z = np.meshgrid(x_axis, z_axis)
     alpha_rock = 1.0e-6
-    v_burn = 0.02
+    v_burn = 0.02  # m/s
+
     sources = [
         {'x0': -total_depth/3, 'start': 0, 'moving': False},
         {'x0': 0, 'start': 40, 'moving': True, 'v': v_burn},
         {'x0': total_depth/3, 'start': 80, 'moving': False}
     ]
+
     temp_2d = np.full_like(grid_x, 25.0)
+
     for src in sources:
-        if time_h <= src['start']: continue
+        if time_h <= src['start']:
+            continue
         dt_sec = (time_h - src['start']) * 3600
-        if src['moving']: x_center = src['x0'] + src['v'] * dt_sec
-        else: x_center = src['x0']
+        if src['moving']:
+            x_center = src['x0'] + src['v'] * dt_sec
+        else:
+            x_center = src['x0']
         pen_depth = np.sqrt(4 * alpha_rock * dt_sec)
         elapsed = time_h - src['start']
-        if elapsed <= burn_duration: curr_T = T_source_max
-        else: curr_T = 25 + (T_source_max-25)*np.exp(-0.03*(elapsed-burn_duration))
+        if elapsed <= burn_duration:
+            curr_T = T_source_max
+        else:
+            curr_T = 25 + (T_source_max-25)*np.exp(-0.03*(elapsed-burn_duration))
         dist_sq = (grid_x - x_center)**2 + (grid_z - source_z)**2
         temp_2d += (curr_T - 25) * np.exp(-dist_sq / (pen_depth**2 + 15**2))
+
+    # Diffuziya (optimallashtirilgan)
     for _ in range(n_steps):
         temp_2d[1:-1,1:-1] += alpha_rock * (
             temp_2d[2:,1:-1] + temp_2d[:-2,1:-1] +
             temp_2d[1:-1,2:] + temp_2d[1:-1,:-2] -
-            4 * temp_2d[1:-1,1:-1])
+            4 * temp_2d[1:-1,1:-1]
+        )
     return temp_2d, x_axis, z_axis, grid_x, grid_z
 
 grid_shape = (80, 100)
@@ -560,7 +584,10 @@ temp_2d, x_axis, z_axis, grid_x, grid_z = compute_temperature_field_moving(
 grid_sigma_v = np.zeros_like(grid_z)
 grid_ucs = np.zeros_like(grid_z); grid_mb = np.zeros_like(grid_z); grid_s_hb = np.zeros_like(grid_z)
 grid_a_hb = np.zeros_like(grid_z); grid_sigma_t0_manual = np.zeros_like(grid_z)
+
+# Pre-calc layer bounds
 layer_bounds = [(l['z_start'], l['z_start'] + l['t']) for l in layers_data]
+
 for i, (z0, z1) in enumerate(layer_bounds):
     mask = (grid_z >= z0) & (grid_z < z1 if i < len(layer_bounds)-1 else True)
     layer = layers_data[i]
@@ -574,6 +601,7 @@ for i, (z0, z1) in enumerate(layer_bounds):
     grid_a_hb[mask] = 0.5 + (1/6)*(np.exp(-layer['gsi']/15) - np.exp(-20/3))
     grid_sigma_t0_manual[mask] = layer['sigma_t0_manual']
 
+# Maksimal harorat xaritasi
 if 'max_temp_map' not in st.session_state or st.session_state.max_temp_map.shape != grid_z.shape:
     st.session_state.max_temp_map = np.ones_like(grid_z)*25
     st.session_state.last_obj_name = obj_name
@@ -584,6 +612,7 @@ st.session_state.max_temp_map = np.maximum(st.session_state.max_temp_map, temp_2
 
 delta_T = temp_2d - 25.0
 
+# Termal shikastlanish (yangilangan funksiya)
 def thermal_damage(T, T0=100, k=0.002, mech_factor=0.1, stress_ratio=1.0):
     thermal = 1 - np.exp(-k * np.maximum(T - T0, 0))
     mech = mech_factor * stress_ratio
@@ -593,6 +622,7 @@ stress_ratio = grid_sigma_v / (grid_ucs + EPS)
 damage = thermal_damage(st.session_state.max_temp_map, stress_ratio=stress_ratio)
 sigma_ci = grid_ucs * (1 - damage)
 
+# Termal kuchlanish
 E_MODULUS, ALPHA_T_COEFF, CONSTRAINT_FACTOR = 5000.0, 1.0e-5, 0.7
 dT_dx = np.gradient(temp_2d, axis=1, edge_order=2)
 dT_dz = np.gradient(temp_2d, axis=0, edge_order=2)
@@ -602,6 +632,7 @@ grid_sigma_h = k_ratio * grid_sigma_v - sigma_thermal
 sigma1_act = np.maximum(grid_sigma_v, grid_sigma_h)
 sigma3_act = np.minimum(grid_sigma_v, grid_sigma_h)
 
+# Cho‘zilish mustahkamligi
 if tensile_mode == t('tensile_empirical'):
     grid_sigma_t0_base = tensile_ratio * sigma_ci
 elif tensile_mode == t('tensile_hb'):
@@ -612,8 +643,10 @@ else:
 sigma_t_field = grid_sigma_t0_base * np.exp(-beta_thermal*(temp_2d-20))
 thermal_boost = 1 + 0.6*(1-np.exp(-delta_T/200))
 sigma_t_field_eff = sigma_t_field/(thermal_boost+EPS)
+
 tensile_failure = (sigma3_act <= -sigma_t_field_eff) & (delta_T>50) & (sigma1_act>sigma3_act)
 
+# Hoek-Brown chegaraviy kuchlanish
 def hoek_brown_sigma1(sigma3, sigma_ci, mb, s, a):
     sigma3_safe = np.maximum(sigma3, 0.01)
     return sigma3_safe + sigma_ci * (mb * sigma3_safe / (sigma_ci + 1e-9) + s) ** a
@@ -631,9 +664,12 @@ void_mask_raw = spalling | crushing | (st.session_state.max_temp_map>900)
 void_mask_smooth = gaussian_filter(void_mask_raw.astype(float), sigma=1.5)
 void_mask_permanent = (void_mask_smooth>0.3) & (collapse_final>0.05)
 
+# O‘tkazuvchanlik va gaz oqimi
 phi = 0.05 + 0.4 * void_mask_permanent.astype(float)
 perm = (phi**3) / ((1-phi+EPS)**2) * 1e-12
 void_volume = np.sum(void_mask_permanent)*(x_axis[1]-x_axis[0])*(z_axis[1]-z_axis[0])
+
+# Bo‘shliq joylarda kuchlanishni nolga yaqinlashtirish
 void_factor = np.where(void_mask_permanent, 0.1, 1.0)
 sigma1_act *= void_factor
 sigma3_act *= void_factor
@@ -644,12 +680,17 @@ dp_dx, dp_dz = np.gradient(pressure, axis=1), np.gradient(pressure, axis=0)
 vx, vz = -perm*dp_dx, -perm*dp_dz
 gas_velocity = np.sqrt(vx**2+vz**2)
 
-# =========================== AI MODEL ===========================
+# =========================== AI MODEL (Collapse prediction) ===========================
 class CollapseNet(nn.Module):
     def __init__(self):
         super().__init__()
-        self.net = nn.Sequential(nn.Linear(4,32), nn.ReLU(), nn.Linear(32,64), nn.ReLU(), nn.Linear(64,1), nn.Sigmoid())
-    def forward(self, x): return self.net(x)
+        self.net = nn.Sequential(
+            nn.Linear(4,32), nn.ReLU(),
+            nn.Linear(32,64), nn.ReLU(),
+            nn.Linear(64,1), nn.Sigmoid()
+        )
+    def forward(self, x):
+        return self.net(x)
 
 def generate_ucg_dataset(n=10000):
     data = []
@@ -666,13 +707,15 @@ def generate_ucg_dataset(n=10000):
 
 @st.cache_resource
 def get_nn_model():
-    if not PT_AVAILABLE: return None
+    if not PT_AVAILABLE:
+        return None
     model = CollapseNet().to(device)
     try:
         model.load_state_dict(torch.load("collapse_model.pth", map_location=device))
         model.eval()
         return model
     except:
+        # Agar fayl bo‘lmasa, o‘qit va saqla
         data = generate_ucg_dataset()
         X = torch.tensor(data[:,:-1], dtype=torch.float32).to(device)
         y = torch.tensor(data[:,-1], dtype=torch.float32).view(-1,1).to(device)
@@ -701,6 +744,7 @@ if nn_model is not None and PT_AVAILABLE:
         collapse_pred = predict_nn(nn_model, temp_2d, sigma1_act, sigma3_act, grid_z)
     except:
         nn_model = None
+
 if nn_model is None or not PT_AVAILABLE:
     X_ai = np.column_stack([temp_2d.flatten(), sigma1_act.flatten(), sigma3_act.flatten(), grid_z.flatten()])
     y_ai = void_mask_permanent.flatten().astype(int)
@@ -721,7 +765,8 @@ for _ in range(15):
     p_strength = (ucs_seam*strength_red)*(w_sol/(H_seam+EPS))**0.5
     y_zone_calc = (H_seam/2)*(np.sqrt(sv_seam/(p_strength+EPS))-1)
     new_w = 2*max(y_zone_calc,1.5)+0.5*H_seam
-    if abs(new_w-w_sol) < 0.1: break
+    if abs(new_w-w_sol) < 0.1:
+        break
     w_sol = new_w
 rec_width = np.round(w_sol, 1)
 pillar_strength = p_strength
@@ -736,6 +781,7 @@ def objective(w_arr):
     strength = (ucs_seam*strength_red)*(w/(H_seam+EPS))**0.5
     risk = void_frac_base * np.exp(-0.01*(w-rec_width))
     return -(strength - 15.0*risk)
+
 try:
     opt_result = minimize(objective, x0=[rec_width], bounds=[(5.0,100.0)], method='SLSQP')
     optimal_width_ai = float(np.clip(opt_result.x[0], 5.0, 100.0))
@@ -814,6 +860,7 @@ with c2:
 
 # =========================== KOMPLEKS MONITORING PANELI ===========================
 st.header(t('monitoring_panel', obj_name=obj_name))
+
 def calculate_live_metrics(h, layers, T_max):
     target = layers[-1]
     ucs_0, H_l = target['ucs'], target['t']
@@ -823,6 +870,7 @@ def calculate_live_metrics(h, layers, T_max):
     p_str = (ucs_0*str_red)*(w_rec/(H_l+EPS))**0.5
     max_sub = (H_l*0.05)*(min(h,120)/120)
     return p_str, w_rec, curr_T, max_sub
+
 p_str, w_rec_live, t_now, s_max_3d = calculate_live_metrics(time_h, layers_data, T_source_max)
 mk1, mk2, mk3, mk4 = st.columns(4)
 mk1.metric(t('pillar_live'), f"{p_str:.1f} MPa", delta=f"{t_now:.0f} °C", delta_color="inverse")
@@ -1226,6 +1274,7 @@ with st.expander("📄 ISO 9001:2015 Standart Hujjat (.docx)"):
     if st.button("📄 ISO hujjat yaratish (kengaytirilgan)", type="primary", use_container_width=True):
         with st.spinner("ISO 9001 shablon tayyorlanmoqda..."):
             try:
+                # Xavf xaritasini rasm sifatida saqlash
                 fig, ax = plt.subplots(figsize=(6,4))
                 im = ax.imshow(risk_map, extent=[x_axis[0], x_axis[-1], z_axis[-1], z_axis[0]], cmap='hot', aspect='auto')
                 plt.colorbar(im, ax=ax, label='Risk Index')
@@ -1544,109 +1593,6 @@ with tab_advanced:
         st.markdown("#### Ushbu model quyidagi fundamental ilmiy ishlar asosida tuzilgan:")
         for r in [t('ref1'), t('ref2'), t('ref3'), t('ref4'), "**Brady, B. H., & Brown, E. T. (2006).** Rock Mechanics for Underground Mining."]:
             st.write(r)
-
-# =========================== INTEGRATSIYA QISMI: INTERACTIVE UCG DASHBOARD (Tuzatilgan) ===========================
-st.header("🕹️ Ultimate Interactive Dashboard (Real-time Animation)")
-st.markdown("Bu panelda FOS, siljish maydoni va vaqt bo‘yicha sirt siljishlarini interaktiv kuzatishingiz mumkin. Quyidagi slayderlar yordamida FOS chegarasini va rang sxemasini o‘zgartiring.")
-
-# Tuzatilgan funksiya (to‘g‘ridan-to‘g‘ri layout orqali o‘qlarni sozlash)
-def draw_interactive_ucg_dashboard(x_axis, z_axis, fos_2d, displacement_2d, surface_x, surface_h_disp, surface_v_disp, time_steps=None, fos_threshold=1.0, disp_colorscale='Turbo'):
-    if time_steps is None:
-        time_steps = np.arange(surface_h_disp.shape[0])
-    pillar_locations = np.linspace(x_axis.min() + 50, x_axis.max() - 50, 3)
-    fig = make_subplots(rows=2, cols=2,
-                        subplot_titles=("A) FOS & Yielded Zones (2D)",
-                                        "B) Total Displacement (2D, cm)",
-                                        "C) Horizontal Surface Displacement (mm)",
-                                        "D) Vertical Surface Displacement (mm)"),
-                        horizontal_spacing=0.1, vertical_spacing=0.15)
-    # FOS Heatmap
-    fig.add_trace(go.Heatmap(
-        z=fos_2d, x=x_axis, y=z_axis,
-        colorscale=[[0, 'rgb(255, 0, 0)'], [0.33, 'rgb(255, 165, 0)'], [0.5, 'rgb(173, 255, 47)'], [1, 'rgb(0, 128, 0)']],
-        zmin=0, zmax=3, colorbar=dict(title="FOS", x=0.45, y=0.78, thickness=12, len=0.42), name="FOS"
-    ), row=1, col=1)
-    mask_fos = np.where(fos_2d < fos_threshold, 1, np.nan)
-    fig.add_trace(go.Heatmap(z=mask_fos, x=x_axis, y=z_axis, colorscale=[[0,'rgba(255,0,0,0.5)'],[1,'rgba(255,0,0,0.5)']], showscale=False, name="Yielded Zone"), row=1, col=1)
-    # 2D Displacement
-    fig.add_trace(go.Heatmap(z=displacement_2d, x=x_axis, y=z_axis, colorscale=disp_colorscale, colorbar=dict(title="Disp (cm)", x=1.0, y=0.78, thickness=12, len=0.42), name="2D Disp"), row=1, col=2)
-    # Surface displacement traces
-    for i, t in enumerate(time_steps):
-        fig.add_trace(go.Heatmap(z=surface_h_disp[i:i+1,:], x=surface_x, y=[t], colorscale='Turbo', zmin=np.min(surface_h_disp), zmax=np.max(surface_h_disp), showscale=False, visible=(i==0), name="H Disp"), row=2, col=1)
-        fig.add_trace(go.Heatmap(z=surface_v_disp[i:i+1,:], x=surface_x, y=[t], colorscale='Viridis', zmin=np.min(surface_v_disp), zmax=np.max(surface_v_disp), showscale=False, visible=(i==0), name="V Disp"), row=2, col=2)
-    # Pillars
-    for pos in pillar_locations:
-        fig.add_shape(type="rect", x0=pos-25, x1=pos+25, y0=550, y1=600, line=dict(color="Lime", width=3), row=1, col=1)
-        fig.add_shape(type="rect", x0=pos-25, x1=pos+25, y0=550, y1=600, line=dict(color="Lime", width=3), row=1, col=2)
-    # ========== O‘QLARNI TO‘G‘RIDAN-TO‘G‘RI LAYOUT ORQALI SOZLASH ==========
-    # 1-qator, 1-ustun (FOS)
-    fig.layout.xaxis.title.text = "X (m)"
-    fig.layout.xaxis.gridcolor = 'rgba(255,255,255,0.1)'
-    fig.layout.xaxis.range = [x_axis.min(), x_axis.max()]
-    fig.layout.yaxis.title.text = "Depth (m)"
-    fig.layout.yaxis.gridcolor = 'rgba(255,255,255,0.1)'
-    fig.layout.yaxis.autorange = "reversed"
-    # 1-qator, 2-ustun (Displacement)
-    fig.layout.xaxis2.title.text = "X (m)"
-    fig.layout.xaxis2.gridcolor = 'rgba(255,255,255,0.1)'
-    fig.layout.xaxis2.range = [x_axis.min(), x_axis.max()]
-    fig.layout.yaxis2.title.text = "Depth (m)"
-    fig.layout.yaxis2.gridcolor = 'rgba(255,255,255,0.1)'
-    fig.layout.yaxis2.autorange = "reversed"
-    # 2-qator, 1-ustun (Horizontal displacement)
-    fig.layout.xaxis3.title.text = "Masofa (m)"
-    fig.layout.xaxis3.gridcolor = 'rgba(255,255,255,0.1)'
-    fig.layout.yaxis3.title.text = "Vaqt bosqichi"
-    fig.layout.yaxis3.gridcolor = 'rgba(255,255,255,0.1)'
-    # 2-qator, 2-ustun (Vertical displacement)
-    fig.layout.xaxis4.title.text = "Masofa (m)"
-    fig.layout.xaxis4.gridcolor = 'rgba(255,255,255,0.1)'
-    fig.layout.yaxis4.title.text = "Vaqt bosqichi"
-    fig.layout.yaxis4.gridcolor = 'rgba(255,255,255,0.1)'
-    # Layout
-    fig.update_layout(
-        title=dict(text="Interactive Ultimate UCG Monitoring Dashboard", x=0.5, font=dict(size=22, color="white")),
-        plot_bgcolor='black', paper_bgcolor='black', template='plotly_dark', height=900,
-        showlegend=False, margin=dict(l=50, r=50, t=100, b=50),
-        updatemenus=[dict(type="buttons", showactive=False, y=1.05, x=1.15, xanchor="right", yanchor="top",
-                          buttons=[dict(label="Play", method="animate",
-                                        args=[None, {"frame": {"duration":500, "redraw":True}, "fromcurrent":True, "transition": {"duration":0}}]),
-                                   dict(label="Pause", method="animate",
-                                        args=[[None], {"frame": {"duration":0, "redraw":False}, "mode":"immediate", "transition": {"duration":0}}])])]
-    )
-    return fig
-
-# Dashboard uchun kerakli ma'lumotlar
-if 'displacement_2d' not in locals():
-    sub_2d = np.tile(sub_p.reshape(1,-1)*100, (len(z_axis), 1))
-    uplift_2d = np.tile(uplift.reshape(1,-1), (len(z_axis), 1))
-    displacement_2d = np.sqrt(sub_2d**2 + uplift_2d**2) * (1 + 0.3 * np.random.rand(*sub_2d.shape))
-
-time_steps_dash = np.arange(0, time_h+1, max(1, time_h//20))
-surface_x = x_axis
-surface_h_disp = []
-surface_v_disp = []
-for t in time_steps_dash:
-    v_disp = -s_max * np.exp(-(surface_x**2)/(2*(total_depth/2)**2)) * (min(t, burn_duration)/burn_duration) * 100
-    h_disp = np.gradient(v_disp) * 0.5
-    surface_v_disp.append(v_disp)
-    surface_h_disp.append(h_disp)
-surface_h_disp = np.array(surface_h_disp)
-surface_v_disp = np.array(surface_v_disp)
-
-col1, col2 = st.columns(2)
-with col1:
-    fos_thresh_dash = st.slider("FOS Threshold (Yielded Zone)", 0.1, 2.0, 1.0, 0.05, key="fos_thresh_dash")
-with col2:
-    disp_cscale = st.selectbox("Displacement Color Scale", ['Turbo','Viridis','Cividis'], index=0, key="disp_cscale")
-
-dash_fig = draw_interactive_ucg_dashboard(
-    x_axis=x_axis, z_axis=z_axis, fos_2d=fos_2d,
-    displacement_2d=displacement_2d, surface_x=surface_x,
-    surface_h_disp=surface_h_disp, surface_v_disp=surface_v_disp,
-    time_steps=time_steps_dash, fos_threshold=fos_thresh_dash, disp_colorscale=disp_cscale
-)
-st.plotly_chart(dash_fig, use_container_width=True)
 
 st.sidebar.markdown("---")
 st.sidebar.write(f"Tuzuvchi: Saitov Dilshodbek | Device: {device}")
