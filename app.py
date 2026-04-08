@@ -854,7 +854,7 @@ with c2:
     stage = st.select_slider("Bosqichni tanlang:", options=[1, 2, 3], value=1, key="ucg_stage_132")
     active_wells = states_132[stage]
     
-    # ------------------- FOS hisoblash funksiyasi (yuqoridagi bilan bir xil) -------------------
+    # ------------------- FOS hisoblash funksiyasi -------------------
     def compute_advanced_fos(grid_x, grid_z, active_wells, well_x, source_z, h_seam, cavity_width,
                              temp_field, sigma_v_field, layers_data, layer_bounds,
                              E, alpha, nu, K0, Hc, sigma_v_coal_MPa, ucs_coal_pa):
