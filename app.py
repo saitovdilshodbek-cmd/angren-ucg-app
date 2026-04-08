@@ -774,8 +774,7 @@ with col_g3:
     fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_burning, name=t('combustion'), line=dict(color='orange',width=4)))
     st.plotly_chart(fig_hb.update_layout(title=t('hb_envelopes_title'), template="plotly_dark", height=300, legend=dict(orientation="h", y=-0.3, x=0.5, xanchor="center")), use_container_width=True)
 
-# =========================== TM MAYDONI (YANGI ILMIY MODEL BILAN) ===========================
-# =========================== TM MAYDONI (QUDUQLAR MASOFASI SOZLANADIGAN) ===========================
+# =========================== TM MAYDONI (QUDUQLAR MASOFASI SIDEBARDA) ===========================
 st.markdown("---")
 c1, c2 = st.columns([1, 2.5])
 
@@ -804,15 +803,14 @@ with c1:
         use_container_width=True
     )
 
+# ----------- YON PANELDA QUDUQLAR MASOFASI SLAYDERNI QO'SHISH -----------
+st.sidebar.markdown("---")
+st.sidebar.subheader("Quduqlar konfiguratsiyasi")
+well_distance = st.sidebar.slider("Quduqlar orasidagi masofa (m):", 50.0, 500.0, 200.0, 10.0, key="well_dist_slider")
+
 # ----------- Right Panel: Advanced UCG Geomechanical Model -----------
 with c2:
     st.subheader("UCG Yonish Bosqichlari (1 → 3 → 2 sxemasi) – Yangi Ilmiy Model")
-    
-    # ========== QO'SHIMCHA SLAYDERNI YON PANELGA JOYLASHTIRISH ==========
-    # (Streamlit da yon panelga joylash uchun st.sidebar bilan)
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("Quduqlar konfiguratsiyasi")
-    well_distance = st.sidebar.slider("Quduqlar orasidagi masofa (m):", 50.0, 500.0, 200.0, 10.0)
     
     # Asosiy koddan kerakli parametrlarni olish
     coal_layer = layers_data[-1]
@@ -856,7 +854,7 @@ with c2:
     stage = st.select_slider("Bosqichni tanlang:", options=[1, 2, 3], value=1, key="ucg_stage_132")
     active_wells = states_132[stage]
     
-    # ------------------- FOS hisoblash funksiyasi -------------------
+    # ------------------- FOS hisoblash funksiyasi (yuqoridagi bilan bir xil) -------------------
     def compute_advanced_fos(grid_x, grid_z, active_wells, well_x, source_z, h_seam, cavity_width,
                              temp_field, sigma_v_field, layers_data, layer_bounds,
                              E, alpha, nu, K0, Hc, sigma_v_coal_MPa, ucs_coal_pa):
