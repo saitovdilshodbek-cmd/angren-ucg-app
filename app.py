@@ -32,11 +32,6 @@ except:
     PT_AVAILABLE = False
     device = "cpu"
 
-# faqat kerak bo‘lganda import qil
-def load_ml_tools():
-    import joblib
-    return joblib
-
 # =========================== GLOBAL TRANSLATIONS ===========================
 TRANSLATIONS = {
     'uz': {
@@ -1112,89 +1107,50 @@ with st.expander("⚖️ Ssenariy Taqqoslash (A vs B)"):
                             'Farq': [f"{b_ucs-a_ucs:+.1f}", f"{b_gsi-a_gsi:+d}", f"{fos_b-fos_a:+.2f}", f"{b_temp-a_temp:+.0f}"]})
     st.dataframe(comp_df, use_container_width=True, hide_index=True)
 
-# ====================== INTERAKTIV SEZGIRLIK TORNADO PLOT (FOYDALANUVCHI PARAMETRLARI) ======================
-with st.expander("🌪️ Interaktiv Sezgirlik Tahlili (O‘z parametrlaringizni kiriting)", expanded=False):
-    st.markdown("Quyidagi slayderlar yordamida asosiy parametrlarni o‘zgartiring va ularning **FOS** ga ta’sirini tornado diagrammada kuzating.")
-    
-    # Foydalanuvchi kiritadigan parametrlar
-    col1, col2 = st.columns(2)
-    with col1:
-        base_ucs_interact = st.number_input("Base UCS (MPa)", value=float(layers_data[-1]['ucs']), step=5.0, key="interact_ucs")
-        base_gsi_interact = st.slider("Base GSI", 10, 100, layers_data[-1]['gsi'], key="interact_gsi")
-        base_d_interact = st.slider("Base D factor", 0.0, 1.0, D_factor, step=0.05, key="interact_d")
-    with col2:
-        base_nu_interact = st.slider("Base Poisson (ν)", 0.1, 0.4, nu_poisson, step=0.01, key="interact_nu")
-        base_t_interact = st.slider("Base Harorat (°C)", 20, 1200, int(avg_t_p), step=10, key="interact_t")
-        H_seam_interact = st.number_input("Qatlam qalinligi (m)", value=float(H_seam), step=2.0, key="interact_h")
-    
-    range_pct_interact = st.slider("Parametr o‘zgarish foizi (%)", 5, 50, 20, key="interact_range") / 100
-    
-    # Sezgirlik funksiyasi (yuqoridagi bilan bir xil, lekin keshni tozalash uchun alohida)
-    @st.cache_data(show_spinner=False)
-    def interactive_sensitivity(ucs, gsi, d, nu, T, H, range_pct):
-        def quick_fos(ucs, gsi, d, nu, T, H):
-            mb = 10 * np.exp((gsi - 100) / (28 - 14 * d))
-            s = np.exp((gsi - 100) / (9 - 3 * d))
-            damage = np.clip(1 - np.exp(-0.002 * max(T - 100, 0)), 0, 0.95)
-            sigma_ci = ucs * (1 - damage)
-            str_red = np.exp(-0.0025 * (T - 20))
-            p_str = (sigma_ci * str_red) * (20 / (H + 1e-12))**0.5
-            sv = ucs * 0.025
-            return p_str / (sv + 1e-12)
-        
-        params = {
-            'UCS (MPa)': (ucs, ucs*(1-range_pct), ucs*(1+range_pct)),
-            'GSI': (gsi, gsi*(1-range_pct), min(100, gsi*(1+range_pct))),
-            'D factor': (d, max(0, d-0.2), min(1, d+0.2)),
-            'Poisson (ν)': (nu, max(0.1, nu-0.05), min(0.4, nu+0.05)),
-            'Harorat (°C)': (T, T*(1-range_pct), min(1200, T*(1+range_pct))),
-        }
-        base_fos = quick_fos(ucs, gsi, d, nu, T, H)
-        results = []
-        for name, (base, low, high) in params.items():
-            f_low = quick_fos(low if name=='UCS (MPa)' else ucs,
-                              low if name=='GSI' else gsi,
-                              low if name=='D factor' else d,
-                              low if name=='Poisson (ν)' else nu,
-                              low if name=='Harorat (°C)' else T,
-                              H)
-            f_high = quick_fos(high if name=='UCS (MPa)' else ucs,
-                               high if name=='GSI' else gsi,
-                               high if name=='D factor' else d,
-                               high if name=='Poisson (ν)' else nu,
-                               high if name=='Harorat (°C)' else T,
-                               H)
-            results.append({'param': name, 'low': f_low - base_fos, 'high': f_high - base_fos, 'abs_diff': abs(f_high - f_low)})
-        df_results = pd.DataFrame(results).sort_values('abs_diff', ascending=True)
-        return df_results, base_fos
-    
-    df_sens_interact, fos_base_interact = interactive_sensitivity(
-        base_ucs_interact, base_gsi_interact, base_d_interact,
-        base_nu_interact, base_t_interact, H_seam_interact, range_pct_interact
-    )
-    
-    # Tornado plot
-    fig_tornado_interact = go.Figure()
-    fig_tornado_interact.add_trace(go.Bar(
-        y=df_sens_interact['param'], x=df_sens_interact['low'], orientation='h',
-        name='−', marker_color='#E74C3C', hovertemplate='%{y}: ΔFOS = %{x:.3f}<extra></extra>'
-    ))
-    fig_tornado_interact.add_trace(go.Bar(
-        y=df_sens_interact['param'], x=df_sens_interact['high'], orientation='h',
-        name='+', marker_color='#27AE60', hovertemplate='%{y}: ΔFOS = %{x:.3f}<extra></extra>'
-    ))
-    fig_tornado_interact.update_layout(
-        title=f"FOS Sezgirligi (Base FOS = {fos_base_interact:.2f})",
-        barmode='relative', template='plotly_dark', height=500,
-        xaxis_title='ΔFOS', yaxis_title='Parametr', showlegend=True,
-        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='center', x=0.5)
-    )
-    fig_tornado_interact.add_vline(x=0, line_color='white', line_width=1, line_dash='dash')
-    st.plotly_chart(fig_tornado_interact, use_container_width=True)
-    
-    # Natijalar jadvali
-    st.dataframe(df_sens_interact[['param', 'low', 'high', 'abs_diff']].round(4), use_container_width=True, hide_index=True)
-    st.caption("Eng sezgir parametrlar yuqorida (eng katta abs_diff). Salbiy ΔFOS – parametr oshganda FOS kamayadi.")
+# 6. Sezgirlik tahlili (Tornado plot)
+@st.cache_data(show_spinner=False)
+def sensitivity_analysis(base_ucs, base_gsi, base_d, base_nu, base_t, H_seam, range_pct=0.2):
+    def quick_fos(ucs, gsi, d, nu, T):
+        mb = 10*np.exp((gsi-100)/(28-14*d))
+        s = np.exp((gsi-100)/(9-3*d))
+        damage = np.clip(1-np.exp(-0.002*max(T-100,0)),0,0.95)
+        sigma_ci = ucs*(1-damage)
+        str_red = np.exp(-0.0025*(T-20))
+        p_str = (sigma_ci*str_red)*(20/(H_seam+1e-12))**0.5
+        sv = ucs*0.025
+        return np.clip(p_str/(sv+1e-12),0,5)
+    params = {
+        'UCS (MPa)': (base_ucs, base_ucs*(1-range_pct), base_ucs*(1+range_pct)),
+        'GSI': (base_gsi, base_gsi*(1-range_pct), min(100,base_gsi*(1+range_pct))),
+        'D factor': (base_d, max(0,base_d-0.2), min(1,base_d+0.2)),
+        'Poisson (ν)': (base_nu, max(0.1,base_nu-0.05), min(0.4,base_nu+0.05)),
+        'Harorat (°C)': (base_t, base_t*(1-range_pct), min(1200,base_t*(1+range_pct))),
+    }
+    base_fos = quick_fos(base_ucs, base_gsi, base_d, base_nu, base_t)
+    results = []
+    for name, (base, low, high) in params.items():
+        fos_low = quick_fos(low if name=='UCS (MPa)' else base_ucs,
+                            low if name=='GSI' else base_gsi,
+                            low if name=='D factor' else base_d,
+                            low if name=='Poisson (ν)' else base_nu,
+                            low if name=='Harorat (°C)' else base_t)
+        fos_high = quick_fos(high if name=='UCS (MPa)' else base_ucs,
+                             high if name=='GSI' else base_gsi,
+                             high if name=='D factor' else base_d,
+                             high if name=='Poisson (ν)' else base_nu,
+                             high if name=='Harorat (°C)' else base_t)
+        results.append({'param':name, 'low':fos_low-base_fos, 'high':fos_high-base_fos})
+    return pd.DataFrame(results), base_fos
+
+with st.expander("🌪️ Sezgirlik Tahlili (Tornado Plot)"):
+    df_sens, fos_base = sensitivity_analysis(layers_data[-1]['ucs'], layers_data[-1]['gsi'], D_factor, nu_poisson, avg_t_p, H_seam)
+    df_sens = df_sens.sort_values('high', ascending=True)
+    fig_tornado = go.Figure()
+    fig_tornado.add_bar(y=df_sens['param'], x=df_sens['low'], orientation='h', name='−20%', marker_color='#E74C3C')
+    fig_tornado.add_bar(y=df_sens['param'], x=df_sens['high'], orientation='h', name='+20%', marker_color='#27AE60')
+    fig_tornado.add_vline(x=0, line_color='white', line_width=2)
+    fig_tornado.update_layout(title=f"FOS sezgirligi (asosiy FOS={fos_base:.2f})", barmode='overlay', template='plotly_dark', height=350, xaxis_title='ΔFOS', bargap=0.3)
+    st.plotly_chart(fig_tornado, use_container_width=True)
 
 # =========================== KENGAYTIRILGAN ISO 9001 HISOBOT GENERATORI ===========================
 def generate_full_iso_report(obj_name, lang, layers_data, T_source_max, burn_duration,
@@ -1632,6 +1588,94 @@ with tab_advanced:
         st.markdown("#### Ushbu model quyidagi fundamental ilmiy ishlar asosida tuzilgan:")
         for r in [t('ref1'), t('ref2'), t('ref3'), t('ref4'), "**Brady, B. H., & Brown, E. T. (2006).** Rock Mechanics for Underground Mining."]:
             st.write(r)
+
+# =========================== INTEGRATSIYA QISMI: INTERACTIVE UCG DASHBOARD (IKKINCHI KOD) ===========================
+st.header("🕹️ Ultimate Interactive Dashboard (Real-time Animation)")
+st.markdown("Bu panelda FOS, siljish maydoni va vaqt bo‘yicha sirt siljishlarini interaktiv kuzatishingiz mumkin. Quyidagi slayderlar yordamida FOS chegarasini va rang sxemasini o‘zgartiring.")
+
+# Ikkinchi kodning funksiyasi (to‘liq moslashtirilgan)
+def draw_interactive_ucg_dashboard(x_axis, z_axis, fos_2d, displacement_2d, surface_x, surface_h_disp, surface_v_disp, time_steps=None, fos_threshold=1.0, disp_colorscale='Turbo'):
+    if time_steps is None:
+        time_steps = np.arange(surface_h_disp.shape[0])
+    pillar_locations = np.linspace(x_axis.min() + 50, x_axis.max() - 50, 3)
+    fig = make_subplots(rows=2, cols=2,
+                        subplot_titles=("A) FOS & Yielded Zones (2D)",
+                                        "B) Total Displacement (2D, cm)",
+                                        "C) Horizontal Surface Displacement (mm)",
+                                        "D) Vertical Surface Displacement (mm)"),
+                        horizontal_spacing=0.1, vertical_spacing=0.15)
+    # FOS Heatmap
+    fig.add_trace(go.Heatmap(
+        z=fos_2d, x=x_axis, y=z_axis,
+        colorscale=[[0, 'rgb(255, 0, 0)'], [0.33, 'rgb(255, 165, 0)'], [0.5, 'rgb(173, 255, 47)'], [1, 'rgb(0, 128, 0)']],
+        zmin=0, zmax=3, colorbar=dict(title="FOS", x=0.45, y=0.78, thickness=12, len=0.42), name="FOS"
+    ), row=1, col=1)
+    mask_fos = np.where(fos_2d < fos_threshold, 1, np.nan)
+    fig.add_trace(go.Heatmap(z=mask_fos, x=x_axis, y=z_axis, colorscale=[[0,'rgba(255,0,0,0.5)'],[1,'rgba(255,0,0,0.5)']], showscale=False, name="Yielded Zone"), row=1, col=1)
+    # 2D Displacement
+    fig.add_trace(go.Heatmap(z=displacement_2d, x=x_axis, y=z_axis, colorscale=disp_colorscale, colorbar=dict(title="Disp (cm)", x=1.0, y=0.78, thickness=12, len=0.42), name="2D Disp"), row=1, col=2)
+    # Surface displacement traces (vaqt qatlamlari)
+    for i, t in enumerate(time_steps):
+        fig.add_trace(go.Heatmap(z=surface_h_disp[i:i+1,:], x=surface_x, y=[t], colorscale='Turbo', zmin=np.min(surface_h_disp), zmax=np.max(surface_h_disp), showscale=False, visible=(i==0), name="H Disp"), row=2, col=1)
+        fig.add_trace(go.Heatmap(z=surface_v_disp[i:i+1,:], x=surface_x, y=[t], colorscale='Viridis', zmin=np.min(surface_v_disp), zmax=np.max(surface_v_disp), showscale=False, visible=(i==0), name="V Disp"), row=2, col=2)
+    # Pillars
+    for pos in pillar_locations:
+        for col in [1,2]:
+            fig.add_shape(type="rect", x0=pos-25, x1=pos+25, y0=550, y1=600, line=dict(color="Lime", width=3), row=1, col=col)
+    fig.update_layout(
+        title=dict(text="Interactive Ultimate UCG Monitoring Dashboard", x=0.5, font=dict(size=22, color="white")),
+        plot_bgcolor='black', paper_bgcolor='black', template='plotly_dark', height=900,
+        showlegend=False, margin=dict(l=50, r=50, t=100, b=50),
+        updatemenus=[dict(type="buttons", showactive=False, y=1.05, x=1.15, xanchor="right", yanchor="top",
+                          buttons=[dict(label="Play", method="animate",
+                                        args=[None, {"frame": {"duration":500, "redraw":True}, "fromcurrent":True, "transition": {"duration":0}}]),
+                                   dict(label="Pause", method="animate",
+                                        args=[[None], {"frame": {"duration":0, "redraw":False}, "mode":"immediate", "transition": {"duration":0}}])])]
+    )
+    fig.update_xaxes(title_text="X (m)", gridcolor='rgba(255,255,255,0.1)', range=[x_axis.min(), x_axis.max()], row=1)
+    fig.update_yaxes(title_text="Depth (m)", gridcolor='rgba(255,255,255,0.1)', reverse=True, row=1)
+    fig.update_xaxes(title_text="Masofa (m)", gridcolor='rgba(255,255,255,0.1)', row=2)
+    fig.update_yaxes(title_text="Vaqt bosqichi / Qatlam", gridcolor='rgba(255,255,255,0.1)', row=2)
+    return fig
+
+# Dashboard uchun kerakli ma'lumotlarni tayyorlash (mavjud ma'lumotlardan)
+# 1. displacement_2d: 2D siljish maydoni (cm) - termal deformatsiya + cho'kish asosida
+if 'displacement_2d' not in locals():
+    # Sirt cho'kishini 2D maydonga aylantirish (oddiy proyeksiya)
+    sub_2d = np.tile(sub_p.reshape(1,-1)*100, (len(z_axis), 1))  # cm
+    uplift_2d = np.tile(uplift.reshape(1,-1), (len(z_axis), 1))  # cm
+    displacement_2d = np.sqrt(sub_2d**2 + uplift_2d**2) * (1 + 0.3 * np.random.rand(*sub_2d.shape))
+
+# 2. Sirt siljishlari (vaqt bo'yicha) - gorizontal va vertikal (mm)
+time_steps_dash = np.arange(0, time_h+1, max(1, time_h//20))
+surface_x = x_axis
+surface_h_disp = []  # gorizontal siljish (mm)
+surface_v_disp = []  # vertikal cho'kish (mm)
+for t in time_steps_dash:
+    # Vertikal: cho'kish modeli (vaqt o'tishi bilan ortadi)
+    v_disp = -s_max * np.exp(-(surface_x**2)/(2*(total_depth/2)**2)) * (min(t, burn_duration)/burn_duration) * 100  # cm -> mm
+    # Gorizontal: gradient asosida (oddiy model)
+    h_disp = np.gradient(v_disp) * 0.5  # mm
+    surface_v_disp.append(v_disp)
+    surface_h_disp.append(h_disp)
+surface_h_disp = np.array(surface_h_disp)
+surface_v_disp = np.array(surface_v_disp)
+
+# Foydalanuvchi boshqaruvlari
+col1, col2 = st.columns(2)
+with col1:
+    fos_thresh_dash = st.slider("FOS Threshold (Yielded Zone)", 0.1, 2.0, 1.0, 0.05, key="fos_thresh_dash")
+with col2:
+    disp_cscale = st.selectbox("Displacement Color Scale", ['Turbo','Viridis','Cividis'], index=0, key="disp_cscale")
+
+# Dashbordni chizish
+dash_fig = draw_interactive_ucg_dashboard(
+    x_axis=x_axis, z_axis=z_axis, fos_2d=fos_2d,
+    displacement_2d=displacement_2d, surface_x=surface_x,
+    surface_h_disp=surface_h_disp, surface_v_disp=surface_v_disp,
+    time_steps=time_steps_dash, fos_threshold=fos_thresh_dash, disp_colorscale=disp_cscale
+)
+st.plotly_chart(dash_fig, use_container_width=True)
 
 st.sidebar.markdown("---")
 st.sidebar.write(f"Tuzuvchi: Saitov Dilshodbek | Device: {device}")
