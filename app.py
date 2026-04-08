@@ -801,8 +801,7 @@ with col_g3:
     fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_burning, name=t('combustion'), line=dict(color='orange',width=4)))
     st.plotly_chart(fig_hb.update_layout(title=t('hb_envelopes_title'), template="plotly_dark", height=300, legend=dict(orientation="h", y=-0.3, x=0.5, xanchor="center")), use_container_width=True)
 
-# =========================== TM MAYDONI (YANGI VERSIYA) ===========================
-# =========================== TM MAYDONI (INTEGRATSIYALANGAN VERSIYA) ===========================
+# =========================== TM MAYDONI (TO‘G‘RILANGAN VERSIYA) ===========================
 st.markdown("---")
 c1, c2 = st.columns([1, 2.5])
 
@@ -855,7 +854,7 @@ with c2:
         subplot_titles=(t('temp_subplot'), "FOS + AI Collapse + Yielded Zones + Pillar Interference")
     )
     
-    # ---------- Row 1: Temperature field + gas flow (asl koddagidek) ----------
+    # ---------- Row 1: Temperature field + gas flow ----------
     fig_tm.add_trace(
         go.Heatmap(
             z=temp_2d, x=x_axis, y=z_axis,
@@ -865,7 +864,7 @@ with c2:
         ),
         row=1, col=1
     )
-    # Gaz oqimi strelkalari (asl koddan)
+    # Gaz oqimi strelkalari
     step = 12
     qx, qz = grid_x[::step, ::step].flatten(), grid_z[::step, ::step].flatten()
     qu, qw = vx[::step, ::step].flatten(), vz[::step, ::step].flatten()
@@ -888,7 +887,7 @@ with c2:
     )
     
     # ---------- Row 2: FOS + AI + Yielded + Interference + Pillars ----------
-    # 2.1 FOS contour (real data)
+    # 2.1 FOS contour
     fig_tm.add_trace(
         go.Contour(
             z=fos_2d, x=x_axis, y=z_axis,
@@ -901,7 +900,7 @@ with c2:
         row=2, col=1
     )
     
-    # 2.2 Yielded zones (where FOS < threshold)
+    # 2.2 Yielded zones (FOS < threshold)
     fracture_mask = np.where(fos_2d < fos_thresh, 1.0, np.nan)
     fig_tm.add_trace(
         go.Heatmap(
@@ -913,9 +912,8 @@ with c2:
         row=2, col=1
     )
     
-    # 2.3 Burn radius circles (orange) + remaining void effect
+    # 2.3 Burn radius circles
     for px in pillar_locations:
-        # Circle
         fig_tm.add_shape(
             type="circle",
             x0=px - burn_radius, x1=px + burn_radius,
@@ -924,9 +922,8 @@ with c2:
             fillcolor='rgba(255,165,0,0.15)',
             row=2, col=1
         )
-        # Optional: mark inside as void? We keep permanent void later.
     
-    # 2.4 Pillar-to-pillar interference zones (when distance < safe_sep)
+    # 2.4 Pillar-to-pillar interference zones
     for i in range(len(pillar_locations)):
         for j in range(i+1, len(pillar_locations)):
             sep = abs(pillar_locations[j] - pillar_locations[i])
@@ -940,7 +937,7 @@ with c2:
                     row=2, col=1
                 )
     
-    # 2.5 AI Collapse Prediction overlay (from main code)
+    # 2.5 AI Collapse Prediction
     fig_tm.add_trace(
         go.Heatmap(
             z=collapse_pred, x=x_axis, y=z_axis,
@@ -950,7 +947,7 @@ with c2:
         row=2, col=1
     )
     
-    # 2.6 Shear and Tensile failure markers (from main code)
+    # 2.6 Shear and Tensile failure markers
     shear_disp = np.copy(shear_failure)
     shear_disp[void_mask_permanent] = False
     tens_disp = np.copy(tensile_failure)
@@ -973,7 +970,7 @@ with c2:
         row=2, col=1
     )
     
-    # 2.7 Permanent void overlay (black)
+    # 2.7 Permanent void overlay
     void_visual = np.where(void_mask_permanent > 0.1, 1.0, np.nan)
     fig_tm.add_trace(
         go.Heatmap(
@@ -994,25 +991,25 @@ with c2:
             row=2, col=1
         )
     
-    # ---------- Annotatsiyalar (sizning misolingizdan olingan) ----------
-    annotations = [
-        dict(
-            x=0, y=source_z + 150,
-            text="YONISH MARKAZI", showarrow=True, arrowhead=2,
-            font=dict(color="white", size=12), row=1, col=1
-        ),
-        dict(
-            x=pillar_locations[1], y=source_z + 150,
-            text="SELEK (MUSTAHKAM)", showarrow=True, arrowhead=2,
-            font=dict(color="lime", size=12), row=2, col=1
-        ),
-        dict(
-            x=-total_depth/2, y=source_z,
-            text="KO'MIR QATLAMI", font=dict(color="white", size=11),
-            showarrow=False, row=2, col=1
-        )
-    ]
-    fig_tm.update_layout(annotations=annotations)
+    # ---------- Annotatsiyalar (to‘g‘rilangan: add_annotation orqali) ----------
+    fig_tm.add_annotation(
+        x=0, y=source_z + 150,
+        text="YONISH MARKAZI", showarrow=True, arrowhead=2,
+        font=dict(color="white", size=12),
+        row=1, col=1
+    )
+    fig_tm.add_annotation(
+        x=pillar_locations[1], y=source_z + 150,
+        text="SELEK (MUSTAHKAM)", showarrow=True, arrowhead=2,
+        font=dict(color="lime", size=12),
+        row=2, col=1
+    )
+    fig_tm.add_annotation(
+        x=-total_depth/2, y=source_z,
+        text="KO'MIR QATLAMI", font=dict(color="white", size=11),
+        showarrow=False,
+        row=2, col=1
+    )
     
     # Final layout
     fig_tm.update_layout(
@@ -1026,7 +1023,6 @@ with c2:
     fig_tm.update_yaxes(autorange='reversed', row=2, col=1)
     
     st.plotly_chart(fig_tm, use_container_width=True)
-
 
 # =========================== KOMPLEKS MONITORING PANELI ===========================
 st.header(t('monitoring_panel', obj_name=obj_name))
