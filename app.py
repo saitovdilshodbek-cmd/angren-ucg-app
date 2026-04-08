@@ -879,46 +879,6 @@ mk3.metric(t('max_subsidence_live'), f"{s_max_3d*100:.1f} cm")
 mk4.metric(t('process_stage'), t('stage_active') if time_h<100 else t('stage_cooling'))
 st.markdown("---")
 
-# ====================== QO'SHIMCHA: UCHINCHI KODDAN FOS LINE PLOT + YIELDED ZONES ======================
-st.header("📊 FOS Line Profile & Yielded Zones (Surface)")
-# Fos_2d ning yuqori qatorini olish (yer yuzasi)
-fos_surface = fos_2d[0, :]  # eng yuqori qatlam (z=0)
-yielded_surface = fos_surface < 1.0
-fig_fos_line = go.Figure()
-fig_fos_line.add_trace(go.Scatter(x=x_axis, y=fos_surface, mode='lines+markers', name="FOS", line=dict(color='orange', width=2), marker=dict(size=5)))
-fig_fos_line.add_trace(go.Scatter(x=x_axis[yielded_surface], y=fos_surface[yielded_surface], mode='markers', name="Yielded Zones (FOS<1)", marker=dict(color='red', size=10, symbol='x')))
-fig_fos_line.add_hline(y=1.0, line_dash="dash", line_color="red", annotation_text="FOS=1.0")
-fig_fos_line.add_hline(y=1.5, line_dash="dash", line_color="green", annotation_text="FOS=1.5")
-fig_fos_line.update_layout(title="Factor of Safety along Surface & Yielded Zones", xaxis_title="Gorizontal masofa (m)", yaxis_title="FOS", template="plotly_dark", height=450)
-st.plotly_chart(fig_fos_line, use_container_width=True)
-
-# ====================== QO'SHIMCHA: UCHINCHI KODDAN KO'P QATLAMLI GORIZONTAL/VERTIKAL SILJISH ======================
-st.header("🌍 Horizontal & Vertical Displacement (Multi-Depth Subsidence)")
-# Uch xil chuqurlik (misol sifatida 100, 500, 1000 m) – foydalanuvchi kiritgan qatlamlardan emas, balki illyustrativ
-depths_example = [100, 500, 1000]
-x_surface_example = np.linspace(0, total_depth*1.2, 150)  # kameraning atrofidagi masofa
-subsidence_data_example = {}
-for d in depths_example:
-    horizontal_disp = 5 * np.sin(np.pi * x_surface_example / total_depth) * (d / 100)
-    vertical_disp = 10 * (1 - np.cos(np.pi * x_surface_example / total_depth)) * (d / 100)
-    subsidence_data_example[d] = {'horizontal': horizontal_disp, 'vertical': vertical_disp}
-
-fig_subs_multi = make_subplots(rows=2, cols=1, shared_xaxes=True,
-                               subplot_titles=("Gorizontal siljish (mm)", "Vertikal siljish (mm)"))
-colors_multi = ['blue', 'red', 'green']
-for i, d in enumerate(depths_example):
-    fig_subs_multi.add_trace(go.Scatter(x=x_surface_example, y=subsidence_data_example[d]['horizontal'], mode='lines',
-                                        name=f"{d} m chuqurlik", line=dict(color=colors_multi[i])), row=1, col=1)
-    fig_subs_multi.add_trace(go.Scatter(x=x_surface_example, y=subsidence_data_example[d]['vertical'], mode='lines',
-                                        name=f"{d} m chuqurlik", line=dict(color=colors_multi[i], dash='dot')), row=2, col=1)
-fig_subs_multi.update_layout(title="Bir nechta kameralar ta'sirida yer yuzasi siljishi (Model)",
-                             xaxis_title="Masofa (m)",
-                             yaxis_title="Gorizontal siljish (mm)",
-                             yaxis2_title="Vertikal siljish (mm)",
-                             template="plotly_dark",
-                             height=600)
-st.plotly_chart(fig_subs_multi, use_container_width=True)
-
 # ====================== YANGI QO'SHIMCHA: AI RISK PREDICTION (SENSOR CSV) ======================
 class SimpleRiskNN(nn.Module):
     def __init__(self, input_dim=3):
@@ -1084,7 +1044,7 @@ with st.expander("🌍 3D Litologik Kesim"):
     st.plotly_chart(fig_3d, use_container_width=True)
     st.caption("Sariq/qizil sferalar — yonish kameralari joylashuvi")
 
-# 4. Monte Carlo noaniqlik tahlili (birlashtirilgan risk indeksi qo'shildi)
+# 4. Monte Carlo noaniqlik tahlili
 @st.cache_data(show_spinner=False)
 def monte_carlo_fos(ucs_mean, ucs_std, gsi_mean, gsi_std, d_mean, temp_mean, H_seam, n_sim=2000):
     np.random.seed(42)
@@ -1100,10 +1060,7 @@ def monte_carlo_fos(ucs_mean, ucs_std, gsi_mean, gsi_std, d_mean, temp_mean, H_s
     sv_s = ucs_s*0.025
     fos_s = np.clip(p_str/(sv_s+1e-12),0,5)
     pf = float(np.mean(fos_s<1.0))
-    # Qo'shimcha: risk index = pf * mean(damage) (ikkinchi koddan olingan)
-    mean_damage = np.mean(dmg_s)
-    risk_index = pf * mean_damage
-    return fos_s, pf, risk_index
+    return fos_s, pf
 
 with st.expander("🎲 Monte Carlo Noaniqlik Tahlili"):
     mc_col1, mc_col2 = st.columns([1,2])
@@ -1112,18 +1069,17 @@ with st.expander("🎲 Monte Carlo Noaniqlik Tahlili"):
         gsi_std = st.number_input("GSI standart og'ish", value=5.0, min_value=0.1)
         n_mc = st.selectbox("Simulyatsiya soni", [500,1000,2000,5000], index=1)
     with mc_col2:
-        fos_mc, pf, risk_index = monte_carlo_fos(layers_data[-1]['ucs'], ucs_std, layers_data[-1]['gsi'], gsi_std, D_factor, avg_t_p, H_seam, n_sim=n_mc)
+        fos_mc, pf = monte_carlo_fos(layers_data[-1]['ucs'], ucs_std, layers_data[-1]['gsi'], gsi_std, D_factor, avg_t_p, H_seam, n_sim=n_mc)
         fig_mc = go.Figure()
         fig_mc.add_histogram(x=fos_mc, nbinsx=40, marker_color=np.where(fos_mc<1.0,'#E74C3C','#27AE60'), name='FOS taqsimoti')
         fig_mc.add_vline(x=1.0, line_color='red', line_dash='dash', annotation_text='FOS=1.0')
         fig_mc.add_vline(x=1.5, line_color='yellow', line_dash='dash', annotation_text='FOS=1.5')
         fig_mc.add_vline(x=np.mean(fos_mc), line_color='cyan', line_dash='dot', annotation_text=f"O'rtacha={np.mean(fos_mc):.2f}")
-        fig_mc.update_layout(template='plotly_dark', height=350, title=f"FOS taqsimoti | Failure ehtimoli: {pf*100:.1f}%")
+        fig_mc.update_layout(template='plotly_dark', height=350, title=f"FOS taqsimoti | Failure ehtimoli: {pf*100:.1f}%", xaxis_title='FOS', yaxis_title='Chastota')
         st.plotly_chart(fig_mc, use_container_width=True)
-    mc_stats = pd.DataFrame({'Ko\'rsatkich': ['O\'rtacha FOS', 'Mediana', 'Std og\'ish', '5-percentil', '95-percentil', 'Failure ehtimoli', 'Risk Index (pf × mean damage)'],
-                             'Qiymat': [f"{np.mean(fos_mc):.3f}", f"{np.median(fos_mc):.3f}", f"{np.std(fos_mc):.3f}", f"{np.percentile(fos_mc,5):.3f}", f"{np.percentile(fos_mc,95):.3f}", f"{pf*100:.2f}%", f"{risk_index:.4f}"]})
+    mc_stats = pd.DataFrame({'Ko\'rsatkich': ['O\'rtacha FOS', 'Mediana', 'Std og\'ish', '5-percentil', '95-percentil', 'Failure ehtimoli'],
+                             'Qiymat': [f"{np.mean(fos_mc):.3f}", f"{np.median(fos_mc):.3f}", f"{np.std(fos_mc):.3f}", f"{np.percentile(fos_mc,5):.3f}", f"{np.percentile(fos_mc,95):.3f}", f"{pf*100:.2f}%"]})
     st.dataframe(mc_stats, hide_index=True, use_container_width=True)
-    st.info(f"📊 **Risk Index (pf × mean damage) = {risk_index:.4f}** — bu qiymat ikkinchi koddagi `compute_risk` funksiyasiga mos keladi. Qiymat qancha katta bo‘lsa, xavf shuncha yuqori.")
 
 # 5. Ssenariy taqqoslash (A vs B)
 with st.expander("⚖️ Ssenariy Taqqoslash (A vs B)"):
