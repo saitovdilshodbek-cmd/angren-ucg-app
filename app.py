@@ -1690,26 +1690,27 @@ with tab_advanced:
 # ====================== YANGI TAB: 3D CAE MODEL (ikkinchi kod asosida, tuzatilgan) ======================
 with tab_cae_3d:
     st.markdown(t('cae_3d_title'))
-    # Ikkinchi kodning parametrlarini sidebar qismida sozlash (asosiy sidebar bilan to'qnashmasin)
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("🔧 CAE Model qo'shimcha sozlamalari")
-    ambient_temp_cae = st.sidebar.number_input("Atrof-muhit harorati (°C)", value=25, key="ambient_cae")
-    decay_length_cae = st.sidebar.slider("Termal so'nish masofasi (m)", 1.0, 50.0, 15.0, key="decay_cae")
-    n_wells_cae = st.sidebar.slider("Quduqlar soni (CAE)", 1, 5, 2, key="nwells_cae")
-    well_dist_cae = st.sidebar.slider("Quduqlararo masofa (m) (CAE)", 20, 150, 80, key="wdist_cae")
-    H_seam_cae = st.sidebar.slider("Kamera radiusi (m) (CAE)", 1.0, 20.0, 8.0, key="hseam_cae")
-    levels_str_cae = st.sidebar.text_input("Kamera chuqurliklari (vergul bilan) (CAE)", "40, 85", key="levels_cae")
-    try:
-        source_levels_cae = [float(x.strip()) for x in levels_str_cae.split(',')]
-    except:
-        source_levels_cae = [40.0]
     
-    FOS_threshold_cae = st.sidebar.slider("Kritik FOS (Ogohlantirish) (CAE)", 0.5, 2.5, 1.2, key="fos_thresh_cae")
-    FOS_critical_scale_cae = st.sidebar.slider("Heatmap Skalasi (Normallashtirish) (CAE)", 0.5, 2.5, 1.5, key="fos_scale_cae")
+    # CAE modelga oid sozlamalar – faqat shu tab ichida (asosiy sidebarda emas)
+    with st.expander("⚙️ CAE Model sozlamalari (faqat ushbu vizualizatsiya uchun)", expanded=False):
+        col1, col2 = st.columns(2)
+        with col1:
+            ambient_temp_cae = st.number_input("Atrof-muhit harorati (°C)", value=25, key="ambient_cae")
+            decay_length_cae = st.slider("Termal so'nish masofasi (m)", 1.0, 50.0, 15.0, key="decay_cae")
+            n_wells_cae = st.slider("Quduqlar soni (CAE)", 1, 5, 2, key="nwells_cae")
+            well_dist_cae = st.slider("Quduqlararo masofa (m) (CAE)", 20, 150, 80, key="wdist_cae")
+        with col2:
+            H_seam_cae = st.slider("Kamera radiusi (m) (CAE)", 1.0, 20.0, 8.0, key="hseam_cae")
+            levels_str_cae = st.text_input("Kamera chuqurliklari (vergul bilan) (CAE)", "40, 85", key="levels_cae")
+            FOS_threshold_cae = st.slider("Kritik FOS (Ogohlantirish) (CAE)", 0.5, 2.5, 1.2, key="fos_thresh_cae")
+            FOS_critical_scale_cae = st.slider("Heatmap Skalasi (Normallashtirish) (CAE)", 0.5, 2.5, 1.5, key="fos_scale_cae")
+        try:
+            source_levels_cae = [float(x.strip()) for x in levels_str_cae.split(',')]
+        except:
+            source_levels_cae = [40.0]
     
     # Qatlam ma'lumotlarini asosiy koddan olamiz (layers_data)
     def get_thermal_and_fos_bulk_cae(z, UCS, GSI, nu, density):
-        # Eng yaqin kameradan keladigan issiqlik (Multi-level ta'siri)
         total_thermal_contribution = 0
         for sl in source_levels_cae:
             dist = abs(z - sl)
@@ -1717,10 +1718,9 @@ with tab_cae_3d:
             total_thermal_contribution = max(total_thermal_contribution, contribution)
         local_t = ambient_temp_cae + total_thermal_contribution
         
-        # Geomexanik stress va FOS (Hoek-Brown soddalashtirilgan)
-        sigma_v = max(0.01, (density * 9.81 * z) / 1e6) # MPa
+        sigma_v = max(0.01, (density * 9.81 * z) / 1e6)
         mb = UCS * np.exp((GSI-100)/28)
-        thermal_reduction = max(0.1, 1 - (local_t/1800)) # Termal kuchsizlanish
+        thermal_reduction = max(0.1, 1 - (local_t/1800))
         fos = (mb / (sigma_v * (1 - nu) + 0.001)) * thermal_reduction
         return round(local_t, 1), round(max(0.0, fos), 2)
     
@@ -1733,7 +1733,6 @@ with tab_cae_3d:
     layer_avg_results_cae = []
     for idx, layer in enumerate(layers_data):
         z_mid = layer['z_start'] + layer['t']/2
-        # Tuzatish: layer['nu'] o'rniga global nu_poisson, layer['density'] o'rniga layer['rho']
         t_val, f_val = get_thermal_and_fos_bulk_cae(z_mid, layer['ucs'], layer['gsi'], nu_poisson, layer['rho'])
         layer_avg_results_cae.append({'name': layer['name'], 'fos': f_val, 'temp': t_val})
         norm_fos = np.clip(f_val / FOS_critical_scale_cae, 0, 1)
@@ -1750,13 +1749,11 @@ with tab_cae_3d:
     well_positions_cae = np.linspace(-well_dist_cae/2, well_dist_cae/2, n_wells_cae)
     u_cae, v_cae = np.mgrid[0:2*np.pi:30j, 0:np.pi:30j]
     for i, wx in enumerate(well_positions_cae):
-        # Shaft
         fig_cae.add_trace(go.Scatter3d(
             x=[wx, wx], y=[0, 0], z=[0, total_depth],
             mode='lines', line=dict(color='silver', width=7),
             name=f"Quduq {i+1}", hovertemplate=f"Quduq {i+1}<extra></extra>"
         ))
-        # Kameralar
         for sl in source_levels_cae:
             cx = wx + H_seam_cae * np.cos(u_cae) * np.sin(v_cae)
             cy = (H_seam_cae * 0.7) * np.sin(u_cae) * np.sin(v_cae)
@@ -1780,7 +1777,6 @@ with tab_cae_3d:
     fos_prof, temp_prof = [], []
     for z in z_prof:
         l = next((x for x in layers_data if x['z_start'] <= z <= x['z_start']+x['t']), layers_data[-1])
-        # Tuzatish: l['nu'] o'rniga global nu_poisson, l['density'] o'rniga l['rho']
         t_z, f_z = get_thermal_and_fos_bulk_cae(z, l['ucs'], l['gsi'], nu_poisson, l['rho'])
         fos_prof.append(f_z)
         temp_prof.append(t_z)
