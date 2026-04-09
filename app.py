@@ -1861,18 +1861,30 @@ with st.expander("⚙️ Multi-well model (ikkinchi koddan birlashtirilgan)", ex
             self.nn = MLPRegressor(hidden_layer_sizes=(64,64), max_iter=500, random_state=42)
         
         def train(self):
-            # dummy data
+            # Generate realistic training data
             np.random.seed(42)
-            X = np.random.rand(1000, 4)
-            y_class = (X[:,0] < 1.2) | (X[:,1] > 0.6)
-            y_reg = X[:,0]*0.5 + X[:,1]*0.3 + X[:,2]*0.2
+            n = 2000
+            fos = np.random.uniform(0.5, 3.0, n)
+            damage = np.random.uniform(0, 1, n)
+            temp_norm = np.random.uniform(0.02, 1.2, n)
+            subs = np.random.uniform(0, 0.5, n)
+            X = np.column_stack([fos, damage, temp_norm, subs])
+            # Risk label: FOS < 1.2 OR damage > 0.6
+            y_class = (fos < 1.2) | (damage > 0.6)
+            # Regression target: risk index between 0 and 1
+            y_reg = np.clip((1.2 - fos) / 2.0 + damage, 0, 1)
             self.rf.fit(X, y_class)
             self.nn.fit(X, y_reg)
         
         def predict(self, fos, D, T, subs):
             features = np.array([[fos, np.mean(D), np.mean(T)/1000, np.max(subs)]])
             risk = self.rf.predict(features)[0]
-            prob = self.rf.predict_proba(features)[0][1]
+            proba = self.rf.predict_proba(features)
+            # Handle case where only one class present
+            if proba.shape[1] == 1:
+                prob = proba[0, 0] if risk == 1 else 0.0
+            else:
+                prob = proba[0, 1]
             future = self.nn.predict(features)[0]
             return risk, prob, future
     
