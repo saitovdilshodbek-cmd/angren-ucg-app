@@ -1751,9 +1751,11 @@ with main_col_sird:
 
 with theory_col_sird:
     st.markdown("### 📚 Ilmiy Mexanizm")
-    diagram_text = """
+    # To'g'ri yozilgan diagramma (uch qo'shtirnoq ichida uch qo'shtirnoq YO'Q)
+    diagram_text = r"""
 **Sirdesai modeli asosidagi cho'kish mexanizmi:**
 
-    st.markdown("""
-    **Sirdesai modeli asosidagi cho'kish mexanizmi:**
-    
+
+
+st.sidebar.markdown("---")
+st.sidebar.write(f"Tuzuvchi: Saitov Dilshodbek | Device: {device}")
