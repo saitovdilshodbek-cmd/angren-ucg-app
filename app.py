@@ -1751,10 +1751,33 @@ with main_col_sird:
 
 with theory_col_sird:
     st.markdown("### 📚 Ilmiy Mexanizm")
-    # To'g'ri yozilgan diagramma (uch qo'shtirnoq ichida uch qo'shtirnoq YO'Q)
-    diagram_text = r"""
-**Sirdesai modeli asosidagi cho'kish mexanizmi:**
-
+    st.markdown("**Sirdesai modeli asosidagi cho'kish mexanizmi:**")
+    st.code("""
+    Yer yuzasi
+─────────────────────────
+     ^
+     | S (maks. cho'kish)
+     |
+─────┼─────   γ (tortish burchagi)
+     |    ╱
+M ───┼───╱  (qatlam qalinligi)
+     |  ╱
+─────┼─╱───
+     |╱
+[=====W=====]  Reaktor kengligi
+    """, language="text")
+    st.info("""
+    **Grafik ko'rsatkichlari:**
+    - **M**: Qatlam qalinligi (m)
+    - **W**: Reaktor kengligi (m)
+    - **S**: Maksimal vertikal cho'kish (mm)
+    - **γ (gamma)**: Tortish burchagi (daraja)
+    """)
+    st.success("""
+    **Tahlil (PhD Xulosasi):**
+    Reaktor yer yuzasiga qanchalik yaqin bo'lsa (h kam bo'lsa), sirt deformatsiyasi shunchalik keskinlashadi. 
+    Kenglik (W) 100 metrdan oshganda yuqori cho'kish kutiladi.
+    """)
 
 
 st.sidebar.markdown("---")
