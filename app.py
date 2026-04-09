@@ -1688,6 +1688,8 @@ with tab_advanced:
             st.write(r)
 
 # =========================== INTEGRATSIYA QISMI: INTERACTIVE UCG DASHBOARD (Sirdesai modeli – to‘liq mustaqil) ===========================
+import os  # <--- ADD THIS LINE
+
 st.header("🕹️ Ultimate Interactive Dashboard (Real-time Animation)")
 st.markdown("Ushbu panelda Sirdesai va boshqalar (2017) modeli asosida termal buzilish, kuchlanish va sirt deformatsiyalari interaktiv tarzda kuzatiladi.")
 
