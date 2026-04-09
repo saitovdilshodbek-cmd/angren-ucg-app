@@ -1688,8 +1688,6 @@ with tab_advanced:
             st.write(r)
 
 # =========================== INTEGRATSIYA QISMI: INTERACTIVE UCG DASHBOARD (Sirdesai modeli – to‘liq mustaqil) ===========================
-import os  # <--- ADD THIS LINE
-
 st.header("🕹️ Ultimate Interactive Dashboard (Real-time Animation)")
 st.markdown("Ushbu panelda Sirdesai va boshqalar (2017) modeli asosida termal buzilish, kuchlanish va sirt deformatsiyalari interaktiv tarzda kuzatiladi.")
 
@@ -1792,34 +1790,12 @@ with main_col_sird:
     st.plotly_chart(fig_sird, use_container_width=True)
 
 # =================================================================
-# 4. ILMIY MEXANIZM (Theory Column)
+# 4. ILMIY MEXANIZM (Theory Column) – rasm talab qilinmaydi
 # =================================================================
 with theory_col_sird:
     st.markdown("### 📚 Ilmiy Mexanizm")
     
-    # Rasm yuklash (agar fayl mavjud bo‘lsa)
-    img_path = "image_9b4d61.png"
-    if os.path.exists(img_path):
-        st.image(img_path, caption="Sirdesai et al. (2017) 5-rasm", use_container_width=True)
-    else:
-        uploaded_file = st.file_uploader("Mexanizm rasmini yuklang (image_9b4d61.png)", type=["png", "jpg"], key="sird_uploader")
-        if uploaded_file is not None:
-            st.image(uploaded_file, caption="Yuklangan mexanizm chizmasi", use_container_width=True)
-        else:
-            st.warning("⚠️ Rasm fayli topilmadi. Iltimos, papkaga qo'shing yoki yuklang.")
-
-    st.info(f"""
-    **Grafik ko'rsatkichlari:**
-    * **M**: Qatlam qalinligi
-    * **W**: Reaktor kengligi
-    * **S**: Maksimal vertikal cho'kish
-    * **$\\gamma$ (Gamma)**: Tortish burchagi
-    """)
+    # Rasm o‘rniga sxematik tushuntirish
+    st.markdown("""
+    **Sirdesai modeli asosidagi cho'kish mexanizmi:**
     
-    st.success(f"""
-    **Tahlil (PhD Xulosasi):**
-    Reaktor yer yuzasiga qanchalik yaqin bo'lsa ($h$ kam bo'lsa), sirt deformatsiyasi shunchalik keskinlashadi. 
-    Kenglik ($W$) 100 metrdan oshganda yuqori cho'kish kutiladi.
-    """)
-st.sidebar.markdown("---")
-st.sidebar.write(f"Tuzuvchi: Saitov Dilshodbek | Device: {device}")
