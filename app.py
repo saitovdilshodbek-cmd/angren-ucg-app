@@ -1302,193 +1302,99 @@ with st.expander("⚖️ Ssenariy Taqqoslash (A vs B)"):
                             'Farq': [f"{b_ucs-a_ucs:+.1f}", f"{b_gsi-a_gsi:+d}", f"{fos_b-fos_a:+.2f}", f"{b_temp-a_temp:+.0f}"]})
     st.dataframe(comp_df, use_container_width=True, hide_index=True)
 
-# 6. Sezgirlik tahlili (Tornado plot)
-@st.cache_data(show_spinner=False)
-def sensitivity_analysis(base_ucs, base_gsi, base_d, base_nu, base_t, H_seam, range_pct=0.2):
-    def quick_fos(ucs, gsi, d, nu, T):
-        mb = 10*np.exp((gsi-100)/(28-14*d))
-        s = np.exp((gsi-100)/(9-3*d))
-        damage = np.clip(1-np.exp(-0.002*max(T-100,0)),0,0.95)
-        sigma_ci = ucs*(1-damage)
-        str_red = np.exp(-0.0025*(T-20))
-        p_str = (sigma_ci*str_red)*(20/(H_seam+1e-12))**0.5
-        sv = ucs*0.025
-        return np.clip(p_str/(sv+1e-12),0,5)
-    params = {
-        'UCS (MPa)': (base_ucs, base_ucs*(1-range_pct), base_ucs*(1+range_pct)),
-        'GSI': (base_gsi, base_gsi*(1-range_pct), min(100,base_gsi*(1+range_pct))),
-        'D factor': (base_d, max(0,base_d-0.2), min(1,base_d+0.2)),
-        'Poisson (ν)': (base_nu, max(0.1,base_nu-0.05), min(0.4,base_nu+0.05)),
-        'Harorat (°C)': (base_t, base_t*(1-range_pct), min(1200,base_t*(1+range_pct))),
-    }
-    base_fos = quick_fos(base_ucs, base_gsi, base_d, base_nu, base_t)
+# ====================== YANGI SEZGIRLIK TAHLILI (SIZ BERGAN KOD ASOSIDA) ======================
+# Hoek-Brown yordamchi funksiyalari (allaqachon mavjud, lekin qayta ishlatamiz)
+def hoek_brown_params(gsi, mi, d):
+    mb = mi * np.exp((gsi - 100) / (28 - 14*d))
+    s  = np.exp((gsi - 100) / (9 - 3*d))
+    a  = 0.5 + (1/6)*(np.exp(-gsi/15) - np.exp(-20/3))
+    return mb, s, a
+
+def thermal_damage_func(T):
+    return np.clip(1 - np.exp(-0.002 * np.maximum(T - 100, 0)), 0, 0.95)
+
+def thermal_reduction_func(T):
+    return np.exp(-0.0025 * (T - 20))
+
+def in_situ_stress(rho, H, nu):
+    sigma_v = rho * 9.81 * H / 1e6  # MPa
+    k = nu / (1 - nu)
+    sigma_h = k * sigma_v
+    return sigma_v, sigma_h
+
+def pillar_strength_func(ucs, gsi, mi, d, T, width, H):
+    mb, s, a = hoek_brown_params(gsi, mi, d)
+    dmg = thermal_damage_func(T)
+    ucs_eff = ucs * (1 - dmg)
+    str_red = thermal_reduction_func(T)
+    strength = (ucs_eff * str_red) * (width / (H + 1e-12))**0.5
+    return strength
+
+def compute_fos_func(ucs, gsi, mi, d, nu, T, width, H, rho):
+    sigma_v, sigma_h = in_situ_stress(rho, H, nu)
+    p_str = pillar_strength_func(ucs, gsi, mi, d, T, width, H)
+    fos = p_str / (sigma_v + 1e-12)
+    return np.clip(fos, 0, 5)
+
+def sensitivity_analysis(base_params, H, rho, range_pct=0.2):
+    base_fos = compute_fos_func(**base_params, H=H, rho=rho)
     results = []
-    for name, (base, low, high) in params.items():
-        fos_low = quick_fos(low if name=='UCS (MPa)' else base_ucs,
-                            low if name=='GSI' else base_gsi,
-                            low if name=='D factor' else base_d,
-                            low if name=='Poisson (ν)' else base_nu,
-                            low if name=='Harorat (°C)' else base_t)
-        fos_high = quick_fos(high if name=='UCS (MPa)' else base_ucs,
-                             high if name=='GSI' else base_gsi,
-                             high if name=='D factor' else base_d,
-                             high if name=='Poisson (ν)' else base_nu,
-                             high if name=='Harorat (°C)' else base_t)
-        results.append({'param':name, 'low':fos_low-base_fos, 'high':fos_high-base_fos})
-    return pd.DataFrame(results), base_fos
+    for key in base_params.keys():
+        low_params = base_params.copy()
+        high_params = base_params.copy()
+        if key == 'nu':
+            low_params[key] = max(0.1, base_params[key] - 0.05)
+            high_params[key] = min(0.4, base_params[key] + 0.05)
+        elif key == 'd':
+            low_params[key] = max(0, base_params[key] - 0.2)
+            high_params[key] = min(1, base_params[key] + 0.2)
+        else:
+            low_params[key] = base_params[key] * (1 - range_pct)
+            high_params[key] = base_params[key] * (1 + range_pct)
+        fos_low = compute_fos_func(**low_params, H=H, rho=rho)
+        fos_high = compute_fos_func(**high_params, H=H, rho=rho)
+        results.append({
+            'param': key,
+            'low': fos_low - base_fos,
+            'high': fos_high - base_fos
+        })
+    df = pd.DataFrame(results)
+    df['impact'] = np.maximum(np.abs(df['low']), np.abs(df['high']))
+    return df.sort_values('impact', ascending=True), base_fos
 
-with st.expander("🌪️ Sezgirlik Tahlili (Tornado Plot)"):
-    df_sens, fos_base = sensitivity_analysis(layers_data[-1]['ucs'], layers_data[-1]['gsi'], D_factor, nu_poisson, avg_t_p, H_seam)
-    df_sens = df_sens.sort_values('high', ascending=True)
-    fig_tornado = go.Figure()
-    fig_tornado.add_bar(y=df_sens['param'], x=df_sens['low'], orientation='h', name='−20%', marker_color='#E74C3C')
-    fig_tornado.add_bar(y=df_sens['param'], x=df_sens['high'], orientation='h', name='+20%', marker_color='#27AE60')
-    fig_tornado.add_vline(x=0, line_color='white', line_width=2)
-    fig_tornado.update_layout(title=f"FOS sezgirligi (asosiy FOS={fos_base:.2f})", barmode='overlay', template='plotly_dark', height=350, xaxis_title='ΔFOS', bargap=0.3)
-    st.plotly_chart(fig_tornado, use_container_width=True)
-
-# =========================== KENGAYTIRILGAN ISO 9001 HISOBOT GENERATORI ===========================
-def generate_full_iso_report(obj_name, lang, layers_data, T_source_max, burn_duration,
-                             pillar_strength, optimal_width_ai, fos_2d, risk_map,
-                             prepared_by, approved_by, doc_number, revision, fig_bytes=None):
-    texts = {
-        'uz': {
-            'h1': "ISO 9001:2015 MUVOFIQDAT HISOBOTI",
-            'sec1': "1. LOYIHA UMUMIY TAVSIFI",
-            'sec2': "2. GEOMEXANIK QATLAMLAR VA XOSSALARI",
-            'sec3': "3. BARQARORLIK VA PILLAR DIZAYNI",
-            'sec4': "4. XAVFNI BAHOLASH (RISK ASSESSMENT)",
-            'sec5': "5. MUHANDISLIK XULOSASI VA TAVSIYALAR",
-            'fos_label': "Xavfsizlik koeffitsienti (FOS):",
-            'ai_label': "AI tomonidan optimallashtirilgan kenglik:",
-            'conclusion_title': "Yakuniy qaror:",
-            'safe': "✅ TIZIM BARQAROR: Loyiha parametrlari xavfsizlik talablariga javob beradi.",
-            'warning': "⚠️ MARGINAL HOLAT: Monitoringni kuchaytirish va qo'shimcha mahkamlash tavsiya etiladi.",
-            'danger': "🚨 XAVFLI: O'pirilish xafvi yuqori! Pillar kengligini oshirish yoki termal yukni kamaytirish shart."
+# Sezgirlik tahlilini yangi funksiya bilan almashtiramiz
+with st.expander("🌪️ Sezgirlik Tahlili (Tornado Plot) - Yangi Ilmiy Model"):
+    st.markdown("Quyidagi tahlilda **Hoek-Brown**, **termal degradatsiya** va **Wilson pillar** nazariyalari asosida FOS sezgirligi baholanadi.")
+    df_sens, fos_base = sensitivity_analysis(
+        base_params={
+            'ucs': layers_data[-1]['ucs'],
+            'gsi': layers_data[-1]['gsi'],
+            'mi': layers_data[-1]['mi'],
+            'd': D_factor,
+            'nu': nu_poisson,
+            'T': avg_t_p,
+            'width': rec_width
         },
-        'en': {
-            'h1': "ISO 9001:2015 COMPLIANCE REPORT",
-            'sec1': "1. PROJECT OVERVIEW",
-            'sec2': "2. GEOMECHANICAL PROPERTIES",
-            'sec3': "3. STABILITY AND PILLAR DESIGN",
-            'sec4': "4. RISK ASSESSMENT",
-            'sec5': "5. ENGINEERING CONCLUSIONS",
-            'fos_label': "Factor of Safety (FOS):",
-            'ai_label': "AI Optimized Width:",
-            'conclusion_title': "Final Decision:",
-            'safe': "✅ SYSTEM STABLE: Project parameters meet safety requirements.",
-            'warning': "⚠️ MARGINAL STABILITY: Increased monitoring and support recommended.",
-            'danger': "🚨 DANGEROUS: High risk of collapse! Increase pillar width or reduce thermal load."
-        }
-    }
-    t = texts.get(lang, texts['en'])
-    doc = Document()
-    header = doc.add_heading(f"{t['h1']}\n{obj_name}", level=1)
-    header.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    meta_table = doc.add_table(rows=2, cols=2)
-    meta_table.style = 'Table Grid'
-    meta_table.cell(0,0).text = f"Doc No: {doc_number}"
-    meta_table.cell(0,1).text = f"Revision: {revision}"
-    meta_table.cell(1,0).text = f"Prepared: {prepared_by}"
-    meta_table.cell(1,1).text = f"Approved: {approved_by}"
-    doc.add_heading(t['sec1'], level=2)
-    p = doc.add_paragraph()
-    p.add_run(f"Ob'ekt nomi: ").bold = True
-    p.add_run(f"{obj_name}\n")
-    p.add_run(f"Maksimal harorat: ").bold = True
-    p.add_run(f"{T_source_max} °C\n")
-    p.add_run(f"Yonish davomiyligi: ").bold = True
-    p.add_run(f"{burn_duration} soat")
-    doc.add_heading(t['sec2'], level=2)
-    table = doc.add_table(rows=1, cols=5)
-    table.style = 'Table Grid'
-    hdrs = ["Layer Name", "Thick (m)", "UCS (MPa)", "GSI", "mi"]
-    for i, h in enumerate(hdrs):
-        table.rows[0].cells[i].text = h
-    for layer in layers_data:
-        row = table.add_row().cells
-        row[0].text = layer['name']
-        row[1].text = f"{layer['t']:.1f}"
-        row[2].text = f"{layer['ucs']:.1f}"
-        row[3].text = str(layer['gsi'])
-        row[4].text = f"{layer['mi']:.1f}"
-    if fig_bytes:
-        doc.add_heading("Visual Analysis (Spatial Model)", level=2)
-        image_stream = io.BytesIO(fig_bytes)
-        doc.add_picture(image_stream, width=Inches(5.5))
-        doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
-    doc.add_heading(t['sec5'], level=2)
-    fos_val = np.nanmean(fos_2d)
-    risk_level = "LOW"
-    if np.max(risk_map) > 0.75:
-        risk_level = "CRITICAL"
-    elif np.max(risk_map) > 0.5:
-        risk_level = "MEDIUM"
-    doc.add_paragraph(f"Risk Level: {risk_level}")
-    conclusion_text = ""
-    color = RGBColor(0, 128, 0)
-    if fos_val < 1.1:
-        conclusion_text = t['danger']
-        color = RGBColor(255, 0, 0)
-    elif fos_val < 1.5:
-        conclusion_text = t['warning']
-        color = RGBColor(255, 165, 0)
-    else:
-        conclusion_text = t['safe']
-    res_p = doc.add_paragraph()
-    res_p.add_run(f"{t['fos_label']} {fos_val:.2f}\n").bold = True
-    res_p.add_run(f"{t['ai_label']} {optimal_width_ai:.1f} m\n\n")
-    final_run = res_p.add_run(f"{t['conclusion_title']}\n{conclusion_text}")
-    final_run.bold = True
-    final_run.font.color.rgb = color
-    doc.add_page_break()
-    doc.add_heading("APPENDIX: Mathematical Models Used", level=2)
-    doc.add_paragraph("1. Hoek-Brown Failure Criterion (Rock Mass Strength)")
-    doc.add_paragraph("σ1 = σ3 + σci * (mb * σ3 / σci + s)^a", style='Intense Quote')
-    doc.add_paragraph("2. Thermal Strength Decay (Exponential Model)")
-    doc.add_paragraph("UCS(T) = UCS_0 * exp(-β * (T - T0))", style='Intense Quote')
-    buffer = io.BytesIO()
-    doc.save(buffer)
-    buffer.seek(0)
-    return buffer.getvalue()
-
-with st.expander("📄 ISO 9001:2015 Standart Hujjat (.docx)"):
-    d1, d2 = st.columns(2)
-    with d1:
-        iso_lang = st.selectbox("Hujjat tili", ['uz','en','ru'], format_func=lambda x: {'uz':"🇺🇿 O'zbek",'en':"🇬🇧 English",'ru':"🇷🇺 Русский"}[x], key="iso_lang")
-        doc_num_input = st.text_input("Hujjat raqami", value="UCG-2026-001")
-        revision_inp = st.text_input("Revision", value="A")
-    with d2:
-        prepared_inp = st.text_input("Prepared by", value="UCG Engineering Team")
-        approved_inp = st.text_input("Approved by", value="Chief Engineer")
-    if st.button("📄 ISO hujjat yaratish (kengaytirilgan)", type="primary", use_container_width=True):
-        with st.spinner("ISO 9001 shablon tayyorlanmoqda..."):
-            try:
-                fig, ax = plt.subplots(figsize=(6,4))
-                im = ax.imshow(risk_map, extent=[x_axis[0], x_axis[-1], z_axis[-1], z_axis[0]], cmap='hot', aspect='auto')
-                plt.colorbar(im, ax=ax, label='Risk Index')
-                ax.set_title('Composite Risk Map')
-                ax.set_xlabel('X (m)')
-                ax.set_ylabel('Depth (m)')
-                buf_img = io.BytesIO()
-                plt.savefig(buf_img, format='png', dpi=100)
-                buf_img.seek(0)
-                plt.close()
-                docx_bytes = generate_full_iso_report(
-                    obj_name=obj_name, lang=iso_lang, layers_data=layers_data,
-                    T_source_max=T_source_max, burn_duration=burn_duration,
-                    pillar_strength=pillar_strength, optimal_width_ai=optimal_width_ai,
-                    fos_2d=fos_2d, risk_map=risk_map,
-                    prepared_by=prepared_inp, approved_by=approved_inp,
-                    doc_number=doc_num_input, revision=revision_inp,
-                    fig_bytes=buf_img.getvalue()
-                )
-                st.download_button(label=f"⬇️ {doc_num_input}_Rev{revision_inp}.docx", data=docx_bytes,
-                                   file_name=f"{doc_num_input}_Rev{revision_inp}_{pd.Timestamp.now().strftime('%Y%m%d')}.docx",
-                                   mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                   use_container_width=True)
-            except Exception as e:
-                st.error(f"Hisobot yaratishda xatolik: {e}")
+        H=H_seam,
+        rho=layers_data[-1]['rho'],
+        range_pct=0.2
+    )
+    fig_tornado = go.Figure()
+    fig_tornado.add_bar(y=df_sens['param'], x=df_sens['low'], orientation='h', name='−20% (yoki pasaytirilgan)', marker_color='#E74C3C')
+    fig_tornado.add_bar(y=df_sens['param'], x=df_sens['high'], orientation='h', name='+20% (yoki oshirilgan)', marker_color='#27AE60')
+    fig_tornado.add_vline(x=0, line_color='white', line_width=2)
+    fig_tornado.update_layout(
+        title=f"FOS Sezgirligi (asosiy FOS = {fos_base:.2f})",
+        barmode='relative',
+        template='plotly_dark',
+        height=450,
+        xaxis_title='ΔFOS',
+        yaxis_title='Parametr',
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1)
+    )
+    st.plotly_chart(fig_tornado, use_container_width=True)
+    st.caption("Parametrlar: ucs – bir oʻqli mustahkamlik, gsi – geologik kuch indeksi, mi – Hoek-Brown doimiysi, d – buzilish koeffitsiyenti, nu – Puasson koeffitsiyenti, T – harorat, width – selek eni.")
+    st.info(f"**Xulosa:** Asosiy FOS = {fos_base:.2f}. Eng ta'sirchan parametr: **{df_sens.iloc[-1]['param']}** (ΔFOS = {df_sens.iloc[-1]['high']:.3f}).")
 
 # ====================== ORIGINAL AI MONITORING (Live 3D, AI Monitoring, Advanced Analysis) ======================
 st.header("🔄 Live 3D Monitoring (Real-time)")
@@ -1787,7 +1693,6 @@ with tab_advanced:
 st.header("🕹️ Ultimate Interactive Dashboard (Real-time Animation)")
 st.markdown("Bu panelda FOS, siljish maydoni va vaqt bo‘yicha sirt siljishlarini interaktiv kuzatishingiz mumkin. Quyidagi slayderlar yordamida FOS chegarasini va rang sxemasini o‘zgartiring.")
 
-# Tuzatilgan funksiya (to‘g‘ridan-to‘g‘ri layout orqali o‘qlarni sozlash)
 def draw_interactive_ucg_dashboard(x_axis, z_axis, fos_2d, displacement_2d, surface_x, surface_h_disp, surface_v_disp, time_steps=None, fos_threshold=1.0, disp_colorscale='Turbo'):
     if time_steps is None:
         time_steps = np.arange(surface_h_disp.shape[0])
