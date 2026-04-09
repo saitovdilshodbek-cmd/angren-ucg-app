@@ -1699,22 +1699,15 @@ def calculate_comprehensive_metrics_sird(x, z, E, nu, alpha, beta_th, angle_draw
     X, Z = np.meshgrid(x, z, indexing='ij')
     reaktor_x = shift
     
-    # Harorat va Termal Buzilish
     dist = np.sqrt((X - reaktor_x)**2 + (Z - depth)**2)
     temp = 25 + (t_max - 25) * np.exp(-dist / (width / 2))
     dT = np.maximum(temp - 25, 0)
     dmg = np.clip(1 - np.exp(-beta_th * dT), 0, 1)
-    
-    # Termal Kuchlanish
     sth = (E * alpha * dT) / (1 - nu)
-    
-    # Sirt deformatsiyasi (sv va sh)
     i = depth * np.tan(np.radians(angle_draw))
     s_max = (0.001 * (width**2)) / (1 + depth / 450)
-    
     sv = s_max * np.exp(-((x - reaktor_x)**2) / (2 * i**2))
     sh = ((x - reaktor_x) / i) * sv * 0.55
-    
     return dmg, sth, sv.reshape(-1), sh.reshape(-1)
 
 # =================================================================
@@ -1727,15 +1720,7 @@ with st.sidebar.expander("📊 Sirdesai Dashboard sozlamalari", expanded=False):
     c_depth_sird = st.selectbox("Chuqurlik (h) [m]", [100, 500, 1000], index=1, key="sird_depth")
     t_core_sird = st.slider("Reaktor Harorati (°C)", 25, 1100, 950, key="sird_temp")
 
-# Sirdesai konstantalari (Pa da E)
-p_sird = {
-    'E': 25.45e9,        # Pa (25.45 GPa)
-    'nu': 0.24,
-    'alpha': 11e-6,      # 1/°C
-    'beta_th': 0.0025,
-    'angle_draw': 35     # gradus
-}
-
+p_sird = {'E': 25.45e9, 'nu': 0.24, 'alpha': 11e-6, 'beta_th': 0.0025, 'angle_draw': 35}
 x_axis_sird = np.linspace(-350, 350, 150)
 z_axis_sird = np.linspace(0, c_depth_sird + 150, 80)
 
@@ -1745,9 +1730,6 @@ dmg_sird, sth_sird, sv_sird, sh_sird = calculate_comprehensive_metrics_sird(
     t_core_sird, c_width_sird, c_depth_sird, reaktor_shift_sird
 )
 
-# =================================================================
-# 3. DASHBOARD LAYOUT (ikki ustun: asosiy grafiklar + nazariya)
-# =================================================================
 main_col_sird, theory_col_sird = st.columns([2.5, 1])
 
 with main_col_sird:
@@ -1757,45 +1739,21 @@ with main_col_sird:
                         "C) Termal Buzilish D(T)", "D) Termal Kuchlanish (MPa)"),
         vertical_spacing=0.25, horizontal_spacing=0.12
     )
-
-    # A) sv + Hovertemplate
-    fig_sird.add_trace(go.Scatter(
-        x=x_axis_sird, y=-sv_sird, fill='tozeroy', name="sv", 
-        line=dict(color='#00f2ff', width=3),
-        hovertemplate='X: %{x} m<br>Cho\'kish: %{y} mm'
-    ), row=1, col=1)
-    
-    # Max Point Marker
-    fig_sird.add_trace(go.Scatter(
-        x=[x_axis_sird[np.argmax(sv_sird)]], y=[-np.max(sv_sird)], mode='markers+text', 
-        text=f'Max: {np.max(sv_sird):.2f}mm', textposition='top center',
-        marker=dict(color='red', size=12, symbol='x')
-    ), row=1, col=1)
-
-    # B) Gorizontal siljish (sh)
-    fig_sird.add_trace(go.Scatter(x=x_axis_sird, y=sh_sird, name="sh", line=dict(color='orange'),
-                             hovertemplate='X: %{x} m<br>Siljish: %{y} mm'), row=1, col=2)
-
-    # C) Termal Buzilish (Heatmap)
-    fig_sird.add_trace(go.Heatmap(z=dmg_sird.T, x=x_axis_sird, y=z_axis_sird, colorscale='Viridis', zmin=0, zmax=1,
-                             colorbar=dict(title="D(T)", x=0.43, len=0.35, y=0.2, thickness=15)), row=2, col=1)
-
-    # D) Termal Kuchlanish (MPa)
-    fig_sird.add_trace(go.Heatmap(z=(sth_sird.T / 1e6), x=x_axis_sird, y=z_axis_sird, colorscale='Cividis',
-                             colorbar=dict(title="MPa", x=1.05, len=0.35, y=0.2, thickness=15)), row=2, col=2)
-
+    fig_sird.add_trace(go.Scatter(x=x_axis_sird, y=-sv_sird, fill='tozeroy', name="sv", line=dict(color='#00f2ff', width=3), hovertemplate='X: %{x} m<br>Cho\'kish: %{y} mm'), row=1, col=1)
+    fig_sird.add_trace(go.Scatter(x=[x_axis_sird[np.argmax(sv_sird)]], y=[-np.max(sv_sird)], mode='markers+text', text=f'Max: {np.max(sv_sird):.2f}mm', textposition='top center', marker=dict(color='red', size=12, symbol='x')), row=1, col=1)
+    fig_sird.add_trace(go.Scatter(x=x_axis_sird, y=sh_sird, name="sh", line=dict(color='orange'), hovertemplate='X: %{x} m<br>Siljish: %{y} mm'), row=1, col=2)
+    fig_sird.add_trace(go.Heatmap(z=dmg_sird.T, x=x_axis_sird, y=z_axis_sird, colorscale='Viridis', zmin=0, zmax=1, colorbar=dict(title="D(T)", x=0.43, len=0.35, y=0.2, thickness=15)), row=2, col=1)
+    fig_sird.add_trace(go.Heatmap(z=(sth_sird.T / 1e6), x=x_axis_sird, y=z_axis_sird, colorscale='Cividis', colorbar=dict(title="MPa", x=1.05, len=0.35, y=0.2, thickness=15)), row=2, col=2)
     fig_sird.update_yaxes(title_text="Chuqurlik (m)", autorange="reversed", row=2, col=1)
     fig_sird.update_yaxes(autorange="reversed", row=2, col=2)
     fig_sird.update_layout(height=850, template='plotly_dark', showlegend=False, margin=dict(t=80, l=60, r=80))
     st.plotly_chart(fig_sird, use_container_width=True)
 
-# =================================================================
-# 4. ILMIY MEXANIZM (Theory Column) – rasm talab qilinmaydi
-# =================================================================
 with theory_col_sird:
     st.markdown("### 📚 Ilmiy Mexanizm")
-    
-    # Rasm o‘rniga sxematik tushuntirish
+    diagram_text = """
+**Sirdesai modeli asosidagi cho'kish mexanizmi:**
+
     st.markdown("""
     **Sirdesai modeli asosidagi cho'kish mexanizmi:**
     
