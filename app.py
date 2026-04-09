@@ -1687,9 +1687,9 @@ with tab_advanced:
         for r in [t('ref1'), t('ref2'), t('ref3'), t('ref4'), "**Brady, B. H., & Brown, E. T. (2006).** Rock Mechanics for Underground Mining."]:
             st.write(r)
 
-# =========================== INTEGRATSIYA QISMI: INTERACTIVE UCG DASHBOARD (Sirdesai modeli – to‘liq) ===========================
+# =========================== INTEGRATSIYA QISMI: INTERACTIVE UCG DASHBOARD (Sirdesai modeli – to‘liq mustaqil) ===========================
 st.header("🕹️ Ultimate Interactive Dashboard (Real-time Animation)")
-st.markdown("Ushbu panelda Sirdesai va boshqalar (2021) modeli asosida termal buzilish, kuchlanish va sirt deformatsiyalari interaktiv tarzda kuzatiladi.")
+st.markdown("Ushbu panelda Sirdesai va boshqalar (2017) modeli asosida termal buzilish, kuchlanish va sirt deformatsiyalari interaktiv tarzda kuzatiladi.")
 
 # =================================================================
 # 1. HISOB-KITOB FUNKSIYASI (Sirdesai et al. Modeli) – CACHED
@@ -1758,64 +1758,66 @@ with main_col_sird:
         vertical_spacing=0.25, horizontal_spacing=0.12
     )
 
-    # A) Vertikal cho'kish
+    # A) sv + Hovertemplate
     fig_sird.add_trace(go.Scatter(
-        x=x_axis_sird, y=-sv_sird, fill='tozeroy', name="sv",
+        x=x_axis_sird, y=-sv_sird, fill='tozeroy', name="sv", 
         line=dict(color='#00f2ff', width=3),
         hovertemplate='X: %{x} m<br>Cho\'kish: %{y} mm'
     ), row=1, col=1)
+    
+    # Max Point Marker
     fig_sird.add_trace(go.Scatter(
-        x=[x_axis_sird[np.argmax(sv_sird)]], y=[-np.max(sv_sird)],
-        mode='markers+text', text=f'Max: {np.max(sv_sird):.2f} mm', textposition='top center',
+        x=[x_axis_sird[np.argmax(sv_sird)]], y=[-np.max(sv_sird)], mode='markers+text', 
+        text=f'Max: {np.max(sv_sird):.2f}mm', textposition='top center',
         marker=dict(color='red', size=12, symbol='x')
     ), row=1, col=1)
 
-    # B) Gorizontal siljish
-    fig_sird.add_trace(go.Scatter(
-        x=x_axis_sird, y=sh_sird, name="sh", line=dict(color='orange', width=2),
-        hovertemplate='X: %{x} m<br>Siljish: %{y} mm'
-    ), row=1, col=2)
+    # B) Gorizontal siljish (sh)
+    fig_sird.add_trace(go.Scatter(x=x_axis_sird, y=sh_sird, name="sh", line=dict(color='orange'),
+                             hovertemplate='X: %{x} m<br>Siljish: %{y} mm'), row=1, col=2)
 
-    # C) Termal buzilish heatmap
-    fig_sird.add_trace(go.Heatmap(
-        z=dmg_sird.T, x=x_axis_sird, y=z_axis_sird, colorscale='Viridis',
-        zmin=0, zmax=1,
-        colorbar=dict(title="D(T)", x=0.43, len=0.35, y=0.2)
-    ), row=2, col=1)
+    # C) Termal Buzilish (Heatmap)
+    fig_sird.add_trace(go.Heatmap(z=dmg_sird.T, x=x_axis_sird, y=z_axis_sird, colorscale='Viridis', zmin=0, zmax=1,
+                             colorbar=dict(title="D(T)", x=0.43, len=0.35, y=0.2, thickness=15)), row=2, col=1)
 
-    # D) Termal kuchlanish heatmap (MPa)
-    fig_sird.add_trace(go.Heatmap(
-        z=(sth_sird.T / 1e6), x=x_axis_sird, y=z_axis_sird, colorscale='Cividis',
-        colorbar=dict(title="MPa", x=1.05, len=0.35, y=0.2)
-    ), row=2, col=2)
+    # D) Termal Kuchlanish (MPa)
+    fig_sird.add_trace(go.Heatmap(z=(sth_sird.T / 1e6), x=x_axis_sird, y=z_axis_sird, colorscale='Cividis',
+                             colorbar=dict(title="MPa", x=1.05, len=0.35, y=0.2, thickness=15)), row=2, col=2)
 
-    # O'qlar
     fig_sird.update_yaxes(title_text="Chuqurlik (m)", autorange="reversed", row=2, col=1)
     fig_sird.update_yaxes(autorange="reversed", row=2, col=2)
-    fig_sird.update_xaxes(title_text="Masofa (m)", row=2, col=1)
-    fig_sird.update_xaxes(title_text="Masofa (m)", row=2, col=2)
-    fig_sird.update_layout(height=850, template='plotly_dark', showlegend=False, margin=dict(t=80))
+    fig_sird.update_layout(height=850, template='plotly_dark', showlegend=False, margin=dict(t=80, l=60, r=80))
     st.plotly_chart(fig_sird, use_container_width=True)
 
+# =================================================================
+# 4. ILMIY MEXANIZM (Theory Column)
+# =================================================================
 with theory_col_sird:
     st.markdown("### 📚 Ilmiy Mexanizm")
-    # Rasm fayli mavjudligiga ishonch hosil qiling. Agar bo'lmasa, izohli matn ko'rsatiladi.
-    try:
-        st.image("image_9b4d61.png", caption="Sirdesai et al. (2017) 5-rasm: Subsidence Mexanizmi", use_column_width=True)
-    except:
-        st.warning("Rasm fayli (image_9b4d61.png) topilmadi. Iltimos, faylni qo'lda qo'shing yoki rasm yo'lini tekshiring.")
     
-    st.info("""
+    # Rasm yuklash (agar fayl mavjud bo‘lsa)
+    img_path = "image_9b4d61.png"
+    if os.path.exists(img_path):
+        st.image(img_path, caption="Sirdesai et al. (2017) 5-rasm", use_container_width=True)
+    else:
+        uploaded_file = st.file_uploader("Mexanizm rasmini yuklang (image_9b4d61.png)", type=["png", "jpg"], key="sird_uploader")
+        if uploaded_file is not None:
+            st.image(uploaded_file, caption="Yuklangan mexanizm chizmasi", use_container_width=True)
+        else:
+            st.warning("⚠️ Rasm fayli topilmadi. Iltimos, papkaga qo'shing yoki yuklang.")
+
+    st.info(f"""
     **Grafik ko'rsatkichlari:**
-    * **M:** Qatlam qalinligi
-    * **W:** Reaktor kengligi
-    * **S:** Maksimal vertikal cho'kish
-    * **$\gamma$:** Tortish burchagi (Angle of Draw)
+    * **M**: Qatlam qalinligi
+    * **W**: Reaktor kengligi
+    * **S**: Maksimal vertikal cho'kish
+    * **$\\gamma$ (Gamma)**: Tortish burchagi
     """)
     
-    st.warning("""
-    **Tahlil:** Reaktor yaqinroq bo'lsa (h kam bo'lsa), cho'kish magnitudasi ortadi. 
-    Kenglik (W) 100 metrdan oshganda yuqori deformatsiya kutiladi.
+    st.success(f"""
+    **Tahlil (PhD Xulosasi):**
+    Reaktor yer yuzasiga qanchalik yaqin bo'lsa ($h$ kam bo'lsa), sirt deformatsiyasi shunchalik keskinlashadi. 
+    Kenglik ($W$) 100 metrdan oshganda yuqori cho'kish kutiladi.
     """)
 st.sidebar.markdown("---")
 st.sidebar.write(f"Tuzuvchi: Saitov Dilshodbek | Device: {device}")
