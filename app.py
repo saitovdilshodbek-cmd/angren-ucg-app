@@ -425,8 +425,10 @@ def hoek_brown_params(gsi, mi, d):
     a  = 0.5 + (1/6)*(np.exp(-gsi/15) - np.exp(-20/3))
     return mb, s, a
 
-def thermal_damage_func(T, T0=100, k=0.002):
-    return np.clip(1 - np.exp(-k * np.maximum(T - T0, 0)), 0, 0.95)
+def thermal_damage_func(T, T0=100, k=0.002, mech_factor=0.1, stress_ratio=1.0):
+    thermal = 1 - np.exp(-k * np.maximum(T - T0, 0))
+    mech = mech_factor * stress_ratio
+    return np.clip(thermal + mech, 0, 0.98)
 
 def thermal_reduction_func(T):
     return np.exp(-0.0025 * (T - 20))
@@ -491,8 +493,7 @@ class SimulationState:
         self.temp_2d, self.x_axis, self.z_axis, self.grid_x, self.grid_z = compute_temperature_field_moving(
             time_h, T_source_max, burn_duration, total_depth, source_z, grid_shape, n_steps=20)
         
-        # Geomexanik hisoblar (bir koddan to‘liq ko‘chirilgan)
-        # 1. Boshlang‘ich kuchlanishlar
+        # Geomexanik hisoblar
         self.sigma_v = np.zeros_like(self.temp_2d)
         grid_ucs = np.zeros_like(self.temp_2d)
         grid_mb = np.zeros_like(self.temp_2d)
@@ -517,7 +518,8 @@ class SimulationState:
         # Termal zarar va UCS pasayishi
         delta_T = self.temp_2d - 25.0
         stress_ratio = self.sigma_v / (grid_ucs + EPS)
-        self.damage = thermal_damage_func(self.temp_2d, stress_ratio=stress_ratio)  # aslida stress_ratio ishlatiladi, soddalashtirildi
+        # Tuzatilgan funksiya chaqiruvi - stress_ratio uzatiladi
+        self.damage = thermal_damage_func(self.temp_2d, stress_ratio=stress_ratio)
         sigma_ci = grid_ucs * (1 - self.damage)
         
         # Termal kuchlanish
@@ -711,11 +713,11 @@ with col_g2:
     st.plotly_chart(go.Figure(go.Scatter(x=sim.x_axis, y=uplift, fill='tozeroy', line=dict(color='cyan',width=3))).update_layout(title=t('thermal_deform_title'), template="plotly_dark", height=300), use_container_width=True)
 with col_g3:
     sigma3_ax = np.linspace(0, layers_data[-1]['ucs']*0.5, 100)
-    mb_s, s_s, a_s = 5, 0.1, 0.5  # placeholder
+    mb_s, s_s, a_s = 5, 0.1, 0.5  # placeholder (aslida hisoblash kerak)
     s1_20 = sigma3_ax + layers_data[-1]['ucs']*(mb_s*sigma3_ax/(layers_data[-1]['ucs']+EPS)+s_s)**a_s
     st.plotly_chart(go.Figure(go.Scatter(x=sigma3_ax, y=s1_20, name='20°C', line=dict(color='red',width=2))).update_layout(title=t('hb_envelopes_title'), template="plotly_dark", height=300), use_container_width=True)
 
-# 3. TM maydoni va selek interferensiyasi (soddalashtirilgan)
+# 3. TM maydoni va selek interferensiyasi
 st.markdown("---")
 c1, c2 = st.columns([1, 2.5])
 with c1:
@@ -738,7 +740,7 @@ with c2:
     fig_tm.update_yaxes(autorange='reversed', row=2, col=1)
     st.plotly_chart(fig_tm, use_container_width=True)
 
-# 4. Kompleks monitoring paneli (qisqa)
+# 4. Kompleks monitoring paneli
 st.header(t('monitoring_panel', obj_name=obj_name))
 def calculate_live_metrics(h, layers, T_max):
     target = layers[-1]
@@ -756,11 +758,11 @@ mk2.metric(t('rec_width_live'), f"{w_rec_live:.1f} m")
 mk3.metric(t('max_subsidence_live'), f"{s_max_3d*100:.1f} cm")
 mk4.metric(t('process_stage'), t('stage_active') if time_h<100 else t('stage_cooling'))
 
-# 5. Qo‘shimcha tahlillar (Monte Carlo, sezgirlik, AI monitoring) – qisqartirilgan
+# 5. Qo‘shimcha tahlillar (soddalashtirilgan)
 with st.expander("🎲 Monte Carlo Noaniqlik Tahlili"):
-    st.info("Monte Carlo simulyatsiyasi uchun to‘liq kod birinchi faylda mavjud. Bu yerda qisqartirilgan.")
+    st.info("Monte Carlo simulyatsiyasi to‘liq holda asl koddan olinadi. Bu yerda namuna.")
 with st.expander("🌪️ Sezgirlik Tahlili (Tornado Plot)"):
-    st.info("Sezgirlik tahlili to‘liq holda birinchi koddan olinadi.")
+    st.info("Sezgirlik tahlili to‘liq holda asl koddan olinadi.")
 
 # 6. AI Risk Prediction (Sensor CSV)
 with st.expander("🤖 AI Risk Prediction (Sensor CSV)", expanded=False):
@@ -770,7 +772,6 @@ with st.expander("🤖 AI Risk Prediction (Sensor CSV)", expanded=False):
         df_sensor = pd.read_csv(sensor_file)
         required_cols = ['temp', 'stress', 'ucs_lab']
         if all(c in df_sensor.columns for c in required_cols):
-            # Risk prediction (SimpleRiskNN yoki formula)
             if PT_AVAILABLE:
                 model = SimpleRiskNN().to(device)
                 model.eval()
@@ -792,16 +793,16 @@ with st.expander("🤖 AI Risk Prediction (Sensor CSV)", expanded=False):
 st.header("🔄 Live 3D Monitoring (Real-time)")
 tab_live, tab_ai, tab_advanced = st.tabs([t('live_monitoring_tab'), t('ai_monitor_title'), t('advanced_analysis')])
 with tab_live:
-    st.markdown("Live monitoring interaktiv simulyatsiya uchun to‘liq kod birinchi faylda mavjud.")
+    st.markdown("Live monitoring interaktiv simulyatsiya to‘liq kodda mavjud. Bu yerda demo.")
     if st.button("▶️ Run Live Monitoring (Demo)"):
-        st.info("Demo ishga tushdi... (to‘liq funksiya uchun birinchi kodni qo‘shing)")
+        st.info("Demo ishga tushdi... (to‘liq funksiya uchun asl kodni qo‘shing)")
 with tab_ai:
     st.markdown(f"*{t('ai_monitor_desc')}*")
     if st.button(t('ai_run_btn')):
         st.info("AI monitoring demo...")
 with tab_advanced:
     st.header(t('advanced_analysis'))
-    st.info("Chuqurlashtirilgan tahlil (Hoek-Brown, termal parametrlar, barqarorlik) birinchi koddan to‘liq ko‘chirilgan.")
+    st.info("Chuqurlashtirilgan tahlil (Hoek-Brown, termal parametrlar, barqarorlik) to‘liq koddan olinadi.")
 
 st.sidebar.markdown("---")
 st.sidebar.write(f"Tuzuvchi: Saitov Dilshodbek | Device: {device}")
