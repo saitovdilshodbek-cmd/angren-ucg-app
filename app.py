@@ -1303,7 +1303,6 @@ with st.expander("⚖️ Ssenariy Taqqoslash (A vs B)"):
     st.dataframe(comp_df, use_container_width=True, hide_index=True)
 
 # ====================== YANGI SEZGIRLIK TAHLILI (SIZ BERGAN KOD ASOSIDA) ======================
-# Hoek-Brown yordamchi funksiyalari (allaqachon mavjud, lekin qayta ishlatamiz)
 def hoek_brown_params(gsi, mi, d):
     mb = mi * np.exp((gsi - 100) / (28 - 14*d))
     s  = np.exp((gsi - 100) / (9 - 3*d))
@@ -1362,7 +1361,6 @@ def sensitivity_analysis(base_params, H, rho, range_pct=0.2):
     df['impact'] = np.maximum(np.abs(df['low']), np.abs(df['high']))
     return df.sort_values('impact', ascending=True), base_fos
 
-# Sezgirlik tahlilini yangi funksiya bilan almashtiramiz
 with st.expander("🌪️ Sezgirlik Tahlili (Tornado Plot) - Yangi Ilmiy Model"):
     st.markdown("Quyidagi tahlilda **Hoek-Brown**, **termal degradatsiya** va **Wilson pillar** nazariyalari asosida FOS sezgirligi baholanadi.")
     df_sens, fos_base = sensitivity_analysis(
