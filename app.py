@@ -1687,107 +1687,134 @@ with tab_advanced:
         for r in [t('ref1'), t('ref2'), t('ref3'), t('ref4'), "**Brady, B. H., & Brown, E. T. (2006).** Rock Mechanics for Underground Mining."]:
             st.write(r)
 
-# =========================== INTEGRATSIYA QISMI: INTERACTIVE UCG DASHBOARD (Tuzatilgan) ===========================
+# =========================== INTEGRATSIYA QISMI: INTERACTIVE UCG DASHBOARD (Sirdesai et al. Model) ===========================
 st.header("🕹️ Ultimate Interactive Dashboard (Real-time Animation)")
-st.markdown("Bu panelda FOS, siljish maydoni va vaqt bo‘yicha sirt siljishlarini interaktiv kuzatishingiz mumkin. Quyidagi slayderlar yordamida FOS chegarasini va rang sxemasini o‘zgartiring.")
+st.markdown("Ushbu panelda Sirdesai va boshqalar (2021) modeli asosida termal buzilish, kuchlanish va sirt deformatsiyalari interaktiv tarzda kuzatiladi.")
 
-def draw_interactive_ucg_dashboard(x_axis, z_axis, fos_2d, displacement_2d, surface_x, surface_h_disp, surface_v_disp, time_steps=None, fos_threshold=1.0, disp_colorscale='Turbo'):
-    if time_steps is None:
-        time_steps = np.arange(surface_h_disp.shape[0])
-    pillar_locations = np.linspace(x_axis.min() + 50, x_axis.max() - 50, 3)
-    fig = make_subplots(rows=2, cols=2,
-                        subplot_titles=("A) FOS & Yielded Zones (2D)",
-                                        "B) Total Displacement (2D, cm)",
-                                        "C) Horizontal Surface Displacement (mm)",
-                                        "D) Vertical Surface Displacement (mm)"),
-                        horizontal_spacing=0.1, vertical_spacing=0.15)
-    # FOS Heatmap
-    fig.add_trace(go.Heatmap(
-        z=fos_2d, x=x_axis, y=z_axis,
-        colorscale=[[0, 'rgb(255, 0, 0)'], [0.33, 'rgb(255, 165, 0)'], [0.5, 'rgb(173, 255, 47)'], [1, 'rgb(0, 128, 0)']],
-        zmin=0, zmax=3, colorbar=dict(title="FOS", x=0.45, y=0.78, thickness=12, len=0.42), name="FOS"
-    ), row=1, col=1)
-    mask_fos = np.where(fos_2d < fos_threshold, 1, np.nan)
-    fig.add_trace(go.Heatmap(z=mask_fos, x=x_axis, y=z_axis, colorscale=[[0,'rgba(255,0,0,0.5)'],[1,'rgba(255,0,0,0.5)']], showscale=False, name="Yielded Zone"), row=1, col=1)
-    # 2D Displacement
-    fig.add_trace(go.Heatmap(z=displacement_2d, x=x_axis, y=z_axis, colorscale=disp_colorscale, colorbar=dict(title="Disp (cm)", x=1.0, y=0.78, thickness=12, len=0.42), name="2D Disp"), row=1, col=2)
-    # Surface displacement traces
-    for i, t in enumerate(time_steps):
-        fig.add_trace(go.Heatmap(z=surface_h_disp[i:i+1,:], x=surface_x, y=[t], colorscale='Turbo', zmin=np.min(surface_h_disp), zmax=np.max(surface_h_disp), showscale=False, visible=(i==0), name="H Disp"), row=2, col=1)
-        fig.add_trace(go.Heatmap(z=surface_v_disp[i:i+1,:], x=surface_x, y=[t], colorscale='Viridis', zmin=np.min(surface_v_disp), zmax=np.max(surface_v_disp), showscale=False, visible=(i==0), name="V Disp"), row=2, col=2)
-    # Pillars
-    for pos in pillar_locations:
-        fig.add_shape(type="rect", x0=pos-25, x1=pos+25, y0=550, y1=600, line=dict(color="Lime", width=3), row=1, col=1)
-        fig.add_shape(type="rect", x0=pos-25, x1=pos+25, y0=550, y1=600, line=dict(color="Lime", width=3), row=1, col=2)
-    # ========== O‘QLARNI TO‘G‘RIDAN-TO‘G‘RI LAYOUT ORQALI SOZLASH ==========
-    # 1-qator, 1-ustun (FOS)
-    fig.layout.xaxis.title.text = "X (m)"
-    fig.layout.xaxis.gridcolor = 'rgba(255,255,255,0.1)'
-    fig.layout.xaxis.range = [x_axis.min(), x_axis.max()]
-    fig.layout.yaxis.title.text = "Depth (m)"
-    fig.layout.yaxis.gridcolor = 'rgba(255,255,255,0.1)'
-    fig.layout.yaxis.autorange = "reversed"
-    # 1-qator, 2-ustun (Displacement)
-    fig.layout.xaxis2.title.text = "X (m)"
-    fig.layout.xaxis2.gridcolor = 'rgba(255,255,255,0.1)'
-    fig.layout.xaxis2.range = [x_axis.min(), x_axis.max()]
-    fig.layout.yaxis2.title.text = "Depth (m)"
-    fig.layout.yaxis2.gridcolor = 'rgba(255,255,255,0.1)'
-    fig.layout.yaxis2.autorange = "reversed"
-    # 2-qator, 1-ustun (Horizontal displacement)
-    fig.layout.xaxis3.title.text = "Masofa (m)"
-    fig.layout.xaxis3.gridcolor = 'rgba(255,255,255,0.1)'
-    fig.layout.yaxis3.title.text = "Vaqt bosqichi"
-    fig.layout.yaxis3.gridcolor = 'rgba(255,255,255,0.1)'
-    # 2-qator, 2-ustun (Vertical displacement)
-    fig.layout.xaxis4.title.text = "Masofa (m)"
-    fig.layout.xaxis4.gridcolor = 'rgba(255,255,255,0.1)'
-    fig.layout.yaxis4.title.text = "Vaqt bosqichi"
-    fig.layout.yaxis4.gridcolor = 'rgba(255,255,255,0.1)'
-    # Layout
-    fig.update_layout(
-        title=dict(text="Interactive Ultimate UCG Monitoring Dashboard", x=0.5, font=dict(size=22, color="white")),
-        plot_bgcolor='black', paper_bgcolor='black', template='plotly_dark', height=900,
-        showlegend=False, margin=dict(l=50, r=50, t=100, b=50),
-        updatemenus=[dict(type="buttons", showactive=False, y=1.05, x=1.15, xanchor="right", yanchor="top",
-                          buttons=[dict(label="Play", method="animate",
-                                        args=[None, {"frame": {"duration":500, "redraw":True}, "fromcurrent":True, "transition": {"duration":0}}]),
-                                   dict(label="Pause", method="animate",
-                                        args=[[None], {"frame": {"duration":0, "redraw":False}, "mode":"immediate", "transition": {"duration":0}}])])]
-    )
-    return fig
+# =================================================================
+# 1. OPTIMALLASHTIRILGAN HISOB-KITOB FUNKSIYASI (CACHED)
+# =================================================================
+@st.cache_data
+def calculate_comprehensive_metrics(x, z, E, nu, alpha, beta_th, angle_draw, ucs_0, t_max, width, depth, shift):
+    # 'ij' indexing koordinata o'qlari va Heatmap mosligi uchun
+    X, Z = np.meshgrid(x, z, indexing='ij') 
+    reaktor_x = shift
+    
+    # Harorat maydoni simulyatsiyasi (Equation 3)
+    dist = np.sqrt((X - reaktor_x)**2 + (Z - depth)**2)
+    temp = 25 + (t_max - 25) * np.exp(-dist / (width / 2))
+    dT = np.maximum(temp - 25, 0)
+    
+    # Termal Buzilish D(T)
+    dmg = 1 - np.exp(-beta_th * dT)
+    
+    # Termal Kuchlanish sigma_th
+    sth = (E * alpha * dT) / (1 - nu)
+    
+    # Sirt deformatsiyasi (sv va sh)
+    i = depth * np.tan(np.radians(angle_draw))
+    s_max = (0.001 * (width**2)) / (1 + depth / 450)
+    
+    sv = s_max * np.exp(-((x - reaktor_x)**2) / (2 * i**2))
+    sh = ((x - reaktor_x) / i) * sv * 0.55
+    
+    # Sirt grafiklari uchun massivlarni tekislash
+    return temp, dmg, sth, sv.reshape(-1), sh.reshape(-1)
 
-# Dashboard uchun kerakli ma'lumotlar
-if 'displacement_2d' not in locals():
-    sub_2d = np.tile(sub_p.reshape(1,-1)*100, (len(z_axis), 1))
-    uplift_2d = np.tile(uplift.reshape(1,-1), (len(z_axis), 1))
-    displacement_2d = np.sqrt(sub_2d**2 + uplift_2d**2) * (1 + 0.3 * np.random.rand(*sub_2d.shape))
+# =================================================================
+# 2. DASHBOARD PARAMETRLARI (SIDEBARDA O‘ZGARTIRISH MUMKIN)
+# =================================================================
+with st.sidebar.expander("📊 Dashboard sozlamalari (Sirdesai modeli)", expanded=False):
+    method = st.radio("UCG Usuli", ["LVW", "CRIP"], key="dash_method")
+    reaktor_shift = 0
+    if method == "CRIP":
+        reaktor_shift = st.slider("Reaktor siljishi (m)", -100, 100, 0, key="dash_shift")
+    c_width = st.slider("Reaktor kengligi (m)", 20, 200, 100, key="dash_width")
+    c_depth = st.selectbox("Chuqurlik (m)", [100, 500, 1000], index=1, key="dash_depth")
+    t_core = st.slider("Reaktor Harorati (°C)", 25, 1100, 950, key="dash_temp")
 
-time_steps_dash = np.arange(0, time_h+1, max(1, time_h//20))
-surface_x = x_axis
-surface_h_disp = []
-surface_v_disp = []
-for t in time_steps_dash:
-    v_disp = -s_max * np.exp(-(surface_x**2)/(2*(total_depth/2)**2)) * (min(t, burn_duration)/burn_duration) * 100
-    h_disp = np.gradient(v_disp) * 0.5
-    surface_v_disp.append(v_disp)
-    surface_h_disp.append(h_disp)
-surface_h_disp = np.array(surface_h_disp)
-surface_v_disp = np.array(surface_v_disp)
+# Sirdesai konstantalari (qatlam xususiyatlariga moslab o‘zgartirish mumkin)
+p_dash = {
+    'E': 25450.0,        # MPa
+    'nu': 0.24,
+    'alpha': 11e-6,      # 1/°C
+    'beta_th': 0.0025,
+    'angle_draw': 35,    # gradus
+    'ucs_0': 35.0        # MPa
+}
 
-col1, col2 = st.columns(2)
-with col1:
-    fos_thresh_dash = st.slider("FOS Threshold (Yielded Zone)", 0.1, 2.0, 1.0, 0.05, key="fos_thresh_dash")
-with col2:
-    disp_cscale = st.selectbox("Displacement Color Scale", ['Turbo','Viridis','Cividis'], index=0, key="disp_cscale")
+# Hisob to‘rlari
+x_axis_dash = np.linspace(-350, 350, 150)
+z_axis_dash = np.linspace(0, c_depth + 150, 80)
 
-dash_fig = draw_interactive_ucg_dashboard(
-    x_axis=x_axis, z_axis=z_axis, fos_2d=fos_2d,
-    displacement_2d=displacement_2d, surface_x=surface_x,
-    surface_h_disp=surface_h_disp, surface_v_disp=surface_v_disp,
-    time_steps=time_steps_dash, fos_threshold=fos_thresh_dash, disp_colorscale=disp_cscale
+# HISOB-KITOB (cached)
+temp_dash, dmg_dash, sth_dash, sv_dash, sh_dash = calculate_comprehensive_metrics(
+    x_axis_dash, z_axis_dash,
+    p_dash['E'], p_dash['nu'], p_dash['alpha'], p_dash['beta_th'], p_dash['angle_draw'], p_dash['ucs_0'],
+    t_core, c_width, c_depth, reaktor_shift
 )
-st.plotly_chart(dash_fig, use_container_width=True)
 
+# =================================================================
+# 3. VIZUALIZATSIYA (PLOTLY)
+# =================================================================
+fig_dash = make_subplots(
+    rows=2, cols=2,
+    subplot_titles=("A) Vertikal Cho'kish (sv)", "B) Gorizontal Siljish (sh)",
+                    "C) Termal Buzilish D(T)", "D) Termal Kuchlanish (MPa)"),
+    vertical_spacing=0.15
+)
+
+# A) Vertikal cho'kish (sv) + Hovertemplate
+fig_dash.add_trace(go.Scatter(
+    x=x_axis_dash, y=-sv_dash, 
+    fill='tozeroy', 
+    name="sv", 
+    line=dict(color='#00f2ff', width=3),
+    hovertemplate='X: %{x} m<br>Cho\'kish: %{y} mm'
+), row=1, col=1)
+
+# Maksimal cho'kish marker nuqtasi
+fig_dash.add_trace(go.Scatter(
+    x=[x_axis_dash[np.argmax(sv_dash)]], 
+    y=[-np.max(sv_dash)],
+    mode='markers+text', 
+    text=f'Max sv: {np.max(sv_dash):.2f} mm', 
+    textposition='top center',
+    marker=dict(color='red', size=12, symbol='x'),
+    name="Max sv Point"
+), row=1, col=1)
+
+# B) Gorizontal siljish (sh)
+fig_dash.add_trace(go.Scatter(
+    x=x_axis_dash, y=sh_dash, 
+    name="sh", 
+    line=dict(color='#ffaa00', width=2),
+    hovertemplate='X: %{x} m<br>Siljish: %{y} mm'
+), row=1, col=2)
+
+# C) Termal Buzilish (Heatmap) - Viridis + Transpose (.T)
+fig_dash.add_trace(go.Heatmap(
+    z=dmg_dash.T, x=x_axis_dash, y=z_axis_dash, 
+    colorscale='Viridis',
+    colorbar=dict(title="D(T)", x=0.46)
+), row=2, col=1)
+
+# D) Termal Kuchlanish (Heatmap) - Cividis + Transpose (.T)
+fig_dash.add_trace(go.Heatmap(
+    z=sth_dash.T, x=x_axis_dash, y=z_axis_dash, 
+    colorscale='Cividis',
+    colorbar=dict(title="MPa", x=1.0)
+), row=2, col=2)
+
+# O'qlarni sozlash
+fig_dash.update_yaxes(autorange="reversed", row=2, col=1)
+fig_dash.update_yaxes(autorange="reversed", row=2, col=2)
+fig_dash.update_layout(
+    height=850,
+    template='plotly_dark',
+    showlegend=False,
+    title=dict(text="Sirdesai modeli asosida UCG geomexanik monitoringi", x=0.5, font=dict(size=18))
+)
+st.plotly_chart(fig_dash, use_container_width=True)
 st.sidebar.markdown("---")
 st.sidebar.write(f"Tuzuvchi: Saitov Dilshodbek | Device: {device}")
