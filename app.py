@@ -1687,12 +1687,12 @@ with tab_advanced:
         for r in [t('ref1'), t('ref2'), t('ref3'), t('ref4'), "**Brady, B. H., & Brown, E. T. (2006).** Rock Mechanics for Underground Mining."]:
             st.write(r)
 
-# =========================== INTEGRATSIYA QISMI: INTERACTIVE UCG DASHBOARD (Sirdesai et al. Model) ===========================
+# =========================== INTEGRATSIYA QISMI: INTERACTIVE UCG DASHBOARD (Sirdesai modeli) ===========================
 st.header("🕹️ Ultimate Interactive Dashboard (Real-time Animation)")
 st.markdown("Ushbu panelda Sirdesai va boshqalar (2021) modeli asosida termal buzilish, kuchlanish va sirt deformatsiyalari interaktiv tarzda kuzatiladi.")
 
 # =================================================================
-# 1. OPTIMALLASHTIRILGAN HISOB-KITOB FUNKSIYASI (CACHED)
+# 1. HISOB-KITOB FUNKSIYASI (CACHED)
 # =================================================================
 @st.cache_data
 def calculate_comprehensive_metrics(x, z, E, nu, alpha, beta_th, angle_draw, ucs_0, t_max, width, depth, shift):
@@ -1718,11 +1718,10 @@ def calculate_comprehensive_metrics(x, z, E, nu, alpha, beta_th, angle_draw, ucs
     sv = s_max * np.exp(-((x - reaktor_x)**2) / (2 * i**2))
     sh = ((x - reaktor_x) / i) * sv * 0.55
     
-    # Sirt grafiklari uchun massivlarni tekislash
     return temp, dmg, sth, sv.reshape(-1), sh.reshape(-1)
 
 # =================================================================
-# 2. DASHBOARD PARAMETRLARI (SIDEBARDA O‘ZGARTIRISH MUMKIN)
+# 2. PARAMETRLAR VA SIDEBAR (dashboard sozlamalari)
 # =================================================================
 with st.sidebar.expander("📊 Dashboard sozlamalari (Sirdesai modeli)", expanded=False):
     method = st.radio("UCG Usuli", ["LVW", "CRIP"], key="dash_method")
@@ -1733,21 +1732,20 @@ with st.sidebar.expander("📊 Dashboard sozlamalari (Sirdesai modeli)", expande
     c_depth = st.selectbox("Chuqurlik (m)", [100, 500, 1000], index=1, key="dash_depth")
     t_core = st.slider("Reaktor Harorati (°C)", 25, 1100, 950, key="dash_temp")
 
-# Sirdesai konstantalari (qatlam xususiyatlariga moslab o‘zgartirish mumkin)
+# Sirdesai Table 1 & 2 ma'lumotlari (kerak bo‘lsa asosiy qatlam xususiyatlariga moslab o‘zgartirish mumkin)
 p_dash = {
-    'E': 25450.0,        # MPa
+    'E': 25450.0,         # MPa
     'nu': 0.24,
-    'alpha': 11e-6,      # 1/°C
+    'alpha': 11e-6,       # 1/°C
     'beta_th': 0.0025,
-    'angle_draw': 35,    # gradus
-    'ucs_0': 35.0        # MPa
+    'angle_draw': 35,     # gradus
+    'ucs_0': 35.0         # MPa
 }
 
-# Hisob to‘rlari
 x_axis_dash = np.linspace(-350, 350, 150)
 z_axis_dash = np.linspace(0, c_depth + 150, 80)
 
-# HISOB-KITOB (cached)
+# HISOB-KITOBNI CHAQIRISH
 temp_dash, dmg_dash, sth_dash, sv_dash, sh_dash = calculate_comprehensive_metrics(
     x_axis_dash, z_axis_dash,
     p_dash['E'], p_dash['nu'], p_dash['alpha'], p_dash['beta_th'], p_dash['angle_draw'], p_dash['ucs_0'],
@@ -1761,19 +1759,17 @@ fig_dash = make_subplots(
     rows=2, cols=2,
     subplot_titles=("A) Vertikal Cho'kish (sv)", "B) Gorizontal Siljish (sh)",
                     "C) Termal Buzilish D(T)", "D) Termal Kuchlanish (MPa)"),
-    vertical_spacing=0.15
+    vertical_spacing=0.15,
+    horizontal_spacing=0.1
 )
 
-# A) Vertikal cho'kish (sv) + Hovertemplate
+# A) Vertikal cho'kish + Max Point
 fig_dash.add_trace(go.Scatter(
-    x=x_axis_dash, y=-sv_dash, 
-    fill='tozeroy', 
-    name="sv", 
+    x=x_axis_dash, y=-sv_dash, fill='tozeroy', name="sv", 
     line=dict(color='#00f2ff', width=3),
     hovertemplate='X: %{x} m<br>Cho\'kish: %{y} mm'
 ), row=1, col=1)
 
-# Maksimal cho'kish marker nuqtasi
 fig_dash.add_trace(go.Scatter(
     x=[x_axis_dash[np.argmax(sv_dash)]], 
     y=[-np.max(sv_dash)],
@@ -1781,40 +1777,40 @@ fig_dash.add_trace(go.Scatter(
     text=f'Max sv: {np.max(sv_dash):.2f} mm', 
     textposition='top center',
     marker=dict(color='red', size=12, symbol='x'),
-    name="Max sv Point"
+    name="Max sv"
 ), row=1, col=1)
 
-# B) Gorizontal siljish (sh)
+# B) Gorizontal siljish
 fig_dash.add_trace(go.Scatter(
-    x=x_axis_dash, y=sh_dash, 
-    name="sh", 
-    line=dict(color='#ffaa00', width=2),
+    x=x_axis_dash, y=sh_dash, name="sh", 
+    line=dict(color='orange', width=2),
     hovertemplate='X: %{x} m<br>Siljish: %{y} mm'
 ), row=1, col=2)
 
-# C) Termal Buzilish (Heatmap) - Viridis + Transpose (.T)
+# C) Termal Buzilish (Viridis) + Transpose
 fig_dash.add_trace(go.Heatmap(
     z=dmg_dash.T, x=x_axis_dash, y=z_axis_dash, 
     colorscale='Viridis',
-    colorbar=dict(title="D(T)", x=0.46)
+    colorbar=dict(title="D(T)", x=0.46, thickness=15, len=0.4)
 ), row=2, col=1)
 
-# D) Termal Kuchlanish (Heatmap) - Cividis + Transpose (.T)
+# D) Termal Kuchlanish (Cividis) + Transpose
 fig_dash.add_trace(go.Heatmap(
     z=sth_dash.T, x=x_axis_dash, y=z_axis_dash, 
     colorscale='Cividis',
-    colorbar=dict(title="MPa", x=1.0)
+    colorbar=dict(title="MPa", x=1.02, thickness=15, len=0.4)
 ), row=2, col=2)
 
-# O'qlarni sozlash
+# O'qlarni va umumiy ko'rinishni sozlash
 fig_dash.update_yaxes(autorange="reversed", row=2, col=1)
 fig_dash.update_yaxes(autorange="reversed", row=2, col=2)
 fig_dash.update_layout(
-    height=850,
-    template='plotly_dark',
+    height=850, 
+    template='plotly_dark', 
     showlegend=False,
-    title=dict(text="Sirdesai modeli asosida UCG geomexanik monitoringi", x=0.5, font=dict(size=18))
+    margin=dict(l=50, r=50, t=80, b=50)
 )
+
 st.plotly_chart(fig_dash, use_container_width=True)
 st.sidebar.markdown("---")
 st.sidebar.write(f"Tuzuvchi: Saitov Dilshodbek | Device: {device}")
