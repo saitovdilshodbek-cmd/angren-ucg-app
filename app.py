@@ -8,6 +8,7 @@ from scipy.optimize import minimize
 from scipy.stats import linregress
 import time
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.neural_network import MLPRegressor
 from sklearn.ensemble import IsolationForest
 import io
 from docx import Document
@@ -1779,6 +1780,201 @@ M ───┼───╱  (qatlam qalinligi)
     Kenglik (W) 100 metrdan oshganda yuqori cho'kish kutiladi.
     """)
 
+# ====================== YANGI QO'SHIMCHA: KO'P QUDUQLI MODEL, REAL-VAQT SENSOR SIMULYATSIYASI VA AI (ikkinchi koddan) ======================
+st.header("🧪 Advanced Multi-Well UCG Model + Real-time Sensor AI")
+with st.expander("⚙️ Multi-well model (ikkinchi koddan birlashtirilgan)", expanded=False):
+    st.markdown("Quyidagi blokda siz bergan **compute_ucg_model**, **multi_well_temperature**, **UCGModel** va **AIEngine** klasslari birlashtirilgan. Real-vaqt sensor simulyatsiyasi va risk prediction mavjud.")
+    
+    # ------------------- Asosiy funksiyalar -------------------
+    def compute_ucg_model(x, z, params):
+        X, Z = np.meshgrid(x, z)
+        # Temperature (single well, shift)
+        dist = np.sqrt((X - params["shift"])**2 + (Z - params["depth"])**2)
+        T = 25 + (params["T_max"] - 25) * np.exp(-dist / params["width"])
+        # Damage
+        D = 1 - np.exp(-params["beta"] * (T - 25))
+        D = np.clip(D, 0, 1)
+        # Stress
+        sigma_th = (params["E"] * params["alpha"] * (T - 25)) / (1 - params["nu"])
+        # Subsidence
+        i = params["depth"] * np.tan(np.radians(params["angle"]))
+        Smax = 0.001 * params["width"]**2
+        subs = Smax * np.exp(-(X**2) / (2*i**2))
+        # FOS
+        sigma_v = params["rho"] * 9.81 * params["depth"] / 1e6
+        sigma_p = params["ucs"] * (params["width"]/params["depth"])**0.5
+        fos = sigma_p / (sigma_v + 1e-6)
+        return X, Z, T, D, sigma_th, subs, fos
+    
+    def multi_well_temperature(X, Z, wells, params):
+        T_total = np.zeros_like(X)
+        for w in wells:
+            dist = np.sqrt((X - w["x"])**2 + (Z - w["z"])**2)
+            T = 25 + (params["T_max"] - 25) * np.exp(-dist / params["width"])
+            T_total += T
+        return T_total
+    
+    # ------------------- Klasslar -------------------
+    class UCGModel:
+        def __init__(self, params, wells, layers):
+            self.params = params
+            self.wells = wells
+            self.layers = layers
+        
+        def temperature(self, X, Z):
+            T_total = np.zeros_like(X)
+            for w in self.wells:
+                dist = np.sqrt((X - w["x"])**2 + (Z - w["z"])**2)
+                T = 25 + (self.params["T_max"] - 25) * np.exp(-dist / self.params["width"])
+                T_total += T
+            return T_total
+        
+        def damage(self, T):
+            D = 1 - np.exp(-self.params["beta"] * (T - 25))
+            return np.clip(D, 0, 1)
+        
+        def stress(self, T):
+            return (self.params["E"] * self.params["alpha"] * (T - 25)) / (1 - self.params["nu"])
+        
+        def subsidence(self, X):
+            i = self.params["depth"] * np.tan(np.radians(self.params["angle"]))
+            Smax = 0.001 * self.params["width"]**2
+            return Smax * np.exp(-(X**2)/(2*i**2))
+        
+        def fos(self, subs):
+            sigma_v = self.params["rho"] * 9.81 * self.params["depth"] / 1e6
+            sigma_p = self.params["ucs"] * (self.params["width"]/self.params["depth"])**0.5
+            return sigma_p / (sigma_v + 1e-6)
+        
+        def run(self, x, z):
+            X, Z = np.meshgrid(x, z)
+            T = self.temperature(X, Z)
+            D = self.damage(T)
+            stress = self.stress(T)
+            subs = self.subsidence(X)
+            fos_val = self.fos(subs)
+            return X, Z, T, D, stress, subs, fos_val
+    
+    class AIEngine:
+        def __init__(self):
+            self.rf = RandomForestClassifier(n_estimators=100, random_state=42)
+            self.nn = MLPRegressor(hidden_layer_sizes=(64,64), max_iter=500, random_state=42)
+        
+        def train(self):
+            # dummy data
+            np.random.seed(42)
+            X = np.random.rand(1000, 4)
+            y_class = (X[:,0] < 1.2) | (X[:,1] > 0.6)
+            y_reg = X[:,0]*0.5 + X[:,1]*0.3 + X[:,2]*0.2
+            self.rf.fit(X, y_class)
+            self.nn.fit(X, y_reg)
+        
+        def predict(self, fos, D, T, subs):
+            features = np.array([[fos, np.mean(D), np.mean(T)/1000, np.max(subs)]])
+            risk = self.rf.predict(features)[0]
+            prob = self.rf.predict_proba(features)[0][1]
+            future = self.nn.predict(features)[0]
+            return risk, prob, future
+    
+    # ------------------- Interaktiv parametrlar -------------------
+    col_m1, col_m2 = st.columns(2)
+    with col_m1:
+        x_range = st.slider("X diapazon (m)", -500, 500, (-300, 300), key="mw_x")
+        z_range = st.slider("Z diapazon (m)", 0, 600, (0, 500), key="mw_z")
+        n_points = st.slider("Grafik aniqlik", 50, 200, 100, key="mw_n")
+    with col_m2:
+        mw_width = st.slider("Reaktor kengligi (W, m)", 20, 200, 100, key="mw_width")
+        mw_temp = st.slider("Maksimal harorat (°C)", 600, 1200, T_source_max, key="mw_temp")
+        mw_depth = st.slider("Kamera chuqurligi (m)", 100, 500, int(total_depth), key="mw_depth")
+        mw_shift = st.slider("Siljish (shift)", -100, 100, 0, key="mw_shift")
+    
+    # Quduqlar ro'yxati
+    wells_mw = [
+        {"x": -well_distance, "z": mw_depth},
+        {"x": 0, "z": mw_depth},
+        {"x": well_distance, "z": mw_depth}
+    ]
+    
+    params_mw = {
+        "T_max": mw_temp,
+        "width": mw_width,
+        "depth": mw_depth,
+        "shift": mw_shift,
+        "beta": 0.0025,
+        "E": 25e9,
+        "alpha": 1e-5,
+        "nu": nu_poisson,
+        "angle": 35,
+        "rho": layers_data[-1]['rho'],
+        "ucs": layers_data[-1]['ucs'] * 1e6
+    }
+    
+    x_mw = np.linspace(x_range[0], x_range[1], n_points)
+    z_mw = np.linspace(z_range[0], z_range[1], n_points)
+    
+    # Modelni ishga tushirish
+    model_mw = UCGModel(params_mw, wells_mw, layers_data)
+    X_mw, Z_mw, T_mw, D_mw, stress_mw, subs_mw, fos_mw = model_mw.run(x_mw, z_mw)
+    
+    # AI
+    ai_engine = AIEngine()
+    ai_engine.train()
+    risk_mw, prob_mw, future_mw = ai_engine.predict(fos_mw, D_mw, T_mw, subs_mw)
+    
+    # Vizualizatsiya
+    fig_mw = make_subplots(rows=2, cols=2, subplot_titles=("Harorat (°C)", "Termal Buzilish D(T)", "Cho'kish (mm)", "Stress (MPa)"))
+    fig_mw.add_trace(go.Heatmap(z=T_mw, x=x_mw, y=z_mw, colorscale='Hot', coloraxis="coloraxis1"), row=1, col=1)
+    fig_mw.add_trace(go.Heatmap(z=D_mw, x=x_mw, y=z_mw, colorscale='Viridis', coloraxis="coloraxis2"), row=1, col=2)
+    fig_mw.add_trace(go.Contour(z=subs_mw, x=x_mw, y=z_mw, colorscale='Bluered', coloraxis="coloraxis3"), row=2, col=1)
+    fig_mw.add_trace(go.Contour(z=stress_mw/1e6, x=x_mw, y=z_mw, colorscale='Cividis', coloraxis="coloraxis4"), row=2, col=2)
+    fig_mw.update_layout(height=600, template='plotly_dark', coloraxis1=dict(colorscale='Hot'), coloraxis2=dict(colorscale='Viridis'), coloraxis3=dict(colorscale='Bluered'), coloraxis4=dict(colorscale='Cividis'))
+    st.plotly_chart(fig_mw, use_container_width=True)
+    
+    # Metrikalar
+    mc1, mc2, mc3, mc4 = st.columns(4)
+    mc1.metric("FOS", f"{fos_mw:.2f}")
+    mc2.metric("Risk Probability", f"{prob_mw:.2f}")
+    mc3.metric("Future Risk Index", f"{future_mw:.2f}")
+    mc4.metric("Max Subsidence (mm)", f"{np.max(subs_mw):.1f}")
+    if risk_mw:
+        st.error(f"⚠️ Collapse Risk HIGH! (prob={prob_mw:.2f})")
+    else:
+        st.success(f"✅ Stable (prob={prob_mw:.2f})")
+    
+    # ------------------- Real-vaqt sensor simulyatsiyasi -------------------
+    st.markdown("---")
+    st.subheader("Real-time Sensor Simulation & Update")
+    run_sensor = st.button("▶️ Run Sensor Simulation (30 steps)", key="run_sensor_mw")
+    if run_sensor:
+        sensor_placeholder = st.empty()
+        params_sensor = params_mw.copy()
+        for step in range(30):
+            # Simulate sensor
+            sensor_temp = np.random.uniform(200, 800)
+            sensor_pressure = np.random.uniform(1, 10)
+            params_sensor["T_max"] = sensor_temp + 300  # update
+            # Re-run model
+            X_s, Z_s, T_s, D_s, stress_s, subs_s, fos_s = compute_ucg_model(x_mw, z_mw, params_sensor)
+            risk_s, prob_s, future_s = ai_engine.predict(fos_s, D_s, T_s, subs_s)
+            with sensor_placeholder.container():
+                st.metric("Sensor Temp", f"{sensor_temp:.1f} °C")
+                st.metric("Gas Pressure", f"{sensor_pressure:.2f} MPa")
+                st.metric("Updated FOS", f"{fos_s:.2f}")
+                st.metric("Risk Prob", f"{prob_s:.2f}")
+                fig_s = go.Figure(go.Heatmap(z=T_s, x=x_mw, y=z_mw, colorscale='Hot'))
+                st.plotly_chart(fig_s, use_container_width=True, key=f"sens_{step}")
+            time.sleep(0.3)
+        st.success("Simulation finished.")
 
+# =========================== IZOH: FastAPI va Docker qismlari alohida fayllarga ajratilgan ===========================
 st.sidebar.markdown("---")
+st.sidebar.info("""
+**Eslatma:**  
+Ikkinchi koddagi FastAPI va Docker konfiguratsiyalari Streamlit ilovasiga mos emas. Ular alohida fayllar (`api.py`, `Dockerfile`, `docker-compose.yml`) sifatida saqlanishi mumkin.  
+Agar kerak bo‘lsa, quyidagi tarkibda yozib oling:
+- `api.py` – FastAPI endpointlari
+- `Dockerfile` – konteynerizatsiya
+- `docker-compose.yml` – orchestratsiya
+""")
+
 st.sidebar.write(f"Tuzuvchi: Saitov Dilshodbek | Device: {device}")
