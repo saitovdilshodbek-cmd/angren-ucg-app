@@ -1376,7 +1376,7 @@ with st.expander("🌪️ Sezgirlik Tahlili (Tornado Plot) - Yangi Ilmiy Model")
     fig_tornado.add_vline(x=0, line_color='white', line_width=2)
     fig_tornado.update_layout(title=f"FOS Sezgirligi (asosiy FOS = {fos_base:.2f})", barmode='relative', template='plotly_dark', height=450, xaxis_title='ΔFOS', yaxis_title='Parametr', legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1))
     st.plotly_chart(fig_tornado, use_container_width=True)
-    st.caption("Parametrlar: ucs – bir oʻqli mustahkamlik, gsi – geologik kuch indeksi, mi – Hoek-Brown doimiysi, d – buz)
+st.caption("Parametrlar: ucs – bir o'qli mustahkamlik, gsi – geologik kuch indeksi, mi – Hoek-Brown doimiysi, d – buzilish koeffitsiyenti, nu – Puasson koeffitsiyenti, T – harorat, width – selek eni.")
                    st.caption("Parametrlar: ucs – bir oʻqli mustahkamlik, gsi – geologik kuch indeksi, mi – Hoek-Brown doimiysi, d – buzilish koeffitsiyenti, nu – Puasson koeffitsiyenti, T – harorat, width – selek eni.")
     st.info(f"**Xulosa:** Asosiy FOS = {fos_base:.2f}. Eng ta'sirchan parametr: **{df_sens.iloc[-1]['param']}** (ΔFOS = {df_sens.iloc[-1]['high']:.3f}).")
 
