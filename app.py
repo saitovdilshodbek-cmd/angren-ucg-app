@@ -149,14 +149,28 @@ TRANSLATIONS = {
 | **Integratsiya va testlash** | 2026-06-30 | Unit testlar, yakuniy vizualizatsiya, deploy |
         """,
         'live_monitoring_tab': "🔄 Live 3D Monitoring",
-        'quick_surface_tab': "🟢 Quick Surface Monitoring (Simple)",
+        'quick_surface_tab': "🟢 Tezkor Yer yuzasi Monitoringi",
         'download_data': "📥 Monitoring ma'lumotlarini yuklab olish (CSV)",
         'digital_twin_tab': "🕹️ Digital Twin (Real-time)",
         'digital_twin_params': "📋 Digital Twin parametrlari (avtomatik bog'langan)",
         'depth_metric': "Kon chuqurligi",
         'ucs_metric': "Jins mustahkamligi (UCS)",
         'temp_metric': "Reaktor harorati",
-        'width_metric': "Reaktor kengligi"
+        'width_metric': "Reaktor kengligi",
+        'stage_select': "🔥 UCG Bosqichi (1→3→2)",
+        'stage1': "1. Quritish va Isitish",
+        'stage3': "3. Gazifikatsiya (Faol)",
+        'stage2': "2. Sovutish",
+        'alert_danger': "🚨 DIQQAT: FOS juda past!",
+        'alert_safe': "✅ Tizim barqaror.",
+        'run_sim': "Simulyatsiyani boshlash",
+        'pillar_width': "Selek eni (m)",
+        'fos_metric': "Barqarorlik (FOS)",
+        'temp_metric_live': "Harorat",
+        'subs_metric': "Cho'kish",
+        'mc_title': "Monte Carlo Noaniqlik Tahlili",
+        'tornado_title': "Tornado Sezgirlik Tahlili",
+        'compare_title': "Ssenariy Taqqoslash"
     },
     'en': {
         'app_title': "Universal Surface Deformation Monitoring",
@@ -273,14 +287,28 @@ TRANSLATIONS = {
 | **Integration & testing** | 2026-06-30 | Unit tests, final visualization, deploy |
         """,
         'live_monitoring_tab': "🔄 Live 3D Monitoring",
-        'quick_surface_tab': "🟢 Quick Surface Monitoring (Simple)",
+        'quick_surface_tab': "🟢 Quick Surface Monitoring",
         'download_data': "📥 Download monitoring data (CSV)",
         'digital_twin_tab': "🕹️ Digital Twin (Real-time)",
         'digital_twin_params': "📋 Digital Twin Parameters (auto-linked)",
         'depth_metric': "Depth",
         'ucs_metric': "Rock Strength (UCS)",
         'temp_metric': "Reactor Temperature",
-        'width_metric': "Reactor Width"
+        'width_metric': "Reactor Width",
+        'stage_select': "🔥 UCG Stage (1→3→2)",
+        'stage1': "1. Drying & Heating",
+        'stage3': "3. Gasification (Active)",
+        'stage2': "2. Cooling",
+        'alert_danger': "🚨 WARNING: Low FOS!",
+        'alert_safe': "✅ System stable.",
+        'run_sim': "Run simulation",
+        'pillar_width': "Pillar width (m)",
+        'fos_metric': "Stability (FOS)",
+        'temp_metric_live': "Temperature",
+        'subs_metric': "Subsidence",
+        'mc_title': "Monte Carlo Uncertainty Analysis",
+        'tornado_title': "Tornado Sensitivity Analysis",
+        'compare_title': "Scenario Comparison"
     },
     'ru': {
         'app_title': "Универсальный мониторинг деформации земной поверхности",
@@ -397,14 +425,28 @@ TRANSLATIONS = {
 | **Интеграция и тестирование** | 2026-06-30 | Модульные тесты, финальная визуализация, деплой |
         """,
         'live_monitoring_tab': "🔄 Live 3D Monitoring",
-        'quick_surface_tab': "🟢 Quick Surface Monitoring (Simple)",
+        'quick_surface_tab': "🟢 Быстрый мониторинг поверхности",
         'download_data': "📥 Скачать данные мониторинга (CSV)",
         'digital_twin_tab': "🕹️ Digital Twin (Real-time)",
         'digital_twin_params': "📋 Параметры Digital Twin (авто-привязка)",
         'depth_metric': "Глубина",
         'ucs_metric': "Прочность (UCS)",
         'temp_metric': "Температура реактора",
-        'width_metric': "Ширина реактора"
+        'width_metric': "Ширина реактора",
+        'stage_select': "🔥 Стадия ПГУ (1→3→2)",
+        'stage1': "1. Сушка и нагрев",
+        'stage3': "3. Газификация (Актив)",
+        'stage2': "2. Охлаждение",
+        'alert_danger': "🚨 ВНИМАНИЕ: Низкий FOS!",
+        'alert_safe': "✅ Система стабильна.",
+        'run_sim': "Запустить симуляцию",
+        'pillar_width': "Ширина целика (м)",
+        'fos_metric': "Устойчивость (FOS)",
+        'temp_metric_live': "Температура",
+        'subs_metric': "Оседание",
+        'mc_title': "Анализ неопределённости Монте-Карло",
+        'tornado_title': "Анализ чувствительности (Торнадо)",
+        'compare_title': "Сравнение сценариев"
     }
 }
 
@@ -502,6 +544,19 @@ st.sidebar.subheader(t('combustion'))
 burn_duration = st.sidebar.number_input(t('burn_duration'), value=40)
 T_source_max  = st.sidebar.slider(t('max_temp'), 600, 1200, 1075)
 
+# ====================== GLOBAL UCG STAGE (SIDEBAR) ======================
+st.sidebar.markdown("---")
+st.sidebar.subheader(t('stage_select'))
+stage_key = st.sidebar.radio(
+    t('stage_select'),
+    [t('stage1'), t('stage3'), t('stage2')],
+    index=1,
+    key="global_stage"
+)
+# Haroratni bosqichga moslash
+stage_temp_map = {t('stage1'): 300, t('stage3'): 1150, t('stage2'): 450}
+current_base_temp = stage_temp_map[stage_key]
+
 with st.sidebar.expander(t('timeline')):
     st.markdown(t('timeline_table'))
 
@@ -539,6 +594,35 @@ if errors:
     for e in errors: st.error(e)
     st.stop()
 
+# Eng pastki qatlam (ko'mir) ma'lumotlari
+target_layer = layers_data[-1]
+H_seam = target_layer['t']
+ucs_seam = target_layer['ucs']
+gsi_seam = target_layer['gsi']
+mi_seam = target_layer['mi']
+rho_seam = target_layer['rho']
+
+# =========================== FIZIKA DVIGATELI (Yagona) ===========================
+def compute_physics(temp, ucs, depth, gsi, mi, pillar_width, poisson=0.25, density=2500):
+    """
+    Qatlam parametrlari va harorat asosida FOS, cho'kish va termal stressni hisoblaydi.
+    """
+    # Termal degradatsiya (UCS pasayishi)
+    ucs_t = ucs * np.exp(-0.0025 * max(temp - 25, 0))
+    # Vertikal bosim (MPa)
+    sigma_v = (depth * density * 9.81) / 1e6
+    # Termal stress (MPa) – soddalashtirilgan model
+    E_mod = 5000  # MPa
+    alpha = 1e-5
+    sigma_th = (E_mod * alpha * max(temp - 25, 0)) / (1 - poisson + EPS)
+    # Selek mustahkamligi (Wilson tipidagi)
+    strength = ucs_t * (pillar_width / (H_seam + EPS)) ** 0.5
+    # FOS
+    fos = strength / (sigma_v + 0.1 * sigma_th + EPS)
+    # Empirik cho'kish (mm)
+    subsidence = (0.00015 * pillar_width ** 1.8) * (temp / 100) * (depth / 100)
+    return {'fos': fos, 'subsidence': subsidence, 'ucs_t': ucs_t, 'stress': sigma_th}
+
 # =========================== KESHLANGAN HARORAT MAYDONI ===========================
 @st.cache_data(show_spinner=False, max_entries=50)
 def compute_temperature_field_moving(time_h, T_source_max, burn_duration, total_depth, source_z, grid_shape, n_steps=20):
@@ -572,12 +656,14 @@ def compute_temperature_field_moving(time_h, T_source_max, burn_duration, total_
     return temp_2d, x_axis, z_axis, grid_x, grid_z
 
 grid_shape = (80, 100)
-source_z = total_depth - (layers_data[-1]['t'] / 2)
-H_seam   = layers_data[-1]['t']
+source_z = total_depth - (target_layer['t'] / 2)
 temp_2d, x_axis, z_axis, grid_x, grid_z = compute_temperature_field_moving(
     time_h, T_source_max, burn_duration, total_depth, source_z, grid_shape, n_steps=20)
 
-# =========================== GEOMEXANIK HISOBI ===========================
+# =========================== GEOMEXANIK HISOBI (ASOSIY MODEL UCHUN) ===========================
+# Bu qism birinchi kodning murakkab hisoblari – uni saqlab qolamiz, faqat stage harorati bilan bog'lamaymiz.
+# U o'zining T_source_max va vaqtga asoslangan. Buni alohida qoldiramiz.
+
 grid_sigma_v = np.zeros_like(grid_z)
 grid_ucs = np.zeros_like(grid_z); grid_mb = np.zeros_like(grid_z); grid_s_hb = np.zeros_like(grid_z)
 grid_a_hb = np.zeros_like(grid_z); grid_sigma_t0_manual = np.zeros_like(grid_z)
@@ -735,7 +821,6 @@ if nn_model is None or not PT_AVAILABLE:
 # =========================== SELEK OPTIMIZATSIYASI ===========================
 avg_t_p = np.mean(temp_2d[np.abs(z_axis-source_z).argmin(), :])
 strength_red = np.exp(-0.0025*(avg_t_p-20))
-ucs_seam = layers_data[-1]['ucs']
 sv_seam = grid_sigma_v[np.abs(z_axis-source_z).argmin(), :].max()
 w_sol = 20.0
 for _ in range(15):
@@ -1254,7 +1339,8 @@ with st.expander("🎲 Monte Carlo Noaniqlik Tahlili"):
         gsi_std = st.number_input("GSI standart og'ish", value=5.0, min_value=0.1)
         n_mc = st.selectbox("Simulyatsiya soni", [500,1000,2000,5000], index=1)
     with mc_col2:
-        fos_mc, pf = monte_carlo_fos(layers_data[-1]['ucs'], ucs_std, layers_data[-1]['gsi'], gsi_std, D_factor, avg_t_p, H_seam, n_sim=n_mc)
+        # Monte Carlo uchun joriy bosqich haroratidan foydalanamiz
+        fos_mc, pf = monte_carlo_fos(ucs_seam, ucs_std, gsi_seam, gsi_std, D_factor, current_base_temp, H_seam, n_sim=n_mc)
         fig_mc = go.Figure()
         fig_mc.add_histogram(x=fos_mc, nbinsx=40, marker_color=np.where(fos_mc<1.0,'#E74C3C','#27AE60'), name='FOS taqsimoti')
         fig_mc.add_vline(x=1.0, line_color='red', line_dash='dash', annotation_text='FOS=1.0')
@@ -1269,19 +1355,19 @@ with st.expander("🎲 Monte Carlo Noaniqlik Tahlili"):
 with st.expander("⚖️ Ssenariy Taqqoslash (A vs B)"):
     sc1, sc2 = st.columns(2)
     with sc1:
-        st.markdown("**Ssenariy A**")
-        a_ucs  = st.number_input("UCS_A (MPa)", value=float(layers_data[-1]['ucs']), key="a_ucs")
-        a_gsi  = st.slider("GSI_A", 10, 100, layers_data[-1]['gsi'], key="a_gsi")
-        a_temp = st.number_input("T_A (°C)", value=float(T_source_max), key="a_t")
+        st.markdown("**Ssenariy A (Joriy)**")
+        a_ucs  = st.number_input("UCS_A (MPa)", value=float(ucs_seam), key="a_ucs")
+        a_gsi  = st.slider("GSI_A", 10, 100, gsi_seam, key="a_gsi")
+        a_temp = st.number_input("T_A (°C)", value=float(current_base_temp), key="a_t")
     with sc2:
-        st.markdown("**Ssenariy B**")
-        b_ucs  = st.number_input("UCS_B (MPa)", value=float(layers_data[-1]['ucs'])*0.8, key="b_ucs")
-        b_gsi  = st.slider("GSI_B", 10, 100, max(10, layers_data[-1]['gsi']-10), key="b_gsi")
-        b_temp = st.number_input("T_B (°C)", value=float(T_source_max)*1.1, key="b_t")
+        st.markdown("**Ssenariy B (Optimallashtirilgan)**")
+        b_ucs  = st.number_input("UCS_B (MPa)", value=float(ucs_seam)*0.8, key="b_ucs")
+        b_gsi  = st.slider("GSI_B", 10, 100, max(10, gsi_seam-10), key="b_gsi")
+        b_temp = st.number_input("T_B (°C)", value=float(current_base_temp)*1.1, key="b_t")
     def norm(val, mn, mx):
         return (val-mn)/(mx-mn+1e-12)
-    fos_a = (a_ucs*np.exp(-0.0025*(a_temp-20))) / (layers_data[-1]['rho']*9.81*H_seam/1e6+1e-12)
-    fos_b = (b_ucs*np.exp(-0.0025*(b_temp-20))) / (layers_data[-1]['rho']*9.81*H_seam/1e6+1e-12)
+    fos_a = (a_ucs*np.exp(-0.0025*(a_temp-20))) / (rho_seam*9.81*H_seam/1e6+1e-12)
+    fos_b = (b_ucs*np.exp(-0.0025*(b_temp-20))) / (rho_seam*9.81*H_seam/1e6+1e-12)
     vals_a = [norm(a_ucs,0,100), norm(a_gsi,10,100), norm(fos_a,0,3), 1-norm(a_temp,20,1200)]
     vals_b = [norm(b_ucs,0,100), norm(b_gsi,10,100), norm(fos_b,0,3), 1-norm(b_temp,20,1200)]
     categories = ['UCS','GSI','FOS (taxmin)','Termal risk']
@@ -1356,18 +1442,19 @@ def sensitivity_analysis(base_params, H, rho, range_pct=0.2):
 
 with st.expander("🌪️ Sezgirlik Tahlili (Tornado Plot) - Yangi Ilmiy Model"):
     st.markdown("Quyidagi tahlilda **Hoek-Brown**, **termal degradatsiya** va **Wilson pillar** nazariyalari asosida FOS sezgirligi baholanadi.")
+    # Tornado uchun joriy bosqich harorati va parametrlardan foydalanamiz
     df_sens, fos_base = sensitivity_analysis(
         base_params={
-            'ucs': layers_data[-1]['ucs'],
-            'gsi': layers_data[-1]['gsi'],
-            'mi': layers_data[-1]['mi'],
+            'ucs': ucs_seam,
+            'gsi': gsi_seam,
+            'mi': mi_seam,
             'd': D_factor,
             'nu': nu_poisson,
-            'T': avg_t_p,
+            'T': current_base_temp,
             'width': rec_width
         },
         H=H_seam,
-        rho=layers_data[-1]['rho'],
+        rho=rho_seam,
         range_pct=0.2
     )
     fig_tornado = go.Figure()
@@ -1391,46 +1478,29 @@ with st.expander("🌪️ Sezgirlik Tahlili (Tornado Plot) - Yangi Ilmiy Model")
 st.header("🔄 Live 3D Monitoring (Real-time)")
 tab_live, tab_quick_surface, tab_ai_orig, tab_advanced, tab_digital_twin = st.tabs([t('live_monitoring_tab'), t('quick_surface_tab'), t('ai_monitor_title'), t('advanced_analysis'), t('digital_twin_tab')])
 
-# --- Yangi qo'shilgan: Quick Surface Monitoring (ikkinchi koddan) ---
+# --- QO'SHIMCHA: Quick Surface Monitoring (global stage va fizika bilan) ---
 with tab_quick_surface:
     st.markdown("### Oddiy 3D Yer yuzasi Cho‘kishi Simulyatsiyasi (Tezkor)")
-    # Ikkinchi koddan olingan soddalashtirilgan fizika engine
-    def quick_physics(temp, ucs, depth, gsi, mi, well_w):
-        ucs_t = ucs * np.exp(-0.0025 * (temp - 25))
-        sigma_v = (depth * 2500 * 9.81) / 1e6
-        sigma_th = (5000 * 1e-5 * (temp - 25)) / (1 - 0.25)
-        strength = ucs_t * (well_w / 10)**0.5
-        fos = strength / (sigma_v + (sigma_th * 0.1) + 1e-6)
-        subs = (0.00015 * well_w**1.8) * (temp / 100) * (depth / 100)
-        return {'fos': fos, 'subs': subs, 'ucs_t': ucs_t, 'stress': sigma_th}
-    
-    # Qatlamlardan eng pastki (ko'mir) ma'lumotlarini olish
-    target_l = layers_data[-1]
-    quick_depth = total_depth
-    # Bosqich tanlash (yonish bosqichiga mos)
-    stage_quick = st.radio(t('st_stages'), [t('st1'), t('st3'), t('st2')], index=1, horizontal=True, key="quick_stage")
-    stage_temps_quick = {t('st1'): 300, t('st3'): 1150, t('st2'): 450}
-    base_temp_quick = stage_temps_quick[stage_quick]
-    
+    st.info(f"Joriy UCG bosqichi: **{stage_key}** (harorat ≈ {current_base_temp}°C)")
     col_q1, col_q2 = st.columns([1, 3])
     with col_q1:
-        well_w_quick = st.slider("Pillar Width (m)", 5, 100, 30, key="quick_w")
-        run_quick = st.button(t('run'), type="primary", use_container_width=True, key="quick_run")
-    
+        well_w_quick = st.slider(t('pillar_width'), 5, 100, int(rec_width), key="quick_w")
+        run_quick = st.button(t('run_sim'), type="primary", use_container_width=True, key="quick_run")
     with col_q2:
         quick_plot = st.empty()
         quick_alert = st.empty()
     
     if run_quick:
         for step in range(21):
-            curr_t = base_temp_quick + np.random.normal(0, 15)
-            res = quick_physics(curr_t, target_l['ucs'], quick_depth, target_l['gsi'], 12, well_w_quick)
+            # Haroratni bosqichga mos qilib, ozgina tebranish bilan
+            curr_t = current_base_temp + np.random.normal(0, 15)
+            res = compute_physics(curr_t, ucs_seam, total_depth, gsi_seam, mi_seam, well_w_quick, nu_poisson, rho_seam)
             # 3D surface plot
             grid = np.linspace(-well_w_quick*2, well_w_quick*2, 30)
             X, Y = np.meshgrid(grid, grid)
-            Z = res['subs'] * np.exp(-(X**2 + Y**2) / (2 * (well_w_quick/2)**2))
+            Z = res['subsidence'] * np.exp(-(X**2 + Y**2) / (2 * (well_w_quick/2)**2))
             fig_q = go.Figure(data=[go.Surface(z=Z, x=X, y=Y, colorscale='Viridis')])
-            fig_q.update_layout(title=f"3D Live Digital Twin - {stage_quick}", height=550, template="plotly_dark")
+            fig_q.update_layout(title=f"3D Live Digital Twin - {stage_key}", height=550, template="plotly_dark")
             quick_plot.plotly_chart(fig_q, use_container_width=True)
             if res['fos'] < 1.3:
                 quick_alert.error(t('alert_danger'))
@@ -1439,7 +1509,7 @@ with tab_quick_surface:
             time.sleep(0.05)
         st.success("Simulyatsiya yakunlandi.")
 
-# Qolgan tablar (live, ai_orig, advanced, digital_twin) birinchi koddagidek qoldiriladi.
+# --- Live 3D Monitoring (asl birinchi kodning tab_live) ---
 with tab_live:
     st.markdown("### Real-time subsidence, temperature, anomalies and alerts")
     TIME_STEPS = st.slider("Simulation steps", 10, 200, 50, key="live_steps")
@@ -1469,48 +1539,41 @@ with tab_live:
         width_history_live = []
         temp_history_live = []
         steps_done = 0
-        rf_live = RandomForestRegressor(n_estimators=10, random_state=42)
-        dummy_X = np.random.rand(10,3)
-        dummy_y = np.random.rand(10)
-        rf_live.fit(dummy_X, dummy_y)
+        # Live monitoring uchun fizika modelidan foydalanamiz, random forest emas
         for t_step in range(TIME_STEPS):
             if st.session_state.stop_flag_live:
                 break
-            Z_subs = np.exp(-(X_grid_live**2+Y_grid_live**2)/(2*(5+t_step*0.1)**2))*5*t_step/TIME_STEPS
-            Z_temp = np.exp(-(X_grid_live**2+Y_grid_live**2)/(2*8**2))*T_source_max*t_step/TIME_STEPS
-            Z_filtered = gaussian_filter(Z_subs, sigma=1)
-            anomalies = Z_subs - Z_filtered
-            anomaly_points = np.where(np.abs(anomalies) > 0.2)
-            avg_ucs = np.mean([l['ucs'] for l in layers_data])
-            X_feat = np.array([[burn_duration, T_source_max, avg_ucs]]).reshape(1,-1)
-            pillar_width_pred = rf_live.predict(X_feat)[0]
-            FOS_live = np.clip(2.5 - t_step*0.03, 0.8, 2.5)
+            # Vaqt o‘tishi bilan harorat bosqich haroratiga yaqinlashadi
+            curr_temp = current_base_temp * (t_step / TIME_STEPS) + np.random.normal(0, 10)
+            # Selek enini vaqt o‘tishi bilan optimallashtirish (shunchaki namuna)
+            current_width = rec_width * (1 + 0.1 * np.sin(t_step/10))
+            res = compute_physics(curr_temp, ucs_seam, total_depth, gsi_seam, mi_seam, current_width, nu_poisson, rho_seam)
+            # Cho‘kish maydoni (Gauss)
+            Z_subs = res['subsidence'] * np.exp(-(X_grid_live**2+Y_grid_live**2)/(2*(current_width/2)**2))
+            Z_temp = curr_temp * np.exp(-(X_grid_live**2+Y_grid_live**2)/(2*8**2))
             mean_subs = np.mean(Z_subs)
             subs_history_live.append(mean_subs)
-            fos_history_live.append(FOS_live)
-            width_history_live.append(pillar_width_pred)
-            temp_history_live.append(np.mean(Z_temp))
-            MAX_HISTORY = 1000
-            new_row = pd.DataFrame({'step':[t_step+1],'mean_subsidence_cm':[mean_subs*100],'max_temp_c':[np.max(Z_temp)],'FOS':[FOS_live],'pillar_width_m':[pillar_width_pred]})
-            st.session_state.live_history_df = pd.concat([st.session_state.live_history_df, new_row], ignore_index=True).tail(MAX_HISTORY)
+            fos_history_live.append(res['fos'])
+            width_history_live.append(current_width)
+            temp_history_live.append(curr_temp)
+            new_row = pd.DataFrame({'step':[t_step+1],'mean_subsidence_cm':[mean_subs*100],'max_temp_c':[curr_temp],'FOS':[res['fos']],'pillar_width_m':[current_width]})
+            st.session_state.live_history_df = pd.concat([st.session_state.live_history_df, new_row], ignore_index=True).tail(1000)
             fig_subs = go.Figure(go.Heatmap(z=Z_subs*100, x=X_live, y=Y_live, colorscale='Viridis')).update_layout(title='Surface Subsidence (cm)', xaxis_title='X (m)', yaxis_title='Y (m)', height=350)
             subs_plot_live.plotly_chart(fig_subs, use_container_width=True, key=f"subs_{t_step}")
             fig_temp = go.Figure(go.Heatmap(z=Z_temp, x=X_live, y=Y_live, colorscale='Hot')).update_layout(title='Temperature Field (°C)', xaxis_title='X (m)', yaxis_title='Y (m)', height=350)
             temp_plot_live.plotly_chart(fig_temp, use_container_width=True, key=f"temp_{t_step}")
-            pillar_plot_live.metric(label="Recommended Pillar Width (m)", value=f"{pillar_width_pred:.2f}", delta=f"FOS = {FOS_live:.2f}")
+            pillar_plot_live.metric(label="Recommended Pillar Width (m)", value=f"{current_width:.2f}", delta=f"FOS = {res['fos']:.2f}")
             trend_fig = go.Figure(go.Scatter(y=subs_history_live, mode='lines+markers', name='Subsidence (cm)')).update_layout(title='Subsidence Trend', xaxis_title='Time step', yaxis_title='Mean subsidence (cm)', height=350)
             trend_plot_live.plotly_chart(trend_fig, use_container_width=True, key=f"trend_{t_step}")
             surface_fig = go.Figure(data=[go.Surface(z=Z_subs*100, x=X_live, y=Y_live, colorscale='Viridis', opacity=0.9)])
-            if anomaly_points[0].size > 0:
-                surface_fig.add_trace(go.Scatter3d(x=X_grid_live[anomaly_points], y=Y_grid_live[anomaly_points], z=Z_subs[anomaly_points]*100, mode='markers', marker=dict(color='red', size=5), name='Anomaly'))
-            surface_fig.update_layout(title='3D Surface & Anomalies', scene=dict(zaxis_title='Subsidence (cm)'), height=500)
+            surface_fig.update_layout(title='3D Surface', scene=dict(zaxis_title='Subsidence (cm)'), height=500)
             surface_3d_plot_live.plotly_chart(surface_fig, use_container_width=True, key=f"surf_{t_step}")
             alerts = []
-            if FOS_live < 1.2:
+            if res['fos'] < 1.2:
                 alerts.append("⚠️ FOS Critical!")
             if mean_subs*100 > 3:
                 alerts.append("⚠️ High Subsidence!")
-            if np.max(Z_temp) > 1100:
+            if curr_temp > 1100:
                 alerts.append("🔥 Overheating Alert!")
             if alerts:
                 alert_box_live.markdown("### 🔴 ALERTS\n" + "\n".join(alerts))
@@ -1525,6 +1588,7 @@ with tab_live:
         csv_data = st.session_state.live_history_df.to_csv(index=False).encode('utf-8')
         st.download_button(label=t('download_data'), data=csv_data, file_name="ucg_live_monitoring.csv", mime="text/csv")
 
+# Qolgan tablar (ai_orig, advanced, digital_twin) avvalgidek qoladi, faqat ular ichida stage haroratiga murojaat qilish shart emas.
 with tab_ai_orig:
     st.markdown(f"*{t('ai_monitor_desc')}*")
     def get_sensor_data_sim(step, total_steps, base_temp):
@@ -1543,7 +1607,7 @@ with tab_ai_orig:
         std = np.std(recent) + 1e-6
         return abs(value - mean) > threshold * std
     def simulate_sensors_fos(n_steps):
-        T = np.linspace(20, min(1100,T_source_max), n_steps) + np.random.normal(0,10,n_steps)
+        T = np.linspace(20, min(1100,current_base_temp), n_steps) + np.random.normal(0,10,n_steps)
         sigma_v = np.linspace(5, min(15, sv_seam*10), n_steps) + np.random.normal(0,0.5,n_steps)
         return pd.DataFrame({'Temperature':T, 'VerticalStress':sigma_v})
     if PT_AVAILABLE:
@@ -1580,7 +1644,7 @@ with tab_ai_orig:
             gas_history = []
             stress_history = []
             for step in range(int(ai_steps_1)):
-                sensor = get_sensor_data_sim(step, int(ai_steps_1), T_source_max*0.6)
+                sensor = get_sensor_data_sim(step, int(ai_steps_1), current_base_temp)
                 effective = compute_effective_stress(sensor)
                 is_anomaly = detect_anomaly_z(history_eff, effective, threshold=anomaly_threshold)
                 history_eff.append(effective)
@@ -1679,10 +1743,9 @@ with tab_ai_orig:
 with tab_advanced:
     st.header(t('advanced_analysis'))
     E_MODULUS_R, ALPHA_THERM, BETA_CONST = 5000.0, 1.0e-5, beta_thermal
-    target_l = layers_data[-1]
-    ucs_0_r, gsi_val, mi_val = target_l['ucs'], target_l['gsi'], target_l['mi']
-    gamma_kn = target_l['rho'] * 9.81 / 1000
-    H_depth_tot = sum(l['t'] for l in layers_data[:-1]) + target_l['t']/2
+    ucs_0_r, gsi_val, mi_val = ucs_seam, gsi_seam, mi_seam
+    gamma_kn = rho_seam * 9.81 / 1000
+    H_depth_tot = sum(l['t'] for l in layers_data[:-1]) + H_seam/2
     sigma_v_tot = (gamma_kn * H_depth_tot) / 1000
     mb_dyn = mi_val * np.exp((gsi_val-100)/(28-14*D_factor))
     s_dyn = np.exp((gsi_val-100)/(9-3*D_factor))
@@ -1737,8 +1800,8 @@ with tab_digital_twin:
     st.sidebar.header("🛠️ Markaziy Boshqaruv Paneli (Digital Twin)")
     st.sidebar.markdown(t('digital_twin_params'))
     st.sidebar.metric(t('depth_metric'), f"{total_depth:.1f} m")
-    st.sidebar.metric(t('ucs_metric'), f"{layers_data[-1]['ucs']:.1f} MPa")
-    st.sidebar.metric(t('temp_metric'), f"{T_source_max:.0f} °C")
+    st.sidebar.metric(t('ucs_metric'), f"{ucs_seam:.1f} MPa")
+    st.sidebar.metric(t('temp_metric'), f"{current_base_temp:.0f} °C")
     st.sidebar.metric(t('width_metric'), f"{well_distance:.1f} m")
 
     if 'global_step_dt' not in st.session_state:
@@ -1750,11 +1813,10 @@ with tab_digital_twin:
 
     def get_integrated_metrics_dt(step, total_steps):
         progress = step / total_steps
-        current_temp = 25 + (T_source_max - 25) * progress + np.random.normal(0, 5)
+        current_temp = 25 + (current_base_temp - 25) * progress + np.random.normal(0, 5)
         E, alpha, nu = 25000, 1e-5, 0.25
         thermal_stress = (E * alpha * (current_temp - 25)) / (1 - nu)
-        ucs_coal = layers_data[-1]['ucs']
-        current_ucs = ucs_coal * np.exp(-0.0025 * (current_temp - 25))
+        current_ucs = ucs_seam * np.exp(-0.0025 * (current_temp - 25))
         pillar_load = (total_depth * 0.025) + (thermal_stress * 0.1)
         fos = current_ucs / (pillar_load + 1e-6)
         max_subs = (0.001 * (well_distance**2)) * progress
@@ -1838,7 +1900,7 @@ with tab_digital_twin:
         st.subheader("Yakuniy hisob-kitob natijalari")
         st.dataframe(st.session_state.history_log_dt.tail(10), use_container_width=True)
         st.latex(r"D(T) = 1 - e^{-\beta (T - T_0)}")
-        st.info(f"Siz tanlagan {total_depth:.1f} m chuqurlik va {T_source_max:.0f}°C haroratda jinsning termal buzilish koeffitsienti: {1 - np.exp(-0.0025 * (T_source_max-25)):.4f}")
+        st.info(f"Siz tanlagan {total_depth:.1f} m chuqurlik va {current_base_temp:.0f}°C haroratda jinsning termal buzilish koeffitsienti: {1 - np.exp(-0.0025 * (current_base_temp-25)):.4f}")
 
 st.sidebar.markdown("---")
 st.sidebar.write(f"Tuzuvchi: Saitov Dilshodbek | Device: {device}")
