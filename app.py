@@ -149,6 +149,7 @@ TRANSLATIONS = {
 | **Integratsiya va testlash** | 2026-06-30 | Unit testlar, yakuniy vizualizatsiya, deploy |
         """,
         'live_monitoring_tab': "🔄 Live 3D Monitoring",
+        'quick_surface_tab': "🟢 Quick Surface Monitoring (Simple)",
         'download_data': "📥 Monitoring ma'lumotlarini yuklab olish (CSV)",
         'digital_twin_tab': "🕹️ Digital Twin (Real-time)",
         'digital_twin_params': "📋 Digital Twin parametrlari (avtomatik bog'langan)",
@@ -272,6 +273,7 @@ TRANSLATIONS = {
 | **Integration & testing** | 2026-06-30 | Unit tests, final visualization, deploy |
         """,
         'live_monitoring_tab': "🔄 Live 3D Monitoring",
+        'quick_surface_tab': "🟢 Quick Surface Monitoring (Simple)",
         'download_data': "📥 Download monitoring data (CSV)",
         'digital_twin_tab': "🕹️ Digital Twin (Real-time)",
         'digital_twin_params': "📋 Digital Twin Parameters (auto-linked)",
@@ -395,6 +397,7 @@ TRANSLATIONS = {
 | **Интеграция и тестирование** | 2026-06-30 | Модульные тесты, финальная визуализация, деплой |
         """,
         'live_monitoring_tab': "🔄 Live 3D Monitoring",
+        'quick_surface_tab': "🟢 Quick Surface Monitoring (Simple)",
         'download_data': "📥 Скачать данные мониторинга (CSV)",
         'digital_twin_tab': "🕹️ Digital Twin (Real-time)",
         'digital_twin_params': "📋 Параметры Digital Twin (авто-привязка)",
@@ -1386,8 +1389,57 @@ with st.expander("🌪️ Sezgirlik Tahlili (Tornado Plot) - Yangi Ilmiy Model")
 
 # ====================== ORIGINAL AI MONITORING (Live 3D, AI Monitoring, Advanced Analysis) ======================
 st.header("🔄 Live 3D Monitoring (Real-time)")
-tab_live, tab_ai_orig, tab_advanced, tab_digital_twin = st.tabs([t('live_monitoring_tab'), t('ai_monitor_title'), t('advanced_analysis'), t('digital_twin_tab')])
+tab_live, tab_quick_surface, tab_ai_orig, tab_advanced, tab_digital_twin = st.tabs([t('live_monitoring_tab'), t('quick_surface_tab'), t('ai_monitor_title'), t('advanced_analysis'), t('digital_twin_tab')])
 
+# --- Yangi qo'shilgan: Quick Surface Monitoring (ikkinchi koddan) ---
+with tab_quick_surface:
+    st.markdown("### Oddiy 3D Yer yuzasi Cho‘kishi Simulyatsiyasi (Tezkor)")
+    # Ikkinchi koddan olingan soddalashtirilgan fizika engine
+    def quick_physics(temp, ucs, depth, gsi, mi, well_w):
+        ucs_t = ucs * np.exp(-0.0025 * (temp - 25))
+        sigma_v = (depth * 2500 * 9.81) / 1e6
+        sigma_th = (5000 * 1e-5 * (temp - 25)) / (1 - 0.25)
+        strength = ucs_t * (well_w / 10)**0.5
+        fos = strength / (sigma_v + (sigma_th * 0.1) + 1e-6)
+        subs = (0.00015 * well_w**1.8) * (temp / 100) * (depth / 100)
+        return {'fos': fos, 'subs': subs, 'ucs_t': ucs_t, 'stress': sigma_th}
+    
+    # Qatlamlardan eng pastki (ko'mir) ma'lumotlarini olish
+    target_l = layers_data[-1]
+    quick_depth = total_depth
+    # Bosqich tanlash (yonish bosqichiga mos)
+    stage_quick = st.radio(t('st_stages'), [t('st1'), t('st3'), t('st2')], index=1, horizontal=True, key="quick_stage")
+    stage_temps_quick = {t('st1'): 300, t('st3'): 1150, t('st2'): 450}
+    base_temp_quick = stage_temps_quick[stage_quick]
+    
+    col_q1, col_q2 = st.columns([1, 3])
+    with col_q1:
+        well_w_quick = st.slider("Pillar Width (m)", 5, 100, 30, key="quick_w")
+        run_quick = st.button(t('run'), type="primary", use_container_width=True, key="quick_run")
+    
+    with col_q2:
+        quick_plot = st.empty()
+        quick_alert = st.empty()
+    
+    if run_quick:
+        for step in range(21):
+            curr_t = base_temp_quick + np.random.normal(0, 15)
+            res = quick_physics(curr_t, target_l['ucs'], quick_depth, target_l['gsi'], 12, well_w_quick)
+            # 3D surface plot
+            grid = np.linspace(-well_w_quick*2, well_w_quick*2, 30)
+            X, Y = np.meshgrid(grid, grid)
+            Z = res['subs'] * np.exp(-(X**2 + Y**2) / (2 * (well_w_quick/2)**2))
+            fig_q = go.Figure(data=[go.Surface(z=Z, x=X, y=Y, colorscale='Viridis')])
+            fig_q.update_layout(title=f"3D Live Digital Twin - {stage_quick}", height=550, template="plotly_dark")
+            quick_plot.plotly_chart(fig_q, use_container_width=True)
+            if res['fos'] < 1.3:
+                quick_alert.error(t('alert_danger'))
+            else:
+                quick_alert.success(t('alert_safe'))
+            time.sleep(0.05)
+        st.success("Simulyatsiya yakunlandi.")
+
+# Qolgan tablar (live, ai_orig, advanced, digital_twin) birinchi koddagidek qoldiriladi.
 with tab_live:
     st.markdown("### Real-time subsidence, temperature, anomalies and alerts")
     TIME_STEPS = st.slider("Simulation steps", 10, 200, 50, key="live_steps")
