@@ -1228,12 +1228,12 @@ with st.expander("🌍 3D Litologik Kesim"):
     st.caption("Sariq/qizil sferalar — yonish kameralari joylashuvi")
 
 @st.cache_data(show_spinner=False)
-def monte_carlo_fos(ucs_mean, ucs_std, gsi_mean, gsi_std, d_mean, temp_mean, H_seam, n_sim=2000):
+def monte_carlo_fos(ucs_mean, ucs_std, gsi_mean, gsi_std, mi_coal, d_mean, temp_mean, H_seam, n_sim=2000):
     np.random.seed(42)
     ucs_s = np.random.normal(ucs_mean, ucs_std, n_sim).clip(1,300)
     gsi_s = np.random.normal(gsi_mean, gsi_std, n_sim).clip(10,100)
     T_s = np.random.normal(temp_mean, temp_mean*0.1, n_sim).clip(20,1200)
-    mb_s = 10*np.exp((gsi_s-100)/(28-14*d_mean))
+    mb_s = mi_coal * np.exp((gsi_s-100)/(28-14*d_mean))
     s_s = np.exp((gsi_s-100)/(9-3*d_mean))
     dmg_s = np.clip(1-np.exp(-0.002*np.maximum(T_s-100,0)),0,0.95)
     sci_s = ucs_s*(1-dmg_s)
@@ -1251,7 +1251,17 @@ with st.expander("🎲 Monte Carlo Noaniqlik Tahlili"):
         gsi_std = st.number_input("GSI standart og'ish", value=5.0, min_value=0.1)
         n_mc = st.selectbox("Simulyatsiya soni", [500,1000,2000,5000], index=1)
     with mc_col2:
-        fos_mc, pf = monte_carlo_fos(layers_data[-1]['ucs'], ucs_std, layers_data[-1]['gsi'], gsi_std, D_factor, avg_t_p, H_seam, n_sim=n_mc)
+        fos_mc, pf = monte_carlo_fos(
+            ucs_mean=layers_data[-1]['ucs'],
+            ucs_std=ucs_std,
+            gsi_mean=layers_data[-1]['gsi'],
+            gsi_std=gsi_std,
+            mi_coal=layers_data[-1]['mi'],
+            d_mean=D_factor,
+            temp_mean=avg_t_p,
+            H_seam=H_seam,
+            n_sim=n_mc
+        )
         fig_mc = go.Figure()
         fig_mc.add_histogram(x=fos_mc, nbinsx=40, marker_color=np.where(fos_mc<1.0,'#E74C3C','#27AE60'), name='FOS taqsimoti')
         fig_mc.add_vline(x=1.0, line_color='red', line_dash='dash', annotation_text='FOS=1.0')
@@ -1409,64 +1419,106 @@ with tab_live:
         st.session_state.live_history_df = pd.DataFrame(columns=['step', 'mean_subsidence_cm', 'max_temp_c', 'FOS', 'pillar_width_m'])
     if run_live:
         st.session_state.stop_flag_live = False
-        X_live = np.linspace(-20,20,50)
-        Y_live = np.linspace(-20,20,50)
+        X_live = np.linspace(-total_depth*0.5, total_depth*0.5, 50)
+        Y_live = np.linspace(-total_depth*0.5, total_depth*0.5, 50)
         X_grid_live, Y_grid_live = np.meshgrid(X_live, Y_live)
         subs_history_live = []
         fos_history_live = []
         width_history_live = []
         temp_history_live = []
         steps_done = 0
-        rf_live = RandomForestRegressor(n_estimators=10, random_state=42)
-        dummy_X = np.random.rand(10,3)
-        dummy_y = np.random.rand(10)
-        rf_live.fit(dummy_X, dummy_y)
+        
+        ucs_coal = layers_data[-1]['ucs']
+        H_coal = H_seam
+        rho_coal = layers_data[-1]['rho']
+        sigma_v_coal_live = 0.0
+        for l in layers_data[:-1]:
+            sigma_v_coal_live += l['rho'] * 9.81 * l['t'] / 1e6
+        sigma_v_coal_live += rho_coal * 9.81 * (H_coal/2) / 1e6
+        
+        base_pillar_strength = pillar_strength
+        base_rec_width = rec_width
+        
         for t_step in range(TIME_STEPS):
             if st.session_state.stop_flag_live:
                 break
-            Z_subs = np.exp(-(X_grid_live**2+Y_grid_live**2)/(2*(5+t_step*0.1)**2))*5*t_step/TIME_STEPS
-            Z_temp = np.exp(-(X_grid_live**2+Y_grid_live**2)/(2*8**2))*T_source_max*t_step/TIME_STEPS
+            
+            progress = t_step / TIME_STEPS
+            T_curr = 25 + (T_source_max - 25) * progress
+            
+            strength_red = np.exp(-0.0025 * (T_curr - 20))
+            current_ucs = ucs_coal * strength_red
+            
+            current_pillar_strength = current_ucs * (base_rec_width / (H_coal + EPS))**0.5
+            FOS_live = np.clip(current_pillar_strength / (sigma_v_coal_live + EPS), 0, 3)
+            
+            max_subs = (H_coal * 0.05) * progress
+            Z_subs = max_subs * np.exp(-(X_grid_live**2 + Y_grid_live**2) / (2 * (total_depth/3)**2))
+            
+            Z_temp = T_curr * np.exp(-(X_grid_live**2 + Y_grid_live**2) / (2 * (well_distance/2)**2))
+            Z_temp = np.clip(Z_temp, 25, T_source_max)
+            
             Z_filtered = gaussian_filter(Z_subs, sigma=1)
             anomalies = Z_subs - Z_filtered
-            anomaly_points = np.where(np.abs(anomalies) > 0.2)
-            avg_ucs = np.mean([l['ucs'] for l in layers_data])
-            X_feat = np.array([[burn_duration, T_source_max, avg_ucs]]).reshape(1,-1)
-            pillar_width_pred = rf_live.predict(X_feat)[0]
-            FOS_live = np.clip(2.5 - t_step*0.03, 0.8, 2.5)
-            mean_subs = np.mean(Z_subs)
+            anomaly_points = np.where(np.abs(anomalies) > 0.2 * max_subs)
+            
+            mean_subs = np.mean(Z_subs) * 100
+            max_temp = np.max(Z_temp)
+            
             subs_history_live.append(mean_subs)
             fos_history_live.append(FOS_live)
-            width_history_live.append(pillar_width_pred)
-            temp_history_live.append(np.mean(Z_temp))
+            width_history_live.append(base_rec_width)
+            temp_history_live.append(max_temp)
+            
             MAX_HISTORY = 1000
-            new_row = pd.DataFrame({'step':[t_step+1],'mean_subsidence_cm':[mean_subs*100],'max_temp_c':[np.max(Z_temp)],'FOS':[FOS_live],'pillar_width_m':[pillar_width_pred]})
+            new_row = pd.DataFrame({
+                'step': [t_step+1],
+                'mean_subsidence_cm': [mean_subs],
+                'max_temp_c': [max_temp],
+                'FOS': [FOS_live],
+                'pillar_width_m': [base_rec_width]
+            })
             st.session_state.live_history_df = pd.concat([st.session_state.live_history_df, new_row], ignore_index=True).tail(MAX_HISTORY)
-            fig_subs = go.Figure(go.Heatmap(z=Z_subs*100, x=X_live, y=Y_live, colorscale='Viridis')).update_layout(title='Surface Subsidence (cm)', xaxis_title='X (m)', yaxis_title='Y (m)', height=350)
+            
+            fig_subs = go.Figure(go.Heatmap(z=Z_subs*100, x=X_live, y=Y_live, colorscale='Viridis')).update_layout(
+                title='Surface Subsidence (cm)', xaxis_title='X (m)', yaxis_title='Y (m)', height=350)
             subs_plot_live.plotly_chart(fig_subs, use_container_width=True, key=f"subs_{t_step}")
-            fig_temp = go.Figure(go.Heatmap(z=Z_temp, x=X_live, y=Y_live, colorscale='Hot')).update_layout(title='Temperature Field (°C)', xaxis_title='X (m)', yaxis_title='Y (m)', height=350)
+            
+            fig_temp = go.Figure(go.Heatmap(z=Z_temp, x=X_live, y=Y_live, colorscale='Hot')).update_layout(
+                title='Temperature Field (°C)', xaxis_title='X (m)', yaxis_title='Y (m)', height=350)
             temp_plot_live.plotly_chart(fig_temp, use_container_width=True, key=f"temp_{t_step}")
-            pillar_plot_live.metric(label="Recommended Pillar Width (m)", value=f"{pillar_width_pred:.2f}", delta=f"FOS = {FOS_live:.2f}")
-            trend_fig = go.Figure(go.Scatter(y=subs_history_live, mode='lines+markers', name='Subsidence (cm)')).update_layout(title='Subsidence Trend', xaxis_title='Time step', yaxis_title='Mean subsidence (cm)', height=350)
+            
+            pillar_plot_live.metric(label="Recommended Pillar Width (m)", value=f"{base_rec_width:.2f}", delta=f"FOS = {FOS_live:.2f}")
+            
+            trend_fig = go.Figure(go.Scatter(y=subs_history_live, mode='lines+markers', name='Subsidence (cm)')).update_layout(
+                title='Subsidence Trend', xaxis_title='Time step', yaxis_title='Mean subsidence (cm)', height=350)
             trend_plot_live.plotly_chart(trend_fig, use_container_width=True, key=f"trend_{t_step}")
+            
             surface_fig = go.Figure(data=[go.Surface(z=Z_subs*100, x=X_live, y=Y_live, colorscale='Viridis', opacity=0.9)])
             if anomaly_points[0].size > 0:
-                surface_fig.add_trace(go.Scatter3d(x=X_grid_live[anomaly_points], y=Y_grid_live[anomaly_points], z=Z_subs[anomaly_points]*100, mode='markers', marker=dict(color='red', size=5), name='Anomaly'))
+                surface_fig.add_trace(go.Scatter3d(
+                    x=X_grid_live[anomaly_points], y=Y_grid_live[anomaly_points], z=Z_subs[anomaly_points]*100,
+                    mode='markers', marker=dict(color='red', size=5), name='Anomaly'))
             surface_fig.update_layout(title='3D Surface & Anomalies', scene=dict(zaxis_title='Subsidence (cm)'), height=500)
             surface_3d_plot_live.plotly_chart(surface_fig, use_container_width=True, key=f"surf_{t_step}")
+            
             alerts = []
             if FOS_live < 1.2:
                 alerts.append("⚠️ FOS Critical!")
-            if mean_subs*100 > 3:
+            if mean_subs > 3:
                 alerts.append("⚠️ High Subsidence!")
-            if np.max(Z_temp) > 1100:
+            if max_temp > 1100:
                 alerts.append("🔥 Overheating Alert!")
             if alerts:
                 alert_box_live.markdown("### 🔴 ALERTS\n" + "\n".join(alerts))
             else:
                 alert_box_live.markdown("### 🟢 All systems normal")
+            
             time.sleep(0.1)
             steps_done += 1
+        
         st.success(f"✅ Live monitoring completed after {steps_done} steps.")
+    
     if not st.session_state.live_history_df.empty:
         st.markdown("---")
         st.subheader("📥 Download Monitoring Results (CSV)")
