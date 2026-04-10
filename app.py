@@ -620,7 +620,7 @@ sigma1_act = np.maximum(grid_sigma_v, grid_sigma_h)
 sigma3_act = np.minimum(grid_sigma_v, grid_sigma_h)
 
 if tensile_mode == t('tensile_empirical'):
-    grid_sigma_t0_base = tensil_ratio * sigma_ci
+    grid_sigma_t0_base = tensile_ratio * sigma_ci
 elif tensile_mode == t('tensile_hb'):
     grid_sigma_t0_base = (sigma_ci * grid_s_hb)/(1+grid_mb+EPS)
 else:
