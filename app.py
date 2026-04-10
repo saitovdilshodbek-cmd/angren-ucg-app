@@ -22,7 +22,7 @@ import matplotlib.pyplot as plt
 import warnings
 warnings.filterwarnings('ignore')
 
-# =========================== PYTORCH IMPORT (xatolikka chidamli) ===========================
+# =========================== PYTORCH IMPORT ===========================
 try:
     import torch
     import torch.nn as nn
@@ -150,7 +150,12 @@ TRANSLATIONS = {
         """,
         'live_monitoring_tab': "🔄 Live 3D Monitoring",
         'download_data': "📥 Monitoring ma'lumotlarini yuklab olish (CSV)",
-        'digital_twin_tab': "🕹️ Digital Twin (Real-time)"
+        'digital_twin_tab': "🕹️ Digital Twin (Real-time)",
+        'digital_twin_params': "📋 Digital Twin parametrlari (avtomatik bog'langan)",
+        'depth_metric': "Kon chuqurligi",
+        'ucs_metric': "Jins mustahkamligi (UCS)",
+        'temp_metric': "Reaktor harorati",
+        'width_metric': "Reaktor kengligi"
     },
     'en': {
         'app_title': "Universal Surface Deformation Monitoring",
@@ -268,7 +273,12 @@ TRANSLATIONS = {
         """,
         'live_monitoring_tab': "🔄 Live 3D Monitoring",
         'download_data': "📥 Download monitoring data (CSV)",
-        'digital_twin_tab': "🕹️ Digital Twin (Real-time)"
+        'digital_twin_tab': "🕹️ Digital Twin (Real-time)",
+        'digital_twin_params': "📋 Digital Twin Parameters (auto-linked)",
+        'depth_metric': "Depth",
+        'ucs_metric': "Rock Strength (UCS)",
+        'temp_metric': "Reactor Temperature",
+        'width_metric': "Reactor Width"
     },
     'ru': {
         'app_title': "Универсальный мониторинг деформации земной поверхности",
@@ -386,7 +396,12 @@ TRANSLATIONS = {
         """,
         'live_monitoring_tab': "🔄 Live 3D Monitoring",
         'download_data': "📥 Скачать данные мониторинга (CSV)",
-        'digital_twin_tab': "🕹️ Digital Twin (Real-time)"
+        'digital_twin_tab': "🕹️ Digital Twin (Real-time)",
+        'digital_twin_params': "📋 Параметры Digital Twin (авто-привязка)",
+        'depth_metric': "Глубина",
+        'ucs_metric': "Прочность (UCS)",
+        'temp_metric': "Температура реактора",
+        'width_metric': "Ширина реактора"
     }
 }
 
@@ -486,24 +501,6 @@ T_source_max  = st.sidebar.slider(t('max_temp'), 600, 1200, 1075)
 
 with st.sidebar.expander(t('timeline')):
     st.markdown(t('timeline_table'))
-
-# =============== DIGITAL TWIN GLOBAL PARAMETRLARI (2-koddan) ===============
-st.sidebar.markdown("---")
-st.sidebar.header("🛠️ Markaziy Boshqaruv Paneli (Digital Twin)")
-st.sidebar.markdown("Bu yerdagi o'zgarishlar **barcha** modullarga ta'sir qiladi.")
-
-g_depth_dt = st.sidebar.slider("Kon chuqurligi (m)", 100, 1500, 500, key="dt_depth")
-g_temp_target_dt = st.sidebar.slider("Reaktor harorati (°C)", 25, 1200, 1000, key="dt_temp")
-g_width_dt = st.sidebar.slider("Reaktor kengligi (m)", 10, 200, 50, key="dt_width")
-g_rock_strength_dt = st.sidebar.slider("Jins mustahkamligi (UCS, MPa)", 10, 100, 40, key="dt_ucs")
-
-# Digital Twin state
-if 'global_step_dt' not in st.session_state:
-    st.session_state.global_step_dt = 0
-if 'is_running_dt' not in st.session_state:
-    st.session_state.is_running_dt = False
-if 'history_log_dt' not in st.session_state:
-    st.session_state.history_log_dt = pd.DataFrame(columns=['Step', 'Temp', 'Subsidence', 'FOS', 'Stress'])
 
 # =========================== QATLAM MA'LUMOTLARI ===========================
 strata_colors = ['#87CEEB', '#F4A460', '#D3D3D3', '#F5DEB3', '#555555']
@@ -833,49 +830,40 @@ well_distance = st.sidebar.slider("Quduqlar orasidagi masofa (m):", 50.0, 500.0,
 with c2:
     st.subheader("UCG Yonish Bosqichlari (1 → 3 → 2 sxemasi) – Yangi Ilmiy Model")
     
-    # Asosiy koddan kerakli parametrlarni olish
     coal_layer = layers_data[-1]
-    h_seam = coal_layer['t']                     # ko'mir qatlami qalinligi (m)
-    ucs_coal_pa = coal_layer['ucs'] * 1e6        # Pa
+    h_seam = coal_layer['t']
+    ucs_coal_pa = coal_layer['ucs'] * 1e6
     rho_coal = coal_layer['rho']
     
-    # Quduq koordinatalari (chap, markaz, o‘ng) – well_distance asosida
     well_x = [-well_distance, 0, well_distance]
     
-    # Kamera kengligi (cavity_width) – optimallashtirilgan pillar eni rec_width dan hisoblanadi
     cavity_width = well_distance - rec_width
-    cavity_width = max(cavity_width, 10)         # minimal 10 m
+    cavity_width = max(cavity_width, 10)
     
-    # Fizik doimiylar
-    E_MOD = 25e9          # 25 GPa (Pa)
-    ALPHA = 1.0e-5        # 1/°C
-    NU = nu_poisson        # asl koddan
-    K0 = NU / (1 - NU)    # yon bosim koeffitsiyenti
+    E_MOD = 25e9
+    ALPHA = 1.0e-5
+    NU = nu_poisson
+    K0 = NU / (1 - NU)
     
-    # Qatlamlarning yuqori va pastki chegaralari
     layer_bounds = []
     for l in layers_data:
         top = l['z_start']
         bot = top + l['t']
         layer_bounds.append((top, bot, l))
     
-    # Ko'mir qatlamidagi o'rtacha vertikal kuchlanish
     sigma_v_coal = 0.0
     for l in layers_data[:-1]:
         sigma_v_coal += l['rho'] * 9.81 * l['t']
     sigma_v_coal += rho_coal * 9.81 * (h_seam / 2)
-    sigma_v_coal = sigma_v_coal / 1e6   # MPa
+    sigma_v_coal = sigma_v_coal / 1e6
     
-    # Kritik gumbaz balandligi Hc
     Hc = h_seam * np.sqrt(sigma_v_coal / (coal_layer['ucs'] + 1e-5))
     Hc = np.clip(Hc, h_seam, h_seam * 4)
     
-    # 1-3-2 ketma-ketligi
     states_132 = {1: [0], 2: [0, 2], 3: [0, 1, 2]}
     stage = st.select_slider("Bosqichni tanlang:", options=[1, 2, 3], value=1, key="ucg_stage_132")
     active_wells = states_132[stage]
     
-    # ------------------- FOS hisoblash funksiyasi -------------------
     def compute_advanced_fos(grid_x, grid_z, active_wells, well_x, source_z, h_seam, cavity_width,
                              temp_field, sigma_v_field, layers_data, layer_bounds,
                              E, alpha, nu, K0, Hc, sigma_v_coal_MPa, ucs_coal_pa):
@@ -923,7 +911,7 @@ with c2:
                 fos_sub = np.minimum(fos_sub, fos_val)
                 fos[mask] = fos_sub
                 
-                if layer == layers_data[-1]:  # ko'mir qatlami
+                if layer == layers_data[-1]:
                     dome_width = (cavity_width / 2) * np.clip(1 - dz[mask] / (Hc + 1e-5), 0, 1)
                     failure_zone = fos_val < 1.2
                     dome_condition = (dz[mask] > 0) & (dz[mask] < Hc) & (np.abs(grid_x[mask] - px) < dome_width) & failure_zone
@@ -968,14 +956,11 @@ with c2:
         E_MOD, ALPHA, NU, K0, Hc, sigma_v_coal, ucs_coal_pa
     )
     
-    # ------------------- GRAFIK (2 QATOR) -------------------
     fig_tm = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.12,
                            subplot_titles=(t('temp_subplot'), "Geomexanik Holat (Yangi Ilmiy Model)"))
     
-    # Temperatura
     fig_tm.add_trace(go.Heatmap(z=temp_2d, x=x_axis, y=z_axis, colorscale='Hot', zmin=25, zmax=T_source_max,
                                 colorbar=dict(title="T (°C)", x=1.05, y=0.78, len=0.42, thickness=15), name=t('temp_subplot')), row=1, col=1)
-    # Gaz oqimi
     step = 12
     qx, qz = grid_x[::step, ::step].flatten(), grid_z[::step, ::step].flatten()
     qu, qw = vx[::step, ::step].flatten(), vz[::step, ::step].flatten()
@@ -987,36 +972,30 @@ with c2:
                                 marker=dict(symbol='arrow', size=10, color=qmag[mask_q], colorscale='ice',
                                             cmin=0, cmax=qmag_max, angle=angles, opacity=0.85, showscale=False, line=dict(width=0)),
                                 name=t('gas_flow')), row=1, col=1)
-    # FOS
     fig_tm.add_trace(go.Contour(z=fos_stage, x=x_axis, y=z_axis,
                                 colorscale=[[0,'black'],[0.1,'red'],[0.4,'orange'],[0.7,'yellow'],[0.85,'lime'],[1,'darkgreen']],
                                 zmin=0, zmax=3, contours_showlines=False,
                                 colorbar=dict(title="FOS", x=1.05, y=0.22, len=0.42, thickness=15), name="FOS"), row=2, col=1)
-    # Yielded zones
     fracture_mask = np.where(fos_stage < 1.2, 1.0, np.nan)
     fig_tm.add_trace(go.Heatmap(z=fracture_mask, x=x_axis, y=z_axis,
                                 colorscale=[[0,'rgba(0,0,0,0)'],[1,'rgba(255,0,0,0.5)']],
                                 showscale=False, opacity=0.6, hoverinfo='skip', name="Yielded Zones"), row=2, col=1)
-    # Yonish doiralari
     r_burn_vis = h_seam * 1.5
     for idx in active_wells:
         px = well_x[idx]
         fig_tm.add_shape(type="circle", x0=px-r_burn_vis, x1=px+r_burn_vis,
                          y0=source_z-r_burn_vis, y1=source_z+r_burn_vis,
                          line=dict(color="orange", width=2), fillcolor='rgba(255,165,0,0.15)', row=2, col=1)
-    # Seleklar (to‘rtburchaklar)
     for px in well_x:
         fig_tm.add_shape(type="rect", x0=px-rec_width/2, x1=px+rec_width/2,
                          y0=source_z-h_seam/2, y1=source_z+h_seam/2,
                          line=dict(color="lime", width=3), fillcolor="rgba(0,255,0,0.1)", row=2, col=1)
-    # 2-bosqichda maxsus selek
     if stage == 2:
         fig_tm.add_shape(type="rect", x0=well_x[1]-80, x1=well_x[1]+80,
                          y0=source_z-30, y1=source_z+30,
                          line=dict(color="cyan", width=4, dash="dash"), fillcolor='rgba(0,255,255,0.1)', row=2, col=1)
         fig_tm.add_annotation(x=well_x[1], y=source_z+100, text="HIMOYA SELEGI (PILLAR)",
                               showarrow=True, arrowhead=2, font=dict(color="cyan", size=12), row=2, col=1)
-    # AI collapse, shear, tensile, void
     fig_tm.add_trace(go.Heatmap(z=collapse_pred, x=x_axis, y=z_axis, colorscale='Viridis', opacity=0.4, showscale=False, name="AI Collapse"), row=2, col=1)
     shear_disp = np.copy(shear_failure); shear_disp[void_mask_permanent]=False
     tens_disp = np.copy(tensile_failure); tens_disp[void_mask_permanent]=False
@@ -1024,12 +1003,10 @@ with c2:
     fig_tm.add_trace(go.Scatter(x=grid_x[tens_disp][::2], y=grid_z[tens_disp][::2], mode='markers', marker=dict(color='blue',size=3,symbol='cross'), name='Tensile'), row=2, col=1)
     void_visual = np.where(void_mask_permanent>0.1, 1.0, np.nan)
     fig_tm.add_trace(go.Heatmap(z=void_visual, x=x_axis, y=z_axis, colorscale=[[0,'black'],[1,'black']], showscale=False, opacity=0.8, hoverinfo='skip'), row=2, col=1)
-    # Qatlam chegaralari
     fig_tm.add_shape(type="line", x0=x_axis.min(), x1=x_axis.max(), y0=source_z-h_seam/2, y1=source_z-h_seam/2,
                      line=dict(color="white", width=2, dash="dash"), row=2, col=1)
     fig_tm.add_shape(type="line", x0=x_axis.min(), x1=x_axis.max(), y0=source_z+h_seam/2, y1=source_z+h_seam/2,
                      line=dict(color="white", width=2, dash="dash"), row=2, col=1)
-    # Layout
     zoom_margin = h_seam * 12
     fig_tm.update_layout(template="plotly_dark", height=900, margin=dict(r=150,t=80,b=100),
                          showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=-0.12, xanchor="center", x=0.5))
@@ -1038,7 +1015,6 @@ with c2:
     fig_tm.update_yaxes(range=[source_z + zoom_margin/2, source_z - zoom_margin], row=2, col=1)
     st.plotly_chart(fig_tm, use_container_width=True)
     
-    # Animatsiya (ixtiyoriy)
     if st.checkbox("Avtomatik animatsiya (1→2→3 bosqichlar)"):
         anim_placeholder = st.empty()
         for s in [1, 2, 3]:
@@ -1058,7 +1034,6 @@ with c2:
             time.sleep(1.2)
         st.success("Animatsiya yakunlandi.")
     
-    # Xulosa va ogohlantirish
     selek_eni = well_distance - cavity_width
     msgs = {
         1: f"**1-Bosqich:** Chap quduq yoqilgan. Qalinlik = {h_seam:.1f} m, Quduqlar masofasi = {well_distance:.0f} m, Selek eni = {selek_eni:.1f} m.",
@@ -1150,8 +1125,7 @@ with st.expander("🤖 AI Risk Prediction (Sensor CSV)", expanded=False):
             else:
                 st.success("✅ Xavf past. Hozircha xavfsiz.")
 
-# ====================== QO'SHIMCHA BLOKLAR (KOMPOZIT XAVF, FOS TREND, 3D, MONTE CARLO, SSENARIY, SEZGIRLIK, ISO) ======================
-# 1. Kompozit xavf indeksi
+# ====================== QO'SHIMCHA BLOKLAR (KOMPOZIT XAVF, FOS TREND, 3D, MONTE CARLO, SSENARIY, SEZGIRLIK) ======================
 @st.cache_data(show_spinner=False)
 def compute_risk_map(fos_arr, damage_arr, void_arr, temp_arr, T_max):
     fos_risk = np.clip(1.0 - fos_arr / 2.0, 0, 1)
@@ -1192,7 +1166,6 @@ with st.expander("🗺️ Kompozit Xavf Indeksi Xaritasi"):
         else:
             st.success("🟢 Umumiy holat qoniqarli")
 
-# 2. FOS vaqt trendi
 with st.expander("📈 FOS Vaqt Bashorati (Trend)"):
     time_points = np.arange(1, time_h+1, max(1, time_h//20))
     fos_timeline = []
@@ -1227,7 +1200,6 @@ with st.expander("📈 FOS Vaqt Bashorati (Trend)"):
     tc3.metric("Hozirgi FOS", f"{fos_timeline[-1]:.3f}")
     st.info(critical_info)
 
-# 3. 3D Litologik kesim
 with st.expander("🌍 3D Litologik Kesim"):
     fig_3d = go.Figure()
     y_3d = np.linspace(-total_depth*0.5, total_depth*0.5, 30)
@@ -1255,7 +1227,6 @@ with st.expander("🌍 3D Litologik Kesim"):
     st.plotly_chart(fig_3d, use_container_width=True)
     st.caption("Sariq/qizil sferalar — yonish kameralari joylashuvi")
 
-# 4. Monte Carlo noaniqlik tahlili
 @st.cache_data(show_spinner=False)
 def monte_carlo_fos(ucs_mean, ucs_std, gsi_mean, gsi_std, d_mean, temp_mean, H_seam, n_sim=2000):
     np.random.seed(42)
@@ -1292,7 +1263,6 @@ with st.expander("🎲 Monte Carlo Noaniqlik Tahlili"):
                              'Qiymat': [f"{np.mean(fos_mc):.3f}", f"{np.median(fos_mc):.3f}", f"{np.std(fos_mc):.3f}", f"{np.percentile(fos_mc,5):.3f}", f"{np.percentile(fos_mc,95):.3f}", f"{pf*100:.2f}%"]})
     st.dataframe(mc_stats, hide_index=True, use_container_width=True)
 
-# 5. Ssenariy taqqoslash (A vs B)
 with st.expander("⚖️ Ssenariy Taqqoslash (A vs B)"):
     sc1, sc2 = st.columns(2)
     with sc1:
@@ -1323,7 +1293,6 @@ with st.expander("⚖️ Ssenariy Taqqoslash (A vs B)"):
                             'Farq': [f"{b_ucs-a_ucs:+.1f}", f"{b_gsi-a_gsi:+d}", f"{fos_b-fos_a:+.2f}", f"{b_temp-a_temp:+.0f}"]})
     st.dataframe(comp_df, use_container_width=True, hide_index=True)
 
-# ====================== YANGI SEZGIRLIK TAHLILI (SIZ BERGAN KOD ASOSIDA) ======================
 def hoek_brown_params(gsi, mi, d):
     mb = mi * np.exp((gsi - 100) / (28 - 14*d))
     s  = np.exp((gsi - 100) / (9 - 3*d))
@@ -1337,7 +1306,7 @@ def thermal_reduction_func(T):
     return np.exp(-0.0025 * (T - 20))
 
 def in_situ_stress(rho, H, nu):
-    sigma_v = rho * 9.81 * H / 1e6  # MPa
+    sigma_v = rho * 9.81 * H / 1e6
     k = nu / (1 - nu)
     sigma_h = k * sigma_v
     return sigma_v, sigma_h
@@ -1708,21 +1677,35 @@ with tab_advanced:
         for r in [t('ref1'), t('ref2'), t('ref3'), t('ref4'), "**Brady, B. H., & Brown, E. T. (2006).** Rock Mechanics for Underground Mining."]:
             st.write(r)
 
-# =========================== DIGITAL TWIN TAB (2-KOD INTEGRATSIYASI) ===========================
+# =========================== DIGITAL TWIN TAB (AVTOMATIK BOG'LANGAN) ===========================
 with tab_digital_twin:
     st.header("🌐 UCG Integrated Digital Twin (Sirdesai & AI Hybrid)")
-    st.markdown("Bu yerda ikkinchi kodingizning barcha funksiyalari jamlangan.")
+    
+    st.sidebar.markdown("---")
+    st.sidebar.header("🛠️ Markaziy Boshqaruv Paneli (Digital Twin)")
+    st.sidebar.markdown(t('digital_twin_params'))
+    st.sidebar.metric(t('depth_metric'), f"{total_depth:.1f} m")
+    st.sidebar.metric(t('ucs_metric'), f"{layers_data[-1]['ucs']:.1f} MPa")
+    st.sidebar.metric(t('temp_metric'), f"{T_source_max:.0f} °C")
+    st.sidebar.metric(t('width_metric'), f"{well_distance:.1f} m")
 
-    # Funksiya: hisoblash
+    if 'global_step_dt' not in st.session_state:
+        st.session_state.global_step_dt = 0
+    if 'is_running_dt' not in st.session_state:
+        st.session_state.is_running_dt = False
+    if 'history_log_dt' not in st.session_state:
+        st.session_state.history_log_dt = pd.DataFrame(columns=['Step', 'Temp', 'Subsidence', 'FOS', 'Stress'])
+
     def get_integrated_metrics_dt(step, total_steps):
         progress = step / total_steps
-        current_temp = 25 + (g_temp_target_dt - 25) * progress + np.random.normal(0, 5)
+        current_temp = 25 + (T_source_max - 25) * progress + np.random.normal(0, 5)
         E, alpha, nu = 25000, 1e-5, 0.25
         thermal_stress = (E * alpha * (current_temp - 25)) / (1 - nu)
-        current_ucs = g_rock_strength_dt * np.exp(-0.0025 * (current_temp - 25))
-        pillar_load = (g_depth_dt * 0.025) + (thermal_stress * 0.1)
+        ucs_coal = layers_data[-1]['ucs']
+        current_ucs = ucs_coal * np.exp(-0.0025 * (current_temp - 25))
+        pillar_load = (total_depth * 0.025) + (thermal_stress * 0.1)
         fos = current_ucs / (pillar_load + 1e-6)
-        max_subs = (0.001 * (g_width_dt**2)) * progress
+        max_subs = (0.001 * (well_distance**2)) * progress
         return {
             'temp': current_temp,
             'stress': thermal_stress,
@@ -1731,7 +1714,6 @@ with tab_digital_twin:
             'ucs': current_ucs
         }
 
-    # Boshqaruv tugmalari
     dt_col1, dt_col2 = st.columns(2)
     with dt_col1:
         sim_speed = st.select_slider("Simulyatsiya tezligi", options=["Sekin", "Normal", "Tez"], value="Normal")
@@ -1743,7 +1725,6 @@ with tab_digital_twin:
     if stop_btn_dt:
         st.session_state.is_running_dt = False
 
-    # Metrikalar
     col_m1, col_m2, col_m3, col_m4 = st.columns(4)
     metric_temp_dt = col_m1.empty()
     metric_fos_dt = col_m2.empty()
@@ -1777,7 +1758,7 @@ with tab_digital_twin:
             metric_subs_dt.metric("Max Cho'kish", f"{data['subsidence']:.2f} mm")
             metric_stress_dt.metric("Termal Stress", f"{data['stress']:.1f} MPa")
             
-            Z_subs = data['subsidence'] * np.exp(-(XX**2 + YY**2) / (2 * (g_width_dt/2)**2))
+            Z_subs = data['subsidence'] * np.exp(-(XX**2 + YY**2) / (2 * (well_distance/2)**2))
             fig3d = go.Figure(data=[go.Surface(z=Z_subs, x=X_grid, y=Y_grid, colorscale='Viridis')])
             fig3d.update_layout(title="Yer usti dinamik cho'kishi", scene=dict(zaxis=dict(range=[0, 20])), height=500, template="plotly_dark")
             plot_3d_dt.plotly_chart(fig3d, use_container_width=True)
@@ -1805,7 +1786,7 @@ with tab_digital_twin:
         st.subheader("Yakuniy hisob-kitob natijalari")
         st.dataframe(st.session_state.history_log_dt.tail(10), use_container_width=True)
         st.latex(r"D(T) = 1 - e^{-\beta (T - T_0)}")
-        st.info(f"Siz tanlagan {g_depth_dt}m chuqurlik va {g_temp_target_dt}°C haroratda jinsning termal buzilish koeffitsienti: {1 - np.exp(-0.0025 * (g_temp_target_dt-25)):.4f}")
+        st.info(f"Siz tanlagan {total_depth:.1f} m chuqurlik va {T_source_max:.0f}°C haroratda jinsning termal buzilish koeffitsienti: {1 - np.exp(-0.0025 * (T_source_max-25)):.4f}")
 
 st.sidebar.markdown("---")
 st.sidebar.write(f"Tuzuvchi: Saitov Dilshodbek | Device: {device}")
