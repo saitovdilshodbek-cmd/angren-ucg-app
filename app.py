@@ -1025,7 +1025,7 @@ with tab_digital_twin:
     if not st.session_state.history_log_dt.empty:
         st.dataframe(st.session_state.history_log_dt.tail(10), use_container_width=True)
 
-# =========================== AI MONITORING VA ADVANCED ANALYSIS (qisqartirilgan, lekin mavjud) ===========================
+# =========================== AI MONITORING VA ADVANCED ANALYSIS (qisqartirilgan) ===========================
 with tab_ai_orig:
     st.markdown("AI Monitoring (Anomaliya va FOS bashorati) - to'liq kod oldingi versiyalarda mavjud.")
 with tab_advanced:
@@ -1064,7 +1064,6 @@ with st.expander(t('scenario_title')):
 
 with st.expander(t('sensitivity_title')):
     st.markdown("Sezgirlik tahlili (Tornado) - asosiy parametrlar bo'yicha FOS o'zgarishi.")
-    # (to'liq kod oldingi javobda keltirilgan, bu yerda qisqartirildi)
 
 st.sidebar.markdown("---")
 st.sidebar.write(f"Tuzuvchi: Saitov Dilshodbek | Device: {device}")
