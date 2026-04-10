@@ -149,7 +149,8 @@ TRANSLATIONS = {
 | **Integratsiya va testlash** | 2026-06-30 | Unit testlar, yakuniy vizualizatsiya, deploy |
         """,
         'live_monitoring_tab': "🔄 Live 3D Monitoring",
-        'download_data': "📥 Monitoring ma'lumotlarini yuklab olish (CSV)"
+        'download_data': "📥 Monitoring ma'lumotlarini yuklab olish (CSV)",
+        'digital_twin_tab': "🕹️ Digital Twin (Real-time)"
     },
     'en': {
         'app_title': "Universal Surface Deformation Monitoring",
@@ -266,7 +267,8 @@ TRANSLATIONS = {
 | **Integration & testing** | 2026-06-30 | Unit tests, final visualization, deploy |
         """,
         'live_monitoring_tab': "🔄 Live 3D Monitoring",
-        'download_data': "📥 Download monitoring data (CSV)"
+        'download_data': "📥 Download monitoring data (CSV)",
+        'digital_twin_tab': "🕹️ Digital Twin (Real-time)"
     },
     'ru': {
         'app_title': "Универсальный мониторинг деформации земной поверхности",
@@ -383,7 +385,8 @@ TRANSLATIONS = {
 | **Интеграция и тестирование** | 2026-06-30 | Модульные тесты, финальная визуализация, деплой |
         """,
         'live_monitoring_tab': "🔄 Live 3D Monitoring",
-        'download_data': "📥 Скачать данные мониторинга (CSV)"
+        'download_data': "📥 Скачать данные мониторинга (CSV)",
+        'digital_twin_tab': "🕹️ Digital Twin (Real-time)"
     }
 }
 
@@ -483,6 +486,24 @@ T_source_max  = st.sidebar.slider(t('max_temp'), 600, 1200, 1075)
 
 with st.sidebar.expander(t('timeline')):
     st.markdown(t('timeline_table'))
+
+# =============== DIGITAL TWIN GLOBAL PARAMETRLARI (2-koddan) ===============
+st.sidebar.markdown("---")
+st.sidebar.header("🛠️ Markaziy Boshqaruv Paneli (Digital Twin)")
+st.sidebar.markdown("Bu yerdagi o'zgarishlar **barcha** modullarga ta'sir qiladi.")
+
+g_depth_dt = st.sidebar.slider("Kon chuqurligi (m)", 100, 1500, 500, key="dt_depth")
+g_temp_target_dt = st.sidebar.slider("Reaktor harorati (°C)", 25, 1200, 1000, key="dt_temp")
+g_width_dt = st.sidebar.slider("Reaktor kengligi (m)", 10, 200, 50, key="dt_width")
+g_rock_strength_dt = st.sidebar.slider("Jins mustahkamligi (UCS, MPa)", 10, 100, 40, key="dt_ucs")
+
+# Digital Twin state
+if 'global_step_dt' not in st.session_state:
+    st.session_state.global_step_dt = 0
+if 'is_running_dt' not in st.session_state:
+    st.session_state.is_running_dt = False
+if 'history_log_dt' not in st.session_state:
+    st.session_state.history_log_dt = pd.DataFrame(columns=['Step', 'Temp', 'Subsidence', 'FOS', 'Stress'])
 
 # =========================== QATLAM MA'LUMOTLARI ===========================
 strata_colors = ['#87CEEB', '#F4A460', '#D3D3D3', '#F5DEB3', '#555555']
@@ -1396,7 +1417,7 @@ with st.expander("🌪️ Sezgirlik Tahlili (Tornado Plot) - Yangi Ilmiy Model")
 
 # ====================== ORIGINAL AI MONITORING (Live 3D, AI Monitoring, Advanced Analysis) ======================
 st.header("🔄 Live 3D Monitoring (Real-time)")
-tab_live, tab_ai_orig, tab_advanced = st.tabs([t('live_monitoring_tab'), t('ai_monitor_title'), t('advanced_analysis')])
+tab_live, tab_ai_orig, tab_advanced, tab_digital_twin = st.tabs([t('live_monitoring_tab'), t('ai_monitor_title'), t('advanced_analysis'), t('digital_twin_tab')])
 
 with tab_live:
     st.markdown("### Real-time subsidence, temperature, anomalies and alerts")
@@ -1687,134 +1708,104 @@ with tab_advanced:
         for r in [t('ref1'), t('ref2'), t('ref3'), t('ref4'), "**Brady, B. H., & Brown, E. T. (2006).** Rock Mechanics for Underground Mining."]:
             st.write(r)
 
-# =========================== INTEGRATSIYA QISMI: INTERACTIVE UCG DASHBOARD (Sirdesai et al. Model) ===========================
-st.header("🕹️ Ultimate Interactive Dashboard (Real-time Animation)")
-st.markdown("Ushbu panelda Sirdesai va boshqalar (2021) modeli asosida termal buzilish, kuchlanish va sirt deformatsiyalari interaktiv tarzda kuzatiladi.")
+# =========================== DIGITAL TWIN TAB (2-KOD INTEGRATSIYASI) ===========================
+with tab_digital_twin:
+    st.header("🌐 UCG Integrated Digital Twin (Sirdesai & AI Hybrid)")
+    st.markdown("Bu yerda ikkinchi kodingizning barcha funksiyalari jamlangan.")
 
-# =================================================================
-# 1. OPTIMALLASHTIRILGAN HISOB-KITOB FUNKSIYASI (CACHED)
-# =================================================================
-@st.cache_data
-def calculate_comprehensive_metrics(x, z, E, nu, alpha, beta_th, angle_draw, ucs_0, t_max, width, depth, shift):
-    # 'ij' indexing koordinata o'qlari va Heatmap mosligi uchun
-    X, Z = np.meshgrid(x, z, indexing='ij') 
-    reaktor_x = shift
-    
-    # Harorat maydoni simulyatsiyasi (Equation 3)
-    dist = np.sqrt((X - reaktor_x)**2 + (Z - depth)**2)
-    temp = 25 + (t_max - 25) * np.exp(-dist / (width / 2))
-    dT = np.maximum(temp - 25, 0)
-    
-    # Termal Buzilish D(T)
-    dmg = 1 - np.exp(-beta_th * dT)
-    
-    # Termal Kuchlanish sigma_th
-    sth = (E * alpha * dT) / (1 - nu)
-    
-    # Sirt deformatsiyasi (sv va sh)
-    i = depth * np.tan(np.radians(angle_draw))
-    s_max = (0.001 * (width**2)) / (1 + depth / 450)
-    
-    sv = s_max * np.exp(-((x - reaktor_x)**2) / (2 * i**2))
-    sh = ((x - reaktor_x) / i) * sv * 0.55
-    
-    # Sirt grafiklari uchun massivlarni tekislash
-    return temp, dmg, sth, sv.reshape(-1), sh.reshape(-1)
+    # Funksiya: hisoblash
+    def get_integrated_metrics_dt(step, total_steps):
+        progress = step / total_steps
+        current_temp = 25 + (g_temp_target_dt - 25) * progress + np.random.normal(0, 5)
+        E, alpha, nu = 25000, 1e-5, 0.25
+        thermal_stress = (E * alpha * (current_temp - 25)) / (1 - nu)
+        current_ucs = g_rock_strength_dt * np.exp(-0.0025 * (current_temp - 25))
+        pillar_load = (g_depth_dt * 0.025) + (thermal_stress * 0.1)
+        fos = current_ucs / (pillar_load + 1e-6)
+        max_subs = (0.001 * (g_width_dt**2)) * progress
+        return {
+            'temp': current_temp,
+            'stress': thermal_stress,
+            'fos': fos,
+            'subsidence': max_subs,
+            'ucs': current_ucs
+        }
 
-# =================================================================
-# 2. DASHBOARD PARAMETRLARI (SIDEBARDA O‘ZGARTIRISH MUMKIN)
-# =================================================================
-with st.sidebar.expander("📊 Dashboard sozlamalari (Sirdesai modeli)", expanded=False):
-    method = st.radio("UCG Usuli", ["LVW", "CRIP"], key="dash_method")
-    reaktor_shift = 0
-    if method == "CRIP":
-        reaktor_shift = st.slider("Reaktor siljishi (m)", -100, 100, 0, key="dash_shift")
-    c_width = st.slider("Reaktor kengligi (m)", 20, 200, 100, key="dash_width")
-    c_depth = st.selectbox("Chuqurlik (m)", [100, 500, 1000], index=1, key="dash_depth")
-    t_core = st.slider("Reaktor Harorati (°C)", 25, 1100, 950, key="dash_temp")
+    # Boshqaruv tugmalari
+    dt_col1, dt_col2 = st.columns(2)
+    with dt_col1:
+        sim_speed = st.select_slider("Simulyatsiya tezligi", options=["Sekin", "Normal", "Tez"], value="Normal")
+        speed_map = {"Sekin": 0.5, "Normal": 0.2, "Tez": 0.05}
+    with dt_col2:
+        run_btn_dt = st.button("▶️ Simulyatsiyani boshlash", use_container_width=True)
+        stop_btn_dt = st.button("⏹ To'xtatish", use_container_width=True)
 
-# Sirdesai konstantalari (qatlam xususiyatlariga moslab o‘zgartirish mumkin)
-p_dash = {
-    'E': 25450.0,        # MPa
-    'nu': 0.24,
-    'alpha': 11e-6,      # 1/°C
-    'beta_th': 0.0025,
-    'angle_draw': 35,    # gradus
-    'ucs_0': 35.0        # MPa
-}
+    if stop_btn_dt:
+        st.session_state.is_running_dt = False
 
-# Hisob to‘rlari
-x_axis_dash = np.linspace(-350, 350, 150)
-z_axis_dash = np.linspace(0, c_depth + 150, 80)
+    # Metrikalar
+    col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+    metric_temp_dt = col_m1.empty()
+    metric_fos_dt = col_m2.empty()
+    metric_subs_dt = col_m3.empty()
+    metric_stress_dt = col_m4.empty()
 
-# HISOB-KITOB (cached)
-temp_dash, dmg_dash, sth_dash, sv_dash, sh_dash = calculate_comprehensive_metrics(
-    x_axis_dash, z_axis_dash,
-    p_dash['E'], p_dash['nu'], p_dash['alpha'], p_dash['beta_th'], p_dash['angle_draw'], p_dash['ucs_0'],
-    t_core, c_width, c_depth, reaktor_shift
-)
+    plot_3d_dt = st.empty()
+    plot_trends_dt = st.empty()
+    status_placeholder = st.empty()
 
-# =================================================================
-# 3. VIZUALIZATSIYA (PLOTLY)
-# =================================================================
-fig_dash = make_subplots(
-    rows=2, cols=2,
-    subplot_titles=("A) Vertikal Cho'kish (sv)", "B) Gorizontal Siljish (sh)",
-                    "C) Termal Buzilish D(T)", "D) Termal Kuchlanish (MPa)"),
-    vertical_spacing=0.15
-)
+    if run_btn_dt:
+        st.session_state.is_running_dt = True
+        st.session_state.history_log_dt = pd.DataFrame(columns=['Step', 'Temp', 'Subsidence', 'FOS', 'Stress'])
+        
+        total_steps = 50
+        X_grid = np.linspace(-100, 100, 40)
+        Y_grid = np.linspace(-100, 100, 40)
+        XX, YY = np.meshgrid(X_grid, Y_grid)
 
-# A) Vertikal cho'kish (sv) + Hovertemplate
-fig_dash.add_trace(go.Scatter(
-    x=x_axis_dash, y=-sv_dash, 
-    fill='tozeroy', 
-    name="sv", 
-    line=dict(color='#00f2ff', width=3),
-    hovertemplate='X: %{x} m<br>Cho\'kish: %{y} mm'
-), row=1, col=1)
+        for s in range(total_steps):
+            if not st.session_state.is_running_dt:
+                break
+            
+            data = get_integrated_metrics_dt(s, total_steps)
+            new_entry = pd.DataFrame([[s, data['temp'], data['subsidence'], data['fos'], data['stress']]], 
+                                     columns=['Step', 'Temp', 'Subsidence', 'FOS', 'Stress'])
+            st.session_state.history_log_dt = pd.concat([st.session_state.history_log_dt, new_entry], ignore_index=True)
+            
+            metric_temp_dt.metric("Harorat", f"{data['temp']:.1f} °C", delta=f"{data['temp']-25:.1f}")
+            metric_fos_dt.metric("FOS (Xavfsizlik)", f"{data['fos']:.2f}", delta=f"{-0.02:.2f}", delta_color="inverse")
+            metric_subs_dt.metric("Max Cho'kish", f"{data['subsidence']:.2f} mm")
+            metric_stress_dt.metric("Termal Stress", f"{data['stress']:.1f} MPa")
+            
+            Z_subs = data['subsidence'] * np.exp(-(XX**2 + YY**2) / (2 * (g_width_dt/2)**2))
+            fig3d = go.Figure(data=[go.Surface(z=Z_subs, x=X_grid, y=Y_grid, colorscale='Viridis')])
+            fig3d.update_layout(title="Yer usti dinamik cho'kishi", scene=dict(zaxis=dict(range=[0, 20])), height=500, template="plotly_dark")
+            plot_3d_dt.plotly_chart(fig3d, use_container_width=True)
+            
+            with status_placeholder.container():
+                if data['fos'] < 1.2:
+                    st.error(f"🚨 KRITIK HOLAT! FOS: {data['fos']:.2f}. Collapse xavfi yuqori!")
+                elif data['temp'] > 1100:
+                    st.warning("🔥 Haddan tashqari qizish! Jins mustahkamligi yo'qolmoqda.")
+                else:
+                    st.success("✅ Tizim barqaror ishlamoqda.")
+                st.write(f"UCS joriy qiymati: {data['ucs']:.1f} MPa")
+                st.progress((s+1)/total_steps)
 
-# Maksimal cho'kish marker nuqtasi
-fig_dash.add_trace(go.Scatter(
-    x=[x_axis_dash[np.argmax(sv_dash)]], 
-    y=[-np.max(sv_dash)],
-    mode='markers+text', 
-    text=f'Max sv: {np.max(sv_dash):.2f} mm', 
-    textposition='top center',
-    marker=dict(color='red', size=12, symbol='x'),
-    name="Max sv Point"
-), row=1, col=1)
+            fig_trends = make_subplots(rows=1, cols=2, subplot_titles=("Harorat Trendi", "FOS Dinamikasi"))
+            fig_trends.add_trace(go.Scatter(x=st.session_state.history_log_dt['Step'], y=st.session_state.history_log_dt['Temp'], name="Temp"), row=1, col=1)
+            fig_trends.add_trace(go.Scatter(x=st.session_state.history_log_dt['Step'], y=st.session_state.history_log_dt['FOS'], name="FOS", line=dict(color='red')), row=1, col=2)
+            fig_trends.update_layout(height=300, template="plotly_dark", showlegend=False)
+            plot_trends_dt.plotly_chart(fig_trends, use_container_width=True)
 
-# B) Gorizontal siljish (sh)
-fig_dash.add_trace(go.Scatter(
-    x=x_axis_dash, y=sh_dash, 
-    name="sh", 
-    line=dict(color='#ffaa00', width=2),
-    hovertemplate='X: %{x} m<br>Siljish: %{y} mm'
-), row=1, col=2)
+            time.sleep(speed_map[sim_speed])
 
-# C) Termal Buzilish (Heatmap) - Viridis + Transpose (.T)
-fig_dash.add_trace(go.Heatmap(
-    z=dmg_dash.T, x=x_axis_dash, y=z_axis_dash, 
-    colorscale='Viridis',
-    colorbar=dict(title="D(T)", x=0.46)
-), row=2, col=1)
+    if not st.session_state.history_log_dt.empty:
+        st.markdown("---")
+        st.subheader("Yakuniy hisob-kitob natijalari")
+        st.dataframe(st.session_state.history_log_dt.tail(10), use_container_width=True)
+        st.latex(r"D(T) = 1 - e^{-\beta (T - T_0)}")
+        st.info(f"Siz tanlagan {g_depth_dt}m chuqurlik va {g_temp_target_dt}°C haroratda jinsning termal buzilish koeffitsienti: {1 - np.exp(-0.0025 * (g_temp_target_dt-25)):.4f}")
 
-# D) Termal Kuchlanish (Heatmap) - Cividis + Transpose (.T)
-fig_dash.add_trace(go.Heatmap(
-    z=sth_dash.T, x=x_axis_dash, y=z_axis_dash, 
-    colorscale='Cividis',
-    colorbar=dict(title="MPa", x=1.0)
-), row=2, col=2)
-
-# O'qlarni sozlash
-fig_dash.update_yaxes(autorange="reversed", row=2, col=1)
-fig_dash.update_yaxes(autorange="reversed", row=2, col=2)
-fig_dash.update_layout(
-    height=850,
-    template='plotly_dark',
-    showlegend=False,
-    title=dict(text="Sirdesai modeli asosida UCG geomexanik monitoringi", x=0.5, font=dict(size=18))
-)
-st.plotly_chart(fig_dash, use_container_width=True)
 st.sidebar.markdown("---")
 st.sidebar.write(f"Tuzuvchi: Saitov Dilshodbek | Device: {device}")
