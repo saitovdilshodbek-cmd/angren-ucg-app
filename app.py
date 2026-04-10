@@ -32,6 +32,121 @@ except:
     PT_AVAILABLE = False
     device = "cpu"
 
+# =========================== MODULAR PHYSICS ENGINE (2-KOD) ===========================
+class PhysicsState:
+    def __init__(self):
+        self.stress = None
+        self.temp = None
+        self.damage = None
+        self.fos = None
+
+def physics_engine(state, step=0, total_steps=1):
+    """Modulli fizika dvigateli – ikkinchi kod asosida."""
+    t = step / total_steps if total_steps > 0 else 0
+    T = state["temp"] * (0.5 + 0.8 * t)
+    # Termal zarar
+    damage = np.clip(1 - np.exp(-0.002 * max(T - 100, 0)), 0, 0.95)
+    # Hoek-Brown mb
+    mb = state["mi"] * np.exp((state["gsi"] - 100) / (28 - 14 * state["D"]))
+    # Vertikal kuchlanish
+    sigma_v = state["rho"] * 9.81 * state["depth"] / 1e6
+    # Termal pasaytirilgan mustahkamlik
+    strength = state["ucs"] * (1 - damage)
+    # Selek yuki (oddiy proportsiya)
+    load = sigma_v * (state["width"] / (state["depth"] + 1e-6)) ** 0.5
+    fos = strength / (load + 1e-6)
+    fos = np.clip(fos, 0, 5)
+    # Cho‘kish
+    subsidence = state["depth"] * 0.001 * t * (1 + np.exp(-fos))
+    # Xavf indeksi
+    risk = np.clip(0.5 * (1 - fos / 2) + 0.3 * damage + 0.2 * np.exp(-fos), 0, 1)
+    return {
+        "T": T,
+        "fos": fos,
+        "damage": damage,
+        "subsidence": subsidence,
+        "risk": risk,
+        "stress": load,
+        "strength": strength
+    }
+
+def monte_carlo(state, n=1000):
+    """Monte Carlo simulyatsiyasi (noaniqlik tahlili)."""
+    results = []
+    for _ in range(n):
+        perturbed = state.copy()
+        perturbed["ucs"] *= np.random.normal(1, 0.1)
+        perturbed["gsi"] += np.random.normal(0, 5)
+        perturbed["temp"] += np.random.normal(0, 20)
+        perturbed["ucs"] = max(perturbed["ucs"], 1)
+        perturbed["gsi"] = np.clip(perturbed["gsi"], 10, 100)
+        perturbed["temp"] = np.clip(perturbed["temp"], 20, 1200)
+        res = physics_engine(perturbed)
+        results.append(res["fos"])
+    results = np.array(results)
+    return {
+        "fos": results,
+        "failure_prob": np.mean(results < 1.0)
+    }
+
+def train_ai(X, y, input_dim=2):
+    """Oddiy neyron tarmoqni o‘rgatish (ikkinchi kod uslubi)."""
+    if not PT_AVAILABLE:
+        return None
+    model = nn.Sequential(
+        nn.Linear(input_dim, 32),
+        nn.ReLU(),
+        nn.Linear(32, 32),
+        nn.ReLU(),
+        nn.Linear(32, 1)
+    ).to(device)
+    opt = torch.optim.Adam(model.parameters(), lr=0.01)
+    loss_fn = nn.MSELoss()
+    X_t = torch.tensor(X, dtype=torch.float32).to(device)
+    y_t = torch.tensor(y, dtype=torch.float32).view(-1, 1).to(device)
+    for epoch in range(100):
+        pred = model(X_t)
+        loss = loss_fn(pred, y_t)
+        opt.zero_grad()
+        loss.backward()
+        opt.step()
+    return model
+
+def digital_twin_step(step, total_steps):
+    """Digital twin uchun qadam (holat + AI bashorat)."""
+    state = st.session_state.state
+    physics = physics_engine(state, step, total_steps)
+    ai_pred = physics["fos"]
+    if "ai_model" in st.session_state and st.session_state.ai_model is not None:
+        try:
+            X_ai = np.array([[physics["T"], physics["stress"]]])
+            X_t = torch.tensor(X_ai, dtype=torch.float32).to(device)
+            with torch.no_grad():
+                ai_pred = st.session_state.ai_model(X_t).cpu().numpy()[0][0]
+        except:
+            pass
+    return {**physics, "ai_fos": ai_pred}
+
+def init_global_state(ucs, gsi, mi, depth, width, temp, rho, D):
+    """Global holatni ishga tushirish."""
+    if "state" not in st.session_state:
+        st.session_state.state = {
+            "ucs": ucs,
+            "gsi": gsi,
+            "mi": mi,
+            "depth": depth,
+            "width": width,
+            "temp": temp,
+            "rho": rho,
+            "D": D
+        }
+    else:
+        # yangilash
+        st.session_state.state.update({
+            "ucs": ucs, "gsi": gsi, "mi": mi, "depth": depth,
+            "width": width, "temp": temp, "rho": rho, "D": D
+        })
+
 # =========================== GLOBAL TRANSLATIONS ===========================
 TRANSLATIONS = {
     'uz': {
@@ -606,7 +721,19 @@ gsi_seam = target_layer['gsi']
 mi_seam = target_layer['mi']
 rho_seam = target_layer['rho']
 
-# =========================== FIZIKA DVIGATELI (Yagona) ===========================
+# =========================== GLOBAL HOLATNI ISHGA TUSHIRISH (YANGI) ===========================
+init_global_state(
+    ucs=ucs_seam,
+    gsi=gsi_seam,
+    mi=mi_seam,
+    depth=total_depth,
+    width=20.0,  # placeholder, keyin rec_width bilan yangilanadi
+    temp=current_base_temp,
+    rho=rho_seam,
+    D=D_factor
+)
+
+# =========================== FIZIKA DVIGATELI (1-KODDAN MAVJUD) ===========================
 def compute_physics(temp, ucs, depth, gsi, mi, pillar_width, poisson=0.25, density=2500):
     ucs_t = ucs * np.exp(-0.0025 * max(temp - 25, 0))
     sigma_v = (depth * density * 9.81) / 1e6
@@ -741,7 +868,7 @@ dp_dx, dp_dz = np.gradient(pressure, axis=1), np.gradient(pressure, axis=0)
 vx, vz = -perm*dp_dx, -perm*dp_dz
 gas_velocity = np.sqrt(vx**2+vz**2)
 
-# =========================== AI MODEL ===========================
+# =========================== AI MODEL (1-KODDAN) ===========================
 class CollapseNet(nn.Module):
     def __init__(self):
         super().__init__()
@@ -838,7 +965,11 @@ try:
 except:
     optimal_width_ai = rec_width
 
-# =========================== METRIKALAR ===========================
+# Global holatga selek enini yangilash
+st.session_state.state["width"] = rec_width
+st.session_state.state["temp"] = current_base_temp
+
+# =========================== METRIKALAR (1-KODDAN) ===========================
 st.subheader(t('monitoring_header', obj_name=obj_name))
 m1, m2, m3, m4, m5 = st.columns(5)
 m1.metric(t('pillar_strength'), f"{pillar_strength:.1f} MPa")
@@ -1108,7 +1239,7 @@ mk3.metric(t('max_subsidence_live'), f"{s_max_3d*100:.1f} cm")
 mk4.metric(t('process_stage'), t('stage_active') if time_h<100 else t('stage_cooling'))
 st.markdown("---")
 
-# ====================== YANGI QO'SHIMCHA: AI RISK PREDICTION (SENSOR CSV) ======================
+# =========================== AI RISK PREDICTION (1-KODDAN) ===========================
 class SimpleRiskNN(nn.Module):
     def __init__(self, input_dim=3):
         super().__init__()
@@ -1286,7 +1417,7 @@ def monte_carlo_fos(ucs_mean, ucs_std, gsi_mean, gsi_std, d_mean, temp_mean, H_s
     pf = float(np.mean(fos_s<1.0))
     return fos_s, pf
 
-with st.expander("🎲 Monte Carlo Noaniqlik Tahlili"):
+with st.expander("🎲 Monte Carlo Noaniqlik Tahlili (Klassik)"):
     mc_col1, mc_col2 = st.columns([1,2])
     with mc_col1:
         ucs_std = st.number_input("UCS standart og'ish (MPa)", value=5.0, min_value=0.1)
@@ -1793,6 +1924,7 @@ def compute_digital_twin(step, total_steps,
         "strength": effective_strength
     }
 
+# =========================== DIGITAL TWIN TAB (YANGI MODULLI DVIGATEL BILAN) ===========================
 with tab_digital_twin:
     st.header("🌐 UCG Integrated Digital Twin (Sirdesai & AI Hybrid)")
     st.sidebar.markdown("---")
@@ -1832,50 +1964,51 @@ with tab_digital_twin:
         X_grid = np.linspace(-100, 100, 40)
         Y_grid = np.linspace(-100, 100, 40)
         XX, YY = np.meshgrid(X_grid, Y_grid)
+        # AI modelni o‘rgatish (agar xohlasa)
+        if PT_AVAILABLE and "ai_model" not in st.session_state:
+            X_train = []
+            y_train = []
+            for _ in range(200):
+                s = st.session_state.state.copy()
+                s["temp"] = np.random.uniform(200, 1100)
+                s["width"] = np.random.uniform(10, 40)
+                res = physics_engine(s)
+                X_train.append([res["T"], res["stress"]])
+                y_train.append(res["fos"])
+            st.session_state.ai_model = train_ai(np.array(X_train), np.array(y_train), input_dim=2)
         for s in range(total_steps):
             if not st.session_state.is_running_dt:
                 break
-            data = compute_digital_twin(
-                step=s,
-                total_steps=total_steps,
-                ucs=ucs_seam,
-                gsi=gsi_seam,
-                mi=mi_seam,
-                D=D_factor,
-                nu=nu_poisson,
-                depth=total_depth,
-                width=rec_width,
-                temp_base=current_base_temp,
-                rho=rho_seam
-            )
+            # Yangi modulli qadam
+            result = digital_twin_step(s, total_steps)
             new_entry = pd.DataFrame([[
-                s, data['T'], data['subsidence'], data['fos'],
-                data['stress'], data['risk'], data['damage']
+                s, result['T'], result['subsidence'], result['fos'],
+                result['stress'], result['risk'], result['damage']
             ]], columns=['Step', 'Temp', 'Subsidence', 'FOS', 'Stress', 'Risk', 'Damage'])
             st.session_state.history_log_dt = pd.concat([st.session_state.history_log_dt, new_entry], ignore_index=True)
-            metric_temp_dt.metric("Harorat", f"{data['T']:.1f} °C", delta=f"{data['T']-25:.1f}")
-            metric_fos_dt.metric("FOS (Xavfsizlik)", f"{data['fos']:.2f}",
-                                 delta=f"{data['fos'] - (st.session_state.history_log_dt['FOS'].iloc[-2] if len(st.session_state.history_log_dt)>1 else data['fos']):.2f}",
+            metric_temp_dt.metric("Harorat", f"{result['T']:.1f} °C", delta=f"{result['T']-25:.1f}")
+            metric_fos_dt.metric("FOS (Xavfsizlik)", f"{result['fos']:.2f}",
+                                 delta=f"{result['fos'] - (st.session_state.history_log_dt['FOS'].iloc[-2] if len(st.session_state.history_log_dt)>1 else result['fos']):.2f}",
                                  delta_color="inverse")
-            metric_subs_dt.metric("Max Cho'kish", f"{data['subsidence']*100:.2f} cm")
-            metric_stress_dt.metric("Selek yuki", f"{data['stress']:.1f} MPa")
-            Z_subs = data['subsidence'] * np.exp(-(XX**2 + YY**2) / (2 * (rec_width/2)**2)) * (1 + (1 - data['fos']))
+            metric_subs_dt.metric("Max Cho'kish", f"{result['subsidence']*100:.2f} cm")
+            metric_stress_dt.metric("Selek yuki", f"{result['stress']:.1f} MPa")
+            Z_subs = result['subsidence'] * np.exp(-(XX**2 + YY**2) / (2 * (rec_width/2)**2)) * (1 + (1 - result['fos']))
             fig3d = go.Figure(data=[go.Surface(z=Z_subs*100, x=X_grid, y=Y_grid, colorscale='Viridis',
                                                contours={"z": {"show": True, "project": {"z": True}}})])
             fig3d.update_layout(title=f"Yer usti dinamik cho'kishi (qadam {s+1}/{total_steps})",
-                                scene=dict(zaxis=dict(range=[0, max(10, data['subsidence']*150)])),
+                                scene=dict(zaxis=dict(range=[0, max(10, result['subsidence']*150)])),
                                 height=500, template="plotly_dark")
             plot_3d_dt.plotly_chart(fig3d, use_container_width=True)
             with status_placeholder.container():
-                if data['fos'] < 1.2:
-                    st.error(f"🚨 KRITIK HOLAT! FOS: {data['fos']:.2f}. Collapse xavfi yuqori!")
-                elif data['risk'] > 0.7:
-                    st.warning(f"⚠️ Yuqori risk! Risk indeksi: {data['risk']:.2f}")
-                elif data['damage'] > 0.6:
-                    st.warning(f"🔥 Jiddiy termal zarar: {data['damage']*100:.1f}%")
+                if result['fos'] < 1.2:
+                    st.error(f"🚨 KRITIK HOLAT! FOS: {result['fos']:.2f}. Collapse xavfi yuqori!")
+                elif result['risk'] > 0.7:
+                    st.warning(f"⚠️ Yuqori risk! Risk indeksi: {result['risk']:.2f}")
+                elif result['damage'] > 0.6:
+                    st.warning(f"🔥 Jiddiy termal zarar: {result['damage']*100:.1f}%")
                 else:
                     st.success("✅ Tizim barqaror ishlamoqda.")
-                st.write(f"Joriy mustahkamlik: {data['strength']:.1f} MPa | Zarar: {data['damage']*100:.1f}%")
+                st.write(f"Joriy mustahkamlik: {result['strength']:.1f} MPa | Zarar: {result['damage']*100:.1f}%")
                 st.progress((s+1)/total_steps)
             fig_trends = make_subplots(rows=1, cols=3, subplot_titles=("Harorat & FOS", "Cho'kish", "Risk & Damage"))
             hist = st.session_state.history_log_dt
