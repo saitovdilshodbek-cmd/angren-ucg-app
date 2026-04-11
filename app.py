@@ -574,6 +574,56 @@ else:
 st.sidebar.header(t('sidebar_header_params'))
 formula_opts = FORMULA_OPTIONS[st.session_state.language]
 formula_option = st.sidebar.selectbox(t('formula_show'), formula_opts)
+
+# --- YANGI: TO'LIQ FORMULALAR RO'YXATI ---
+with st.sidebar.expander("📝 Dasturda qo'llanilgan barcha formulalar (To'liq ro'yxat)"):
+    st.markdown("### 1. Tog' jinsi massivi xossalarini aniqlash (Hoek-Brown)")
+    st.write("Dasturda tog' jinsi massivining mustahkamligi Hoek-Brown (2002) mezoni asosida hisoblanadi:")
+    st.latex(r"m_b = m_i \cdot \exp\left(\frac{GSI - 100}{28 - 14D}\right)")
+    st.latex(r"s = \exp\left(\frac{GSI - 100}{9 - 3D}\right)")
+    st.latex(r"a = \frac{1}{2} + \frac{1}{6}\left(e^{-GSI/15} - e^{-20/3}\right)")
+    st.write("Bu yerda: $GSI$ - jins sifatining geologik indeksi, $D$ - buzilish darajasi.")
+
+    st.markdown("### 2. Kuchlanish va Mustahkamlik parametrlari")
+    st.write("Massivning vertikal kuchlanishi va siqilishdagi mustahkamligi:")
+    st.latex(r"\sigma_v = \gamma \cdot H \cdot 10^{-3} \quad [MPa]")
+    st.latex(r"E_{massiv} = E_i \cdot \left(0.02 + \frac{1 - D/2}{1 + e^{(60 + 15D - GSI)/11}}\right)")
+    st.latex(r"\sigma_{cm} = \sigma_{ci} \cdot \frac{(m_b + 4s - a(m_b - 8s))(m_b/4 + s)^{a-1}}{2(1+a)(2+a)}")
+
+    st.markdown("### 3. Termal degradatsiya (Harorat ta'siri)")
+    st.write("Angren ko'mir konidagi termal jarayonlar natijasida elastiklik moduli va mustahkamlikning kamayishi:")
+    st.latex(r"E(T) = E_0 \cdot \left(1 - \alpha \cdot \frac{T - T_{amb}}{T_{max}}\right)")
+    st.latex(r"\sigma_{cm}(T) = \sigma_{cm} \cdot f_{deg}(T)")
+    st.write("Bu yerda $\alpha$ - termal emirilish koeffitsienti.")
+
+    st.markdown("### 4. Issiqlik tarqalishi (Heat Transfer)")
+    st.write("Differensial issiqlik o'tkazuvchanlik tenglamasi (Vaqt va masofa bo'yicha):")
+    st.latex(r"\frac{\partial T}{\partial t} = \kappa \left( \frac{\partial^2 T}{\partial x^2} + \frac{\partial^2 T}{\partial y^2} \right)")
+    st.write("Issiqlik manbasidan masofaga qarab pasayishi:")
+    st.latex(r"T(r) = T_{source} \cdot \exp\left(-\frac{r^2}{4\kappa t}\right)")
+
+    st.markdown("### 5. Xavfsizlik koeffitsienti (FOS)")
+    st.write("Loyiha barqarorligini baholash:")
+    st.latex(r"FOS = \frac{\sigma_{cm}(T)}{\sigma_v + \Delta\sigma_{thermal}}")
+
+    st.markdown("### 6. Yer yuzasining cho'kishi (Subsidence - Knothe-Budryk)")
+    st.write("Pustoyeta (bo'shliq) hosil bo'lishi natijasida yer yuzasining vertikal ko'chishi:")
+    st.latex(r"S(x) = S_{max} \cdot \exp\left( - \frac{\pi \cdot x^2}{R^2} \right)")
+    st.latex(r"S_{max} = m \cdot a \cdot \cos(\alpha)")
+    st.write("Bu yerda $m$ - qatlam qalinligi, $a$ - cho'kish koeffitsienti.")
+
+    st.markdown("### 7. AI va Neyron Tarmoq arxitekturasi")
+    st.write("CollapseNet va RiskNN modellarining ishlash prinsipi:")
+    st.latex(r"z^{(l)} = W^{(l)} \cdot a^{(l-1)} + b^{(l)}")
+    st.latex(r"a^{(l)} = \text{ReLU}(z^{(l)}) \quad \text{yoki} \quad \text{Sigmoid}(z^{(l)})")
+    st.write("Loss funksiyasi (MSE):")
+    st.latex(r"\mathcal{L} = \frac{1}{n} \sum_{i=1}^{n} (y_i - \hat{y}_i)^2")
+
+    st.markdown("### 8. Chiziqli Bashorat (Linear Trend Prediction)")
+    st.write("Vaqtga bog'liq ravishda FOS o'zgarishi bashorati:")
+    st.latex(r"\hat{y} = \beta_0 + \beta_1 \cdot t")
+    st.latex(r"\beta_1 = \frac{\sum(t_i - \bar{t})(y_i - \bar{y})}{\sum(t_i - \bar{t})^2}")
+
 if formula_option != formula_opts[0]:
     with st.expander(f"📚 Ilmiy asos: {formula_option}", expanded=True):
         if formula_option == formula_opts[1]:
@@ -768,12 +818,13 @@ for i, (z0, z1) in enumerate(layer_bounds):
     grid_a_hb[mask] = 0.5 + (1/6)*(np.exp(-layer['gsi']/15) - np.exp(-20/3))
     grid_sigma_t0_manual[mask] = layer['sigma_t0_manual']
 
-if 'max_temp_map' not in st.session_state or st.session_state.max_temp_map.shape != grid_z.shape:
-    st.session_state.max_temp_map = np.ones_like(grid_z)*25
+if (st.session_state.get('last_obj_name') != obj_name or 
+    st.session_state.get('last_max_temp') != T_source_max or
+    st.session_state.max_temp_map.shape != grid_z.shape):
+    st.session_state.max_temp_map = np.ones_like(grid_z) * 25
     st.session_state.last_obj_name = obj_name
-elif st.session_state.get('last_obj_name') != obj_name:
-    st.session_state.max_temp_map = np.ones_like(grid_z)*25
-    st.session_state.last_obj_name = obj_name
+    st.session_state.last_max_temp = T_source_max
+
 st.session_state.max_temp_map = np.maximum(st.session_state.max_temp_map, temp_2d)
 
 delta_T = temp_2d - 25.0
@@ -874,6 +925,10 @@ def get_nn_model():
         loss.backward()
         optimizer.step()
     model.eval()
+    try:
+        torch.save(model.state_dict(), "collapse_model.pth")
+    except:
+        pass
     return model
 
 def predict_nn(model, temp, s1, s3, depth):
@@ -1160,7 +1215,6 @@ with c2:
     fig_tm.update_layout(template="plotly_dark", height=900, margin=dict(r=150,t=80,b=100),
                          showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=-0.12, xanchor="center", x=0.5))
     fig_tm.update_yaxes(autorange='reversed', row=1, col=1)
-    fig_tm.update_yaxes(autorange='reversed', row=2, col=1)
     fig_tm.update_yaxes(range=[source_z + zoom_margin/2, source_z - zoom_margin], row=2, col=1)
     st.plotly_chart(fig_tm, use_container_width=True)
     if st.checkbox("Avtomatik animatsiya (1→2→3 bosqichlar)"):
@@ -1228,6 +1282,23 @@ def get_risk_model():
     if not PT_AVAILABLE:
         return None
     model = SimpleRiskNN().to(device)
+    try:
+        model.load_state_dict(torch.load("risk_model.pth", map_location=device))
+    except:
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+        loss_fn = nn.BCELoss()
+        for _ in range(50):
+            X_syn = torch.rand(100, 3).to(device)
+            y_syn = torch.rand(100, 1).to(device)
+            pred = model(X_syn)
+            loss = loss_fn(pred, y_syn)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+        try:
+            torch.save(model.state_dict(), "risk_model.pth")
+        except:
+            pass
     model.eval()
     return model
 
@@ -1320,7 +1391,10 @@ with st.expander("📈 FOS Vaqt Bashorati (Trend)"):
         sv_t = sv_seam*(1+0.001*th)
         fos_t = np.clip(p_str_t/(sv_t+EPS),0,3)
         fos_timeline.append(fos_t)
-    slope, intercept, r_value, _, _ = linregress(time_points, fos_timeline)
+    if len(time_points) > 1:
+        slope, intercept, r_value, _, _ = linregress(time_points, fos_timeline)
+    else:
+        slope, intercept, r_value = 0.0, fos_timeline[0], 0.0
     future_times = np.arange(time_h, min(time_h*2,300), max(1,time_h//10))
     fos_forecast = intercept + slope*future_times
     fos_forecast = np.clip(fos_forecast,0,3)
@@ -1590,7 +1664,7 @@ with tab_quick_surface:
                 quick_alert.error(t('alert_danger'))
             else:
                 quick_alert.success(t('alert_safe'))
-            time.sleep(0.05)
+            time.sleep(0.2)
         st.success("Simulyatsiya yakunlandi.")
 
 with tab_live:
@@ -1658,7 +1732,7 @@ with tab_live:
                 alert_box_live.markdown("### 🔴 ALERTS\n" + "\n".join(alerts))
             else:
                 alert_box_live.markdown("### 🟢 All systems normal")
-            time.sleep(0.1)
+            time.sleep(0.2)
             steps_done += 1
         st.success(f"✅ Live monitoring completed after {steps_done} steps.")
     if not st.session_state.live_history_df.empty:
@@ -1752,7 +1826,7 @@ with tab_ai_orig:
                     else:
                         st.success(f"✅ Normal holat — Effektiv σ: {effective:.2f} MPa")
                     st.progress((step+1)/int(ai_steps_1))
-                time.sleep(0.15)
+                time.sleep(0.2)
             st.balloons()
             st.success(f"✅ Monitoring yakunlandi! Jami anomaliyalar: {sum(1 for a in anomalies_eff if a is not None)}")
     with ai_tab2:
@@ -1768,6 +1842,8 @@ with tab_ai_orig:
             sensor_data_fos = simulate_sensors_fos(int(ai_steps_2))
             pillar_strength_pred = []
             fos_rf_trained = False
+            X_history = []
+            y_history = []
             for i in range(int(ai_steps_2)):
                 row = sensor_data_fos.iloc[i]
                 X = np.array([[row.Temperature, row.VerticalStress]])
@@ -1780,10 +1856,15 @@ with tab_ai_orig:
                     loss.backward()
                     fos_optimizer.step()
                 else:
-                    if not fos_rf_trained:
-                        fos_rf_model.fit(X, [fos_target])
+                    X_history.append([row.Temperature, row.VerticalStress])
+                    y_history.append(fos_target)
+                    if not fos_rf_trained and len(X_history) > 5:
+                        fos_rf_model.fit(X_history, y_history)
                         fos_rf_trained = True
-                    y_pred = fos_rf_model.predict(X)[0]
+                    if fos_rf_trained:
+                        y_pred = fos_rf_model.predict(X)[0]
+                    else:
+                        y_pred = fos_target
                 pillar_strength_pred.append(float(y_pred))
                 if y_pred < 10:
                     fos_color = t('fos_red')
@@ -1808,7 +1889,7 @@ with tab_ai_orig:
                     st.plotly_chart(fig_fos, use_container_width=True, key=f"fospred_{i}")
                     st.info(f"Qadam {i+1}/{int(ai_steps_2)} | Model: {'PyTorch SimpleNN' if PT_AVAILABLE else 'RandomForest'} | {fos_color}")
                     st.progress((i+1)/int(ai_steps_2))
-                time.sleep(0.05)
+                time.sleep(0.2)
             st.balloons()
             final_fos = pillar_strength_pred[-1] if pillar_strength_pred else 0
             if final_fos < 10:
@@ -1829,7 +1910,7 @@ with tab_advanced:
     s_dyn = np.exp((gsi_val-100)/(9-3*D_factor))
     ucs_t_dyn = ucs_0_r * np.exp(-BETA_CONST*(T_source_max-20))
     p_str_final = ucs_t_dyn * (rec_width/(H_seam+EPS))**0.5
-    fos_final = p_str_final/(sigma_v_tot+EPS)
+    fos_final = np.clip(p_str_final/(sigma_v_tot+EPS), 0.1, 10.0)
     t1,t2,t3 = st.tabs([t('tab_mass'), t('tab_thermal'), t('tab_stability')])
     with t1:
         st.subheader(t('hb_class'))
@@ -1904,7 +1985,7 @@ with tab_digital_twin:
     dt_col1, dt_col2 = st.columns(2)
     with dt_col1:
         sim_speed = st.select_slider("Simulyatsiya tezligi", options=["Sekin", "Normal", "Tez"], value="Normal")
-        speed_map = {"Sekin": 0.5, "Normal": 0.2, "Tez": 0.05}
+        speed_map = {"Sekin": 0.5, "Normal": 0.2, "Tez": 0.2}
     with dt_col2:
         run_btn_dt = st.button("▶️ Simulyatsiyani boshlash", use_container_width=True)
         stop_btn_dt = st.button("⏹ To'xtatish", use_container_width=True)
