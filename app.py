@@ -51,7 +51,7 @@ def geoai_digital_twin_v3(params, state=None):
     dT = temp - state["temp_prev"]
     thermal_shock = np.tanh(dT / 50)
 
-    # ---------- 4. STOCHASTIC UNCERTAINTY (REAL GEOLOGY) ----------
+    # ---------- 4. STOCHASTIC UNCERTAINTY ----------
     noise_ucs = np.random.normal(1.0, 0.08)
     noise_gsi = np.random.normal(1.0, 0.05)
     noise_temp = np.random.normal(1.0, 0.03)
@@ -86,18 +86,15 @@ def geoai_digital_twin_v3(params, state=None):
 
     # ---------- 9. FAILURE CRITERION ----------
     sigma3 = nu_t * sigma_total
-
     sigma1_lim = sigma3 + ucs_eff * (mb * sigma3 / (ucs_eff + 1e-6) + s) ** a
-
     fos = sigma1_lim / (sigma_total + 1e-6)
 
     # ---------- 10. BAYES DAMAGE UPDATE ----------
     damage_increment = (1 - reduction) * (1.2 - min(fos, 2)) * 0.1
     damage = state["damage"] + max(0, damage_increment)
-
     damage = float(np.clip(damage, 0, 1))
 
-    # ---------- 11. SUBSIDENCE (NONLINEAR COUPLING) ----------
+    # ---------- 11. SUBSIDENCE ----------
     subsidence = H * 0.8 * damage * (1 + max(0, 1.2 - fos))
 
     # ---------- 12. AI RISK LAYER ----------
@@ -661,7 +658,7 @@ current_base_temp = stage_temp_map[stage_key]
 with st.sidebar.expander(t('timeline')):
     st.markdown(t('timeline_table'))
 
-# Qatlam ma'lumotlari (soddalashtirilgan)
+# Qatlam ma'lumotlari
 strata_colors = ['#87CEEB', '#F4A460', '#D3D3D3', '#F5DEB3', '#555555']
 layers_data   = []
 total_depth   = 0.0
@@ -686,7 +683,7 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("Quduqlar konfiguratsiyasi")
 well_distance = st.sidebar.slider("Quduqlar orasidagi masofa (m):", 50.0, 500.0, 200.0, 10.0)
 
-# =========================== DIGITAL TWIN PANELI (SIDEBAR) ===========================
+# =========================== DIGITAL TWIN PANELI ===========================
 st.sidebar.markdown("---")
 st.sidebar.header("🛠️ Markaziy Boshqaruv Paneli (Digital Twin)")
 st.sidebar.markdown(t('digital_twin_params'))
@@ -702,7 +699,7 @@ tab_live, tab_quick_surface, tab_ai_orig, tab_advanced, tab_digital_twin = st.ta
     t('advanced_analysis'), t('digital_twin_tab')
 ])
 
-# ---------- DIGITAL TWIN TAB (ASOSIY) ----------
+# ---------- DIGITAL TWIN TAB ----------
 with tab_digital_twin:
     st.header("🌐 UCG Integrated Digital Twin (GeoAI v3)")
 
@@ -789,7 +786,6 @@ with tab_digital_twin:
 
             time.sleep(max(0.05, speed_map[sim_speed]))
 
-        # Trend grafigi
         hist = st.session_state.history_log_dt
         fig_trends = make_subplots(
             rows=1, cols=3,
@@ -816,9 +812,6 @@ with tab_digital_twin:
             file_name=f"UCG_Monitoring_{time.strftime('%Y%m%d_%H%M')}.csv",
             mime='text/csv'
         )
-
-# Boshqa tablar (AI, Advanced, Live) bu yerda qisqartirilgan, lekin asl to'liq kodda mavjud.
-# Ular `geoai_digital_twin_v3` dvigateliga moslab qo'yilgan.
 
 st.sidebar.markdown("---")
 st.sidebar.write(f"Tuzuvchi: Saitov Dilshodbek | Device: {device}")
