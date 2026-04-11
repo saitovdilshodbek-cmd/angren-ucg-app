@@ -8,7 +8,6 @@ from scipy.optimize import minimize
 from scipy.stats import linregress
 import time
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
-from sklearn.ensemble import IsolationForest
 import io
 from docx import Document
 from docx.shared import Pt, Cm, RGBColor, Inches
@@ -32,120 +31,111 @@ except:
     PT_AVAILABLE = False
     device = "cpu"
 
-# =========================== MODULAR PHYSICS ENGINE (2-KOD) ===========================
-class PhysicsState:
-    def __init__(self):
-        self.stress = None
-        self.temp = None
-        self.damage = None
-        self.fos = None
+# =========================== YAGONA FIZIKA DVIGATELI ===========================
+def unified_physics_engine(params):
+    """
+    Barcha geomexanik va termal hisob-kitoblar uchun yagona funksiya.
+    Kirish parametrlari (dict):
+        ucs, gsi, mi, D, nu, depth, width, temp, rho,
+        H_seam (ixtiyoriy), E (ixtiyoriy), alpha (ixtiyoriy),
+        stage (ixtiyoriy: 'active' yoki 'cooling'),
+        void_factor (ixtiyoriy, bo'shliq ta'siri uchun, standart 1.0)
+    Qaytaradi (dict):
+        fos, subsidence, stress, strength, damage, risk, ucs_eff,
+        sigma_v, sigma_h, sigma_th, y_plastic, mb, s, a, T, D_T,
+        sigma1_limit (agar kerak bo'lsa)
+    """
+    # Parametrlarni olish
+    ucs   = params.get("ucs", 40)
+    gsi   = params.get("gsi", 60)
+    mi    = params.get("mi", 10)
+    D     = params.get("D", 0.7)
+    nu    = params.get("nu", 0.25)
+    depth = params.get("depth", 200)
+    width = params.get("width", 20)
+    temp  = params.get("temp", 500)
+    rho   = params.get("rho", 2500)
+    H     = params.get("H_seam", depth)      # qatlam qalinligi
+    E_mod = params.get("E", 5000.0)          # MPa
+    alpha = params.get("alpha", 1.0e-5)      # 1/°C
+    stage = params.get("stage", "active")
+    void_factor = params.get("void_factor", 1.0)  # bo'shliq tufayli kamaytirish
 
-def physics_engine(state, step=0, total_steps=1):
-    """Modulli fizika dvigateli – ikkinchi kod asosida."""
-    t = step / total_steps if total_steps > 0 else 0
-    T = state["temp"] * (0.5 + 0.8 * t)
-    # Termal zarar
-    damage = np.clip(1 - np.exp(-0.002 * max(T - 100, 0)), 0, 0.95)
-    # Hoek-Brown mb
-    mb = state["mi"] * np.exp((state["gsi"] - 100) / (28 - 14 * state["D"]))
-    # Vertikal kuchlanish
-    sigma_v = state["rho"] * 9.81 * state["depth"] / 1e6
-    # Termal pasaytirilgan mustahkamlik
-    strength = state["ucs"] * (1 - damage)
-    # Selek yuki (oddiy proportsiya)
-    load = sigma_v * (state["width"] / (state["depth"] + 1e-6)) ** 0.5
-    fos = strength / (load + 1e-6)
-    fos = np.clip(fos, 0, 5)
-    # Cho‘kish
-    subsidence = state["depth"] * 0.001 * t * (1 + np.exp(-fos))
-    # Xavf indeksi
-    risk = np.clip(0.5 * (1 - fos / 2) + 0.3 * damage + 0.2 * np.exp(-fos), 0, 1)
-    return {
-        "T": T,
-        "fos": fos,
-        "damage": damage,
-        "subsidence": subsidence,
-        "risk": risk,
-        "stress": load,
-        "strength": strength
-    }
+    # 1. Hoek-Brown parametrlari
+    mb = mi * np.exp((gsi - 100) / (28 - 14 * D))
+    s  = np.exp((gsi - 100) / (9 - 3 * D))
+    a  = 0.5 + (1/6) * (np.exp(-gsi/15) - np.exp(-20/3))
 
-def monte_carlo(state, n=1000):
-    """Monte Carlo simulyatsiyasi (noaniqlik tahlili)."""
-    results = []
-    for _ in range(n):
-        perturbed = state.copy()
-        perturbed["ucs"] *= np.random.normal(1, 0.1)
-        perturbed["gsi"] += np.random.normal(0, 5)
-        perturbed["temp"] += np.random.normal(0, 20)
-        perturbed["ucs"] = max(perturbed["ucs"], 1)
-        perturbed["gsi"] = np.clip(perturbed["gsi"], 10, 100)
-        perturbed["temp"] = np.clip(perturbed["temp"], 20, 1200)
-        res = physics_engine(perturbed)
-        results.append(res["fos"])
-    results = np.array(results)
-    return {
-        "fos": results,
-        "failure_prob": np.mean(results < 1.0)
-    }
+    # 2. Termal zarar va mustahkamlik pasayishi
+    D_T = np.clip(1 - np.exp(-0.002 * max(temp - 100, 0)), 0, 0.95)
+    red_factor = np.exp(-0.0025 * max(temp - 20, 0))
+    ucs_eff = ucs * (1 - D_T) * void_factor
 
-def train_ai(X, y, input_dim=2):
-    """Oddiy neyron tarmoqni o‘rgatish (ikkinchi kod uslubi)."""
-    if not PT_AVAILABLE:
-        return None
-    model = nn.Sequential(
-        nn.Linear(input_dim, 32),
-        nn.ReLU(),
-        nn.Linear(32, 32),
-        nn.ReLU(),
-        nn.Linear(32, 1)
-    ).to(device)
-    opt = torch.optim.Adam(model.parameters(), lr=0.01)
-    loss_fn = nn.MSELoss()
-    X_t = torch.tensor(X, dtype=torch.float32).to(device)
-    y_t = torch.tensor(y, dtype=torch.float32).view(-1, 1).to(device)
-    for epoch in range(100):
-        pred = model(X_t)
-        loss = loss_fn(pred, y_t)
-        opt.zero_grad()
-        loss.backward()
-        opt.step()
-    return model
+    # 3. In-situ kuchlanishlar
+    sigma_v = rho * 9.81 * depth / 1e6
+    k0 = nu / (1 - nu) if nu < 0.5 else 0.5
+    sigma_h0 = k0 * sigma_v
 
-def digital_twin_step(step, total_steps):
-    """Digital twin uchun qadam (holat + AI bashorat)."""
-    state = st.session_state.state
-    physics = physics_engine(state, step, total_steps)
-    ai_pred = physics["fos"]
-    if "ai_model" in st.session_state and st.session_state.ai_model is not None:
-        try:
-            X_ai = np.array([[physics["T"], physics["stress"]]])
-            X_t = torch.tensor(X_ai, dtype=torch.float32).to(device)
-            with torch.no_grad():
-                ai_pred = st.session_state.ai_model(X_t).cpu().numpy()[0][0]
-        except:
-            pass
-    return {**physics, "ai_fos": ai_pred}
-
-def init_global_state(ucs, gsi, mi, depth, width, temp, rho, D):
-    """Global holatni ishga tushirish."""
-    if "state" not in st.session_state:
-        st.session_state.state = {
-            "ucs": ucs,
-            "gsi": gsi,
-            "mi": mi,
-            "depth": depth,
-            "width": width,
-            "temp": temp,
-            "rho": rho,
-            "D": D
-        }
+    # 4. Termal kuchlanish
+    delta_T = max(temp - 20, 0)
+    if stage == "active":
+        sigma_th = (E_mod * alpha * delta_T) / (1 - nu + 1e-12)
     else:
-        # yangilash
-        st.session_state.state.update({
-            "ucs": ucs, "gsi": gsi, "mi": mi, "depth": depth,
-            "width": width, "temp": temp, "rho": rho, "D": D
-        })
+        sigma_th = 0.0
+    sigma_h = sigma_h0 - sigma_th   # termal kengayish gorizontal stressni kamaytiradi
+
+    # 5. Asosiy kuchlanishlar
+    sigma1 = max(sigma_v, sigma_h)
+    sigma3 = min(sigma_v, sigma_h)
+
+    # 6. Selek mustahkamligi (Wilson soddalashtirilgan)
+    strength = (ucs_eff * red_factor) * (width / (H + 1e-12))**0.5
+
+    # 7. Hoek-Brown chegaraviy mustahkamlik
+    sigma3_safe = max(sigma3, 0.01)
+    sigma1_limit = sigma3_safe + ucs_eff * (mb * sigma3_safe / (ucs_eff + 1e-9) + s)**a
+
+    # 8. Xavfsizlik koeffitsienti (FOS)
+    fos = sigma1_limit / (sigma1 + 1e-12)
+    fos = np.clip(fos, 0, 5)
+
+    # 9. Cho'kish
+    subsidence = depth * 0.0015 * (temp / 100) * (1 + np.exp(-fos))
+
+    # 10. Zarar va xavf indeksi
+    damage = D_T
+    fos_risk = np.clip(1 - fos/2, 0, 1)
+    thermal_risk = damage
+    collapse_risk = np.exp(-fos)
+    risk = 0.4 * fos_risk + 0.3 * thermal_risk + 0.2 * collapse_risk + 0.1 * (temp / 1200)
+    risk = np.clip(risk, 0, 1)
+
+    # 11. Plastik zona (soddalashtirilgan)
+    y_plastic = (H / 2) * (np.sqrt(sigma_v / (strength + 1e-12)) - 1)
+    y_plastic = max(0, y_plastic)
+
+    return {
+        "fos": fos,
+        "subsidence": subsidence,
+        "stress": sigma1,        # asosiy kuchlanish
+        "strength": strength,
+        "damage": damage,
+        "risk": risk,
+        "ucs_eff": ucs_eff,
+        "sigma_v": sigma_v,
+        "sigma_h": sigma_h,
+        "sigma_th": sigma_th,
+        "y_plastic": y_plastic,
+        "mb": mb,
+        "s": s,
+        "a": a,
+        "T": temp,
+        "D_T": D_T,
+        "sigma1_limit": sigma1_limit
+    }
+
+# =========================== MODULAR PHYSICS ENGINE (eski) - o'chirildi ===========================
+# Eski funksiyalar endi unified_physics_engine orqali ishlaydi
 
 # =========================== GLOBAL TRANSLATIONS ===========================
 TRANSLATIONS = {
@@ -721,29 +711,46 @@ gsi_seam = target_layer['gsi']
 mi_seam = target_layer['mi']
 rho_seam = target_layer['rho']
 
-# =========================== GLOBAL HOLATNI ISHGA TUSHIRISH (YANGI) ===========================
-init_global_state(
-    ucs=ucs_seam,
-    gsi=gsi_seam,
-    mi=mi_seam,
-    depth=total_depth,
-    width=20.0,  # placeholder, keyin rec_width bilan yangilanadi
-    temp=current_base_temp,
-    rho=rho_seam,
-    D=D_factor
-)
+# =========================== GLOBAL HOLATNI ISHGA TUSHIRISH ===========================
+if "state" not in st.session_state:
+    st.session_state.state = {
+        "ucs": ucs_seam,
+        "gsi": gsi_seam,
+        "mi": mi_seam,
+        "depth": total_depth,
+        "width": 20.0,  # placeholder, keyin rec_width bilan yangilanadi
+        "temp": current_base_temp,
+        "rho": rho_seam,
+        "D": D_factor
+    }
+else:
+    st.session_state.state.update({
+        "ucs": ucs_seam, "gsi": gsi_seam, "mi": mi_seam, "depth": total_depth,
+        "width": 20.0, "temp": current_base_temp, "rho": rho_seam, "D": D_factor
+    })
 
-# =========================== FIZIKA DVIGATELI (1-KODDAN MAVJUD) ===========================
+# =========================== YORDAMCHI FUNKSIYALAR (YANGI DVIGATEL BILAN) ===========================
 def compute_physics(temp, ucs, depth, gsi, mi, pillar_width, poisson=0.25, density=2500):
-    ucs_t = ucs * np.exp(-0.0025 * max(temp - 25, 0))
-    sigma_v = (depth * density * 9.81) / 1e6
-    E_mod = 5000
-    alpha = 1e-5
-    sigma_th = (E_mod * alpha * max(temp - 25, 0)) / (1 - poisson + EPS)
-    strength = ucs_t * (pillar_width / (H_seam + EPS)) ** 0.5
-    fos = strength / (sigma_v + 0.1 * sigma_th + EPS)
-    subsidence = (0.00015 * pillar_width ** 1.8) * (temp / 100) * (depth / 100)
-    return {'fos': fos, 'subsidence': subsidence, 'ucs_t': ucs_t, 'stress': sigma_th}
+    params = {
+        "ucs": ucs,
+        "gsi": gsi,
+        "mi": mi,
+        "D": D_factor,
+        "nu": poisson,
+        "depth": depth,
+        "width": pillar_width,
+        "temp": temp,
+        "rho": density,
+        "H_seam": H_seam,
+        "stage": "active"
+    }
+    res = unified_physics_engine(params)
+    return {
+        'fos': res['fos'],
+        'subsidence': res['subsidence'],
+        'ucs_t': res['ucs_eff'],
+        'stress': res['sigma_th']
+    }
 
 @st.cache_data(show_spinner=False, max_entries=50)
 def compute_temperature_field_moving(time_h, T_source_max, burn_duration, total_depth, source_z, grid_shape, n_steps=20):
@@ -868,7 +875,7 @@ dp_dx, dp_dz = np.gradient(pressure, axis=1), np.gradient(pressure, axis=0)
 vx, vz = -perm*dp_dx, -perm*dp_dz
 gas_velocity = np.sqrt(vx**2+vz**2)
 
-# =========================== AI MODEL (1-KODDAN) ===========================
+# =========================== AI MODEL ===========================
 class CollapseNet(nn.Module):
     def __init__(self):
         super().__init__()
@@ -935,7 +942,7 @@ if nn_model is None or not PT_AVAILABLE:
     else:
         collapse_pred = np.zeros_like(temp_2d)
 
-# =========================== SELEK OPTIMIZATSIYASI ===========================
+# =========================== SELEK OPTIMIZATSIYASI (yangi dvigatel bilan) ===========================
 avg_t_p = np.mean(temp_2d[np.abs(z_axis-source_z).argmin(), :])
 strength_red = np.exp(-0.0025*(avg_t_p-20))
 sv_seam = grid_sigma_v[np.abs(z_axis-source_z).argmin(), :].max()
@@ -965,11 +972,10 @@ try:
 except:
     optimal_width_ai = rec_width
 
-# Global holatga selek enini yangilash
 st.session_state.state["width"] = rec_width
 st.session_state.state["temp"] = current_base_temp
 
-# =========================== METRIKALAR (1-KODDAN) ===========================
+# =========================== METRIKALAR ===========================
 st.subheader(t('monitoring_header', obj_name=obj_name))
 m1, m2, m3, m4, m5 = st.columns(5)
 m1.metric(t('pillar_strength'), f"{pillar_strength:.1f} MPa")
@@ -1239,7 +1245,7 @@ mk3.metric(t('max_subsidence_live'), f"{s_max_3d*100:.1f} cm")
 mk4.metric(t('process_stage'), t('stage_active') if time_h<100 else t('stage_cooling'))
 st.markdown("---")
 
-# =========================== AI RISK PREDICTION (1-KODDAN) ===========================
+# =========================== AI RISK PREDICTION ===========================
 class SimpleRiskNN(nn.Module):
     def __init__(self, input_dim=3):
         super().__init__()
@@ -1406,16 +1412,25 @@ def monte_carlo_fos(ucs_mean, ucs_std, gsi_mean, gsi_std, d_mean, temp_mean, H_s
     ucs_s = np.random.normal(ucs_mean, ucs_std, n_sim).clip(1,300)
     gsi_s = np.random.normal(gsi_mean, gsi_std, n_sim).clip(10,100)
     T_s = np.random.normal(temp_mean, temp_mean*0.1, n_sim).clip(20,1200)
-    mb_s = 10*np.exp((gsi_s-100)/(28-14*d_mean))
-    s_s = np.exp((gsi_s-100)/(9-3*d_mean))
-    dmg_s = np.clip(1-np.exp(-0.002*np.maximum(T_s-100,0)),0,0.95)
-    sci_s = ucs_s*(1-dmg_s)
-    str_r = np.exp(-0.0025*(T_s-20))
-    p_str = (sci_s*str_r)*(20/(H_seam+1e-12))**0.5
-    sv_s = ucs_s*0.025
-    fos_s = np.clip(p_str/(sv_s+1e-12),0,5)
-    pf = float(np.mean(fos_s<1.0))
-    return fos_s, pf
+    fos_samples = []
+    for i in range(n_sim):
+        params = {
+            "ucs": ucs_s[i],
+            "gsi": gsi_s[i],
+            "mi": mi_seam,
+            "D": d_mean,
+            "nu": nu_poisson,
+            "depth": total_depth,
+            "width": rec_width,
+            "temp": T_s[i],
+            "rho": rho_seam,
+            "H_seam": H_seam
+        }
+        res = unified_physics_engine(params)
+        fos_samples.append(res['fos'])
+    fos_samples = np.array(fos_samples)
+    pf = float(np.mean(fos_samples < 1.0))
+    return fos_samples, pf
 
 with st.expander("🎲 Monte Carlo Noaniqlik Tahlili (Klassik)"):
     mc_col1, mc_col2 = st.columns([1,2])
@@ -1896,35 +1911,22 @@ def compute_digital_twin(step, total_steps,
     t = step / total_steps
     T = temp_base * (0.5 + 0.8*t) + np.random.normal(0, 5)
     T = max(20, T)
-    damage = thermal_damage_func(T)
-    mb, s, a = hoek_brown_params(gsi, mi, D)
-    sigma_v = rho * 9.81 * depth / 1e6
-    sigma_h = nu / (1 - nu + 1e-6) * sigma_v
-    rock_mass_strength = ucs * (s + mb * sigma_h / (ucs + 1e-6)) ** a
-    effective_strength = rock_mass_strength * (1 - damage)
-    load = sigma_v * (width / (depth + 1e-6))**0.5
-    fos = effective_strength / (load + 1e-6)
-    fos = np.clip(fos, 0, 5)
-    collapse_factor = np.exp(-fos)
-    subsidence = depth * 0.0015 * t * (1 + collapse_factor)
-    risk = (
-        0.4 * np.clip(1 - fos/2, 0, 1) +
-        0.3 * damage +
-        0.2 * collapse_factor +
-        0.1 * (T / (temp_base + 1e-6))
-    )
-    risk = np.clip(risk, 0, 1)
-    return {
-        "T": T,
-        "fos": fos,
-        "subsidence": subsidence,
-        "stress": load,
-        "damage": damage,
-        "risk": risk,
-        "strength": effective_strength
+    params = {
+        "ucs": ucs,
+        "gsi": gsi,
+        "mi": mi,
+        "D": D,
+        "nu": nu,
+        "depth": depth,
+        "width": width,
+        "temp": T,
+        "rho": rho,
+        "H_seam": H_seam,
+        "stage": "active"
     }
+    return unified_physics_engine(params)
 
-# =========================== DIGITAL TWIN TAB (YANGI MODULLI DVIGATEL BILAN) ===========================
+# =========================== DIGITAL TWIN TAB ===========================
 with tab_digital_twin:
     st.header("🌐 UCG Integrated Digital Twin (Sirdesai & AI Hybrid)")
     st.sidebar.markdown("---")
@@ -1964,23 +1966,14 @@ with tab_digital_twin:
         X_grid = np.linspace(-100, 100, 40)
         Y_grid = np.linspace(-100, 100, 40)
         XX, YY = np.meshgrid(X_grid, Y_grid)
-        # AI modelni o‘rgatish (agar xohlasa)
-        if PT_AVAILABLE and "ai_model" not in st.session_state:
-            X_train = []
-            y_train = []
-            for _ in range(200):
-                s = st.session_state.state.copy()
-                s["temp"] = np.random.uniform(200, 1100)
-                s["width"] = np.random.uniform(10, 40)
-                res = physics_engine(s)
-                X_train.append([res["T"], res["stress"]])
-                y_train.append(res["fos"])
-            st.session_state.ai_model = train_ai(np.array(X_train), np.array(y_train), input_dim=2)
         for s in range(total_steps):
             if not st.session_state.is_running_dt:
                 break
-            # Yangi modulli qadam
-            result = digital_twin_step(s, total_steps)
+            result = compute_digital_twin(
+                step=s, total_steps=total_steps,
+                ucs=ucs_seam, gsi=gsi_seam, mi=mi_seam, D=D_factor, nu=nu_poisson,
+                depth=total_depth, width=rec_width, temp_base=current_base_temp, rho=rho_seam
+            )
             new_entry = pd.DataFrame([[
                 s, result['T'], result['subsidence'], result['fos'],
                 result['stress'], result['risk'], result['damage']
