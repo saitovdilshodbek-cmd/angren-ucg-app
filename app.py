@@ -33,19 +33,6 @@ except:
 
 # =========================== YAGONA FIZIKA DVIGATELI ===========================
 def unified_physics_engine(params):
-    """
-    Barcha geomexanik va termal hisob-kitoblar uchun yagona funksiya.
-    Kirish parametrlari (dict):
-        ucs, gsi, mi, D, nu, depth, width, temp, rho,
-        H_seam (ixtiyoriy), E (ixtiyoriy), alpha (ixtiyoriy),
-        stage (ixtiyoriy: 'active' yoki 'cooling'),
-        void_factor (ixtiyoriy, bo'shliq ta'siri uchun, standart 1.0)
-    Qaytaradi (dict):
-        fos, subsidence, stress, strength, damage, risk, ucs_eff,
-        sigma_v, sigma_h, sigma_th, y_plastic, mb, s, a, T, D_T,
-        sigma1_limit (agar kerak bo'lsa)
-    """
-    # Parametrlarni olish
     ucs   = params.get("ucs", 40)
     gsi   = params.get("gsi", 60)
     mi    = params.get("mi", 10)
@@ -55,54 +42,44 @@ def unified_physics_engine(params):
     width = params.get("width", 20)
     temp  = params.get("temp", 500)
     rho   = params.get("rho", 2500)
-    H     = params.get("H_seam", depth)      # qatlam qalinligi
-    E_mod = params.get("E", 5000.0)          # MPa
-    alpha = params.get("alpha", 1.0e-5)      # 1/°C
+    H     = params.get("H_seam", depth)
+    E_mod = params.get("E", 5000.0)
+    alpha = params.get("alpha", 1.0e-5)
     stage = params.get("stage", "active")
-    void_factor = params.get("void_factor", 1.0)  # bo'shliq tufayli kamaytirish
+    void_factor = params.get("void_factor", 1.0)
 
-    # 1. Hoek-Brown parametrlari
     mb = mi * np.exp((gsi - 100) / (28 - 14 * D))
     s  = np.exp((gsi - 100) / (9 - 3 * D))
     a  = 0.5 + (1/6) * (np.exp(-gsi/15) - np.exp(-20/3))
 
-    # 2. Termal zarar va mustahkamlik pasayishi
     D_T = np.clip(1 - np.exp(-0.002 * max(temp - 100, 0)), 0, 0.95)
     red_factor = np.exp(-0.0025 * max(temp - 20, 0))
     ucs_eff = ucs * (1 - D_T) * void_factor
 
-    # 3. In-situ kuchlanishlar
     sigma_v = rho * 9.81 * depth / 1e6
     k0 = nu / (1 - nu) if nu < 0.5 else 0.5
     sigma_h0 = k0 * sigma_v
 
-    # 4. Termal kuchlanish
     delta_T = max(temp - 20, 0)
     if stage == "active":
         sigma_th = (E_mod * alpha * delta_T) / (1 - nu + 1e-12)
     else:
         sigma_th = 0.0
-    sigma_h = sigma_h0 - sigma_th   # termal kengayish gorizontal stressni kamaytiradi
+    sigma_h = sigma_h0 - sigma_th
 
-    # 5. Asosiy kuchlanishlar
     sigma1 = max(sigma_v, sigma_h)
     sigma3 = min(sigma_v, sigma_h)
 
-    # 6. Selek mustahkamligi (Wilson soddalashtirilgan)
     strength = (ucs_eff * red_factor) * (width / (H + 1e-12))**0.5
 
-    # 7. Hoek-Brown chegaraviy mustahkamlik
     sigma3_safe = max(sigma3, 0.01)
     sigma1_limit = sigma3_safe + ucs_eff * (mb * sigma3_safe / (ucs_eff + 1e-9) + s)**a
 
-    # 8. Xavfsizlik koeffitsienti (FOS)
     fos = sigma1_limit / (sigma1 + 1e-12)
     fos = np.clip(fos, 0, 5)
 
-    # 9. Cho'kish
     subsidence = depth * 0.0015 * (temp / 100) * (1 + np.exp(-fos))
 
-    # 10. Zarar va xavf indeksi
     damage = D_T
     fos_risk = np.clip(1 - fos/2, 0, 1)
     thermal_risk = damage
@@ -110,32 +87,16 @@ def unified_physics_engine(params):
     risk = 0.4 * fos_risk + 0.3 * thermal_risk + 0.2 * collapse_risk + 0.1 * (temp / 1200)
     risk = np.clip(risk, 0, 1)
 
-    # 11. Plastik zona (soddalashtirilgan)
     y_plastic = (H / 2) * (np.sqrt(sigma_v / (strength + 1e-12)) - 1)
     y_plastic = max(0, y_plastic)
 
     return {
-        "fos": fos,
-        "subsidence": subsidence,
-        "stress": sigma1,        # asosiy kuchlanish
-        "strength": strength,
-        "damage": damage,
-        "risk": risk,
-        "ucs_eff": ucs_eff,
-        "sigma_v": sigma_v,
-        "sigma_h": sigma_h,
-        "sigma_th": sigma_th,
-        "y_plastic": y_plastic,
-        "mb": mb,
-        "s": s,
-        "a": a,
-        "T": temp,
-        "D_T": D_T,
-        "sigma1_limit": sigma1_limit
+        "fos": fos, "subsidence": subsidence, "stress": sigma1,
+        "strength": strength, "damage": damage, "risk": risk,
+        "ucs_eff": ucs_eff, "sigma_v": sigma_v, "sigma_h": sigma_h,
+        "sigma_th": sigma_th, "y_plastic": y_plastic, "mb": mb, "s": s,
+        "a": a, "T": temp, "D_T": D_T, "sigma1_limit": sigma1_limit
     }
-
-# =========================== MODULAR PHYSICS ENGINE (eski) - o'chirildi ===========================
-# Eski funksiyalar endi unified_physics_engine orqali ishlaydi
 
 # =========================== GLOBAL TRANSLATIONS ===========================
 TRANSLATIONS = {
@@ -605,7 +566,7 @@ def generate_qr(link):
 
 qr_img_bytes = generate_qr(url)
 if qr_img_bytes is not None:
-    st.sidebar.image(qr_img_bytes, caption="Scan QR: Angren UCG API", use_column_width=True)
+    st.sidebar.image(qr_img_bytes, caption="Scan QR: Angren UCG API", use_container_width=True)
 else:
     st.sidebar.markdown(f"[Mobil ilovaga o'tish]({url})")
 
@@ -658,13 +619,15 @@ T_source_max  = st.sidebar.slider(t('max_temp'), 600, 1200, 1075)
 # ====================== GLOBAL UCG STAGE (SIDEBAR) ======================
 st.sidebar.markdown("---")
 st.sidebar.subheader(t('stage_select'))
+stage_temp_map = {'stage1': 300, 'stage3': 1150, 'stage2': 450}
+stage_options = ['stage1', 'stage3', 'stage2']
 stage_key = st.sidebar.radio(
     t('stage_select'),
-    [t('stage1'), t('stage3'), t('stage2')],
+    options=stage_options,
+    format_func=lambda x: t(x),
     index=1,
     key="global_stage"
 )
-stage_temp_map = {t('stage1'): 300, t('stage3'): 1150, t('stage2'): 450}
 current_base_temp = stage_temp_map[stage_key]
 
 with st.sidebar.expander(t('timeline')):
@@ -718,7 +681,7 @@ if "state" not in st.session_state:
         "gsi": gsi_seam,
         "mi": mi_seam,
         "depth": total_depth,
-        "width": 20.0,  # placeholder, keyin rec_width bilan yangilanadi
+        "width": 20.0,
         "temp": current_base_temp,
         "rho": rho_seam,
         "D": D_factor
@@ -729,7 +692,7 @@ else:
         "width": 20.0, "temp": current_base_temp, "rho": rho_seam, "D": D_factor
     })
 
-# =========================== YORDAMCHI FUNKSIYALAR (YANGI DVIGATEL BILAN) ===========================
+# =========================== YORDAMCHI FUNKSIYALAR ===========================
 def compute_physics(temp, ucs, depth, gsi, mi, pillar_width, poisson=0.25, density=2500):
     params = {
         "ucs": ucs,
@@ -752,7 +715,7 @@ def compute_physics(temp, ucs, depth, gsi, mi, pillar_width, poisson=0.25, densi
         'stress': res['sigma_th']
     }
 
-@st.cache_data(show_spinner=False, max_entries=50)
+@st.cache_data(show_spinner=False)
 def compute_temperature_field_moving(time_h, T_source_max, burn_duration, total_depth, source_z, grid_shape, n_steps=20):
     x_axis = np.linspace(-total_depth * 1.5, total_depth * 1.5, grid_shape[1])
     z_axis = np.linspace(0, total_depth + 50, grid_shape[0])
@@ -899,25 +862,19 @@ def generate_ucg_dataset(n=10000):
 def get_nn_model():
     if not PT_AVAILABLE: return None
     model = CollapseNet().to(device)
-    try:
-        model.load_state_dict(torch.load("collapse_model.pth", map_location=device))
-        model.eval()
-        return model
-    except:
-        data = generate_ucg_dataset()
-        X = torch.tensor(data[:,:-1], dtype=torch.float32).to(device)
-        y = torch.tensor(data[:,-1], dtype=torch.float32).view(-1,1).to(device)
-        optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-        loss_fn = nn.BCELoss()
-        for epoch in range(50):
-            pred = model(X)
-            loss = loss_fn(pred, y)
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-        torch.save(model.state_dict(), "collapse_model.pth")
-        model.eval()
-        return model
+    data = generate_ucg_dataset()
+    X = torch.tensor(data[:,:-1], dtype=torch.float32).to(device)
+    y = torch.tensor(data[:,-1], dtype=torch.float32).view(-1,1).to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    loss_fn = nn.BCELoss()
+    for epoch in range(50):
+        pred = model(X)
+        loss = loss_fn(pred, y)
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+    model.eval()
+    return model
 
 def predict_nn(model, temp, s1, s3, depth):
     X = np.column_stack([temp.flatten(), s1.flatten(), s3.flatten(), depth.flatten()])
@@ -942,7 +899,7 @@ if nn_model is None or not PT_AVAILABLE:
     else:
         collapse_pred = np.zeros_like(temp_2d)
 
-# =========================== SELEK OPTIMIZATSIYASI (yangi dvigatel bilan) ===========================
+# =========================== SELEK OPTIMIZATSIYASI ===========================
 avg_t_p = np.mean(temp_2d[np.abs(z_axis-source_z).argmin(), :])
 strength_red = np.exp(-0.0025*(avg_t_p-20))
 sv_seam = grid_sigma_v[np.abs(z_axis-source_z).argmin(), :].max()
@@ -1035,6 +992,15 @@ with c1:
 st.sidebar.markdown("---")
 st.sidebar.subheader("Quduqlar konfiguratsiyasi")
 well_distance = st.sidebar.slider("Quduqlar orasidagi masofa (m):", 50.0, 500.0, 200.0, 10.0, key="well_dist_slider")
+
+# =========================== DIGITAL TWIN PANELI (SIDEBAR) ===========================
+st.sidebar.markdown("---")
+st.sidebar.header("🛠️ Markaziy Boshqaruv Paneli (Digital Twin)")
+st.sidebar.markdown(t('digital_twin_params'))
+st.sidebar.metric(t('depth_metric'), f"{total_depth:.1f} m")
+st.sidebar.metric(t('ucs_metric'), f"{ucs_seam:.1f} MPa")
+st.sidebar.metric(t('temp_metric'), f"{current_base_temp:.0f} °C")
+st.sidebar.metric(t('width_metric'), f"{well_distance:.1f} m")
 
 with c2:
     st.subheader("UCG Yonish Bosqichlari (1 → 3 → 2 sxemasi) – Yangi Ilmiy Model")
@@ -1602,7 +1568,7 @@ tab_live, tab_quick_surface, tab_ai_orig, tab_advanced, tab_digital_twin = st.ta
 
 with tab_quick_surface:
     st.markdown("### Oddiy 3D Yer yuzasi Cho‘kishi Simulyatsiyasi (Tezkor)")
-    st.info(f"Joriy UCG bosqichi: **{stage_key}** (harorat ≈ {current_base_temp}°C)")
+    st.info(f"Joriy UCG bosqichi: **{t(stage_key)}** (harorat ≈ {current_base_temp}°C)")
     col_q1, col_q2 = st.columns([1, 3])
     with col_q1:
         well_w_quick = st.slider(t('pillar_width'), 5, 100, int(rec_width), key="quick_w")
@@ -1618,7 +1584,7 @@ with tab_quick_surface:
             X, Y = np.meshgrid(grid, grid)
             Z = res['subsidence'] * np.exp(-(X**2 + Y**2) / (2 * (well_w_quick/2)**2))
             fig_q = go.Figure(data=[go.Surface(z=Z, x=X, y=Y, colorscale='Viridis')])
-            fig_q.update_layout(title=f"3D Live Digital Twin - {stage_key}", height=550, template="plotly_dark")
+            fig_q.update_layout(title=f"3D Live Digital Twin - {t(stage_key)}", height=550, template="plotly_dark")
             quick_plot.plotly_chart(fig_q, use_container_width=True)
             if res['fos'] < 1.3:
                 quick_alert.error(t('alert_danger'))
@@ -1929,13 +1895,6 @@ def compute_digital_twin(step, total_steps,
 # =========================== DIGITAL TWIN TAB ===========================
 with tab_digital_twin:
     st.header("🌐 UCG Integrated Digital Twin (Sirdesai & AI Hybrid)")
-    st.sidebar.markdown("---")
-    st.sidebar.header("🛠️ Markaziy Boshqaruv Paneli (Digital Twin)")
-    st.sidebar.markdown(t('digital_twin_params'))
-    st.sidebar.metric(t('depth_metric'), f"{total_depth:.1f} m")
-    st.sidebar.metric(t('ucs_metric'), f"{ucs_seam:.1f} MPa")
-    st.sidebar.metric(t('temp_metric'), f"{current_base_temp:.0f} °C")
-    st.sidebar.metric(t('width_metric'), f"{well_distance:.1f} m")
     if 'global_step_dt' not in st.session_state:
         st.session_state.global_step_dt = 0
     if 'is_running_dt' not in st.session_state:
