@@ -134,6 +134,9 @@ def unified_physics_engine(params):
         "sigma1_limit": sigma1_limit
     }
 
+# =========================== MODULAR PHYSICS ENGINE (eski) - o'chirildi ===========================
+# Eski funksiyalar endi unified_physics_engine orqali ishlaydi
+
 # =========================== GLOBAL TRANSLATIONS ===========================
 TRANSLATIONS = {
     'uz': {
@@ -602,7 +605,7 @@ def generate_qr(link):
 
 qr_img_bytes = generate_qr(url)
 if qr_img_bytes is not None:
-    st.sidebar.image(qr_img_bytes, caption="Scan QR: Angren UCG API", use_container_width=True)
+    st.sidebar.image(qr_img_bytes, caption="Scan QR: Angren UCG API", use_column_width=True)
 else:
     st.sidebar.markdown(f"[Mobil ilovaga o'tish]({url})")
 
@@ -655,15 +658,13 @@ T_source_max  = st.sidebar.slider(t('max_temp'), 600, 1200, 1075)
 # ====================== GLOBAL UCG STAGE (SIDEBAR) ======================
 st.sidebar.markdown("---")
 st.sidebar.subheader(t('stage_select'))
-stage_temp_map = {'stage1': 300, 'stage3': 1150, 'stage2': 450}
-stage_options = ['stage1', 'stage3', 'stage2']
 stage_key = st.sidebar.radio(
     t('stage_select'),
-    options=stage_options,
-    format_func=lambda x: t(x),
+    [t('stage1'), t('stage3'), t('stage2')],
     index=1,
     key="global_stage"
 )
+stage_temp_map = {t('stage1'): 300, t('stage3'): 1150, t('stage2'): 450}
 current_base_temp = stage_temp_map[stage_key]
 
 with st.sidebar.expander(t('timeline')):
@@ -717,7 +718,7 @@ if "state" not in st.session_state:
         "gsi": gsi_seam,
         "mi": mi_seam,
         "depth": total_depth,
-        "width": 20.0,
+        "width": 20.0,  # placeholder, keyin rec_width bilan yangilanadi
         "temp": current_base_temp,
         "rho": rho_seam,
         "D": D_factor
@@ -751,7 +752,7 @@ def compute_physics(temp, ucs, depth, gsi, mi, pillar_width, poisson=0.25, densi
         'stress': res['sigma_th']
     }
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, max_entries=50)
 def compute_temperature_field_moving(time_h, T_source_max, burn_duration, total_depth, source_z, grid_shape, n_steps=20):
     x_axis = np.linspace(-total_depth * 1.5, total_depth * 1.5, grid_shape[1])
     z_axis = np.linspace(0, total_depth + 50, grid_shape[0])
@@ -898,20 +899,25 @@ def generate_ucg_dataset(n=10000):
 def get_nn_model():
     if not PT_AVAILABLE: return None
     model = CollapseNet().to(device)
-    # Modelni faylga saqlamasdan to'g'ridan-to'g'ri o'qitamiz
-    data = generate_ucg_dataset()
-    X = torch.tensor(data[:,:-1], dtype=torch.float32).to(device)
-    y = torch.tensor(data[:,-1], dtype=torch.float32).view(-1,1).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-    loss_fn = nn.BCELoss()
-    for epoch in range(50):
-        pred = model(X)
-        loss = loss_fn(pred, y)
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-    model.eval()
-    return model
+    try:
+        model.load_state_dict(torch.load("collapse_model.pth", map_location=device))
+        model.eval()
+        return model
+    except:
+        data = generate_ucg_dataset()
+        X = torch.tensor(data[:,:-1], dtype=torch.float32).to(device)
+        y = torch.tensor(data[:,-1], dtype=torch.float32).view(-1,1).to(device)
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+        loss_fn = nn.BCELoss()
+        for epoch in range(50):
+            pred = model(X)
+            loss = loss_fn(pred, y)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+        torch.save(model.state_dict(), "collapse_model.pth")
+        model.eval()
+        return model
 
 def predict_nn(model, temp, s1, s3, depth):
     X = np.column_stack([temp.flatten(), s1.flatten(), s3.flatten(), depth.flatten()])
@@ -936,7 +942,7 @@ if nn_model is None or not PT_AVAILABLE:
     else:
         collapse_pred = np.zeros_like(temp_2d)
 
-# =========================== SELEK OPTIMIZATSIYASI ===========================
+# =========================== SELEK OPTIMIZATSIYASI (yangi dvigatel bilan) ===========================
 avg_t_p = np.mean(temp_2d[np.abs(z_axis-source_z).argmin(), :])
 strength_red = np.exp(-0.0025*(avg_t_p-20))
 sv_seam = grid_sigma_v[np.abs(z_axis-source_z).argmin(), :].max()
@@ -1256,7 +1262,6 @@ def get_risk_model():
     if not PT_AVAILABLE:
         return None
     model = SimpleRiskNN().to(device)
-    # Bu model oldindan o'qitilmagan, shunchaki struktura.
     model.eval()
     return model
 
@@ -1597,7 +1602,7 @@ tab_live, tab_quick_surface, tab_ai_orig, tab_advanced, tab_digital_twin = st.ta
 
 with tab_quick_surface:
     st.markdown("### Oddiy 3D Yer yuzasi Cho‘kishi Simulyatsiyasi (Tezkor)")
-    st.info(f"Joriy UCG bosqichi: **{t(stage_key)}** (harorat ≈ {current_base_temp}°C)")
+    st.info(f"Joriy UCG bosqichi: **{stage_key}** (harorat ≈ {current_base_temp}°C)")
     col_q1, col_q2 = st.columns([1, 3])
     with col_q1:
         well_w_quick = st.slider(t('pillar_width'), 5, 100, int(rec_width), key="quick_w")
@@ -1613,7 +1618,7 @@ with tab_quick_surface:
             X, Y = np.meshgrid(grid, grid)
             Z = res['subsidence'] * np.exp(-(X**2 + Y**2) / (2 * (well_w_quick/2)**2))
             fig_q = go.Figure(data=[go.Surface(z=Z, x=X, y=Y, colorscale='Viridis')])
-            fig_q.update_layout(title=f"3D Live Digital Twin - {t(stage_key)}", height=550, template="plotly_dark")
+            fig_q.update_layout(title=f"3D Live Digital Twin - {stage_key}", height=550, template="plotly_dark")
             quick_plot.plotly_chart(fig_q, use_container_width=True)
             if res['fos'] < 1.3:
                 quick_alert.error(t('alert_danger'))
@@ -1924,6 +1929,13 @@ def compute_digital_twin(step, total_steps,
 # =========================== DIGITAL TWIN TAB ===========================
 with tab_digital_twin:
     st.header("🌐 UCG Integrated Digital Twin (Sirdesai & AI Hybrid)")
+    st.sidebar.markdown("---")
+    st.sidebar.header("🛠️ Markaziy Boshqaruv Paneli (Digital Twin)")
+    st.sidebar.markdown(t('digital_twin_params'))
+    st.sidebar.metric(t('depth_metric'), f"{total_depth:.1f} m")
+    st.sidebar.metric(t('ucs_metric'), f"{ucs_seam:.1f} MPa")
+    st.sidebar.metric(t('temp_metric'), f"{current_base_temp:.0f} °C")
+    st.sidebar.metric(t('width_metric'), f"{well_distance:.1f} m")
     if 'global_step_dt' not in st.session_state:
         st.session_state.global_step_dt = 0
     if 'is_running_dt' not in st.session_state:
