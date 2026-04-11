@@ -76,7 +76,7 @@ def unified_physics_engine(params):
     sigma1_limit = sigma3_safe + ucs_eff * (mb * sigma3_safe / (ucs_eff + 1e-9) + s)**a
 
     fos = sigma1_limit / (sigma1 + 1e-12)
-    fos = np.clip(fos, 0, 5)
+    fos = float(np.clip(fos, 0.1, 10.0))  # Realistik chegarada saqlash
 
     subsidence = depth * 0.0015 * (temp / 100) * (1 + np.exp(-fos))
 
@@ -575,7 +575,7 @@ st.sidebar.header(t('sidebar_header_params'))
 formula_opts = FORMULA_OPTIONS[st.session_state.language]
 formula_option = st.sidebar.selectbox(t('formula_show'), formula_opts)
 
-# --- YANGI: TO'LIQ FORMULALAR RO'YXATI ---
+# --- TO'LIQ FORMULALAR RO'YXATI ---
 with st.sidebar.expander("📝 Dasturda qo'llanilgan barcha formulalar (To'liq ro'yxat)"):
     st.markdown("### 1. Tog' jinsi massivi xossalarini aniqlash (Hoek-Brown)")
     st.write("Dasturda tog' jinsi massivining mustahkamligi Hoek-Brown (2002) mezoni asosida hisoblanadi:")
@@ -818,12 +818,12 @@ for i, (z0, z1) in enumerate(layer_bounds):
     grid_a_hb[mask] = 0.5 + (1/6)*(np.exp(-layer['gsi']/15) - np.exp(-20/3))
     grid_sigma_t0_manual[mask] = layer['sigma_t0_manual']
 
-if (st.session_state.get('last_obj_name') != obj_name or 
-    st.session_state.get('last_max_temp') != T_source_max or
+# --- YANGILANGAN max_temp_map TEKSHIRISH ---
+if ('max_temp_map' not in st.session_state or 
+    st.session_state.get('last_obj_name') != obj_name or 
     st.session_state.max_temp_map.shape != grid_z.shape):
     st.session_state.max_temp_map = np.ones_like(grid_z) * 25
     st.session_state.last_obj_name = obj_name
-    st.session_state.last_max_temp = T_source_max
 
 st.session_state.max_temp_map = np.maximum(st.session_state.max_temp_map, temp_2d)
 
@@ -969,7 +969,7 @@ rec_width = np.round(w_sol, 1)
 pillar_strength = p_strength
 y_zone = max(y_zone_calc, 1.5)
 
-fos_2d = np.clip(sigma1_limit/(sigma1_act+EPS), 0, 3.0)
+fos_2d = np.clip(sigma1_limit/(sigma1_act+EPS), 0.1, 10.0)
 fos_2d = np.where(void_mask_permanent, 0.0, fos_2d)
 void_frac_base = float(np.mean(void_mask_permanent))
 
@@ -1389,7 +1389,7 @@ with st.expander("📈 FOS Vaqt Bashorati (Trend)"):
         str_red_t = np.exp(-0.0025*(T_source_max*min(th,burn_duration)/burn_duration - 20))
         p_str_t = (ucs_seam*str_red_t)*(rec_width/(H_seam+EPS))**0.5
         sv_t = sv_seam*(1+0.001*th)
-        fos_t = np.clip(p_str_t/(sv_t+EPS),0,3)
+        fos_t = np.clip(p_str_t/(sv_t+EPS),0.1,10.0)
         fos_timeline.append(fos_t)
     if len(time_points) > 1:
         slope, intercept, r_value, _, _ = linregress(time_points, fos_timeline)
@@ -1397,7 +1397,7 @@ with st.expander("📈 FOS Vaqt Bashorati (Trend)"):
         slope, intercept, r_value = 0.0, fos_timeline[0], 0.0
     future_times = np.arange(time_h, min(time_h*2,300), max(1,time_h//10))
     fos_forecast = intercept + slope*future_times
-    fos_forecast = np.clip(fos_forecast,0,3)
+    fos_forecast = np.clip(fos_forecast,0.1,10.0)
     if slope<0 and intercept+slope*time_h>1.0:
         t_critical = (1.0-intercept)/slope
         critical_info = f"⚠️ FOS=1.0 ga taxminan **{t_critical:.0f}** soatda yetishi mumkin"
@@ -1551,7 +1551,7 @@ def compute_fos_func(ucs, gsi, mi, d, nu, T, width, H, rho):
     sigma_v, sigma_h = in_situ_stress(rho, H, nu)
     p_str = pillar_strength_func(ucs, gsi, mi, d, T, width, H)
     fos = p_str / (sigma_v + 1e-12)
-    return np.clip(fos, 0, 5)
+    return np.clip(fos, 0.1, 10.0)
 
 def sensitivity_analysis(base_params, H, rho, range_pct=0.2):
     def wrapper(p):
@@ -1664,7 +1664,7 @@ with tab_quick_surface:
                 quick_alert.error(t('alert_danger'))
             else:
                 quick_alert.success(t('alert_safe'))
-            time.sleep(0.2)
+            time.sleep(max(0.1, 0.2))
         st.success("Simulyatsiya yakunlandi.")
 
 with tab_live:
@@ -1732,7 +1732,7 @@ with tab_live:
                 alert_box_live.markdown("### 🔴 ALERTS\n" + "\n".join(alerts))
             else:
                 alert_box_live.markdown("### 🟢 All systems normal")
-            time.sleep(0.2)
+            time.sleep(max(0.1, 0.2))
             steps_done += 1
         st.success(f"✅ Live monitoring completed after {steps_done} steps.")
     if not st.session_state.live_history_df.empty:
@@ -1826,7 +1826,7 @@ with tab_ai_orig:
                     else:
                         st.success(f"✅ Normal holat — Effektiv σ: {effective:.2f} MPa")
                     st.progress((step+1)/int(ai_steps_1))
-                time.sleep(0.2)
+                time.sleep(max(0.1, 0.2))
             st.balloons()
             st.success(f"✅ Monitoring yakunlandi! Jami anomaliyalar: {sum(1 for a in anomalies_eff if a is not None)}")
     with ai_tab2:
@@ -1889,7 +1889,7 @@ with tab_ai_orig:
                     st.plotly_chart(fig_fos, use_container_width=True, key=f"fospred_{i}")
                     st.info(f"Qadam {i+1}/{int(ai_steps_2)} | Model: {'PyTorch SimpleNN' if PT_AVAILABLE else 'RandomForest'} | {fos_color}")
                     st.progress((i+1)/int(ai_steps_2))
-                time.sleep(0.2)
+                time.sleep(max(0.1, 0.2))
             st.balloons()
             final_fos = pillar_strength_pred[-1] if pillar_strength_pred else 0
             if final_fos < 10:
@@ -2057,7 +2057,7 @@ with tab_digital_twin:
             fig_trends.update_yaxes(title_text="Cho'kish (cm)", row=1, col=2)
             fig_trends.update_yaxes(title_text="Indeks", row=1, col=3)
             plot_trends_dt.plotly_chart(fig_trends, use_container_width=True)
-            time.sleep(speed_map[sim_speed])
+            time.sleep(max(0.1, speed_map[sim_speed]))
     if not st.session_state.history_log_dt.empty:
         st.markdown("---")
         st.subheader("Yakuniy hisob-kitob natijalari")
