@@ -31,74 +31,114 @@ except:
     PT_AVAILABLE = False
     device = "cpu"
 
-# =========================== YAGONA FIZIKA DVIGATELI ===========================
+# =========================== YANGILANGAN YAGONA FIZIKA DVIGATELI (TENSILE CUT-OFF VA PORE PRESSURE BILAN) ===========================
 def unified_physics_engine(params):
-    ucs   = params.get("ucs", 40)
-    gsi   = params.get("gsi", 60)
-    mi    = params.get("mi", 10)
-    D     = params.get("D", 0.7)
-    nu    = params.get("nu", 0.25)
-    depth = params.get("depth", 200)
-    width = params.get("width", 20)
-    temp  = params.get("temp", 500)
-    rho   = params.get("rho", 2500)
-    H     = params.get("H_seam", depth)
-    E_mod = params.get("E", 5000.0)
-    alpha = params.get("alpha", 1.0e-5)
-    stage = params.get("stage", "active")
+    """
+    Takomillashtirilgan geomexanik model:
+    - Haroratga bog'liq Hoek-Brown parametrlar.
+    - Tensile Cut-off (Cho'zilish zonasi nazorati).
+    - G'ovak bosimi (Pore pressure) ta'siri.
+    """
+    ucs_0   = max(params.get("ucs", 40), 0.1)
+    gsi_0   = np.clip(params.get("gsi", 60), 10, 100)
+    mi_0    = max(params.get("mi", 10), 0.1)
+    D       = np.clip(params.get("D", 0.7), 0, 1)
+    nu      = np.clip(params.get("nu", 0.25), 0.01, 0.45)
+    depth   = max(params.get("depth", 200), 1)
+    width   = max(params.get("width", 20), 1)
+    temp    = params.get("temp", 20)
+    rho     = params.get("rho", 2500)
+    H       = max(params.get("H_seam", depth), 0.5)
+    E_mod   = params.get("E", 5000.0)
+    alpha   = params.get("alpha", 1.0e-5)
+    stage   = params.get("stage", "active")
     void_factor = params.get("void_factor", 1.0)
+    pore_press_ratio = params.get("lambda_p", 0.3)  # Yangi: g'ovak bosimi koeffitsiyenti
 
-    mb = mi * np.exp((gsi - 100) / (28 - 14 * D))
-    s  = np.exp((gsi - 100) / (9 - 3 * D))
-    a  = 0.5 + (1/6) * (np.exp(-gsi/15) - np.exp(-20/3))
+    # 1. TERMAL DEGRADATSIYA (T > 100°C da boshlanadi, 400°C dan keyin keskin)
+    T_factor = np.exp(-0.0025 * max(temp - 20, 0))
+    ucs_t = ucs_0 * T_factor * void_factor
 
-    D_T = np.clip(1 - np.exp(-0.002 * max(temp - 100, 0)), 0, 0.95)
-    red_factor = np.exp(-0.0025 * max(temp - 20, 0))
-    ucs_eff = ucs * (1 - D_T) * void_factor
+    # Harorat oshishi bilan GSI kamayadi (mikro-yoriqlar)
+    gsi_t = gsi_0 * (0.5 + 0.5 * T_factor)
 
-    sigma_v = rho * 9.81 * depth / 1e6
-    k0 = nu / (1 - nu) if nu < 0.5 else 0.5
-    sigma_h0 = k0 * sigma_v
+    # 2. HOEK-BROWN KOEFFITSIYENTLARI
+    mb = mi_0 * np.exp((gsi_t - 100) / (28 - 14 * D))
+    s  = np.exp((gsi_t - 100) / (9 - 3 * D))
+    a  = 0.5 + (1/6) * (np.exp(-gsi_t/15) - np.exp(-20/3))
 
+    # 3. KUCHLANISHLAR (MPa)
+    sigma_v = (rho * 9.81 * depth) / 1e6
+    u_pore = sigma_v * pore_press_ratio  # g'ovak bosimi
+    sigma_v_eff = sigma_v - u_pore
+
+    k0 = nu / (1 - nu)
+    sigma_h_eff = k0 * sigma_v_eff
+
+    # Termal kuchlanish
+    E_t = E_mod * T_factor
     delta_T = max(temp - 20, 0)
-    if stage == "active":
-        sigma_th = (E_mod * alpha * delta_T) / (1 - nu + 1e-12)
-    else:
+    sigma_th = (E_t * alpha * delta_T) / (1 - nu)
+    if stage != "active":
         sigma_th = 0.0
-    sigma_h = sigma_h0 - sigma_th
 
-    sigma1 = max(sigma_v, sigma_h)
-    sigma3 = min(sigma_v, sigma_h)
+    # Umumiy samarali kuchlanishlar
+    sigma1_eff = sigma_v_eff + sigma_th
+    sigma3_eff = max(sigma_h_eff, 0.01)
 
-    strength = (ucs_eff * red_factor) * (width / (H + 1e-12))**0.5
+    # 4. TENSILE STRENGTH (Cho'zilish mustahkamligi) - UCG uchun muhim
+    sig_t_eff = -(s * ucs_t) / (mb + 1e-9)
 
-    sigma3_safe = max(sigma3, 0.01)
-    sigma1_limit = sigma3_safe + ucs_eff * (mb * sigma3_safe / (ucs_eff + 1e-9) + s)**a
+    # 5. BARQARORLIK (FOS) VA XAVF
+    if sigma3_eff < sig_t_eff:
+        fos = 0.05  # Kritik cho'zilish buzilishi
+    else:
+        term_inner = (mb * sigma3_eff / ucs_t) + s
+        sigma1_limit = sigma3_eff + ucs_t * (max(term_inner, 0) ** a)
+        fos = sigma1_limit / (sigma1_eff + 1e-9)
 
-    fos = sigma1_limit / (sigma1 + 1e-12)
-    fos = float(np.clip(fos, 0.1, 10.0))  # Realistik chegarada saqlash
+    fos = float(np.clip(fos, 0.1, 10.0))
 
-    subsidence = depth * 0.0015 * (temp / 100) * (1 + np.exp(-fos))
+    # Selek mustahkamligi (Wilson)
+    strength = ucs_t * (width / H) ** 0.5
 
-    damage = D_T
-    fos_risk = np.clip(1 - fos/2, 0, 1)
-    thermal_risk = damage
+    # Plastik zona
+    y_plastic = (H / 2) * (np.sqrt(sigma_v_eff / (strength + 1e-9)) - 1)
+    y_plastic = max(0, y_plastic)
+
+    # Termal zarar va xavf
+    D_T = 1 - T_factor
+    fos_risk = np.clip(1 - fos / 2, 0, 1)
+    thermal_risk = D_T
     collapse_risk = np.exp(-fos)
     risk = 0.4 * fos_risk + 0.3 * thermal_risk + 0.2 * collapse_risk + 0.1 * (temp / 1200)
     risk = np.clip(risk, 0, 1)
 
-    y_plastic = (H / 2) * (np.sqrt(sigma_v / (strength + 1e-12)) - 1)
-    y_plastic = max(0, y_plastic)
+    # Cho'kish hisobi
+    subsidence = depth * 0.0015 * (temp / 100) * (1 + np.exp(-fos))
 
     return {
-        "fos": fos, "subsidence": subsidence, "stress": sigma1,
-        "strength": strength, "damage": damage, "risk": risk,
-        "ucs_eff": ucs_eff, "sigma_v": sigma_v, "sigma_h": sigma_h,
-        "sigma_th": sigma_th, "y_plastic": y_plastic, "mb": mb, "s": s,
-        "a": a, "T": temp, "D_T": D_T, "sigma1_limit": sigma1_limit
+        "fos": fos,
+        "subsidence": subsidence,
+        "stress": sigma1_eff,
+        "strength": strength,
+        "damage": D_T,
+        "risk": risk,
+        "ucs_eff": ucs_t,
+        "sigma_v": sigma_v,
+        "sigma_h": sigma_h_eff,
+        "sigma_th": sigma_th,
+        "y_plastic": y_plastic,
+        "mb": mb,
+        "s": s,
+        "a": a,
+        "T": temp,
+        "D_T": D_T,
+        "sigma1_limit": sigma1_limit if 'sigma1_limit' in locals() else 0.0,
+        "sig_t": sig_t_eff
     }
 
-# =========================== GLOBAL TRANSLATIONS ===========================
+# =========================== GLOBAL TRANSLATIONS (o'zgarishsiz) ===========================
 TRANSLATIONS = {
     'uz': {
         'app_title': "Universal Yer yuzasi Deformatsiyasi Monitoringi",
