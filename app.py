@@ -1,6 +1,5 @@
 import streamlit as st
 import numpy as np
-import cv2
 from PIL import Image
 import time
 
@@ -65,14 +64,13 @@ def load_model():
 model = load_model()
 
 # ============================================
-# Yordamchi funksiyalar
+# Yordamchi funksiyalar (cv2 ISHLATILMAGAN)
 # ============================================
 def preprocess_image(uploaded_file):
-    """Rasmni 224x224 RGB formatga o'tkazish"""
+    """Rasmni 224x224 RGB formatga o'tkazish (PIL orqali)"""
     image = Image.open(uploaded_file).convert("RGB")
-    image = np.array(image)
-    image = cv2.resize(image, (224, 224))
-    return image
+    image = image.resize((224, 224), Image.Resampling.LANCZOS)
+    return np.array(image)
 
 def crack_estimation(temp):
     """Harorat asosida yoriq foizini hisoblash"""
