@@ -33,7 +33,7 @@
 
         .sample-img-container { position: relative; width: 100%; aspect-ratio: 1; background: #1e293b; border-radius: 0.5rem; overflow: hidden; display: flex; align-items: center; justify-content: center; border: 1px solid rgba(255,255,255,0.1); }
         .img-placeholder { position: absolute; font-size: 10px; color: #475569; text-align: center; padding: 5px; }
-        input[type=number] { background: #1e293b; border: 1px solid #334155; color: white; padding: 0.5rem; border-radius: 0.5rem; }
+        input[type=number] { background: #1e293b; border: 1px solid #334155; color: white; padding: 0.5rem; border-radius: 0.5rem; width: 100%; }
     </style>
 </head>
 <body class="p-4 md:p-8">
