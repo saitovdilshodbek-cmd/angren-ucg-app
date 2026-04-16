@@ -70,7 +70,6 @@ html_code = """
             </div>
         </div>
 
-        <!-- 4 Hesaplayıcı -->
         <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div class="glass-panel"><h3 class="text-purple-400 text-sm">Yoğunluk (ρ)</h3><div class="formula-card text-center">ρ = m / V</div><input type="number" id="dens-m" placeholder="m (g)" oninput="calcDens()"><input type="number" id="dens-v" placeholder="V (cm³)" oninput="calcDens()"><div id="res-dens" class="text-center text-purple-300 font-bold">-</div></div>
             <div class="glass-panel"><h3 class="text-yellow-400 text-sm">Porozite</h3><div class="formula-card text-center">n = (1 - ρb/ρs)·100%</div><input type="number" id="rho-b" placeholder="ρb" oninput="calcPoro()"><input type="number" id="rho-s" placeholder="ρs" oninput="calcPoro()"><div id="res-poro" class="text-center text-yellow-300 font-bold">-</div></div>
@@ -78,7 +77,6 @@ html_code = """
             <div class="glass-panel"><h3 class="text-green-400 text-sm">UCS Degrad.</h3><div class="formula-card text-center">σ(T)=σ0·e^(-βT)</div><input type="number" id="sig0" placeholder="σ0" oninput="calcDeg()"><input type="number" id="beta" placeholder="β" oninput="calcDeg()"><input type="number" id="temp" placeholder="T" oninput="calcDeg()"><div id="res-deg" class="text-center text-green-300 font-bold">-</div></div>
         </div>
 
-        <!-- Δm Tablosu -->
         <div class="glass-panel">
             <h3 class="text-amber-400 font-bold text-sm uppercase">Kütle Kaybı (Δm) Analizi</h3>
             <div class="formula-card text-center text-2xl text-amber-300 py-3">Δm = (m₀ - mₜ) / m₀ × 100%</div>
@@ -88,14 +86,12 @@ html_code = """
             </table>
         </div>
 
-        <!-- Rapor İndir -->
         <div class="glass-panel text-center">
             <h3 class="text-blue-400 font-bold text-sm uppercase mb-2">Akademik Rapor</h3>
             <button onclick="downloadWordReport()" class="bg-blue-600 hover:bg-blue-700 text-white py-3 px-8 rounded-xl font-bold">📄 Word (Grafikli, APA Kaynakçalı) İndir</button>
             <p class="text-xs text-slate-400 mt-2">Grafik, tablo, numune detayları (çap/uzunluk/hacim/yoğunluk) ve APA 7</p>
         </div>
 
-        <!-- Sonuç -->
         <div class="glass-panel">
             <h3 class="text-white font-black text-xl mb-4">Bilimsel Sonuç</h3>
             <div id="conclusion-text" class="text-slate-300 space-y-4">
@@ -105,7 +101,6 @@ html_code = """
     </div>
 
     <script>
-        // ---------- VERİ SETLERİ ----------
         const allDatasets = [
             { label: 'Kıltaşı UCS-1', data: [{x:718,y:25},{x:705,y:100},{x:693,y:500}], baseColor:0, diameter: 54.0, length: 110.0 },
             { label: 'Kıltaşı UCS-2', data: [{x:464,y:25},{x:456,y:100},{x:409,y:1000}], baseColor:40, diameter: 54.0, length: 108.0 },
@@ -120,6 +115,7 @@ html_code = """
         let currentTab = 'ucs';
         const ctx = document.getElementById('mainChart').getContext('2d');
         const chart = new Chart(ctx, { type:'scatter', data:{datasets:[]}, options:{
+            responsive: true, maintainAspectRatio: false,
             scales:{ x:{title:{display:true,text:'Kütle (g)'}}, y:{title:{display:true,text:'Sıcaklık (°C)'}} }
         }});
 
@@ -170,7 +166,8 @@ html_code = """
                         backgroundColor: `hsl(${ds.baseColor},70%,50%,0.5)`, pointRadius:6, tension:0.4 });
                 }
             });
-            chart.data.datasets = active; chart.update();
+            chart.data.datasets = active;
+            chart.update();
         }
 
         function updateDensitySim() {
@@ -187,8 +184,9 @@ html_code = """
         function calcStrain(){ const a=+document.getElementById('alpha').value||0, d=+document.getElementById('deltaT').value||0; document.getElementById('res-strain').innerText = (a*d).toExponential(3); }
         function calcDeg(){ const s=+document.getElementById('sig0').value||0, b=+document.getElementById('beta').value||0, t=+document.getElementById('temp').value||0; document.getElementById('res-deg').innerText = (s*Math.exp(-b*t)).toFixed(2)+' MPa'; }
 
-        // ========== WORD RAPORU ==========
         async function downloadWordReport() {
+            // grafiği güncelle
+            chart.update();
             await new Promise(resolve => setTimeout(resolve, 100));
             
             const canvas = document.getElementById('mainChart');
@@ -196,19 +194,19 @@ html_code = """
                 alert("Grafik henüz hazır değil, lütfen tekrar deneyin.");
                 return;
             }
-            const chartImg = canvas.toDataURL('image/png');
+            // JPEG kullan (Word'de daha uyumlu)
+            const chartImg = canvas.toDataURL('image/jpeg', 0.95);
             const tableHtml = document.querySelector('.delta-table').outerHTML;
             const conclusion = document.getElementById('conclusion-text').innerHTML;
             const now = new Date().toLocaleString('tr-TR');
 
-            // >>> BU KISIM SİZİN İSTEDİĞİNİZ HESAPLAMA <<<
             let sampleRows = '';
             allDatasets.forEach(ds => {
                 const p25 = ds.data.find(p=>p.y===25);
                 const m0 = p25 ? p25.x : 0;
                 const d = ds.diameter || 0;
                 const l = ds.length || 0;
-                const volume = Math.PI * Math.pow(d/20, 2) * l; // cm³
+                const volume = Math.PI * Math.pow(d/20, 2) * l;
                 const density = volume > 0 ? (m0 / volume).toFixed(3) : '-';
                 sampleRows += `<tr><td>${ds.label}</td><td>${d.toFixed(1)}</td><td>${l.toFixed(1)}</td><td>${volume.toFixed(2)}</td><td>${density}</td></tr>`;
             });
@@ -216,7 +214,7 @@ html_code = """
             const fullHtml = `
             <!DOCTYPE html>
             <html><head><meta charset="UTF-8"><title>Geo-Lab Akademik Rapor</title>
-            <style>body{font-family:Calibri; margin:2cm;} table{border-collapse:collapse; width:100%; margin:10px 0;} th,td{border:1px solid #333; padding:8px;} img{max-width:100%; height:auto; border:1px solid #ddd;}</style>
+            <style>body{font-family:Calibri; margin:2cm;} table{border-collapse:collapse; width:100%; margin:10px 0;} th,td{border:1px solid #333; padding:8px;} img{max-width:100%; height:auto; border:1px solid #ccc;}</style>
             </head><body>
                 <h1>Geo-Lab Jeofizik Analiz Raporu</h1>
                 <p><strong>Oluşturulma:</strong> ${now}</p>
