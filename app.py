@@ -70,7 +70,7 @@ html_code = """
             </div>
         </div>
 
-        <!-- 4 Hesaplayıcı (genel) -->
+        <!-- 4 Hesaplayıcı -->
         <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div class="glass-panel"><h3 class="text-purple-400 text-sm">Yoğunluk (ρ)</h3><div class="formula-card text-center">ρ = m / V</div><input type="number" id="dens-m" placeholder="m (g)" oninput="calcDens()"><input type="number" id="dens-v" placeholder="V (cm³)" oninput="calcDens()"><div id="res-dens" class="text-center text-purple-300 font-bold">-</div></div>
             <div class="glass-panel"><h3 class="text-yellow-400 text-sm">Porozite</h3><div class="formula-card text-center">n = (1 - ρb/ρs)·100%</div><input type="number" id="rho-b" placeholder="ρb" oninput="calcPoro()"><input type="number" id="rho-s" placeholder="ρs" oninput="calcPoro()"><div id="res-poro" class="text-center text-yellow-300 font-bold">-</div></div>
@@ -91,7 +91,7 @@ html_code = """
         <!-- Rapor İndir -->
         <div class="glass-panel text-center">
             <h3 class="text-blue-400 font-bold text-sm uppercase mb-2">Akademik Rapor</h3>
-            <button onclick="downloadWordReport()" class="bg-blue-600 hover:bg-blue-700 text-white py-3 px-8 rounded-xl font-bold">📄 Word (APA Kaynakçalı) İndir</button>
+            <button onclick="downloadWordReport()" class="bg-blue-600 hover:bg-blue-700 text-white py-3 px-8 rounded-xl font-bold">📄 Word (Grafikli, APA Kaynakçalı) İndir</button>
             <p class="text-xs text-slate-400 mt-2">Grafik, tablo, numune detayları (çap/uzunluk/yoğunluk) ve APA 7</p>
         </div>
 
@@ -188,9 +188,17 @@ html_code = """
         function calcStrain(){ const a=+document.getElementById('alpha').value||0, d=+document.getElementById('deltaT').value||0; document.getElementById('res-strain').innerText = (a*d).toExponential(3); }
         function calcDeg(){ const s=+document.getElementById('sig0').value||0, b=+document.getElementById('beta').value||0, t=+document.getElementById('temp').value||0; document.getElementById('res-deg').innerText = (s*Math.exp(-b*t)).toFixed(2)+' MPa'; }
 
-        // Word raporu (numune detayları ile)
+        // Word raporu (grafik kesinlikle içerir)
         async function downloadWordReport() {
+            // Grafiğin tam olarak çizildiğinden emin olmak için kısa bir gecikme
+            await new Promise(resolve => setTimeout(resolve, 100));
+            
             const canvas = document.getElementById('mainChart');
+            // Canvas boyutlarının uygun olduğundan emin ol
+            if (canvas.width === 0 || canvas.height === 0) {
+                alert("Grafik henüz hazır değil, lütfen tekrar deneyin.");
+                return;
+            }
             const chartImg = canvas.toDataURL('image/png');
             const tableHtml = document.querySelector('.delta-table').outerHTML;
             const conclusion = document.getElementById('conclusion-text').innerHTML;
@@ -211,12 +219,13 @@ html_code = """
             const fullHtml = `
             <!DOCTYPE html>
             <html><head><meta charset="UTF-8"><title>Geo-Lab Akademik Rapor</title>
-            <style>body{font-family:Calibri; margin:2cm;} table{border-collapse:collapse; width:100%; margin:10px 0;} th,td{border:1px solid #333; padding:8px;} img{max-width:100%;}</style>
+            <style>body{font-family:Calibri; margin:2cm;} table{border-collapse:collapse; width:100%; margin:10px 0;} th,td{border:1px solid #333; padding:8px;} img{max-width:100%; height:auto; border:1px solid #ddd;}</style>
             </head><body>
                 <h1>Geo-Lab Jeofizik Analiz Raporu</h1>
                 <p><strong>Oluşturulma:</strong> ${now}</p>
                 <h2>1. Kütle – Sıcaklık Grafiği</h2>
-                <img src="${chartImg}" alt="Grafik">
+                <p>Aşağıdaki grafik, seçili numunelerin sıcaklığa bağlı kütle değişimini göstermektedir.</p>
+                <img src="${chartImg}" alt="Kütle-Sıcaklık Grafiği" style="width:100%; max-width:800px;">
                 <h2>2. Numune Özellikleri ve Yoğunlukları</h2>
                 <table>
                     <thead><tr><th>Numune</th><th>Çap (mm)</th><th>Uzunluk (mm)</th><th>Hacim (cm³)</th><th>Yoğunluk (g/cm³)</th></tr></thead>
@@ -243,7 +252,10 @@ html_code = """
             const a = document.createElement('a');
             a.href = URL.createObjectURL(blob);
             a.download = `GeoLab_Rapor_${new Date().toISOString().slice(0,10)}.doc`;
+            document.body.appendChild(a);
             a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(a.href);
         }
 
         window.onload = () => { switchTab('ucs'); updateDensitySim(); renderDeltaTable(); };
