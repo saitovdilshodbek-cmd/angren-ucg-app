@@ -92,7 +92,7 @@ html_code = """
         <div class="glass-panel text-center">
             <h3 class="text-blue-400 font-bold text-sm uppercase mb-2">Akademik Rapor</h3>
             <button onclick="downloadWordReport()" class="bg-blue-600 hover:bg-blue-700 text-white py-3 px-8 rounded-xl font-bold">📄 Word (Grafikli, APA Kaynakçalı) İndir</button>
-            <p class="text-xs text-slate-400 mt-2">Grafik, tablo, numune detayları (çap/uzunluk/yoğunluk) ve APA 7</p>
+            <p class="text-xs text-slate-400 mt-2">Grafik, tablo, numune detayları (çap/uzunluk/hacim/yoğunluk) ve APA 7</p>
         </div>
 
         <!-- Sonuç -->
@@ -188,13 +188,11 @@ html_code = """
         function calcStrain(){ const a=+document.getElementById('alpha').value||0, d=+document.getElementById('deltaT').value||0; document.getElementById('res-strain').innerText = (a*d).toExponential(3); }
         function calcDeg(){ const s=+document.getElementById('sig0').value||0, b=+document.getElementById('beta').value||0, t=+document.getElementById('temp').value||0; document.getElementById('res-deg').innerText = (s*Math.exp(-b*t)).toFixed(2)+' MPa'; }
 
-        // Word raporu (grafik kesinlikle içerir)
+        // Word raporu (grafik kesinlikle içerir, her numune için yoğunluk hesaplanır)
         async function downloadWordReport() {
-            // Grafiğin tam olarak çizildiğinden emin olmak için kısa bir gecikme
             await new Promise(resolve => setTimeout(resolve, 100));
             
             const canvas = document.getElementById('mainChart');
-            // Canvas boyutlarının uygun olduğundan emin ol
             if (canvas.width === 0 || canvas.height === 0) {
                 alert("Grafik henüz hazır değil, lütfen tekrar deneyin.");
                 return;
@@ -204,14 +202,14 @@ html_code = """
             const conclusion = document.getElementById('conclusion-text').innerHTML;
             const now = new Date().toLocaleString('tr-TR');
 
-            // Her numune için çap, uzunluk, hacim ve yoğunluk hesapla
+            // Her numune için çap, uzunluk, hacim ve yoğunluk (ρ = m / V)
             let sampleRows = '';
             allDatasets.forEach(ds => {
                 const p25 = ds.data.find(p=>p.y===25);
                 const m0 = p25 ? p25.x : 0;
                 const d = ds.diameter || 0;
                 const l = ds.length || 0;
-                const volume = Math.PI * Math.pow(d/20, 2) * l; // cm³ (mm -> cm: /10, yarıçap: d/2 -> d/20)
+                const volume = Math.PI * Math.pow(d/20, 2) * l; // cm³
                 const density = volume > 0 ? (m0 / volume).toFixed(3) : '-';
                 sampleRows += `<tr><td>${ds.label}</td><td>${d.toFixed(1)}</td><td>${l.toFixed(1)}</td><td>${volume.toFixed(2)}</td><td>${density}</td></tr>`;
             });
@@ -226,7 +224,7 @@ html_code = """
                 <h2>1. Kütle – Sıcaklık Grafiği</h2>
                 <p>Aşağıdaki grafik, seçili numunelerin sıcaklığa bağlı kütle değişimini göstermektedir.</p>
                 <img src="${chartImg}" alt="Kütle-Sıcaklık Grafiği" style="width:100%; max-width:800px;">
-                <h2>2. Numune Özellikleri ve Yoğunlukları</h2>
+                <h2>2. Numune Özellikleri ve Yoğunlukları (ρ = m / V)</h2>
                 <table>
                     <thead><tr><th>Numune</th><th>Çap (mm)</th><th>Uzunluk (mm)</th><th>Hacim (cm³)</th><th>Yoğunluk (g/cm³)</th></tr></thead>
                     <tbody>${sampleRows}</tbody>
