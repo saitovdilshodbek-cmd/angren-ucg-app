@@ -17,3 +17,10 @@ fastapi
 uvicorn
 opencv-python
 pillow numpy
+streamlit
+numpy
+Pillow
+requests
+--index-url https://download.pytorch.org/whl/cpu
+torch
+torchvision
