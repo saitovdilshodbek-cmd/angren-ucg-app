@@ -8,7 +8,7 @@ html_code = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Geo-Lab | Jeofizik Laboratuvarı</title>
+    <title>Geo-Lab | Jeofizik ve Geomekanik Laboratuvarı</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
@@ -20,6 +20,7 @@ html_code = """
         .delta-table th, .delta-table td { padding: 0.5rem; border: 1px solid #334155; text-align: center; }
         .delta-table th { background: #1e293b; color: #94a3b8; }
         input[type=number] { background: #1e293b; border: 1px solid #334155; color: white; padding: 0.5rem; border-radius: 0.5rem; width: 100%; }
+        .hidden-canvas { display: none; }
     </style>
 </head>
 <body class="p-4 md:p-8">
@@ -27,7 +28,7 @@ html_code = """
         <header class="bg-gradient-to-r from-slate-900 to-indigo-950 rounded-2xl p-6 border border-indigo-500/30 flex justify-between">
             <div>
                 <h1 class="text-3xl font-black text-white uppercase">Geo-Lab Jeofizik</h1>
-                <p class="text-indigo-400 text-xs uppercase">Yoğunluk ve Dayanım Simülasyonu</p>
+                <p class="text-indigo-400 text-xs uppercase">Yoğunluk, Dayanım ve Geomekanik Simülasyonu</p>
             </div>
             <div class="text-right"><p class="text-green-400">● ÇEVRİMİÇİ</p></div>
         </header>
@@ -58,6 +59,26 @@ html_code = """
                         </div>
                     </div>
                 </div>
+                <!-- Hoek-Brown Panel -->
+                <div class="glass-panel border-l-4 border-orange-500">
+                    <h3 class="text-orange-400 font-bold text-xs mb-3 uppercase">Hoek-Brown & Geomekanik</h3>
+                    <div class="space-y-2 text-xs">
+                        <div><label class="text-slate-400">GSI</label> <input type="number" id="gsi" value="50" min="10" max="100" oninput="calcHoekBrown()" class="py-1"></div>
+                        <div><label class="text-slate-400">mi</label> <input type="number" id="mi" value="10" min="1" max="35" oninput="calcHoekBrown()" class="py-1"></div>
+                        <div><label class="text-slate-400">D (Örselenme)</label> <input type="number" id="D" value="0" min="0" max="1" step="0.1" oninput="calcHoekBrown()" class="py-1"></div>
+                        <div><label class="text-slate-400">σci (MPa)</label> <input type="number" id="sigci" value="80" min="1" oninput="calcHoekBrown()" class="py-1"></div>
+                        <hr class="border-slate-700 my-2">
+                        <div><span class="text-slate-400">mb = </span><span id="mb-val" class="text-orange-300">-</span></div>
+                        <div><span class="text-slate-400">s = </span><span id="s-val" class="text-orange-300">-</span></div>
+                        <div><span class="text-slate-400">a = </span><span id="a-val" class="text-orange-300">-</span></div>
+                        <div><label class="text-slate-400">σ3 (MPa)</label> <input type="number" id="sigma3" value="0" oninput="calcHoekBrown()" class="py-1"></div>
+                        <div class="font-bold text-orange-300">σ1 = <span id="sigma1-val">-</span> MPa</div>
+                        <hr class="border-slate-700 my-2">
+                        <div><label class="text-slate-400">Elastisite Modülü (E)</label></div>
+                        <div><span class="text-slate-400">E (GPa) = </span><span id="E-val" class="text-orange-300">-</span></div>
+                        <p class="text-[10px] text-slate-500">Hoek & Diederichs (2006)</p>
+                    </div>
+                </div>
             </div>
             <div class="lg:col-span-9">
                 <div class="glass-panel h-96 relative">
@@ -69,6 +90,9 @@ html_code = """
                 </div>
             </div>
         </div>
+
+        <!-- Yashirin canvas (Brezilya grafigi) -->
+        <canvas id="brazilChartCanvas" width="800" height="400" class="hidden-canvas"></canvas>
 
         <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div class="glass-panel"><h3 class="text-purple-400 text-sm">Yoğunluk (ρ)</h3><div class="formula-card text-center">ρ = m / V</div><input type="number" id="dens-m" placeholder="m (g)" oninput="calcDens()"><input type="number" id="dens-v" placeholder="V (cm³)" oninput="calcDens()"><div id="res-dens" class="text-center text-purple-300 font-bold">-</div></div>
@@ -88,9 +112,9 @@ html_code = """
 
         <div class="glass-panel text-center">
             <h3 class="text-blue-400 font-bold text-sm uppercase mb-2">Akademik Rapor</h3>
-            <button onclick="downloadWordReport()" class="bg-blue-600 hover:bg-blue-700 text-white py-3 px-8 rounded-xl font-bold">📄 Word (Grafikli, APA Kaynakçalı) İndir</button>
-            <button onclick="downloadGraphPNG()" class="bg-green-600 hover:bg-green-700 text-white py-3 px-8 rounded-xl font-bold ml-2">📥 Grafiği PNG indir</button>
-            <p class="text-xs text-slate-400 mt-2">Word'de grafik görünmezse, PNG dosyasını ekleyin.</p>
+            <button onclick="downloadWordReport()" class="bg-blue-600 hover:bg-blue-700 text-white py-3 px-8 rounded-xl font-bold">📄 Word (UCS + Brezilya + Geomekanik) İndir</button>
+            <button onclick="downloadGraphsAsPNG()" class="bg-green-600 hover:bg-green-700 text-white py-3 px-8 rounded-xl font-bold ml-2">📥 Grafikleri PNG indir</button>
+            <p class="text-xs text-slate-400 mt-2">Word'de UCS, Brezilya grafikleri, Δm tablosu, numune detayları ve geomekanik hesaplar bulunur.</p>
         </div>
 
         <div class="glass-panel">
@@ -117,17 +141,51 @@ html_code = """
         const canvas = document.getElementById('mainChart');
         const ctx = canvas.getContext('2d');
         const chart = new Chart(ctx, { 
-            type:'scatter', 
-            data:{datasets:[]}, 
-            options:{
-                responsive: true, 
-                maintainAspectRatio: true,
-                scales:{ 
-                    x:{title:{display:true,text:'Kütle (g)'}}, 
-                    y:{title:{display:true,text:'Sıcaklık (°C)'}} 
-                }
+            type:'scatter', data:{datasets:[]}, options:{
+                scales:{ x:{title:{display:true,text:'Kütle (g)'}}, y:{title:{display:true,text:'Sıcaklık (°C)'}} }
             }
         });
+
+        // Yashirin Brezilya grafigi
+        const brazilCanvas = document.getElementById('brazilChartCanvas');
+        const brazilCtx = brazilCanvas.getContext('2d');
+        const brazilChart = new Chart(brazilCtx, {
+            type:'scatter', data:{datasets:[]}, options:{
+                plugins:{title:{display:true,text:'Brezilya Testi'}},
+                scales:{ x:{title:{text:'Kütle (g)'}}, y:{title:{text:'Sıcaklık (°C)'}} }
+            }
+        });
+
+        function initBrazilChart() {
+            const brazilDs = [];
+            allDatasets.slice(4).forEach(ds => {
+                brazilDs.push({ label: ds.label, data: ds.data, showLine: true,
+                    borderColor: `hsl(${ds.baseColor},70%,50%)`, backgroundColor: `hsl(${ds.baseColor},70%,50%,0.5)`, pointRadius:6, tension:0.4 });
+            });
+            brazilChart.data.datasets = brazilDs;
+            brazilChart.update();
+        }
+
+        function calcHoekBrown() {
+            const GSI = parseFloat(document.getElementById('gsi').value) || 50;
+            const mi = parseFloat(document.getElementById('mi').value) || 10;
+            const D = parseFloat(document.getElementById('D').value) || 0;
+            const sigci = parseFloat(document.getElementById('sigci').value) || 80;
+            const sigma3 = parseFloat(document.getElementById('sigma3').value) || 0;
+
+            const mb = mi * Math.exp((GSI - 100) / (28 - 14*D));
+            const s = Math.exp((GSI - 100) / (9 - 3*D));
+            const a = 0.5 + (Math.exp(-GSI/15) - Math.exp(-20/3))/6;
+            document.getElementById('mb-val').innerText = mb.toFixed(3);
+            document.getElementById('s-val').innerText = s.toExponential(3);
+            document.getElementById('a-val').innerText = a.toFixed(3);
+
+            const sigma1 = sigma3 + sigci * Math.pow(mb * sigma3 / sigci + s, a);
+            document.getElementById('sigma1-val').innerText = sigma1.toFixed(2);
+
+            const E = 100 * (1 - D/2) * Math.sqrt(sigci/100) * Math.pow(10, (GSI-10)/40);
+            document.getElementById('E-val').innerText = E.toFixed(2);
+        }
 
         function renderDeltaTable() {
             const tbody = document.getElementById('delta-table-body');
@@ -172,8 +230,7 @@ html_code = """
                 if(cb.checked) {
                     const ds = allDatasets[cb.dataset.index];
                     active.push({ label: ds.label, data: ds.data, showLine: true,
-                        borderColor: `hsl(${ds.baseColor},70%,50%)`,
-                        backgroundColor: `hsl(${ds.baseColor},70%,50%,0.5)`, pointRadius:6, tension:0.4 });
+                        borderColor: `hsl(${ds.baseColor},70%,50%)`, backgroundColor: `hsl(${ds.baseColor},70%,50%,0.5)`, pointRadius:6, tension:0.4 });
                 }
             });
             chart.data.datasets = active;
@@ -194,88 +251,64 @@ html_code = """
         function calcStrain(){ const a=+document.getElementById('alpha').value||0, d=+document.getElementById('deltaT').value||0; document.getElementById('res-strain').innerText = (a*d).toExponential(3); }
         function calcDeg(){ const s=+document.getElementById('sig0').value||0, b=+document.getElementById('beta').value||0, t=+document.getElementById('temp').value||0; document.getElementById('res-deg').innerText = (s*Math.exp(-b*t)).toFixed(2)+' MPa'; }
 
-        // Grafiği PNG olarak indir (ayrı dosya)
-        function downloadGraphPNG() {
-            chart.update();
-            setTimeout(() => {
-                const canvas = document.getElementById('mainChart');
-                const link = document.createElement('a');
-                link.download = 'GeoLab_Grafik.png';
-                link.href = canvas.toDataURL('image/png');
-                link.click();
-            }, 300);
+        function downloadGraphsAsPNG() {
+            const linkMain = document.createElement('a'); linkMain.download = 'UCS_Grafik.png'; linkMain.href = canvas.toDataURL('image/png'); linkMain.click();
+            setTimeout(() => { const linkBrazil = document.createElement('a'); linkBrazil.download = 'Brezilya_Grafik.png'; linkBrazil.href = brazilCanvas.toDataURL('image/png'); linkBrazil.click(); }, 200);
         }
 
         async function downloadWordReport() {
-            chart.update();
-            // Uzun bekleme süresi
-            await new Promise(resolve => setTimeout(resolve, 500));
-            
-            const canvas = document.getElementById('mainChart');
-            if (canvas.width === 0 || canvas.height === 0) {
-                alert("Grafik hazır değil, lütfen tekrar deneyin.");
-                return;
-            }
-            
-            const chartImg = canvas.toDataURL('image/png');
+            chart.update(); brazilChart.update();
+            await new Promise(r => setTimeout(r, 300));
+            const mainImg = canvas.toDataURL('image/png');
+            const brazilImg = brazilCanvas.toDataURL('image/png');
             const tableHtml = document.querySelector('.delta-table').outerHTML;
             const conclusion = document.getElementById('conclusion-text').innerHTML;
             const now = new Date().toLocaleString('tr-TR');
 
             let sampleRows = '';
             allDatasets.forEach(ds => {
-                const p25 = ds.data.find(p=>p.y===25);
-                const m0 = p25 ? p25.x : 0;
-                const d = ds.diameter || 0;
-                const l = ds.length || 0;
-                const volume = Math.PI * Math.pow(d/20, 2) * l;
-                const density = volume > 0 ? (m0 / volume).toFixed(3) : '-';
+                const p25 = ds.data.find(p=>p.y===25); const m0 = p25?p25.x:0;
+                const d = ds.diameter||0, l = ds.length||0;
+                const volume = Math.PI * Math.pow(d/20,2)*l;
+                const density = volume>0 ? (m0/volume).toFixed(3) : '-';
                 sampleRows += `<tr><td>${ds.label}</td><td>${d.toFixed(1)}</td><td>${l.toFixed(1)}</td><td>${volume.toFixed(2)}</td><td>${density}</td></tr>`;
             });
 
+            const geoRows = `
+                <tr><td>GSI</td><td>${document.getElementById('gsi').value}</td></tr>
+                <tr><td>mi</td><td>${document.getElementById('mi').value}</td></tr>
+                <tr><td>D</td><td>${document.getElementById('D').value}</td></tr>
+                <tr><td>σci (MPa)</td><td>${document.getElementById('sigci').value}</td></tr>
+                <tr><td>mb</td><td>${document.getElementById('mb-val').innerText}</td></tr>
+                <tr><td>s</td><td>${document.getElementById('s-val').innerText}</td></tr>
+                <tr><td>a</td><td>${document.getElementById('a-val').innerText}</td></tr>
+                <tr><td>σ3 (MPa)</td><td>${document.getElementById('sigma3').value}</td></tr>
+                <tr><td>σ1 (MPa)</td><td>${document.getElementById('sigma1-val').innerText}</td></tr>
+                <tr><td>E (GPa)</td><td>${document.getElementById('E-val').innerText}</td></tr>
+            `;
+
             const fullHtml = `
-            <!DOCTYPE html>
-            <html><head><meta charset="UTF-8"><title>Geo-Lab Akademik Rapor</title>
-            <style>body{font-family:Calibri; margin:2cm;} table{border-collapse:collapse; width:100%; margin:10px 0;} th,td{border:1px solid #333; padding:8px;} img{max-width:100%; height:auto; border:1px solid #ccc;}</style>
+            <!DOCTYPE html><html><head><meta charset="UTF-8"><title>Geo-Lab Rapor</title>
+            <style>body{font-family:Calibri; margin:2cm;} table{border-collapse:collapse; width:100%;} th,td{border:1px solid #333; padding:8px;} img{max-width:100%;}</style>
             </head><body>
-                <h1>Geo-Lab Jeofizik Analiz Raporu</h1>
-                <p><strong>Oluşturulma:</strong> ${now}</p>
-                <h2>1. Kütle – Sıcaklık Grafiği</h2>
-                <img src="${chartImg}" alt="Kütle-Sıcaklık Grafiği" style="width:100%; max-width:800px; display:block; margin:10px 0;">
-                <p><em>Not: Grafik görünmezse, lütfen "📥 Grafiği PNG indir" butonunu kullanarak resmi ekleyin.</em></p>
-                <h2>2. Numune Özellikleri ve Yoğunlukları (ρ = m / V)</h2>
-                <table>
-                    <thead><tr><th>Numune</th><th>Çap (mm)</th><th>Uzunluk (mm)</th><th>Hacim (cm³)</th><th>Yoğunluk (g/cm³)</th></tr></thead>
-                    <tbody>${sampleRows}</tbody>
-                </table>
-                <h2>3. Kütle Kaybı (Δm) Tablosu</h2>
-                ${tableHtml}
-                <h2>4. Temel Formüller</h2>
-                <p>Yoğunluk: ρ = m / V &nbsp;|&nbsp; Porozite: n = (1 - ρb/ρs)·100%</p>
-                <p>Termal deformasyon: ε = α·ΔT &nbsp;|&nbsp; UCS degradasyonu: σ(T) = σ0·e<sup>(-βT)</sup></p>
-                <p>Kütle kaybı: Δm = (m₀ - mₜ) / m₀ × 100%</p>
-                <h2>5. Bilimsel Sonuç</h2>
-                <div>${conclusion}</div>
-                <h2>6. Kaynakça (APA 7)</h2>
-                <ul>
-                    <li>ASTM D7012-14e1. (2020). Standard Test Method for Compressive Strength of Intact Rock Core Specimens.</li>
-                    <li>Hoek, E., & Brown, E. T. (1997). Practical estimates of rock mass strength. <i>Int. J. Rock Mech. Min. Sci.</i>, 34(8), 1165–1186.</li>
-                    <li>Ulusay, R., & Hudson, J. A. (2007). <i>The Complete ISRM Suggested Methods for Rock Characterization</i>. ISRM.</li>
-                    <li>Jaeger, J. C., Cook, N. G. W., & Zimmerman, R. W. (2007). <i>Fundamentals of Rock Mechanics</i> (4th ed.). Blackwell.</li>
-                </ul>
+                <h1>Geo-Lab Jeofizik ve Geomekanik Raporu</h1><p>${now}</p>
+                <h2>UCS Grafiği</h2><img src="${mainImg}">
+                <h2>Brezilya Grafiği</h2><img src="${brazilImg}">
+                <h2>Numune Özellikleri</h2><table><tr><th>Numune</th><th>Çap(mm)</th><th>Uzunluk(mm)</th><th>Hacim(cm³)</th><th>Yoğunluk(g/cm³)</th></tr>${sampleRows}</table>
+                <h2>Kütle Kaybı Tablosu</h2>${tableHtml}
+                <h2>Geomekanik Hesaplamalar (Hoek-Brown)</h2>
+                <table><tr><th>Parametre</th><th>Değer</th></tr>${geoRows}</table>
+                <p><em>Formüller: mb = mi·exp((GSI-100)/(28-14D)); s = exp((GSI-100)/(9-3D)); a = 0.5 + (e^(-GSI/15)-e^(-20/3))/6; E = 100·(1-D/2)·√(σci/100)·10^((GSI-10)/40).</em></p>
+                <h2>Bilimsel Sonuç</h2>${conclusion}
+                <h2>Kaynakça (APA 7)</h2><ul><li>Hoek, E., Carranza-Torres, C., & Corkum, B. (2002). Hoek-Brown failure criterion-2002 edition. NARMS-TAC.</li><li>Hoek, E., & Diederichs, M. S. (2006). Empirical estimation of rock mass modulus. IJRM.</li></ul>
             </body></html>`;
 
             const blob = new Blob([fullHtml], {type: 'application/msword'});
-            const a = document.createElement('a');
-            a.href = URL.createObjectURL(blob);
-            a.download = `GeoLab_Rapor_${new Date().toISOString().slice(0,10)}.doc`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(a.href);
+            const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `GeoLab_Rapor_${new Date().toISOString().slice(0,10)}.doc`;
+            document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(a.href);
         }
 
-        window.onload = () => { switchTab('ucs'); updateDensitySim(); renderDeltaTable(); };
+        window.onload = () => { switchTab('ucs'); updateDensitySim(); renderDeltaTable(); initBrazilChart(); calcHoekBrown(); };
     </script>
 </body>
 </html>
