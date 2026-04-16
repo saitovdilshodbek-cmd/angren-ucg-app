@@ -3,10 +3,9 @@ import numpy as np
 from PIL import Image
 import time
 
-# Sahifa sozlamalari
 st.set_page_config(page_title="GeoAI Digital Twin", layout="wide")
 
-# Custom CSS
+# Custom CSS (avvalgidek)
 st.markdown("""
 <style>
     .main-header {
@@ -49,12 +48,11 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ============================================
-# Model (o'z modelingiz bilan almashtiring)
-# ============================================
+# ------------------------------------------------------------
+# Model placeholder
+# ------------------------------------------------------------
 class DummyModel:
     def predict(self, img_array):
-        # Haqiqiy model o'rnida random tuzatish
         return 2.5 + np.random.rand() * 3
 
 @st.cache_resource
@@ -63,31 +61,29 @@ def load_model():
 
 model = load_model()
 
-# ============================================
-# Yordamchi funksiyalar (cv2 ISHLATILMAGAN)
-# ============================================
+# ------------------------------------------------------------
+# Rasmni tayyorlash (cv2 o'rniga PIL)
+# ------------------------------------------------------------
 def preprocess_image(uploaded_file):
-    """Rasmni 224x224 RGB formatga o'tkazish (PIL orqali)"""
     image = Image.open(uploaded_file).convert("RGB")
-    image = image.resize((224, 224), Image.Resampling.LANCZOS)
+    image = image.resize((224, 224))
     return np.array(image)
 
+# ------------------------------------------------------------
+# Hisoblash funksiyalari
+# ------------------------------------------------------------
 def crack_estimation(temp):
-    """Harorat asosida yoriq foizini hisoblash"""
     base = temp * 0.08
     noise = np.random.rand() * 3
     return min(100, base + noise)
 
 def physics_mpa(ucs, gsi, temp, depth):
-    """Fizik formula asosida mustahkamlik"""
     base = (ucs * 0.5 + gsi * 0.3)
     penalty = temp * 0.05 + depth * 0.01
     return max(5, base - penalty)
 
 def run_inference(image_file, ucs, gsi, depth, temp):
-    """Asosiy hisoblash funksiyasi"""
     img_array = preprocess_image(image_file)
-    
     crack = crack_estimation(temp)
     mpa_physics = physics_mpa(ucs, gsi, temp, depth)
     ai_correction = model.predict(img_array)
@@ -112,9 +108,9 @@ def run_inference(image_file, ucs, gsi, depth, temp):
         "loss": round(0.08 + np.random.rand() * 0.04, 4)
     }
 
-# ============================================
+# ------------------------------------------------------------
 # Interfeys
-# ============================================
+# ------------------------------------------------------------
 st.markdown("""
 <div class="main-header">
     <span style="font-size: 2.2rem; font-weight: 800;">🧠 GeoAI Digital Twin</span>
@@ -128,19 +124,12 @@ col_left, col_right = st.columns([1.2, 1], gap="large")
 
 with col_left:
     st.subheader("📥 Ma'lumotlarni yuklash")
-    
-    uploaded_file = st.file_uploader(
-        "Namuna rasmini tanlang",
-        type=["jpg", "jpeg", "png"],
-        help="224x224 o'lchamda qabul qilinadi"
-    )
-    
+    uploaded_file = st.file_uploader("Namuna rasmini tanlang", type=["jpg","jpeg","png"])
     if uploaded_file:
         st.image(uploaded_file, caption="Yuklangan rasm", use_container_width=True)
     
     st.divider()
     st.subheader("⚙️ Parametrlar")
-    
     col_a, col_b = st.columns(2)
     with col_a:
         ucs = st.slider("UCS (MPa)", 10, 200, 85, 1)
@@ -150,23 +139,15 @@ with col_left:
         temp = st.number_input("Harorat (°C)", 0, 1000, 25, 5)
     
     st.divider()
-    
-    analyze_btn = st.button(
-        "🔍 DIGITAL TWIN ANALIZNI BOSHLASH",
-        type="primary",
-        use_container_width=True,
-        disabled=(uploaded_file is None)
-    )
+    analyze_btn = st.button("🔍 DIGITAL TWIN ANALIZNI BOSHLASH", type="primary", use_container_width=True, disabled=(uploaded_file is None))
 
 with col_right:
     st.subheader("📊 Inference Natijalari")
-    
     if analyze_btn and uploaded_file:
         with st.spinner("⏳ Hisoblanmoqda... Multi-modal fusion jarayoni..."):
-            time.sleep(2)  # Realistik kechikish
+            time.sleep(2)
             result = run_inference(uploaded_file, ucs, gsi, depth, temp)
         
-        # Natijalar kartasi
         st.markdown(f"""
         <div class="result-card">
             <div style="display: flex; justify-content: space-between; margin-bottom: 20px;">
@@ -175,7 +156,6 @@ with col_right:
                     Loss: {result['loss']}
                 </span>
             </div>
-            
             <div style="text-align: center;">
                 <p style="opacity:0.6; margin-bottom:8px; text-transform:uppercase; letter-spacing:3px; font-size:0.8rem;">
                     Strength Regression (MPa)
@@ -189,9 +169,7 @@ with col_right:
                     </span>
                 </p>
             </div>
-            
             <hr style="margin:30px 0; border-color:#334155;">
-            
             <div style="display: flex; gap: 30px; justify-content: space-around;">
                 <div style="text-align:center;">
                     <p style="opacity:0.6; font-size:0.9rem;">Crack Ratio</p>
@@ -209,7 +187,6 @@ with col_right:
         </div>
         """, unsafe_allow_html=True)
         
-        # Qo'shimcha ma'lumot
         with st.expander("📈 Batafsil tahlil"):
             st.write(f"**Kirish parametrlari:** UCS={ucs} MPa, GSI={gsi}, Chuqurlik={depth} m, Harorat={temp} °C")
             st.write(f"**Fizik hisoblangan MPa:** {physics_mpa(ucs, gsi, temp, depth):.2f}")
@@ -221,6 +198,5 @@ with col_right:
     else:
         st.info("👈 Chap tomondan rasm yuklang va parametrlarni sozlang, so'ng 'Analiz' tugmasini bosing.")
 
-# Footer
 st.divider()
 st.caption("GeoAI Digital Twin · Inference time: ~142ms · GPU Acceleration Enabled")
