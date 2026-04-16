@@ -3,13 +3,13 @@ import numpy as np
 from PIL import Image
 import time
 
-# Agar sizda PyTorch modelingiz bo'lsa, quyidagi importlarni faollashtiring
+# Agar haqiqiy PyTorch modelingiz bo'lsa, quyidagi importlarni faollashtiring
 # import torch
 # import torch.nn as nn
 
 st.set_page_config(page_title="GeoAI Digital Twin", layout="wide")
 
-# ----------------- CSS (o'zgarmagan) -----------------
+# ----------------- CSS dizayn -----------------
 st.markdown("""
 <style>
     .main-header {
@@ -52,10 +52,11 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ----------------- Dummy Model (agar haqiqiy model yo'q bo'lsa) -----------------
+# ----------------- Dummy Model (torch talab qilmaydi) -----------------
 class DummyModel:
     def predict(self, img_array):
-        return 2.5 + np.random.rand() * 3
+        # Sun'iy bashorat (45-55 MPa atrofida)
+        return 45.0 + np.random.rand() * 10.0
 
 @st.cache_resource
 def load_model():
@@ -92,7 +93,7 @@ def preprocess_image(uploaded_file):
     image = Image.open(uploaded_file).convert("RGB")
     image = image.resize((224, 224))
     img_array = np.array(image) / 255.0
-    return img_array.flatten()  # (150528,)
+    return img_array.flatten()  # (150528,) o'lchamli vektor
 
 # ----------------- Fizik hisoblar -----------------
 def physics_constraint(ucs, gsi, temp, depth):
@@ -101,7 +102,6 @@ def physics_constraint(ucs, gsi, temp, depth):
     geo_effect = depth * 0.01
     return stress - (thermal_effect + geo_effect)
 
-# ----------------- Yangi qo'shilgan funksiyalar (ikkinchi koddan) -----------------
 def uncertainty_estimation(mpa):
     """Ishonch darajasini hisoblaydi (0–100 oralig'ida)"""
     noise = np.random.normal(0, 2.0)
@@ -117,7 +117,7 @@ def crack_index(temp, stress_loss):
     """Yoriq foizini tanh funksiyasi orqali hisoblaydi"""
     return np.tanh(temp * 0.03 + stress_loss * 0.02) * 100
 
-# ----------------- Asosiy inference (yangilangan) -----------------
+# ----------------- Asosiy inference funksiyasi -----------------
 def run_inference(image_file, ucs, gsi, depth, temp):
     img_vector = preprocess_image(image_file)
 
@@ -133,14 +133,14 @@ def run_inference(image_file, ucs, gsi, depth, temp):
 
     physics_mpa = physics_constraint(ucs, gsi, temp, depth)
     
-    # Yangi birlashtirilgan qiymat (hybrid_score ishlatiladi)
+    # Yakuniy MPa (hybrid_score)
     final_mpa = hybrid_score(ai_mpa, physics_mpa)
     final_mpa = max(5.0, final_mpa)  # minimal chegara
     
-    # Stress farqi (fizik va yakuniy qiymat orasidagi)
+    # Stress farqi
     stress_loss = abs(physics_mpa - final_mpa)
     
-    # Yangi crack_index funksiyasi bilan yoriq foizi
+    # Yoriq foizi (crack_index)
     crack_percent = crack_index(temp, stress_loss)
     crack_percent = min(100.0, max(0.0, crack_percent))
     
@@ -164,10 +164,10 @@ def run_inference(image_file, ucs, gsi, depth, temp):
         "confidence": round(confidence, 1),
         "status": status,
         "status_color": color,
-        "loss": round(0.08 + np.random.rand() * 0.04, 4)  # ko'rgazmali loss qiymati
+        "loss": round(0.08 + np.random.rand() * 0.04, 4)  # Vizual loss qiymati
     }
 
-# ----------------- Interfeys -----------------
+# ----------------- Interfeys qismi -----------------
 st.markdown("""
 <div class="main-header">
     <span style="font-size: 2.2rem; font-weight: 800;">🧠 GeoAI Digital Twin</span>
