@@ -105,7 +105,7 @@ html_code = """
     </div>
 
     <script>
-        // ---------- VERİ SETLERİ (Kıltaşı olarak güncellendi, çap/uzunluk eklendi) ----------
+        // ---------- VERİ SETLERİ ----------
         const allDatasets = [
             { label: 'Kıltaşı UCS-1', data: [{x:718,y:25},{x:705,y:100},{x:693,y:500}], baseColor:0, diameter: 54.0, length: 110.0 },
             { label: 'Kıltaşı UCS-2', data: [{x:464,y:25},{x:456,y:100},{x:409,y:1000}], baseColor:40, diameter: 54.0, length: 108.0 },
@@ -123,7 +123,6 @@ html_code = """
             scales:{ x:{title:{display:true,text:'Kütle (g)'}}, y:{title:{display:true,text:'Sıcaklık (°C)'}} }
         }});
 
-        // Δm tablosu
         function renderDeltaTable() {
             const tbody = document.getElementById('delta-table-body');
             tbody.innerHTML = '';
@@ -188,7 +187,7 @@ html_code = """
         function calcStrain(){ const a=+document.getElementById('alpha').value||0, d=+document.getElementById('deltaT').value||0; document.getElementById('res-strain').innerText = (a*d).toExponential(3); }
         function calcDeg(){ const s=+document.getElementById('sig0').value||0, b=+document.getElementById('beta').value||0, t=+document.getElementById('temp').value||0; document.getElementById('res-deg').innerText = (s*Math.exp(-b*t)).toFixed(2)+' MPa'; }
 
-        // Word raporu (grafik kesinlikle içerir, her numune için yoğunluk hesaplanır)
+        // ========== WORD RAPORU ==========
         async function downloadWordReport() {
             await new Promise(resolve => setTimeout(resolve, 100));
             
@@ -202,7 +201,7 @@ html_code = """
             const conclusion = document.getElementById('conclusion-text').innerHTML;
             const now = new Date().toLocaleString('tr-TR');
 
-            // Her numune için çap, uzunluk, hacim ve yoğunluk (ρ = m / V)
+            // >>> BU KISIM SİZİN İSTEDİĞİNİZ HESAPLAMA <<<
             let sampleRows = '';
             allDatasets.forEach(ds => {
                 const p25 = ds.data.find(p=>p.y===25);
@@ -222,7 +221,6 @@ html_code = """
                 <h1>Geo-Lab Jeofizik Analiz Raporu</h1>
                 <p><strong>Oluşturulma:</strong> ${now}</p>
                 <h2>1. Kütle – Sıcaklık Grafiği</h2>
-                <p>Aşağıdaki grafik, seçili numunelerin sıcaklığa bağlı kütle değişimini göstermektedir.</p>
                 <img src="${chartImg}" alt="Kütle-Sıcaklık Grafiği" style="width:100%; max-width:800px;">
                 <h2>2. Numune Özellikleri ve Yoğunlukları (ρ = m / V)</h2>
                 <table>
