@@ -61,7 +61,7 @@ html_code = """
             </div>
             <div class="lg:col-span-9">
                 <div class="glass-panel h-96 relative">
-                    <canvas id="mainChart"></canvas>
+                    <canvas id="mainChart" width="800" height="400" style="width:100%; height:100%;"></canvas>
                 </div>
                 <div class="glass-panel mt-4">
                     <h3 class="text-blue-400 text-xs uppercase mb-2">Seçili Numuneler</h3>
@@ -90,6 +90,7 @@ html_code = """
             <h3 class="text-blue-400 font-bold text-sm uppercase mb-2">Akademik Rapor</h3>
             <button onclick="downloadWordReport()" class="bg-blue-600 hover:bg-blue-700 text-white py-3 px-8 rounded-xl font-bold">📄 Word (Grafikli, APA Kaynakçalı) İndir</button>
             <p class="text-xs text-slate-400 mt-2">Grafik, tablo, numune detayları (çap/uzunluk/hacim/yoğunluk) ve APA 7</p>
+            <p class="text-[10px] text-amber-400 mt-2">⚠️ Grafik görünmezse, Word'de "Güvenlik Uyarısı"nı onaylayın veya LibreOffice ile açın.</p>
         </div>
 
         <div class="glass-panel">
@@ -113,11 +114,20 @@ html_code = """
         ];
 
         let currentTab = 'ucs';
-        const ctx = document.getElementById('mainChart').getContext('2d');
-        const chart = new Chart(ctx, { type:'scatter', data:{datasets:[]}, options:{
-            responsive: true, maintainAspectRatio: false,
-            scales:{ x:{title:{display:true,text:'Kütle (g)'}}, y:{title:{display:true,text:'Sıcaklık (°C)'}} }
-        }});
+        const canvas = document.getElementById('mainChart');
+        const ctx = canvas.getContext('2d');
+        const chart = new Chart(ctx, { 
+            type:'scatter', 
+            data:{datasets:[]}, 
+            options:{
+                responsive: true, 
+                maintainAspectRatio: true,
+                scales:{ 
+                    x:{title:{display:true,text:'Kütle (g)'}}, 
+                    y:{title:{display:true,text:'Sıcaklık (°C)'}} 
+                }
+            }
+        });
 
         function renderDeltaTable() {
             const tbody = document.getElementById('delta-table-body');
@@ -185,16 +195,20 @@ html_code = """
         function calcDeg(){ const s=+document.getElementById('sig0').value||0, b=+document.getElementById('beta').value||0, t=+document.getElementById('temp').value||0; document.getElementById('res-deg').innerText = (s*Math.exp(-b*t)).toFixed(2)+' MPa'; }
 
         async function downloadWordReport() {
-            // grafiği güncelle
+            // Grafiğin tamamen render edildiğinden emin ol
             chart.update();
-            await new Promise(resolve => setTimeout(resolve, 100));
+            
+            // İki aşamalı bekleme
+            await new Promise(resolve => setTimeout(resolve, 150));
+            await new Promise(resolve => requestAnimationFrame(resolve));
             
             const canvas = document.getElementById('mainChart');
             if (canvas.width === 0 || canvas.height === 0) {
-                alert("Grafik henüz hazır değil, lütfen tekrar deneyin.");
+                alert("Grafik hazır değil, lütfen tekrar deneyin.");
                 return;
             }
-            // JPEG kullan (Word'de daha uyumlu)
+            
+            // Yüksek kaliteli JPEG al
             const chartImg = canvas.toDataURL('image/jpeg', 0.95);
             const tableHtml = document.querySelector('.delta-table').outerHTML;
             const conclusion = document.getElementById('conclusion-text').innerHTML;
@@ -219,7 +233,8 @@ html_code = """
                 <h1>Geo-Lab Jeofizik Analiz Raporu</h1>
                 <p><strong>Oluşturulma:</strong> ${now}</p>
                 <h2>1. Kütle – Sıcaklık Grafiği</h2>
-                <img src="${chartImg}" alt="Kütle-Sıcaklık Grafiği" style="width:100%; max-width:800px;">
+                <img src="${chartImg}" alt="Kütle-Sıcaklık Grafiği" style="width:100%; max-width:800px; display:block; margin:10px 0;">
+                <p><em>Not: Grafik görünmezse lütfen Word'ün güvenlik ayarlarından "Dışarıdan eklenen resimleri engelleme" seçeneğini kapatın.</em></p>
                 <h2>2. Numune Özellikleri ve Yoğunlukları (ρ = m / V)</h2>
                 <table>
                     <thead><tr><th>Numune</th><th>Çap (mm)</th><th>Uzunluk (mm)</th><th>Hacim (cm³)</th><th>Yoğunluk (g/cm³)</th></tr></thead>
