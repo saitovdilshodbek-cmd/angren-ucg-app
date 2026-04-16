@@ -648,3 +648,22 @@ with open("index.html", "r", encoding="utf-8") as f:
     html_code = f.read()
 
 st.components.v1.html(html_code, height=1200, scrolling=True)
+import streamlit as st
+
+st.set_page_config(layout="wide", page_title="Geo-Lab AI")
+
+html_code = """
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+    <meta charset="UTF-8">
+    <title>Geo-Lab AI & Ilg'or Geofizika</title>
+    <!-- ... qolgan barcha HTML kod ... -->
+</head>
+<body>
+    <!-- ... -->
+</body>
+</html>
+"""
+
+st.components.v1.html(html_code, height=1200, scrolling=True)
