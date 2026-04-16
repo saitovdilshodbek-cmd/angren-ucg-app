@@ -20,6 +20,7 @@ html_code = """
         .delta-table th, .delta-table td { padding: 0.5rem; border: 1px solid #334155; text-align: center; }
         .delta-table th { background: #1e293b; color: #94a3b8; }
         input[type=number] { background: #1e293b; border: 1px solid #334155; color: white; padding: 0.5rem; border-radius: 0.5rem; width: 100%; }
+        .hidden-canvas { display: none; }
     </style>
 </head>
 <body class="p-4 md:p-8">
@@ -70,6 +71,10 @@ html_code = """
             </div>
         </div>
 
+        <!-- Yashirin grafikler (Word raporu için) -->
+        <canvas id="ucsChartCanvas" width="800" height="400" class="hidden-canvas"></canvas>
+        <canvas id="brazilChartCanvas" width="800" height="400" class="hidden-canvas"></canvas>
+
         <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div class="glass-panel"><h3 class="text-purple-400 text-sm">Yoğunluk (ρ)</h3><div class="formula-card text-center">ρ = m / V</div><input type="number" id="dens-m" placeholder="m (g)" oninput="calcDens()"><input type="number" id="dens-v" placeholder="V (cm³)" oninput="calcDens()"><div id="res-dens" class="text-center text-purple-300 font-bold">-</div></div>
             <div class="glass-panel"><h3 class="text-yellow-400 text-sm">Porozite</h3><div class="formula-card text-center">n = (1 - ρb/ρs)·100%</div><input type="number" id="rho-b" placeholder="ρb" oninput="calcPoro()"><input type="number" id="rho-s" placeholder="ρs" oninput="calcPoro()"><div id="res-poro" class="text-center text-yellow-300 font-bold">-</div></div>
@@ -88,9 +93,9 @@ html_code = """
 
         <div class="glass-panel text-center">
             <h3 class="text-blue-400 font-bold text-sm uppercase mb-2">Akademik Rapor</h3>
-            <button onclick="downloadWordReport()" class="bg-blue-600 hover:bg-blue-700 text-white py-3 px-8 rounded-xl font-bold">📄 Word (Grafikli, APA Kaynakçalı) İndir</button>
-            <button onclick="downloadGraphPNG()" class="bg-green-600 hover:bg-green-700 text-white py-3 px-8 rounded-xl font-bold ml-2">📥 Grafiği PNG indir</button>
-            <p class="text-xs text-slate-400 mt-2">Word'de grafik görünmezse, PNG dosyasını ekleyin.</p>
+            <button onclick="downloadWordReport()" class="bg-blue-600 hover:bg-blue-700 text-white py-3 px-8 rounded-xl font-bold">📄 Word (UCS + Brezilya Grafikli) İndir</button>
+            <button onclick="downloadGraphsAsPNG()" class="bg-green-600 hover:bg-green-700 text-white py-3 px-8 rounded-xl font-bold ml-2">📥 Grafikleri PNG indir</button>
+            <p class="text-xs text-slate-400 mt-2">Word belgesinde iki ayrı grafik bulunur: UCS ve Brezilya testi.</p>
         </div>
 
         <div class="glass-panel">
@@ -114,9 +119,11 @@ html_code = """
         ];
 
         let currentTab = 'ucs';
-        const canvas = document.getElementById('mainChart');
-        const ctx = canvas.getContext('2d');
-        const chart = new Chart(ctx, { 
+        
+        // Ana grafik (kullanıcı arayüzü)
+        const mainCanvas = document.getElementById('mainChart');
+        const mainCtx = mainCanvas.getContext('2d');
+        const mainChart = new Chart(mainCtx, { 
             type:'scatter', 
             data:{datasets:[]}, 
             options:{
@@ -129,6 +136,55 @@ html_code = """
             }
         });
 
+        // Yashirin grafikler (Word raporu için)
+        const ucsCanvas = document.getElementById('ucsChartCanvas');
+        const ucsCtx = ucsCanvas.getContext('2d');
+        const ucsChart = new Chart(ucsCtx, {
+            type:'scatter',
+            data:{ datasets: [] },
+            options:{
+                responsive: false,
+                scales:{ x:{title:{display:true,text:'Kütle (g)'}}, y:{title:{display:true,text:'Sıcaklık (°C)'}} },
+                plugins: { title: { display: true, text: 'UCS Testi (Kıltaşı ve Kumtaşı)' } }
+            }
+        });
+
+        const brazilCanvas = document.getElementById('brazilChartCanvas');
+        const brazilCtx = brazilCanvas.getContext('2d');
+        const brazilChart = new Chart(brazilCtx, {
+            type:'scatter',
+            data:{ datasets: [] },
+            options:{
+                responsive: false,
+                scales:{ x:{title:{display:true,text:'Kütle (g)'}}, y:{title:{display:true,text:'Sıcaklık (°C)'}} },
+                plugins: { title: { display: true, text: 'Brezilya Testi (Kıltaşı ve Kumtaşı)' } }
+            }
+        });
+
+        // Yashirin grafikleri doldur (tüm veriler)
+        function initHiddenCharts() {
+            const ucsDatasets = [];
+            const brazilDatasets = [];
+            allDatasets.forEach((ds, idx) => {
+                const chartDs = {
+                    label: ds.label,
+                    data: ds.data,
+                    showLine: true,
+                    borderColor: `hsl(${ds.baseColor},70%,50%)`,
+                    backgroundColor: `hsl(${ds.baseColor},70%,50%,0.5)`,
+                    pointRadius: 6,
+                    tension: 0.4
+                };
+                if (idx < 4) ucsDatasets.push(chartDs);
+                else brazilDatasets.push(chartDs);
+            });
+            ucsChart.data.datasets = ucsDatasets;
+            ucsChart.update();
+            brazilChart.data.datasets = brazilDatasets;
+            brazilChart.update();
+        }
+
+        // Δm tablosu
         function renderDeltaTable() {
             const tbody = document.getElementById('delta-table-body');
             tbody.innerHTML = '';
@@ -152,7 +208,7 @@ html_code = """
             currentTab = tab;
             document.getElementById('tab-ucs').className = tab==='ucs'? 'flex-1 py-2 text-xs font-bold tab-active' : 'flex-1 py-2 text-xs font-bold text-slate-500';
             document.getElementById('tab-brazil').className = tab==='brazil'? 'flex-1 py-2 text-xs font-bold tab-active' : 'flex-1 py-2 text-xs font-bold text-slate-500';
-            renderCheckboxes(); updateChart();
+            renderCheckboxes(); updateMainChart();
         }
 
         function renderCheckboxes() {
@@ -161,12 +217,12 @@ html_code = """
             const start = currentTab==='ucs'?0:4, end = currentTab==='ucs'?4:8;
             for(let i=start; i<end; i++) {
                 const div = document.createElement('div'); div.className = "flex items-center gap-2 p-2 bg-slate-800/30 rounded";
-                div.innerHTML = `<input type="checkbox" checked onchange="updateChart()" data-index="${i}" class="accent-indigo-500"> <span class="text-xs">${allDatasets[i].label}</span>`;
+                div.innerHTML = `<input type="checkbox" checked onchange="updateMainChart()" data-index="${i}" class="accent-indigo-500"> <span class="text-xs">${allDatasets[i].label}</span>`;
                 cont.appendChild(div);
             }
         }
 
-        function updateChart() {
+        function updateMainChart() {
             const active = [];
             document.querySelectorAll('#checkbox-container input').forEach(cb => {
                 if(cb.checked) {
@@ -176,8 +232,8 @@ html_code = """
                         backgroundColor: `hsl(${ds.baseColor},70%,50%,0.5)`, pointRadius:6, tension:0.4 });
                 }
             });
-            chart.data.datasets = active;
-            chart.update();
+            mainChart.data.datasets = active;
+            mainChart.update();
         }
 
         function updateDensitySim() {
@@ -194,30 +250,30 @@ html_code = """
         function calcStrain(){ const a=+document.getElementById('alpha').value||0, d=+document.getElementById('deltaT').value||0; document.getElementById('res-strain').innerText = (a*d).toExponential(3); }
         function calcDeg(){ const s=+document.getElementById('sig0').value||0, b=+document.getElementById('beta').value||0, t=+document.getElementById('temp').value||0; document.getElementById('res-deg').innerText = (s*Math.exp(-b*t)).toFixed(2)+' MPa'; }
 
-        // Grafiği PNG olarak indir (ayrı dosya)
-        function downloadGraphPNG() {
-            chart.update();
+        // Grafikleri PNG olarak indir
+        function downloadGraphsAsPNG() {
+            // UCS grafiğini indir
+            const linkUcs = document.createElement('a');
+            linkUcs.download = 'GeoLab_UCS_Grafik.png';
+            linkUcs.href = ucsCanvas.toDataURL('image/png');
+            linkUcs.click();
+            
             setTimeout(() => {
-                const canvas = document.getElementById('mainChart');
-                const link = document.createElement('a');
-                link.download = 'GeoLab_Grafik.png';
-                link.href = canvas.toDataURL('image/png');
-                link.click();
-            }, 300);
+                const linkBrazil = document.createElement('a');
+                linkBrazil.download = 'GeoLab_Brezilya_Grafik.png';
+                linkBrazil.href = brazilCanvas.toDataURL('image/png');
+                linkBrazil.click();
+            }, 200);
         }
 
         async function downloadWordReport() {
-            chart.update();
-            // Uzun bekleme süresi
-            await new Promise(resolve => setTimeout(resolve, 500));
+            // Yashirin grafikleri güncelle (zaten dolu)
+            ucsChart.update();
+            brazilChart.update();
+            await new Promise(resolve => setTimeout(resolve, 300));
             
-            const canvas = document.getElementById('mainChart');
-            if (canvas.width === 0 || canvas.height === 0) {
-                alert("Grafik hazır değil, lütfen tekrar deneyin.");
-                return;
-            }
-            
-            const chartImg = canvas.toDataURL('image/png');
+            const ucsImg = ucsCanvas.toDataURL('image/png');
+            const brazilImg = brazilCanvas.toDataURL('image/png');
             const tableHtml = document.querySelector('.delta-table').outerHTML;
             const conclusion = document.getElementById('conclusion-text').innerHTML;
             const now = new Date().toLocaleString('tr-TR');
@@ -236,27 +292,35 @@ html_code = """
             const fullHtml = `
             <!DOCTYPE html>
             <html><head><meta charset="UTF-8"><title>Geo-Lab Akademik Rapor</title>
-            <style>body{font-family:Calibri; margin:2cm;} table{border-collapse:collapse; width:100%; margin:10px 0;} th,td{border:1px solid #333; padding:8px;} img{max-width:100%; height:auto; border:1px solid #ccc;}</style>
+            <style>body{font-family:Calibri; margin:2cm;} table{border-collapse:collapse; width:100%; margin:10px 0;} th,td{border:1px solid #333; padding:8px;} img{max-width:100%; height:auto; border:1px solid #ccc; margin-bottom:20px;}</style>
             </head><body>
                 <h1>Geo-Lab Jeofizik Analiz Raporu</h1>
                 <p><strong>Oluşturulma:</strong> ${now}</p>
-                <h2>1. Kütle – Sıcaklık Grafiği</h2>
-                <img src="${chartImg}" alt="Kütle-Sıcaklık Grafiği" style="width:100%; max-width:800px; display:block; margin:10px 0;">
-                <p><em>Not: Grafik görünmezse, lütfen "📥 Grafiği PNG indir" butonunu kullanarak resmi ekleyin.</em></p>
-                <h2>2. Numune Özellikleri ve Yoğunlukları (ρ = m / V)</h2>
+                
+                <h2>1. UCS Testi Grafiği</h2>
+                <img src="${ucsImg}" alt="UCS Grafiği" style="width:100%; max-width:800px;">
+                
+                <h2>2. Brezilya Testi Grafiği</h2>
+                <img src="${brazilImg}" alt="Brezilya Grafiği" style="width:100%; max-width:800px;">
+                
+                <h2>3. Numune Özellikleri ve Yoğunlukları (ρ = m / V)</h2>
                 <table>
                     <thead><tr><th>Numune</th><th>Çap (mm)</th><th>Uzunluk (mm)</th><th>Hacim (cm³)</th><th>Yoğunluk (g/cm³)</th></tr></thead>
                     <tbody>${sampleRows}</tbody>
                 </table>
-                <h2>3. Kütle Kaybı (Δm) Tablosu</h2>
+                
+                <h2>4. Kütle Kaybı (Δm) Tablosu</h2>
                 ${tableHtml}
-                <h2>4. Temel Formüller</h2>
+                
+                <h2>5. Temel Formüller</h2>
                 <p>Yoğunluk: ρ = m / V &nbsp;|&nbsp; Porozite: n = (1 - ρb/ρs)·100%</p>
                 <p>Termal deformasyon: ε = α·ΔT &nbsp;|&nbsp; UCS degradasyonu: σ(T) = σ0·e<sup>(-βT)</sup></p>
                 <p>Kütle kaybı: Δm = (m₀ - mₜ) / m₀ × 100%</p>
-                <h2>5. Bilimsel Sonuç</h2>
+                
+                <h2>6. Bilimsel Sonuç</h2>
                 <div>${conclusion}</div>
-                <h2>6. Kaynakça (APA 7)</h2>
+                
+                <h2>7. Kaynakça (APA 7)</h2>
                 <ul>
                     <li>ASTM D7012-14e1. (2020). Standard Test Method for Compressive Strength of Intact Rock Core Specimens.</li>
                     <li>Hoek, E., & Brown, E. T. (1997). Practical estimates of rock mass strength. <i>Int. J. Rock Mech. Min. Sci.</i>, 34(8), 1165–1186.</li>
@@ -275,7 +339,13 @@ html_code = """
             URL.revokeObjectURL(a.href);
         }
 
-        window.onload = () => { switchTab('ucs'); updateDensitySim(); renderDeltaTable(); };
+        // Başlangıç
+        window.onload = () => { 
+            switchTab('ucs'); 
+            updateDensitySim(); 
+            renderDeltaTable(); 
+            initHiddenCharts(); 
+        };
     </script>
 </body>
 </html>
