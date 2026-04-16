@@ -10,9 +10,3 @@ requests
 numpy
 pandas
 streamlit
-
-angren-ucg-app/
-├── app.py
-└── templates/
-    └── index.html
-streamlit
