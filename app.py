@@ -61,7 +61,7 @@
         </header>
 
         <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            <!-- Chap panel: Filtr + Zichlik + AI tezkor bashorat -->
+            <!-- Chap panel -->
             <div class="lg:col-span-3 space-y-4">
                 <div class="glass-panel p-4 rounded-xl">
                     <h3 class="text-[10px] font-bold uppercase text-slate-400 mb-3">Ma'lumotlar filtri</h3>
@@ -115,7 +115,7 @@
                     </div>
                 </div>
 
-                <!-- AI Tezkor Bashorat (Gemini) -->
+                <!-- AI Tezkor Bashorat -->
                 <div class="glass-panel p-5 rounded-2xl border-indigo-500/40">
                     <h3 class="gemini-sparkle text-xs mb-4 uppercase">✨ AI Tezkor Bashorat</h3>
                     <div id="ai-insight-content" class="text-[10px] text-slate-300 italic mb-4 leading-relaxed">
@@ -125,7 +125,7 @@
                 </div>
             </div>
 
-            <!-- Asosiy grafik maydoni -->
+            <!-- Asosiy grafik -->
             <div class="lg:col-span-9 space-y-6">
                 <div class="glass-panel p-6 rounded-2xl h-[450px] relative">
                     <div class="absolute top-4 left-4 z-10 flex gap-2">
@@ -149,7 +149,6 @@
 
         <!-- 4 ta geofizik kalkulyator -->
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mt-6">
-            <!-- Zichlik (g/cm³) -->
             <div class="glass-panel p-6 rounded-2xl border border-purple-500/20">
                 <h3 class="text-purple-400 font-bold text-sm mb-4 uppercase">Zichlik (ρ)</h3>
                 <div class="formula-card text-center text-purple-300">ρ = m / V</div>
@@ -160,7 +159,6 @@
                 <div class="text-center mt-3 text-purple-300 font-bold" id="res-dens">-</div>
             </div>
 
-            <!-- Porozlik -->
             <div class="glass-panel p-6 rounded-2xl border border-yellow-500/20">
                 <h3 class="text-yellow-400 font-bold text-sm mb-4 uppercase">Porozlik</h3>
                 <div class="formula-card text-center text-yellow-300">n = (1 - ρb/ρs)·100%</div>
@@ -171,7 +169,6 @@
                 <div class="text-center mt-3 text-yellow-300 font-bold" id="res-poro">-</div>
             </div>
 
-            <!-- Termal deformatsiya -->
             <div class="glass-panel p-6 rounded-2xl border border-red-500/20">
                 <h3 class="text-red-400 font-bold text-sm mb-4 uppercase">Termal deformatsiya</h3>
                 <div class="formula-card text-center text-red-300">ε = α·ΔT</div>
@@ -182,7 +179,6 @@
                 <div class="text-center mt-3 text-red-300 font-bold" id="res-strain">-</div>
             </div>
 
-            <!-- UCS degradatsiyasi -->
             <div class="glass-panel p-6 rounded-2xl border border-green-500/20">
                 <h3 class="text-green-400 font-bold text-sm mb-4 uppercase">UCS degradatsiyasi</h3>
                 <div class="formula-card text-center text-green-300">σ(T)=σ0·e^(-βT)</div>
@@ -226,7 +222,7 @@
             <p class="text-[10px] text-slate-500 mt-2">* Δm qiymatlari foizda ifodalangan. "-" belgisi ma'lumot mavjud emasligini bildiradi.</p>
         </div>
 
-        <!-- AI bo'limi (Regressiya + Neyron tarmoq + Hisobot) -->
+        <!-- AI bo'limi -->
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div class="glass-panel p-6 rounded-2xl border-pink-500/30 col-span-2">
                 <h3 class="text-pink-400 font-bold text-sm uppercase mb-4">AI Bashorat Modeli</h3>
@@ -251,8 +247,8 @@
             </div>
 
             <div class="glass-panel p-6 rounded-2xl border-green-500/20">
-                <h3 class="text-green-400 font-bold text-sm uppercase mb-4">✨ AI Ilmiy Hisobot</h3>
-                <p class="text-[10px] text-slate-400 mb-4">Gemini barcha joriy tajriba natijalari asosida professional ilmiy xulosa generatsiya qiladi yoki Word formatida to'liq hisobot yuklab olinadi.</p>
+                <h3 class="text-green-400 font-bold text-sm uppercase mb-4">✨ Hisobot</h3>
+                <p class="text-[10px] text-slate-400 mb-4">AI tahlili yoki APA manbali Word hujjati yuklab olish.</p>
                 <button onclick="generateFullReport()" id="report-gen-btn" class="w-full bg-green-600/20 hover:bg-green-600/40 text-green-400 py-3 rounded-xl font-bold text-xs uppercase transition-all border border-green-500/30 flex items-center justify-center gap-2">
                    ✨ Gemini Hisoboti
                 </button>
@@ -262,7 +258,7 @@
             </div>
         </div>
 
-        <!-- Ilmiy-analitik xulosa (AI tomonidan to'ldiriladi) -->
+        <!-- Ilmiy xulosa -->
         <div class="glass-panel p-8 rounded-2xl border border-indigo-500/30 conclusion-section mt-6">
             <h3 class="text-white font-black text-xl mb-6 uppercase tracking-wider flex items-center gap-3">
                 <span class="w-8 h-8 bg-indigo-500 rounded-full flex items-center justify-center text-sm italic">Σ</span>
@@ -276,9 +272,9 @@
 
     <script>
         // ---------- KONFIGURATSIYA ----------
-        const apiKey = ""; // O'zingizning Gemini API kalitingizni kiriting
+        // O'zingizning Gemini API kalitingizni kiriting. Bo'sh qoldirsangiz, AI funksiyalari ogohlantirish beradi.
+        const apiKey = ""; 
         
-        // Ma'lumotlar to'plami
         const allDatasets = [
             { label: 'Ohaktosh UCS-1', data: [{x: 718, y: 25}, {x: 705, y: 100}, {x: 693, y: 500}], baseColor: 0 },
             { label: 'Ohaktosh UCS-2', data: [{x: 464, y: 25}, {x: 456, y: 100}, {x: 409, y: 1000}], baseColor: 40 },
@@ -292,9 +288,8 @@
 
         let currentTab = 'ucs';
         let nnModel = null;
-        let lastAiResponse = ""; // AI tomonidan yaratilgan so'nggi xulosa
+        let lastAiResponse = "";
 
-        // Chart.js
         const ctx = document.getElementById('mainChart').getContext('2d');
         const mainChart = new Chart(ctx, {
             type: 'scatter',
@@ -309,7 +304,7 @@
             }
         });
 
-        // ---------- GEMINI API YORDAMCHI FUNKSIYALARI ----------
+        // ---------- GEMINI API YORDAMCHI ----------
         async function fetchGemini(prompt, systemPrompt = "Siz professional geofizika muhandisi va laboratoriya mutaxassisiz.") {
             if (!apiKey) {
                 alert("Iltimos, kodga o'zingizning Gemini API kalitingizni kiriting.");
@@ -320,7 +315,6 @@
                 contents: [{ parts: [{ text: prompt }] }],
                 systemInstruction: { parts: [{ text: systemPrompt }] }
             };
-
             let delay = 1000;
             for (let i = 0; i < 5; i++) {
                 try {
@@ -350,7 +344,6 @@
                     speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Puck" } } }
                 }
             };
-
             try {
                 const response = await fetch(url, {
                     method: 'POST',
@@ -372,9 +365,7 @@
             for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
             
             const wavHeader = new Uint8Array(44);
-            const sampleRate = 24000;
-            const numChannels = 1;
-            const bitsPerSample = 16;
+            const sampleRate = 24000, numChannels = 1, bitsPerSample = 16;
             const blockAlign = numChannels * bitsPerSample / 8;
             const byteRate = sampleRate * blockAlign;
             const dataSize = bytes.length;
@@ -393,33 +384,26 @@
             const combined = new Uint8Array(wavHeader.length + bytes.length);
             combined.set(wavHeader);
             combined.set(bytes, wavHeader.length);
-
             const blob = new Blob([combined], { type: 'audio/wav' });
-            const audio = new Audio(URL.createObjectURL(blob));
-            audio.play();
+            new Audio(URL.createObjectURL(blob)).play();
         }
 
-        // ---------- AI FUNKSIYALARI (Gemini) ----------
+        // ---------- AI FUNKSIYALARI ----------
         async function getAiInsight() {
             const insightEl = document.getElementById('ai-insight-content');
             const btn = document.getElementById('ai-insight-btn');
             const rho = document.getElementById('rho-display').innerText;
             const m = document.getElementById('m-val').innerText;
             const v = document.getElementById('v-val').innerText;
-
             insightEl.classList.add('ai-loading');
             btn.disabled = true;
-
-            const prompt = `Zichlik simulyatsiyasi ma'lumotlari: Massa=${m}, Hajm=${v}, Zichlik=${rho}. 
-            Ushbu zichlikdagi tog' jinsi (masalan, ohaktosh yoki qumtosh) yuqori haroratda o'zini qanday tutishi mumkin? 
-            Qisqa (2-3 jumla) va ilmiy javob bering.`;
-
+            const prompt = `Zichlik simulyatsiyasi ma'lumotlari: Massa=${m}, Hajm=${v}, Zichlik=${rho}. Ushbu zichlikdagi tog' jinsi yuqori haroratda qanday tutishi haqida qisqa ilmiy fikr bildiring.`;
             try {
                 const response = await fetchGemini(prompt);
                 insightEl.innerText = response;
                 lastAiResponse = response;
             } catch (e) {
-                insightEl.innerText = "Aloqa uzildi yoki API kaliti noto'g'ri.";
+                insightEl.innerText = "API kaliti mavjud emas yoki xato. Iltimos, tekshiring.";
             } finally {
                 insightEl.classList.remove('ai-loading');
                 btn.disabled = false;
@@ -429,24 +413,15 @@
         async function analyzeGraphWithGemini() {
             const concEl = document.getElementById('conclusion-text');
             concEl.innerHTML = `<div class="ai-loading text-indigo-400">Gemini grafik ma'lumotlarini o'rganmoqda...</div>`;
-            
-            const activeData = mainChart.data.datasets.map(d => ({
-                label: d.label,
-                points: d.data
-            }));
-
-            const prompt = `Mana laboratoriya natijalari: ${JSON.stringify(activeData)}. 
-            Harorat ko'tarilishi bilan massa yo'qotilishi o'rtasidagi bog'liqlikni tahlil qiling. 
-            Natijalarga ko'ra tog' jinsining strukturaviy o'zgarishlari haqida batafsil o'zbek tilida ilmiy xulosa yozing. 
-            Xulosa kamida 3 ta paragrafdan iborat bo'lsin.`;
-
+            const activeData = mainChart.data.datasets.map(d => ({ label: d.label, points: d.data }));
+            const prompt = `Laboratoriya natijalari: ${JSON.stringify(activeData)}. Harorat ko'tarilishi bilan massa yo'qotilishi o'rtasidagi bog'liqlikni tahlil qiling va o'zbek tilida kamida 3 paragraf ilmiy xulosa yozing.`;
             try {
                 const response = await fetchGemini(prompt);
                 concEl.innerHTML = response.split('\n').map(p => p ? `<p>${p}</p>` : '').join('');
                 lastAiResponse = response;
                 document.getElementById('voice-btn').classList.remove('hidden');
             } catch (e) {
-                concEl.innerHTML = `<p class="text-red-400">Tahlil jarayonida xatolik yuz berdi. API kalitini tekshiring.</p>`;
+                concEl.innerHTML = `<p class="text-red-400">Tahlil uchun API kaliti kerak. Iltimos, kodga kalitni kiriting.</p>`;
             }
         }
 
@@ -455,20 +430,16 @@
             const originalText = btn.innerHTML;
             btn.innerHTML = "Tayyorlanmoqda...";
             btn.disabled = true;
-            
-            const prompt = `Ushbu laboratoriya uchun yakuniy hisobot sarlavhalari va muhim nuqtalarini generatsiya qiling. 
-            Jadvallar va grafiklar asosida termik barqarorlik koeffitsientini taxmin qiling. O'zbek tilida professional formatda bo'lsin.`;
-
+            const prompt = `Laboratoriya natijalari asosida qisqacha hisobot tayyorlang. O'zbek tilida.`;
             try {
                 const response = await fetchGemini(prompt);
                 const blob = new Blob([response], {type: 'text/plain'});
-                const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
-                a.href = url;
-                a.download = "Gemini_GeoLab_Report.txt";
+                a.href = URL.createObjectURL(blob);
+                a.download = "Gemini_Hisobot.txt";
                 a.click();
             } catch (e) {
-                alert("Hisobot yaratishda xatolik.");
+                alert("Hisobot yaratish uchun API kaliti kerak.");
             } finally {
                 btn.innerHTML = originalText;
                 btn.disabled = false;
@@ -476,15 +447,11 @@
         }
 
         function playAiVoice() {
-            if (lastAiResponse) {
-                const shortText = lastAiResponse.substring(0, 300);
-                fetchTts(shortText);
-            } else {
-                alert("Avval AI tahlilini ishga tushiring.");
-            }
+            if (lastAiResponse) fetchTts(lastAiResponse.substring(0, 300));
+            else alert("Avval AI tahlilini ishga tushiring.");
         }
 
-        // ---------- WORD EKSPORTI (APA manbali) ----------
+        // ---------- WORD EKSPORTI (APA) ----------
         async function downloadWordReport() {
             const canvas = document.getElementById('mainChart');
             const chartImage = canvas.toDataURL('image/png');
@@ -494,124 +461,70 @@
             const now = new Date().toLocaleString('uz-UZ');
             
             const references = `
-                <h3 style="color:#2c3e50; margin-top:30px;">Adabiyotlar (APA 7)</h3>
-                <ul style="font-size:12px; color:#2c3e50;">
-                    <li>ASTM International. (2020). <i>Standard Test Method for Compressive Strength of Intact Rock Core Specimens</i> (ASTM D7012-14e1).</li>
-                    <li>Bieniawski, Z. T. (1989). <i>Engineering Rock Mass Classifications</i>. John Wiley & Sons.</li>
-                    <li>Hoek, E., & Brown, E. T. (1997). Practical estimates of rock mass strength. <i>International Journal of Rock Mechanics and Mining Sciences</i>, 34(8), 1165–1186.</li>
-                    <li>Jaeger, J. C., Cook, N. G. W., & Zimmerman, R. W. (2007). <i>Fundamentals of Rock Mechanics</i> (4th ed.). Blackwell Publishing.</li>
-                    <li>Ulusay, R., & Hudson, J. A. (Eds.). (2007). <i>The Complete ISRM Suggested Methods for Rock Characterization, Testing and Monitoring: 1974–2006</i>. ISRM Turkish National Group.</li>
-                    <li>Zhang, L. (2016). <i>Engineering Properties of Rocks</i> (2nd ed.). Butterworth-Heinemann.</li>
+                <h3>Adabiyotlar (APA 7)</h3>
+                <ul style="font-size:12px;">
+                    <li>ASTM D7012-14e1. (2020). Standard Test Method for Compressive Strength of Intact Rock Core Specimens.</li>
+                    <li>Hoek, E., & Brown, E. T. (1997). Practical estimates of rock mass strength. <i>Int. J. Rock Mech. Min. Sci.</i>, 34(8), 1165–1186.</li>
+                    <li>Ulusay, R., & Hudson, J. A. (2007). <i>The Complete ISRM Suggested Methods for Rock Characterization</i>. ISRM.</li>
                 </ul>
-            `;
-            
-            const formulas = `
-                <h3 style="color:#2c3e50;">Asosiy formulalar</h3>
-                <p>Zichlik: ρ = m / V &nbsp;&nbsp;|&nbsp;&nbsp; Porozlik: n = (1 - ρ<sub>b</sub>/ρ<sub>s</sub>)·100%</p>
-                <p>Termal deformatsiya: ε = α·ΔT &nbsp;&nbsp;|&nbsp;&nbsp; UCS degradatsiyasi: σ(T) = σ<sub>0</sub>·e<sup>(-βT)</sup></p>
-                <p>Massa yo'qotilishi: Δm = (m<sub>0</sub> - m<sub>T</sub>) / m<sub>0</sub> × 100%</p>
-                <p><strong>Chiziqli regressiya (Δm – UCS):</strong> ${regressionText}</p>
             `;
             
             const fullHtml = `
                 <!DOCTYPE html>
-                <html>
-                <head>
-                    <meta charset="UTF-8">
-                    <title>Geo-Lab Hisoboti - ${now}</title>
-                    <style>
-                        body { font-family: 'Calibri', sans-serif; margin: 2cm; color: #1e293b; }
-                        h1 { color: #1e3a8a; border-bottom: 2px solid #3b82f6; padding-bottom: 8px; }
-                        h2 { color: #334155; margin-top: 30px; }
-                        table { border-collapse: collapse; width: 100%; margin: 20px 0; }
-                        th, td { border: 1px solid #94a3b8; padding: 8px; text-align: center; }
-                        th { background: #1e293b; color: white; }
-                        img { max-width: 100%; border: 1px solid #cbd5e1; border-radius: 8px; margin: 20px 0; }
-                        .footer { margin-top: 40px; font-size: 10px; color: #64748b; text-align: center; }
-                    </style>
-                </head>
+                <html><head><meta charset="UTF-8"><title>Geo-Lab Hisoboti</title>
+                <style>body { font-family: Calibri; margin:2cm; } table { border-collapse: collapse; } th,td { border:1px solid #333; padding:6px; }</style></head>
                 <body>
                     <h1>Geo-Lab Analitik Hisoboti</h1>
-                    <p><strong>Yaratilgan sana:</strong> ${now}</p>
-                    
-                    <h2>1. Massa – Harorat grafigi</h2>
-                    <img src="${chartImage}" alt="Grafik" />
-                    
-                    <h2>2. Massa yo'qotilishi (Δm) jadvali</h2>
+                    <p><strong>Sana:</strong> ${now}</p>
+                    <h2>Grafik</h2>
+                    <img src="${chartImage}" style="max-width:100%;">
+                    <h2>Massa yo'qotilishi (Δm) jadvali</h2>
                     ${tableHtml}
-                    
-                    <h2>3. Formulalar va regressiya</h2>
-                    ${formulas}
-                    
-                    <h2>4. Ilmiy xulosa</h2>
-                    <div style="background:#f8fafc; padding:15px; border-left:4px solid #3b82f6;">
-                        ${conclusionHtml}
-                    </div>
-                    
+                    <h2>Regressiya</h2>
+                    <p>${regressionText}</p>
+                    <h2>Ilmiy xulosa</h2>
+                    <div>${conclusionHtml}</div>
                     ${references}
-                    
-                    <div class="footer">Geo-Lab AI – ${now}</div>
-                </body>
-                </html>
+                </body></html>
             `;
             
             const blob = new Blob([fullHtml], { type: 'application/msword' });
-            const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
-            a.href = url;
+            a.href = URL.createObjectURL(blob);
             a.download = `GeoLab_Hisobot_${new Date().toISOString().slice(0,10)}.doc`;
-            document.body.appendChild(a);
             a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
         }
 
-        // ---------- Δm JADVALI ----------
+        // ---------- Δm jadvali ----------
         function renderDeltaTable() {
             const tbody = document.getElementById('delta-table-body');
             tbody.innerHTML = '';
             allDatasets.forEach(ds => {
                 const row = document.createElement('tr');
-                const nameCell = document.createElement('td');
-                nameCell.className = 'text-left font-medium text-slate-300';
-                nameCell.innerText = ds.label;
-                row.appendChild(nameCell);
-                
+                const nameCell = document.createElement('td'); nameCell.innerText = ds.label; row.appendChild(nameCell);
                 const point25 = ds.data.find(p => p.y === 25);
                 const m0 = point25 ? point25.x : null;
-                
-                const m0Cell = document.createElement('td');
-                m0Cell.innerText = m0 !== null ? m0.toFixed(1) : '-';
-                m0Cell.className = 'text-slate-400';
-                row.appendChild(m0Cell);
-                
+                const m0Cell = document.createElement('td'); m0Cell.innerText = m0 ? m0.toFixed(1) : '-'; row.appendChild(m0Cell);
                 [100, 500, 1000].forEach(T => {
                     const cell = document.createElement('td');
                     const pointT = ds.data.find(p => p.y === T);
-                    if (m0 !== null && pointT) {
-                        const mT = pointT.x;
-                        const delta = ((m0 - mT) / m0) * 100;
+                    if (m0 && pointT) {
+                        const delta = ((m0 - pointT.x) / m0) * 100;
                         cell.innerText = delta.toFixed(2) + '%';
-                        const intensity = Math.min(delta / 20, 1);
-                        cell.style.color = `hsl(${0}, 80%, ${60 - intensity*20}%)`;
-                        cell.style.fontWeight = 'bold';
-                    } else {
-                        cell.innerText = '-';
-                        cell.style.color = '#64748b';
-                    }
+                        cell.style.color = `hsl(0, 80%, ${60 - Math.min(delta/20,1)*20}%)`;
+                    } else { cell.innerText = '-'; }
                     row.appendChild(cell);
                 });
                 tbody.appendChild(row);
             });
         }
 
-        // ---------- FILTR VA GRAFIK ----------
+        // ---------- TAB va FILTR ----------
         function switchTab(tab) {
             currentTab = tab;
             document.getElementById('tab-ucs').className = tab === 'ucs' ? "flex-1 py-2 text-[10px] font-bold tab-active" : "flex-1 py-2 text-[10px] font-bold text-slate-500";
             document.getElementById('tab-brazil').className = tab === 'brazil' ? "flex-1 py-2 text-[10px] font-bold tab-active" : "flex-1 py-2 text-[10px] font-bold text-slate-500";
-            renderCheckboxes();
-            updateChartDisplay();
+            renderCheckboxes(); updateChartDisplay();
         }
 
         function renderCheckboxes() {
@@ -621,8 +534,8 @@
             const end = currentTab === 'ucs' ? 4 : 8;
             for(let i = start; i < end; i++) {
                 const div = document.createElement('div');
-                div.className = "flex items-center gap-2 p-2 bg-slate-800/30 rounded border border-slate-700 cursor-pointer hover:bg-slate-700/50 transition-all";
-                div.innerHTML = `<input type="checkbox" checked onchange="updateChartDisplay()" data-index="${i}" class="w-3 h-3 accent-indigo-500"><span class="text-[10px] text-slate-300 font-medium">${allDatasets[i].label}</span>`;
+                div.className = "flex items-center gap-2 p-2 bg-slate-800/30 rounded border border-slate-700 cursor-pointer hover:bg-slate-700/50";
+                div.innerHTML = `<input type="checkbox" checked onchange="updateChartDisplay()" data-index="${i}" class="w-3 h-3 accent-indigo-500"><span class="text-[10px] text-slate-300">${allDatasets[i].label}</span>`;
                 div.onclick = (e) => { if(e.target.tagName !== 'INPUT') { const cb = div.querySelector('input'); cb.checked = !cb.checked; updateChartDisplay(); } };
                 container.appendChild(div);
             }
@@ -630,25 +543,16 @@
 
         function updateChartDisplay() {
             const activeDatasets = [];
-            const gallery = document.getElementById('sample-gallery');
-            gallery.innerHTML = '';
             document.querySelectorAll('#checkbox-container input').forEach(cb => {
                 if(cb.checked) {
                     const idx = cb.dataset.index;
-                    const dsData = allDatasets[idx];
+                    const ds = allDatasets[idx];
                     activeDatasets.push({
-                        label: dsData.label,
-                        data: dsData.data,
-                        showLine: true,
-                        borderColor: `hsl(${dsData.baseColor}, 70%, 50%)`,
-                        backgroundColor: `hsl(${dsData.baseColor}, 70%, 50%, 0.5)`,
-                        pointRadius: 6,
-                        tension: 0.4
+                        label: ds.label, data: ds.data, showLine: true,
+                        borderColor: `hsl(${ds.baseColor}, 70%, 50%)`,
+                        backgroundColor: `hsl(${ds.baseColor}, 70%, 50%, 0.5)`,
+                        pointRadius: 6, tension: 0.4
                     });
-                    const thumb = document.createElement('div');
-                    thumb.className = "sample-img-container h-12";
-                    thumb.innerHTML = `<div class="text-[8px] text-slate-500 uppercase text-center">${dsData.label.split(' ')[0]}</div>`;
-                    gallery.appendChild(thumb);
                 }
             });
             mainChart.data.datasets = activeDatasets;
@@ -656,7 +560,7 @@
             calculateRegression();
         }
 
-        // ---------- ZICHLIK SIMULYATORI ----------
+        // ---------- ZICHLIK ----------
         function updateDensitySim() {
             const m = parseFloat(document.getElementById('m-slider').value);
             const v = parseFloat(document.getElementById('v-slider').value);
@@ -664,101 +568,70 @@
             document.getElementById('m-val').innerText = m.toFixed(1) + " kg";
             document.getElementById('v-val').innerText = v.toFixed(1) + " L";
             document.getElementById('rho-display').innerText = rho.toFixed(2) + " kg/L";
-            const heightPercent = (v / 20) * 100;
-            document.getElementById('water-level').style.height = heightPercent + "%";
-            const bubblesContainer = document.getElementById('bubbles-container');
-            bubblesContainer.innerHTML = '';
-            const bubbleCount = Math.floor(rho * 10);
-            for(let i = 0; i < bubbleCount; i++) {
-                const b = document.createElement('div');
-                b.className = 'bubble';
-                b.style.left = Math.random() * 100 + "%";
-                b.style.width = b.style.height = (Math.random() * 6 + 2) + "px";
-                b.style.animationDelay = Math.random() * 2 + "s";
-                bubblesContainer.appendChild(b);
-            }
+            document.getElementById('water-level').style.height = (v / 20 * 100) + "%";
         }
 
         // ---------- KALKULYATORLAR ----------
         function calculateDensityExt() {
             const m = parseFloat(document.getElementById('dens-m').value) || 0;
             const v = parseFloat(document.getElementById('dens-v').value) || 0;
-            document.getElementById('res-dens').innerText = v > 0 ? (m / v).toFixed(3) + " g/cm³" : '-';
+            document.getElementById('res-dens').innerText = v>0 ? (m/v).toFixed(3)+" g/cm³" : '-';
         }
         function calculatePorosity() {
             const rb = parseFloat(document.getElementById('rho-b').value) || 0;
             const rs = parseFloat(document.getElementById('rho-s').value) || 0;
-            document.getElementById('res-poro').innerText = rs > 0 ? ((1 - rb / rs) * 100).toFixed(2) + " %" : '-';
+            document.getElementById('res-poro').innerText = rs>0 ? ((1 - rb/rs)*100).toFixed(2)+" %" : '-';
         }
         function calculateThermalStrain() {
-            const alpha = parseFloat(document.getElementById('alpha').value) || 0;
-            const dT = parseFloat(document.getElementById('deltaT').value) || 0;
-            document.getElementById('res-strain').innerText = (alpha * dT).toExponential(3);
+            const a = parseFloat(document.getElementById('alpha').value)||0, d=parseFloat(document.getElementById('deltaT').value)||0;
+            document.getElementById('res-strain').innerText = (a*d).toExponential(3);
         }
         function calculateDegradation() {
-            const sig0 = parseFloat(document.getElementById('sig0').value) || 0;
-            const beta = parseFloat(document.getElementById('beta').value) || 0;
-            const T = parseFloat(document.getElementById('temp').value) || 0;
-            document.getElementById('res-deg').innerText = (sig0 * Math.exp(-beta * T)).toFixed(2) + " MPa";
+            const s = parseFloat(document.getElementById('sig0').value)||0, b=parseFloat(document.getElementById('beta').value)||0, t=parseFloat(document.getElementById('temp').value)||0;
+            document.getElementById('res-deg').innerText = (s*Math.exp(-b*t)).toFixed(2)+" MPa";
         }
 
-        // ---------- REGRESSIYA VA NEYRON TARMOQ ----------
+        // ---------- REGRESSIYA & NN ----------
         function calculateRegression() {
-            let x = [], y = [];
+            let x=[], y=[];
             allDatasets.slice(0,4).forEach(ds => {
                 const m0 = ds.data[0].x;
-                ds.data.forEach(p => {
-                    if(p.y !== 25) {
-                        let dm = ((m0 - p.x)/m0)*100;
-                        x.push(dm);
-                        y.push(100 - dm * 5);
-                    }
-                });
+                ds.data.forEach(p => { if(p.y!==25) { let dm=((m0-p.x)/m0)*100; x.push(dm); y.push(100-dm*5); } });
             });
-            if(x.length < 2) return;
-            let n = x.length, sumX = x.reduce((a,b)=>a+b,0), sumY = y.reduce((a,b)=>a+b,0);
-            let sumXY = x.reduce((a,b,i)=>a+b*y[i],0), sumXX = x.reduce((a,b)=>a+b*b,0);
-            let slope = (n*sumXY - sumX*sumY) / (n*sumXX - sumX*sumX);
-            let intercept = (sumY - slope*sumX) / n;
+            if(x.length<2) return;
+            let n=x.length, sx=x.reduce((a,b)=>a+b), sy=y.reduce((a,b)=>a+b);
+            let sxy=x.reduce((a,b,i)=>a+b*y[i],0), sxx=x.reduce((a,b)=>a+b*b);
+            let slope=(n*sxy-sx*sy)/(n*sxx-sx*sx), intercept=(sy-slope*sx)/n;
             document.getElementById("regression-result").innerText = `σc = ${intercept.toFixed(2)} - ${Math.abs(slope).toFixed(2)}·Δm`;
         }
 
         async function trainModel() {
-            const statusEl = document.getElementById('ai-status');
-            statusEl.innerText = "O'qitilmoqda...";
-            let x = [], y = [];
+            let x=[], y=[];
             allDatasets.slice(0,4).forEach(ds => {
                 const m0 = ds.data[0].x;
-                ds.data.forEach(p => {
-                    if(p.y !== 25) {
-                        let dm = ((m0 - p.x)/m0)*100;
-                        x.push(dm); y.push(100 - dm * 5);
-                    }
-                });
+                ds.data.forEach(p => { if(p.y!==25) { let dm=((m0-p.x)/m0)*100; x.push(dm); y.push(100-dm*5); } });
             });
-            const xs = tf.tensor2d(x, [x.length, 1]);
-            const ys = tf.tensor2d(y, [y.length, 1]);
+            const xs = tf.tensor2d(x, [x.length,1]), ys = tf.tensor2d(y, [y.length,1]);
             nnModel = tf.sequential();
-            nnModel.add(tf.layers.dense({units: 8, inputShape: [1], activation: 'relu'}));
-            nnModel.add(tf.layers.dense({units: 1}));
-            nnModel.compile({ optimizer: tf.train.adam(0.01), loss: 'meanSquaredError' });
-            await nnModel.fit(xs, ys, { epochs: 50 });
-            statusEl.innerText = "Model tayyor ✅";
+            nnModel.add(tf.layers.dense({units:8, inputShape:[1], activation:'relu'}));
+            nnModel.add(tf.layers.dense({units:1}));
+            nnModel.compile({optimizer: tf.train.adam(0.01), loss:'meanSquaredError'});
+            await nnModel.fit(xs, ys, {epochs:50});
+            document.getElementById('ai-status').innerText = "Model tayyor ✅";
         }
 
         async function predictWithNN() {
-            const input = parseFloat(document.getElementById('predict-temp').value) || 0;
-            const resEl = document.getElementById('prediction-result');
-            if (!nnModel) { resEl.innerText = "Avval modelni o'rgating"; return; }
-            let dm = input * 0.08;
-            const pred = nnModel.predict(tf.tensor2d([dm], [1,1]));
-            const value = (await pred.data())[0];
-            resEl.innerText = value.toFixed(2) + " MPa (AI)";
+            if(!nnModel) { document.getElementById('prediction-result').innerText = "Avval o'rgating"; return; }
+            const t = parseFloat(document.getElementById('predict-temp').value)||0;
+            let dm = t*0.08;
+            const pred = nnModel.predict(tf.tensor2d([dm],[1,1]));
+            const val = (await pred.data())[0];
+            document.getElementById('prediction-result').innerText = val.toFixed(2)+" MPa";
         }
 
-        // ---------- ISHGA TUSHIRISH ----------
-        window.onload = () => { 
-            switchTab('ucs'); 
+        // ---------- START ----------
+        window.onload = () => {
+            switchTab('ucs');
             updateDensitySim();
             renderDeltaTable();
         };
