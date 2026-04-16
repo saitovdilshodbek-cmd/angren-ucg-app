@@ -667,3 +667,20 @@ html_code = """
 """
 
 st.components.v1.html(html_code, height=1200, scrolling=True)
+import streamlit as st
+
+st.set_page_config(page_title="Geo-Lab AI", layout="wide")
+
+# HTML faylni o'qib ko'rsatish
+try:
+    with open("index.html", "r", encoding="utf-8") as f:
+        html_code = f.read()
+    st.components.v1.html(html_code, height=1200, scrolling=True)
+except FileNotFoundError:
+    st.error("❌ 'index.html' topilmadi.")
+    st.code("""
+Loyiha tuzilmasi:
+angren-ucg-app/
+├── app.py
+└── index.html
+    """)
