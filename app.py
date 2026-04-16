@@ -1,9 +1,27 @@
+# ==================== Paketlarni avtomatik o'rnatish ====================
+import sys
+import subprocess
+import importlib
+
+def install_package(package_name):
+    """Agar paket topilmasa, uni pip orqali o'rnatadi."""
+    try:
+        importlib.import_module(package_name)
+    except ImportError:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", package_name])
+
+# Kerakli paketlar ro'yxati
+required = ["streamlit", "numpy", "Pillow"]
+for pkg in required:
+    install_package(pkg)
+
+# ==================== Asosiy ilova ====================
 import streamlit as st
 import numpy as np
 from PIL import Image
 import time
 
-# Agar haqiqiy PyTorch modelingiz bo'lsa, quyidagi importlarni faollashtiring
+# Agar haqiqiy PyTorch modelingiz bo'lsa, izohdan chiqaring
 # import torch
 # import torch.nn as nn
 
