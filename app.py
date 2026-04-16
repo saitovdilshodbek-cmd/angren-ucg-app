@@ -638,3 +638,13 @@
     </script>
 </body>
 </html>
+import streamlit as st
+
+st.set_page_config(layout="wide", page_title="Geo-Lab AI")
+st.title("Geo-Lab AI Dashboard")
+
+# HTML faylni o'qib, brauzerda ko'rsatamiz
+with open("index.html", "r", encoding="utf-8") as f:
+    html_code = f.read()
+
+st.components.v1.html(html_code, height=1200, scrolling=True)
