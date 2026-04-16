@@ -10,3 +10,10 @@ requests
 numpy
 pandas
 streamlit
+
+pip 
+install 
+fastapi 
+uvicorn
+opencv-python
+pillow numpy
