@@ -12,5 +12,6 @@ except FileNotFoundError:
     st.code("""
 angren-ucg-app/
 ├── app.py
-└── index.html
+├── index.html
+└── requirements.txt
     """)
