@@ -20,7 +20,8 @@ html_code = """
         .delta-table th, .delta-table td { padding: 0.5rem; border: 1px solid #334155; text-align: center; }
         .delta-table th { background: #1e293b; color: #94a3b8; }
         input[type=number] { background: #1e293b; border: 1px solid #334155; color: white; padding: 0.5rem; border-radius: 0.5rem; width: 100%; }
-        .hidden-canvas { display: none; }
+        /* Yashirin canvaslar uchun */
+        .offscreen-canvas { position: absolute; left: -9999px; top: 0; width: 800px; height: 400px; }
     </style>
 </head>
 <body class="p-4 md:p-8">
@@ -91,8 +92,9 @@ html_code = """
             </div>
         </div>
 
-        <!-- Yashirin canvas (Brezilya grafigi) -->
-        <canvas id="brazilChartCanvas" width="800" height="400" class="hidden-canvas"></canvas>
+        <!-- Doimiy yashirin canvaslar (offscreen) -->
+        <canvas id="offscreenUcsCanvas" width="800" height="400" class="offscreen-canvas"></canvas>
+        <canvas id="offscreenBrazilCanvas" width="800" height="400" class="offscreen-canvas"></canvas>
 
         <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div class="glass-panel"><h3 class="text-purple-400 text-sm">Yoğunluk (ρ)</h3><div class="formula-card text-center">ρ = m / V</div><input type="number" id="dens-m" placeholder="m (g)" oninput="calcDens()"><input type="number" id="dens-v" placeholder="V (cm³)" oninput="calcDens()"><div id="res-dens" class="text-center text-purple-300 font-bold">-</div></div>
@@ -138,31 +140,38 @@ html_code = """
         ];
 
         let currentTab = 'ucs';
-        const canvas = document.getElementById('mainChart');
-        const ctx = canvas.getContext('2d');
-        const chart = new Chart(ctx, { 
-            type:'scatter', data:{datasets:[]}, options:{
-                scales:{ x:{title:{display:true,text:'Kütle (g)'}}, y:{title:{display:true,text:'Sıcaklık (°C)'}} }
-            }
-        });
+        
+        // Ana grafik
+        const mainCanvas = document.getElementById('mainChart');
+        const mainCtx = mainCanvas.getContext('2d');
+        const mainChart = new Chart(mainCtx, { type:'scatter', data:{datasets:[]}, options:{
+            scales:{ x:{title:{display:true,text:'Kütle (g)'}}, y:{title:{display:true,text:'Sıcaklık (°C)'}} }
+        }});
 
-        // Yashirin Brezilya grafigi
-        const brazilCanvas = document.getElementById('brazilChartCanvas');
-        const brazilCtx = brazilCanvas.getContext('2d');
-        const brazilChart = new Chart(brazilCtx, {
-            type:'scatter', data:{datasets:[]}, options:{
-                plugins:{title:{display:true,text:'Brezilya Testi'}},
-                scales:{ x:{title:{text:'Kütle (g)'}}, y:{title:{text:'Sıcaklık (°C)'}} }
-            }
-        });
+        // Offscreen grafikler
+        const offscreenUcsCanvas = document.getElementById('offscreenUcsCanvas');
+        const ucsCtx = offscreenUcsCanvas.getContext('2d');
+        const ucsChart = new Chart(ucsCtx, { type:'scatter', data:{datasets:[]}, options:{
+            plugins:{title:{display:true,text:'UCS Testi'}}, scales:{ x:{title:{text:'Kütle (g)'}},y:{title:{text:'Sıcaklık (°C)'}} }
+        }});
 
-        function initBrazilChart() {
-            const brazilDs = [];
-            allDatasets.slice(4).forEach(ds => {
-                brazilDs.push({ label: ds.label, data: ds.data, showLine: true,
-                    borderColor: `hsl(${ds.baseColor},70%,50%)`, backgroundColor: `hsl(${ds.baseColor},70%,50%,0.5)`, pointRadius:6, tension:0.4 });
+        const offscreenBrazilCanvas = document.getElementById('offscreenBrazilCanvas');
+        const brazilCtx = offscreenBrazilCanvas.getContext('2d');
+        const brazilChart = new Chart(brazilCtx, { type:'scatter', data:{datasets:[]}, options:{
+            plugins:{title:{display:true,text:'Brezilya Testi'}}, scales:{ x:{title:{text:'Kütle (g)'}},y:{title:{text:'Sıcaklık (°C)'}} }
+        }});
+
+        // Offscreen grafikleri doldur (tüm verilerle)
+        function initOffscreenCharts() {
+            const ucsDs = [], brazilDs = [];
+            allDatasets.forEach((ds, i) => {
+                const cds = { label: ds.label, data: ds.data, showLine: true,
+                    borderColor: `hsl(${ds.baseColor},70%,50%)`, backgroundColor: `hsl(${ds.baseColor},70%,50%,0.5)`, pointRadius:6, tension:0.4 };
+                if(i<4) ucsDs.push(cds); else brazilDs.push(cds);
             });
+            ucsChart.data.datasets = ucsDs;
             brazilChart.data.datasets = brazilDs;
+            ucsChart.update();
             brazilChart.update();
         }
 
@@ -210,7 +219,7 @@ html_code = """
             currentTab = tab;
             document.getElementById('tab-ucs').className = tab==='ucs'? 'flex-1 py-2 text-xs font-bold tab-active' : 'flex-1 py-2 text-xs font-bold text-slate-500';
             document.getElementById('tab-brazil').className = tab==='brazil'? 'flex-1 py-2 text-xs font-bold tab-active' : 'flex-1 py-2 text-xs font-bold text-slate-500';
-            renderCheckboxes(); updateChart();
+            renderCheckboxes(); updateMainChart();
         }
 
         function renderCheckboxes() {
@@ -219,12 +228,12 @@ html_code = """
             const start = currentTab==='ucs'?0:4, end = currentTab==='ucs'?4:8;
             for(let i=start; i<end; i++) {
                 const div = document.createElement('div'); div.className = "flex items-center gap-2 p-2 bg-slate-800/30 rounded";
-                div.innerHTML = `<input type="checkbox" checked onchange="updateChart()" data-index="${i}" class="accent-indigo-500"> <span class="text-xs">${allDatasets[i].label}</span>`;
+                div.innerHTML = `<input type="checkbox" checked onchange="updateMainChart()" data-index="${i}" class="accent-indigo-500"> <span class="text-xs">${allDatasets[i].label}</span>`;
                 cont.appendChild(div);
             }
         }
 
-        function updateChart() {
+        function updateMainChart() {
             const active = [];
             document.querySelectorAll('#checkbox-container input').forEach(cb => {
                 if(cb.checked) {
@@ -233,8 +242,8 @@ html_code = """
                         borderColor: `hsl(${ds.baseColor},70%,50%)`, backgroundColor: `hsl(${ds.baseColor},70%,50%,0.5)`, pointRadius:6, tension:0.4 });
                 }
             });
-            chart.data.datasets = active;
-            chart.update();
+            mainChart.data.datasets = active;
+            mainChart.update();
         }
 
         function updateDensitySim() {
@@ -252,15 +261,27 @@ html_code = """
         function calcDeg(){ const s=+document.getElementById('sig0').value||0, b=+document.getElementById('beta').value||0, t=+document.getElementById('temp').value||0; document.getElementById('res-deg').innerText = (s*Math.exp(-b*t)).toFixed(2)+' MPa'; }
 
         function downloadGraphsAsPNG() {
-            const linkMain = document.createElement('a'); linkMain.download = 'UCS_Grafik.png'; linkMain.href = canvas.toDataURL('image/png'); linkMain.click();
-            setTimeout(() => { const linkBrazil = document.createElement('a'); linkBrazil.download = 'Brezilya_Grafik.png'; linkBrazil.href = brazilCanvas.toDataURL('image/png'); linkBrazil.click(); }, 200);
+            const linkUcs = document.createElement('a'); linkUcs.download = 'UCS_Grafik.png'; linkUcs.href = offscreenUcsCanvas.toDataURL('image/png'); linkUcs.click();
+            setTimeout(() => { const linkBrazil = document.createElement('a'); linkBrazil.download = 'Brezilya_Grafik.png'; linkBrazil.href = offscreenBrazilCanvas.toDataURL('image/png'); linkBrazil.click(); }, 200);
         }
 
         async function downloadWordReport() {
-            chart.update(); brazilChart.update();
-            await new Promise(r => setTimeout(r, 300));
-            const mainImg = canvas.toDataURL('image/png');
-            const brazilImg = brazilCanvas.toDataURL('image/png');
+            // Offscreen grafikleri güncelle
+            ucsChart.update();
+            brazilChart.update();
+            
+            // Render için bekle (requestAnimationFrame ile)
+            await new Promise(resolve => requestAnimationFrame(resolve));
+            await new Promise(resolve => setTimeout(resolve, 200));
+            
+            const ucsImg = offscreenUcsCanvas.toDataURL('image/png');
+            const brazilImg = offscreenBrazilCanvas.toDataURL('image/png');
+            
+            if (ucsImg === 'data:,' || brazilImg === 'data:,') {
+                alert("Grafik oluşturulamadı. Lütfen sayfayı yenileyip tekrar deneyin.");
+                return;
+            }
+            
             const tableHtml = document.querySelector('.delta-table').outerHTML;
             const conclusion = document.getElementById('conclusion-text').innerHTML;
             const now = new Date().toLocaleString('tr-TR');
@@ -292,8 +313,8 @@ html_code = """
             <style>body{font-family:Calibri; margin:2cm;} table{border-collapse:collapse; width:100%;} th,td{border:1px solid #333; padding:8px;} img{max-width:100%;}</style>
             </head><body>
                 <h1>Geo-Lab Jeofizik ve Geomekanik Raporu</h1><p>${now}</p>
-                <h2>UCS Grafiği</h2><img src="${mainImg}">
-                <h2>Brezilya Grafiği</h2><img src="${brazilImg}">
+                <h2>UCS Grafiği</h2><img src="${ucsImg}" alt="UCS Grafiği">
+                <h2>Brezilya Grafiği</h2><img src="${brazilImg}" alt="Brezilya Grafiği">
                 <h2>Numune Özellikleri</h2><table><tr><th>Numune</th><th>Çap(mm)</th><th>Uzunluk(mm)</th><th>Hacim(cm³)</th><th>Yoğunluk(g/cm³)</th></tr>${sampleRows}</table>
                 <h2>Kütle Kaybı Tablosu</h2>${tableHtml}
                 <h2>Geomekanik Hesaplamalar (Hoek-Brown)</h2>
@@ -308,7 +329,14 @@ html_code = """
             document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(a.href);
         }
 
-        window.onload = () => { switchTab('ucs'); updateDensitySim(); renderDeltaTable(); initBrazilChart(); calcHoekBrown(); };
+        // Başlangıç
+        window.onload = () => { 
+            switchTab('ucs'); 
+            updateDensitySim(); 
+            renderDeltaTable(); 
+            initOffscreenCharts(); 
+            calcHoekBrown(); 
+        };
     </script>
 </body>
 </html>
