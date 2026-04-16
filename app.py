@@ -89,8 +89,8 @@ html_code = """
         <div class="glass-panel text-center">
             <h3 class="text-blue-400 font-bold text-sm uppercase mb-2">Akademik Rapor</h3>
             <button onclick="downloadWordReport()" class="bg-blue-600 hover:bg-blue-700 text-white py-3 px-8 rounded-xl font-bold">📄 Word (Grafikli, APA Kaynakçalı) İndir</button>
-            <p class="text-xs text-slate-400 mt-2">Grafik, tablo, numune detayları (çap/uzunluk/hacim/yoğunluk) ve APA 7</p>
-            <p class="text-[10px] text-amber-400 mt-2">⚠️ Grafik görünmezse, Word'de "Güvenlik Uyarısı"nı onaylayın veya LibreOffice ile açın.</p>
+            <button onclick="downloadGraphPNG()" class="bg-green-600 hover:bg-green-700 text-white py-3 px-8 rounded-xl font-bold ml-2">📥 Grafiği PNG indir</button>
+            <p class="text-xs text-slate-400 mt-2">Word'de grafik görünmezse, PNG dosyasını ekleyin.</p>
         </div>
 
         <div class="glass-panel">
@@ -194,13 +194,22 @@ html_code = """
         function calcStrain(){ const a=+document.getElementById('alpha').value||0, d=+document.getElementById('deltaT').value||0; document.getElementById('res-strain').innerText = (a*d).toExponential(3); }
         function calcDeg(){ const s=+document.getElementById('sig0').value||0, b=+document.getElementById('beta').value||0, t=+document.getElementById('temp').value||0; document.getElementById('res-deg').innerText = (s*Math.exp(-b*t)).toFixed(2)+' MPa'; }
 
-        async function downloadWordReport() {
-            // Grafiğin tamamen render edildiğinden emin ol
+        // Grafiği PNG olarak indir (ayrı dosya)
+        function downloadGraphPNG() {
             chart.update();
-            
-            // İki aşamalı bekleme
-            await new Promise(resolve => setTimeout(resolve, 150));
-            await new Promise(resolve => requestAnimationFrame(resolve));
+            setTimeout(() => {
+                const canvas = document.getElementById('mainChart');
+                const link = document.createElement('a');
+                link.download = 'GeoLab_Grafik.png';
+                link.href = canvas.toDataURL('image/png');
+                link.click();
+            }, 300);
+        }
+
+        async function downloadWordReport() {
+            chart.update();
+            // Uzun bekleme süresi
+            await new Promise(resolve => setTimeout(resolve, 500));
             
             const canvas = document.getElementById('mainChart');
             if (canvas.width === 0 || canvas.height === 0) {
@@ -208,8 +217,7 @@ html_code = """
                 return;
             }
             
-            // Yüksek kaliteli JPEG al
-            const chartImg = canvas.toDataURL('image/jpeg', 0.95);
+            const chartImg = canvas.toDataURL('image/png');
             const tableHtml = document.querySelector('.delta-table').outerHTML;
             const conclusion = document.getElementById('conclusion-text').innerHTML;
             const now = new Date().toLocaleString('tr-TR');
@@ -234,7 +242,7 @@ html_code = """
                 <p><strong>Oluşturulma:</strong> ${now}</p>
                 <h2>1. Kütle – Sıcaklık Grafiği</h2>
                 <img src="${chartImg}" alt="Kütle-Sıcaklık Grafiği" style="width:100%; max-width:800px; display:block; margin:10px 0;">
-                <p><em>Not: Grafik görünmezse lütfen Word'ün güvenlik ayarlarından "Dışarıdan eklenen resimleri engelleme" seçeneğini kapatın.</em></p>
+                <p><em>Not: Grafik görünmezse, lütfen "📥 Grafiği PNG indir" butonunu kullanarak resmi ekleyin.</em></p>
                 <h2>2. Numune Özellikleri ve Yoğunlukları (ρ = m / V)</h2>
                 <table>
                     <thead><tr><th>Numune</th><th>Çap (mm)</th><th>Uzunluk (mm)</th><th>Hacim (cm³)</th><th>Yoğunluk (g/cm³)</th></tr></thead>
