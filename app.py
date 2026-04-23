@@ -477,6 +477,16 @@ k_ratio       = st.sidebar.slider(t('stress_ratio'), 0.1, 2.0, 0.5)
 st.sidebar.subheader(t('tensile_params'))
 tensile_ratio = st.sidebar.slider(t('tensile_ratio'), 0.03, 0.15, 0.08)
 beta_thermal  = st.sidebar.number_input(t('thermal_decay'), value=0.0035, format="%.4f")
+st.sidebar.subheader("🔬 Termal koeffitsientlar (kalibrlangan)")
+beta_damage   = st.sidebar.number_input("β_damage (UCS yo'qolish)",
+                                         value=0.002, format="%.4f",
+                                         help="Shao et al. 2015 bo'yicha 0.0015–0.0035")
+beta_strength = st.sidebar.number_input("β_strength (Pillar redaktsiyasi)",
+                                         value=0.0025, format="%.4f",
+                                         help="Yang 2010 PhD: 0.002–0.003 ko'mir uchun")
+beta_tensile  = st.sidebar.number_input("β_tensile (Cho'zilish)",
+                                         value=0.0035, format="%.4f",
+                                         help="Tensile strength faster decay")
 
 st.sidebar.subheader(t('combustion'))
 burn_duration = st.sidebar.number_input(t('burn_duration'), value=40)
@@ -576,6 +586,9 @@ for i, (z0, z1) in enumerate(layer_bounds):
     grid_sigma_t0_manual[mask] = layer['sigma_t0_manual']
 
 if 'max_temp_map' not in st.session_state or st.session_state.max_temp_map.shape != grid_z.shape:
+   def thermal_damage(T, T0=100, k=None, mech_factor=0.1, stress_ratio=1.0):
+    if k is None: k = beta_damage
+    ...
     st.session_state.max_temp_map = np.ones_like(grid_z)*25
     st.session_state.last_obj_name = obj_name
 elif st.session_state.get('last_obj_name') != obj_name:
@@ -598,6 +611,7 @@ E_MODULUS, ALPHA_T_COEFF, CONSTRAINT_FACTOR = 5000.0, 1.0e-5, 0.7
 dT_dx = np.gradient(temp_2d, axis=1, edge_order=2)
 dT_dz = np.gradient(temp_2d, axis=0, edge_order=2)
 thermal_gradient = np.sqrt(dT_dx**2 + dT_dz**2)
+sigma_t_field = grid_sigma_t0_base * np.exp(-beta_tensile*(temp_2d-20))
 sigma_thermal = CONSTRAINT_FACTOR*(E_MODULUS*ALPHA_T_COEFF*delta_T)/(1-nu_poisson+EPS) + 0.3*thermal_gradient
 grid_sigma_h = k_ratio * grid_sigma_v - sigma_thermal
 sigma1_act = np.maximum(grid_sigma_v, grid_sigma_h)
@@ -701,6 +715,7 @@ if nn_model is not None and PT_AVAILABLE:
     try:
         collapse_pred = predict_nn(nn_model, temp_2d, sigma1_act, sigma3_act, grid_z)
     except:
+       strength_red = np.exp(-beta_strength*(avg_t_p-20))
         nn_model = None
 if nn_model is None or not PT_AVAILABLE:
     X_ai = np.column_stack([temp_2d.flatten(), sigma1_act.flatten(), sigma3_act.flatten(), grid_z.flatten()])
@@ -1459,6 +1474,7 @@ with tab_ai_orig:
                     st.progress((i+1)/int(ai_steps_2))
                 time.sleep(0.05)
             st.balloons()
+            ucs_t_dyn = ucs_0_r * np.exp(-beta_damage*(T_source_max-20))  # damage uchun
             final_fos = pillar_strength_pred[-1] if pillar_strength_pred else 0
             if final_fos < 10: st.error(f"🔴 Yakuniy FOS: {final_fos:.2f} — Xavfli zona!")
             elif final_fos <= 15: st.warning(f"🟡 Yakuniy FOS: {final_fos:.2f} — Noaniq holat")
