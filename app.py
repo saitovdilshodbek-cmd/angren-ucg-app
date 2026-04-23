@@ -25,7 +25,7 @@ import matplotlib.pyplot as plt
 import warnings
 warnings.filterwarnings('ignore')
 
-# =========================== PYTORCH IMPORT (xatolikka chidamli) ===========================
+# =========================== PYTORCH IMPORT ===========================
 try:
     import torch
     import torch.nn as nn
@@ -36,7 +36,7 @@ except ImportError as e:
     device = "cpu"
     st.sidebar.info(f"PyTorch yuklanmadi: {e}. Klassik ML ishlatiladi.")
 
-# =========================== GLOBAL SEED / LOGGING ===========================
+# =========================== SEED / LOGGING ===========================
 SEED_GLOBAL = 42
 np.random.seed(SEED_GLOBAL)
 import random
@@ -442,9 +442,9 @@ def t(key, **kwargs):
     return text.format(**kwargs) if kwargs else text
 
 EPS = 1e-12
-EPS_PA = 1e3  # kPa fizik ma'noli kichik son
+EPS_PA = 1e3
 
-# Til va sahifa sozlamalari
+# Sahifa konfiguratsiyasi
 if 'language' not in st.session_state:
     st.session_state.language = 'uz'
 
@@ -452,14 +452,14 @@ st.set_page_config(page_title=t('app_title'), layout="wide")
 st.title(t('app_title'))
 st.markdown(f"### {t('app_subtitle')}")
 
-# =========================== TILNI SOZLASH ===========================
+# Til tanlash
 LANGUAGES = {'uz': "🇺🇿 O'zbek", 'en': '🇬🇧 English', 'ru': '🇷🇺 Русский'}
 lang = st.sidebar.selectbox("Til / Language / Язык", options=list(LANGUAGES.keys()),
                             format_func=lambda x: LANGUAGES[x],
                             index=list(LANGUAGES.keys()).index(st.session_state.language))
 st.session_state.language = lang
 
-# =========================== QR KOD GENERATORI ===========================
+# QR kod
 st.sidebar.markdown("---")
 st.sidebar.subheader("📱 Mobil ilovaga o'tish")
 url = "https://angren-ucg-app-a7rxktm6usxqixabhaq576.streamlit.app/#ucg-termo-mexanik-dinamik-3-d-model"
@@ -477,7 +477,7 @@ def generate_qr(link):
 qr_img_bytes = generate_qr(url)
 st.sidebar.image(qr_img_bytes, caption="Scan QR: Angren UCG API", use_container_width=True)
 
-# =========================== MATEMATIK METODOLOGIYA ===========================
+# Matematik metodologiya
 st.sidebar.header(t('sidebar_header_params'))
 formula_opts = FORMULA_OPTIONS[st.session_state.language]
 formula_option = st.sidebar.selectbox(t('formula_show'), formula_opts)
@@ -518,7 +518,6 @@ k_ratio = st.sidebar.slider(t('stress_ratio'), 0.1, 2.0, 0.5)
 st.sidebar.subheader(t('tensile_params'))
 tensile_ratio = st.sidebar.slider(t('tensile_ratio'), 0.03, 0.15, 0.08)
 
-# Yangi termal koeffitsientlar (kalibrlangan)
 st.sidebar.subheader("🔬 Termal koeffitsientlar (kalibrlangan)")
 beta_damage = st.sidebar.number_input("β_damage (UCS yo'qolish)", value=0.002, format="%.4f",
                                        help="Shao et al. 2015 bo'yicha 0.0015–0.0035")
@@ -527,17 +526,14 @@ beta_strength = st.sidebar.number_input("β_strength (Pillar redaktsiyasi)", val
 beta_tensile = st.sidebar.number_input("β_tensile (Cho'zilish)", value=0.0035, format="%.4f",
                                         help="Tensile strength faster decay")
 
-# Eski beta_thermal ni olib tashlaymiz, endi ishlatilmaydi
-
 st.sidebar.subheader(t('combustion'))
-burn_duration = st.sidebar.number_input(t('burn_duration'), value=40,
-                                        min_value=1, max_value=500, step=1)
+burn_duration = st.sidebar.number_input(t('burn_duration'), value=40, min_value=1, max_value=500, step=1)
 T_source_max = st.sidebar.slider(t('max_temp'), 600, 1200, 1075)
 
 with st.sidebar.expander(t('timeline')):
     st.markdown(t('timeline_table'))
 
-# =========================== QATLAM MA'LUMOTLARI ===========================
+# Qatlam ma'lumotlari
 strata_colors = ['#87CEEB', '#F4A460', '#D3D3D3', '#F5DEB3', '#555555']
 layers_data = []
 total_depth = 0.0
@@ -571,7 +567,7 @@ if errors:
     for e in errors: st.error(e)
     st.stop()
 
-# =========================== KESHLANGAN HARORAT MAYDONI ===========================
+# =========================== HARORAT MAYDONI ===========================
 @st.cache_data(show_spinner=False, max_entries=20)
 def compute_temperature_field_moving(time_h: int, T_source_max: int, burn_duration: int,
                                      total_depth: float, source_z: float,
@@ -640,14 +636,13 @@ st.session_state.max_temp_map = np.maximum(st.session_state.max_temp_map, temp_2
 delta_T = temp_2d - 25.0
 
 def thermal_damage(T, T0=100, k=None, mech_factor=0.1, stress_ratio=1.0):
-    if k is None:
-        k = beta_damage
+    if k is None: k = beta_damage
     thermal = 1 - np.exp(-k * np.maximum(T - T0, 0))
     mech = mech_factor * stress_ratio
     return np.clip(thermal + mech, 0, 0.98)
 
-stress_ratio = grid_sigma_v / (grid_ucs + EPS)
-damage = thermal_damage(st.session_state.max_temp_map, stress_ratio=stress_ratio)
+stress_ratio_arr = grid_sigma_v / (grid_ucs + EPS)
+damage = thermal_damage(st.session_state.max_temp_map, stress_ratio=stress_ratio_arr)
 sigma_ci = grid_ucs * (1 - damage)
 
 E_MODULUS, ALPHA_T_COEFF, CONSTRAINT_FACTOR = 5000.0, 1.0e-5, 0.7
@@ -672,7 +667,6 @@ sigma_t_field_eff = sigma_t_field/(thermal_boost+EPS)
 tensile_failure = (sigma3_act <= -sigma_t_field_eff) & (delta_T>50) & (sigma1_act>sigma3_act)
 
 def hoek_brown_sigma1(sigma3, sigma_ci, mb, s, a):
-    """Hoek-Brown 2018 + tensile cutoff."""
     sigma_t = -s * sigma_ci / (mb + 1e-9)
     sigma3_safe = np.maximum(sigma3, sigma_t)
     sigma3_compr = np.maximum(sigma3_safe, 0.0)
@@ -702,18 +696,19 @@ sigma1_act *= void_factor
 sigma3_act *= void_factor
 sigma_ci *= void_factor
 
-# Ideal gaz qonuni asosida bosim va Darcy oqimi
-R_SPECIFIC_SYNGAS = 350.0  # J/(kg·K)
-RHO_GAS = 0.7              # kg/m³
+# Ideal gaz qonuni + Darcy
+R_SPECIFIC_SYNGAS = 350.0
+RHO_GAS = 0.7
 T_KELVIN = temp_2d + 273.15
-pressure_pa = RHO_GAS * R_SPECIFIC_SYNGAS * T_KELVIN   # Pa
-pressure = pressure_pa / 1e6                            # MPa
+pressure_pa = RHO_GAS * R_SPECIFIC_SYNGAS * T_KELVIN
+pressure = pressure_pa / 1e6
 dp_dx = np.gradient(pressure, x_axis, axis=1, edge_order=2)
 dp_dz = np.gradient(pressure, z_axis, axis=0, edge_order=2)
-mu_gas = 4.0e-5  # Pa·s
+mu_gas = 4.0e-5
 vx = -perm * dp_dx * 1e6 / mu_gas
 vz = -perm * dp_dz * 1e6 / mu_gas
 gas_velocity = np.sqrt(vx**2+vz**2)
+
 # =========================== AI MODEL (CollapseNet) ===========================
 class CollapseNet(nn.Module):
     def __init__(self):
@@ -723,7 +718,6 @@ class CollapseNet(nn.Module):
 
 @st.cache_data
 def generate_physics_based_dataset(n=10000, seed=42):
-    """Fizik asoslangan, Monte-Carlo perturbatsiyali sintetik dataset."""
     rng = np.random.default_rng(seed)
     T   = rng.uniform(20, 1100, n)
     s1  = rng.uniform(0.5, 60, n)
@@ -763,7 +757,7 @@ def get_nn_model():
         return model
     except:
         X_data, y_data = load_or_generate_dataset()
-        X = torch.tensor(X_data[:, :4], dtype=torch.float32).to(device)  # faqat T,s1,s3,depth uchun
+        X = torch.tensor(X_data[:, :4], dtype=torch.float32).to(device)
         y = torch.tensor(y_data, dtype=torch.float32).view(-1,1).to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
         loss_fn = nn.BCELoss()
@@ -797,13 +791,12 @@ if nn_model is None or not PT_AVAILABLE:
         rf_model = RandomForestClassifier(n_estimators=30, max_depth=10, random_state=SEED_GLOBAL, n_jobs=-1)
         rf_model.fit(X_ai, y_ai)
         collapse_pred = rf_model.predict_proba(X_ai)[:,1].reshape(temp_2d.shape)
-        # Cross-validation metrikasi
         scores = cross_val_score(rf_model, X_ai, y_ai, cv=5, scoring='roc_auc')
         st.sidebar.metric("Model AUC (5-fold CV)", f"{scores.mean():.3f} ± {scores.std():.3f}")
     else:
         collapse_pred = np.zeros_like(temp_2d)
 
-# =========================== SimpleRiskNN (AI Risk Prediction) ===========================
+# SimpleRiskNN
 if PT_AVAILABLE:
     class SimpleRiskNN(nn.Module):
         def __init__(self, input_dim=3):
@@ -835,39 +828,10 @@ def predict_risk_from_sensor(model, temp, stress, ucs_lab):
         pred = model(X_t).cpu().numpy()
     return pred.flatten()
 
-# =========================== SELEK OPTIMIZATSIYASI ===========================
-avg_t_p = np.mean(temp_2d[np.abs(z_axis-source_z).argmin(), :])
-strength_red = np.exp(-beta_strength*(avg_t_p-20))
-ucs_seam = layers_data[-1]['ucs']
-sv_seam = grid_sigma_v[np.abs(z_axis-source_z).argmin(), :].max()
-w_sol = 20.0
-for _ in range(15):
-    p_strength = (ucs_seam*strength_red)*(w_sol/(H_seam+EPS))**0.5
-    y_zone_calc = (H_seam/2)*(np.sqrt(sv_seam/(p_strength+EPS))-1)
-    new_w = 2*max(y_zone_calc,1.5)+0.5*H_seam
-    if abs(new_w-w_sol) < 0.1: break
-    w_sol = new_w
-rec_width = np.round(w_sol, 1)
-pillar_strength = p_strength
-y_zone = max(y_zone_calc, 1.5)
+# =========================== 1-QISM TUGADI – 2-QISMGA DAVOM ETING ===========================
+# =========================== 2-QISM ===========================
 
-fos_2d = np.clip(sigma1_limit/(sigma1_act+EPS), 0, 3.0)
-fos_2d = np.where(void_mask_permanent, 0.0, fos_2d)
-void_frac_base = float(np.mean(void_mask_permanent))
-
-def objective(w_arr):
-    w = w_arr[0]
-    strength = (ucs_seam*strength_red)*(w/(H_seam+EPS))**0.5
-    risk = void_frac_base * np.exp(-0.01*(w-rec_width))
-    return -(strength - 15.0*risk)
-try:
-    opt_result = minimize(objective, x0=[rec_width], bounds=[(5.0,100.0)], method='SLSQP')
-    optimal_width_ai = float(np.clip(opt_result.x[0], 5.0, 100.0))
-except (ValueError, RuntimeError) as e:
-    st.warning(f"Optimizatsiya xatosi: {e}. Klassik tavsiya ishlatiladi.")
-    optimal_width_ai = rec_width
-
-# =========================== YANGI QO‘SHIMCHA: QUDUQLAR SLADERI ===========================
+# ---------- Quduqlar konfiguratsiyasi (metrikalardan oldin) ----------
 st.sidebar.markdown("---")
 st.sidebar.subheader("Quduqlar konfiguratsiyasi")
 well_distance = st.sidebar.slider(
@@ -876,73 +840,106 @@ well_distance = st.sidebar.slider(
     key="well_dist_slider"
 )
 
+# =========================== SELEK OPTIMIZATSIYASI ===========================
+avg_t_p = np.mean(temp_2d[np.abs(z_axis - source_z).argmin(), :])
+strength_red = np.exp(-beta_strength * (avg_t_p - 20))
+ucs_seam = layers_data[-1]['ucs']
+sv_seam = grid_sigma_v[np.abs(z_axis - source_z).argmin(), :].max()
+w_sol = 20.0
+for _ in range(15):
+    p_strength = (ucs_seam * strength_red) * (w_sol / (H_seam + EPS)) ** 0.5
+    y_zone_calc = (H_seam / 2) * (np.sqrt(sv_seam / (p_strength + EPS)) - 1)
+    new_w = 2 * max(y_zone_calc, 1.5) + 0.5 * H_seam
+    if abs(new_w - w_sol) < 0.1:
+        break
+    w_sol = new_w
+rec_width = np.round(w_sol, 1)
+pillar_strength = p_strength
+y_zone = max(y_zone_calc, 1.5)
+
+fos_2d = np.clip(sigma1_limit / (sigma1_act + EPS), 0, 3.0)
+fos_2d = np.where(void_mask_permanent, 0.0, fos_2d)
+void_frac_base = float(np.mean(void_mask_permanent))
+
+def objective(w_arr):
+    w = w_arr[0]
+    strength = (ucs_seam * strength_red) * (w / (H_seam + EPS)) ** 0.5
+    risk = void_frac_base * np.exp(-0.01 * (w - rec_width))
+    return -(strength - 15.0 * risk)
+
+try:
+    opt_result = minimize(objective, x0=[rec_width], bounds=[(5.0, 100.0)], method='SLSQP')
+    optimal_width_ai = float(np.clip(opt_result.x[0], 5.0, 100.0))
+except (ValueError, RuntimeError) as e:
+    st.warning(f"Optimizatsiya xatosi: {e}. Klassik tavsiya ishlatiladi.")
+    optimal_width_ai = rec_width
+
 # =========================== METRIKALAR ===========================
 st.subheader(t('monitoring_header', obj_name=obj_name))
 m1, m2, m3, m4, m5 = st.columns(5)
 m1.metric(t('pillar_strength'), f"{pillar_strength:.1f} MPa")
 m2.metric(t('plastic_zone'), f"{y_zone:.1f} m")
 
-# Bo‘shliq yuzasi (2D) va 3D hajm
-cavity_length_y = well_distance            # endi xatolik yo‘q
-void_volume_3d = void_volume * cavity_length_y
+# 2D kesim yuzasi va 3D taxminiy hajm
+cavity_length_y = well_distance                  # endi aniqlangan
+void_volume_3d = void_volume * cavity_length_y   # m³
 m3.metric(t('cavity_volume'), f"{void_volume_3d:.1f} m³")
-
 m4.metric(t('max_permeability'), f"{np.max(perm):.1e} m²")
 m5.metric(t('ai_recommendation'), f"{optimal_width_ai:.1f} m",
           delta=f"Klassik: {rec_width} m", delta_color="off")
 
-# =========================== CHO'KISH VA HOEK-BROWN GRAFIKALARI ===========================
+# =========================== CHO'KISH VA HOEK-BROWN ===========================
 st.markdown("---")
-col_g1, col_g2, col_g3 = st.columns([1.5,1.5,2])
-s_max = (H_seam*0.04)*(min(time_h,120)/120)
-sub_p = -s_max * np.exp(-(x_axis**2)/(2*(total_depth/2)**2))
-uplift = (total_depth*1e-4)*np.exp(-(x_axis**2)/(total_depth*10))*(time_h/150)*100
+col_g1, col_g2, col_g3 = st.columns([1.5, 1.5, 2])
+s_max = (H_seam * 0.04) * (min(time_h, 120) / 120)
+sub_p = -s_max * np.exp(-(x_axis**2) / (2 * (total_depth / 2) ** 2))
+uplift = (total_depth * 1e-4) * np.exp(-(x_axis**2) / (total_depth * 10)) * (time_h / 150) * 100
 with col_g1:
-    st.plotly_chart(go.Figure(go.Scatter(x=x_axis, y=sub_p*100, fill='tozeroy', line=dict(color='magenta',width=3))).update_layout(title=t('subsidence_title'), template="plotly_dark", height=300), use_container_width=True)
+    st.plotly_chart(go.Figure(go.Scatter(x=x_axis, y=sub_p * 100, fill='tozeroy',
+                                         line=dict(color='magenta', width=3)))
+                    .update_layout(title=t('subsidence_title'), template="plotly_dark", height=300),
+                    use_container_width=True)
 with col_g2:
-    st.plotly_chart(go.Figure(go.Scatter(x=x_axis, y=uplift, fill='tozeroy', line=dict(color='cyan',width=3))).update_layout(title=t('thermal_deform_title'), template="plotly_dark", height=300), use_container_width=True)
+    st.plotly_chart(go.Figure(go.Scatter(x=x_axis, y=uplift, fill='tozeroy',
+                                         line=dict(color='cyan', width=3)))
+                    .update_layout(title=t('thermal_deform_title'), template="plotly_dark", height=300),
+                    use_container_width=True)
 with col_g3:
-    sigma3_ax = np.linspace(0, ucs_seam*0.5, 100)
+    sigma3_ax = np.linspace(0, ucs_seam * 0.5, 100)
     mb_s, s_s, a_s = grid_mb.max(), grid_s_hb.max(), grid_a_hb.max()
-    s1_20 = sigma3_ax + ucs_seam*(mb_s*sigma3_ax/(ucs_seam+EPS)+s_s)**a_s
-    ucs_burn = ucs_seam*np.exp(-beta_damage*(T_source_max-20))
-    s1_burning = sigma3_ax + ucs_burn*(mb_s*sigma3_ax/(ucs_burn+EPS)+s_s)**a_s
-    s1_sov = sigma3_ax + (ucs_seam*strength_red)*(mb_s*sigma3_ax/(ucs_seam*strength_red+EPS)+s_s)**a_s
+    s1_20 = sigma3_ax + ucs_seam * (mb_s * sigma3_ax / (ucs_seam + EPS) + s_s) ** a_s
+    ucs_burn = ucs_seam * np.exp(-beta_damage * (T_source_max - 20))
+    s1_burning = sigma3_ax + ucs_burn * (mb_s * sigma3_ax / (ucs_burn + EPS) + s_s) ** a_s
+    s1_sov = sigma3_ax + (ucs_seam * strength_red) * (mb_s * sigma3_ax / (ucs_seam * strength_red + EPS) + s_s) ** a_s
     fig_hb = go.Figure()
-    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_20, name='20°C', line=dict(color='red',width=2)))
-    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_sov, name=t('tensile_hb'), line=dict(color='cyan',width=2,dash='dash')))
-    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_burning, name=t('combustion'), line=dict(color='orange',width=4)))
-    st.plotly_chart(fig_hb.update_layout(title=t('hb_envelopes_title'), template="plotly_dark", height=300, legend=dict(orientation="h", y=-0.3, x=0.5, xanchor="center")), use_container_width=True)
+    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_20, name='20°C', line=dict(color='red', width=2)))
+    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_sov, name=t('tensile_hb'), line=dict(color='cyan', width=2, dash='dash')))
+    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_burning, name=t('combustion'), line=dict(color='orange', width=4)))
+    st.plotly_chart(fig_hb.update_layout(title=t('hb_envelopes_title'), template="plotly_dark", height=300,
+                                         legend=dict(orientation="h", y=-0.3, x=0.5, xanchor="center")),
+                    use_container_width=True)
 
-# =========================== TM MAYDONI (QUDUQLAR MASOFASI) ===========================
+# =========================== TM MAYDONI (QUDIQ MASOFASI ISHLATILDI) ===========================
 st.markdown("---")
 c1, c2 = st.columns([1, 2.5])
 
 with c1:
     st.subheader(t('scientific_analysis'))
-    st.error(t('fos_red')); st.warning(t('fos_yellow')); st.success(t('fos_green'))
-    
+    st.error(t('fos_red'))
+    st.warning(t('fos_yellow'))
+    st.success(t('fos_green'))
+
     fig_layers = go.Figure()
     for lyr in layers_data:
-        fig_layers.add_trace(go.Bar(
-            x=['Kesim'],
-            y=[lyr['t']],
-            name=lyr['name'],
-            marker_color=lyr['color'],
-            width=0.4
-        ))
-    st.plotly_chart(
-        fig_layers.update_layout(barmode='stack', template="plotly_dark", yaxis=dict(autorange='reversed'), height=450, showlegend=False),
-        use_container_width=True
-    )
-
-st.sidebar.markdown("---")
-st.sidebar.subheader("Quduqlar konfiguratsiyasi")
-well_distance = st.sidebar.slider("Quduqlar orasidagi masofa (m):", 50.0, 500.0, 200.0, 10.0, key="well_dist_slider")
+        fig_layers.add_trace(go.Bar(x=['Kesim'], y=[lyr['t']], name=lyr['name'],
+                                    marker_color=lyr['color'], width=0.4))
+    st.plotly_chart(fig_layers.update_layout(barmode='stack', template="plotly_dark",
+                                             yaxis=dict(autorange='reversed'), height=450,
+                                             showlegend=False), use_container_width=True)
 
 with c2:
     st.subheader("UCG Yonish Bosqichlari (1 → 3 → 2 sxemasi) – Yangi Ilmiy Model")
-    
+
     coal_layer = layers_data[-1]
     h_seam = coal_layer['t']
     ucs_coal_pa = coal_layer['ucs'] * 1e6
@@ -950,36 +947,41 @@ with c2:
     well_x = [-well_distance, 0, well_distance]
     cavity_width = well_distance - rec_width
     cavity_width = max(cavity_width, 10)
-    E_MOD = 25e9; ALPHA = 1.0e-5; NU = nu_poisson; K0 = NU / (1 - NU)
-    
+    E_MOD = 25e9
+    ALPHA = 1.0e-5
+    NU = nu_poisson
+    K0 = NU / (1 - NU)
+
     sigma_v_overburden = sum(l['rho'] * 9.81 * l['t'] for l in layers_data[:-1]) / 1e6
-    sigma_v_total = sigma_v_overburden + (rho_coal * 9.81 * (h_seam/2)) / 1e6
+    sigma_v_total = sigma_v_overburden + (rho_coal * 9.81 * (h_seam / 2)) / 1e6
     Hc = h_seam * np.sqrt(sigma_v_total / (coal_layer['ucs'] + 1e-5))
     Hc = np.clip(Hc, h_seam, h_seam * 4)
-    
+
     states_132 = {1: [0], 2: [0, 2], 3: [0, 1, 2]}
     stage = st.select_slider("Bosqichni tanlang:", options=[1, 2, 3], value=1, key="ucg_stage_132")
     active_wells = states_132[stage]
-    
+
     def compute_advanced_fos(grid_x, grid_z, active_wells, well_x, source_z, h_seam, cavity_width,
                              temp_field, sigma_v_field, layers_data, layer_bounds,
                              E, alpha, nu, K0, Hc, sigma_v_coal_MPa, ucs_coal_pa, stage, well_distance):
         fos = np.full_like(grid_x, 3.0)
         for px_idx in active_wells:
             px = well_x[px_idx]
-            dist = np.sqrt((grid_x - px)**2 + (grid_z - source_z)**2)
+            dist = np.sqrt((grid_x - px) ** 2 + (grid_z - source_z) ** 2)
             dz = source_z - grid_z
             T = temp_field
             delta_T = np.maximum(T - 20, 0)
             thermal_zone = dist < (h_seam * 3)
             for (top, bot, layer) in layer_bounds:
                 mask = (grid_z >= top) & (grid_z < bot)
-                if not np.any(mask): continue
+                if not np.any(mask):
+                    continue
                 ucs_pa = layer['ucs'] * 1e6
-                gsi = layer['gsi']; mi = layer['mi']
+                gsi = layer['gsi']
+                mi = layer['mi']
                 mb = mi * np.exp((gsi - 100) / (28 - 14 * D_factor))
                 s_hb = np.exp((gsi - 100) / (9 - 3 * D_factor))
-                a_hb = 0.5 + (1/6)*(np.exp(-gsi/15) - np.exp(-20/3))
+                a_hb = 0.5 + (1 / 6) * (np.exp(-gsi / 15) - np.exp(-20 / 3))
                 sigma_v = sigma_v_field[mask]
                 delta_T_m = delta_T[mask]
                 D_T = 1 - np.exp(-beta_damage * delta_T_m)
@@ -992,7 +994,7 @@ with c2:
                     sigma_th[local_thermal] = np.clip(th_vals, 0, sigma_ci_T[local_thermal] * 0.25)
                 sigma_1 = sigma_v + sigma_th
                 term = mb * sigma_3 / (sigma_ci_T + EPS_PA) + s_hb
-                sigma_limit = sigma_3 + sigma_ci_T * (term)**a_hb
+                sigma_limit = sigma_3 + sigma_ci_T * (term) ** a_hb
                 fos_val = np.clip(sigma_limit / (sigma_1 + EPS_PA), 0, 3)
                 yield_mask = sigma_1 > (sigma_limit * 0.85)
                 fos_val[yield_mask] = np.minimum(fos_val[yield_mask], 0.8)
@@ -1009,13 +1011,14 @@ with c2:
                         fos[mask] = fos_sub
         for px_idx in active_wells:
             px = well_x[px_idx]
-            a = cavity_width / 2; b = h_seam / 2
-            cavity_ellipse = ((grid_x - px)**2 / (a**2 + EPS) + (grid_z - source_z)**2 / (b**2 + EPS)) < 1
+            a = cavity_width / 2
+            b = h_seam / 2
+            cavity_ellipse = ((grid_x - px) ** 2 / (a ** 2 + EPS) + (grid_z - source_z) ** 2 / (b ** 2 + EPS)) < 1
             fos[cavity_ellipse] = 0.05
         bottom_layer = layers_data[-1]
         bottom_boundary = bottom_layer['z_start'] + bottom_layer['t']
         fos[grid_z > bottom_boundary] = 2.5
-        all_wells = [0,1,2]
+        all_wells = [0, 1, 2]
         for i in all_wells:
             if i not in active_wells:
                 px = well_x[i]
@@ -1028,17 +1031,18 @@ with c2:
             fos[pillar_zone] = 2.2
         fos = np.nan_to_num(fos, nan=3.0, posinf=3.0, neginf=0.0)
         return fos
-    
+
     fos_stage = compute_advanced_fos(
         grid_x, grid_z, active_wells, well_x, source_z, h_seam, cavity_width,
         temp_2d, grid_sigma_v, layers_data, layer_bounds,
         E_MOD, ALPHA, NU, K0, Hc, sigma_v_total, ucs_coal_pa, stage, well_distance
     )
-    
+
     fig_tm = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.12,
                            subplot_titles=(t('temp_subplot'), "Geomexanik Holat (Yangi Ilmiy Model)"))
     fig_tm.add_trace(go.Heatmap(z=temp_2d, x=x_axis, y=z_axis, colorscale='Hot', zmin=25, zmax=T_source_max,
-                                colorbar=dict(title="T (°C)", x=1.05, y=0.78, len=0.42, thickness=15), name=t('temp_subplot')), row=1, col=1)
+                                colorbar=dict(title="T (°C)", x=1.05, y=0.78, len=0.42, thickness=15),
+                                name=t('temp_subplot')), row=1, col=1)
     step = 12
     qx, qz = grid_x[::step, ::step].flatten(), grid_z[::step, ::step].flatten()
     qu, qw = vx[::step, ::step].flatten(), vz[::step, ::step].flatten()
@@ -1048,52 +1052,74 @@ with c2:
     angles = np.degrees(np.arctan2(qw[mask_q], qu[mask_q] + EPS))
     fig_tm.add_trace(go.Scatter(x=qx[mask_q], y=qz[mask_q], mode='markers',
                                 marker=dict(symbol='arrow', size=10, color=qmag[mask_q], colorscale='ice',
-                                            cmin=0, cmax=qmag_max, angle=angles, opacity=0.85, showscale=False, line=dict(width=0)),
+                                            cmin=0, cmax=qmag_max, angle=angles, opacity=0.85,
+                                            showscale=False, line=dict(width=0)),
                                 name=t('gas_flow')), row=1, col=1)
     fig_tm.add_trace(go.Contour(z=fos_stage, x=x_axis, y=z_axis,
-                                colorscale=[[0,'black'],[0.1,'red'],[0.4,'orange'],[0.7,'yellow'],[0.85,'lime'],[1,'darkgreen']],
+                                colorscale=[[0, 'black'], [0.1, 'red'], [0.4, 'orange'],
+                                            [0.7, 'yellow'], [0.85, 'lime'], [1, 'darkgreen']],
                                 zmin=0, zmax=3, contours_showlines=False,
-                                colorbar=dict(title="FOS", x=1.05, y=0.22, len=0.42, thickness=15), name="FOS"), row=2, col=1)
+                                colorbar=dict(title="FOS", x=1.05, y=0.22, len=0.42, thickness=15),
+                                name="FOS"), row=2, col=1)
     fracture_mask = np.where(fos_stage < 1.2, 1.0, np.nan)
     fig_tm.add_trace(go.Heatmap(z=fracture_mask, x=x_axis, y=z_axis,
-                                colorscale=[[0,'rgba(0,0,0,0)'],[1,'rgba(255,0,0,0.5)']],
-                                showscale=False, opacity=0.6, hoverinfo='skip', name="Yielded Zones"), row=2, col=1)
+                                colorscale=[[0, 'rgba(0,0,0,0)'], [1, 'rgba(255,0,0,0.5)']],
+                                showscale=False, opacity=0.6, hoverinfo='skip',
+                                name="Yielded Zones"), row=2, col=1)
     r_burn_vis = h_seam * 1.5
     for idx in active_wells:
         px = well_x[idx]
-        fig_tm.add_shape(type="circle", x0=px-r_burn_vis, x1=px+r_burn_vis,
-                         y0=source_z-r_burn_vis, y1=source_z+r_burn_vis,
-                         line=dict(color="orange", width=2), fillcolor='rgba(255,165,0,0.15)', row=2, col=1)
+        fig_tm.add_shape(type="circle", x0=px - r_burn_vis, x1=px + r_burn_vis,
+                         y0=source_z - r_burn_vis, y1=source_z + r_burn_vis,
+                         line=dict(color="orange", width=2),
+                         fillcolor='rgba(255,165,0,0.15)', row=2, col=1)
     for px in well_x:
-        fig_tm.add_shape(type="rect", x0=px-rec_width/2, x1=px+rec_width/2,
-                         y0=source_z-h_seam/2, y1=source_z+h_seam/2,
-                         line=dict(color="lime", width=3), fillcolor="rgba(0,255,0,0.1)", row=2, col=1)
+        fig_tm.add_shape(type="rect", x0=px - rec_width / 2, x1=px + rec_width / 2,
+                         y0=source_z - h_seam / 2, y1=source_z + h_seam / 2,
+                         line=dict(color="lime", width=3),
+                         fillcolor="rgba(0,255,0,0.1)", row=2, col=1)
     if stage == 2:
-        fig_tm.add_shape(type="rect", x0=well_x[1]-80, x1=well_x[1]+80,
-                         y0=source_z-30, y1=source_z+30,
-                         line=dict(color="cyan", width=4, dash="dash"), fillcolor='rgba(0,255,255,0.1)', row=2, col=1)
-        fig_tm.add_annotation(x=well_x[1], y=source_z+100, text="HIMOYA SELEGI (PILLAR)",
-                              showarrow=True, arrowhead=2, font=dict(color="cyan", size=12), row=2, col=1)
-    fig_tm.add_trace(go.Heatmap(z=collapse_pred, x=x_axis, y=z_axis, colorscale='Viridis', opacity=0.4, showscale=False, name="AI Collapse"), row=2, col=1)
-    shear_disp = np.copy(shear_failure); shear_disp[void_mask_permanent]=False
-    tens_disp = np.copy(tensile_failure); tens_disp[void_mask_permanent]=False
-    fig_tm.add_trace(go.Scatter(x=grid_x[shear_disp][::2], y=grid_z[shear_disp][::2], mode='markers', marker=dict(color='red',size=3,symbol='x'), name='Shear'), row=2, col=1)
-    fig_tm.add_trace(go.Scatter(x=grid_x[tens_disp][::2], y=grid_z[tens_disp][::2], mode='markers', marker=dict(color='blue',size=3,symbol='cross'), name='Tensile'), row=2, col=1)
-    void_visual = np.where(void_mask_permanent>0.1, 1.0, np.nan)
-    fig_tm.add_trace(go.Heatmap(z=void_visual, x=x_axis, y=z_axis, colorscale=[[0,'black'],[1,'black']], showscale=False, opacity=0.8, hoverinfo='skip'), row=2, col=1)
-    fig_tm.add_shape(type="line", x0=x_axis.min(), x1=x_axis.max(), y0=source_z-h_seam/2, y1=source_z-h_seam/2, line=dict(color="white", width=2, dash="dash"), row=2, col=1)
-    fig_tm.add_shape(type="line", x0=x_axis.min(), x1=x_axis.max(), y0=source_z+h_seam/2, y1=source_z+h_seam/2, line=dict(color="white", width=2, dash="dash"), row=2, col=1)
+        fig_tm.add_shape(type="rect", x0=well_x[1] - 80, x1=well_x[1] + 80,
+                         y0=source_z - 30, y1=source_z + 30,
+                         line=dict(color="cyan", width=4, dash="dash"),
+                         fillcolor='rgba(0,255,255,0.1)', row=2, col=1)
+        fig_tm.add_annotation(x=well_x[1], y=source_z + 100, text="HIMOYA SELEGI (PILLAR)",
+                              showarrow=True, arrowhead=2, font=dict(color="cyan", size=12),
+                              row=2, col=1)
+    fig_tm.add_trace(go.Heatmap(z=collapse_pred, x=x_axis, y=z_axis, colorscale='Viridis',
+                                opacity=0.4, showscale=False, name="AI Collapse"), row=2, col=1)
+    shear_disp = np.copy(shear_failure)
+    shear_disp[void_mask_permanent] = False
+    tens_disp = np.copy(tensile_failure)
+    tens_disp[void_mask_permanent] = False
+    fig_tm.add_trace(go.Scatter(x=grid_x[shear_disp][::2], y=grid_z[shear_disp][::2],
+                                mode='markers', marker=dict(color='red', size=3, symbol='x'),
+                                name='Shear'), row=2, col=1)
+    fig_tm.add_trace(go.Scatter(x=grid_x[tens_disp][::2], y=grid_z[tens_disp][::2],
+                                mode='markers', marker=dict(color='blue', size=3, symbol='cross'),
+                                name='Tensile'), row=2, col=1)
+    void_visual = np.where(void_mask_permanent > 0.1, 1.0, np.nan)
+    fig_tm.add_trace(go.Heatmap(z=void_visual, x=x_axis, y=z_axis,
+                                colorscale=[[0, 'black'], [1, 'black']],
+                                showscale=False, opacity=0.8, hoverinfo='skip'), row=2, col=1)
+    fig_tm.add_shape(type="line", x0=x_axis.min(), x1=x_axis.max(),
+                     y0=source_z - h_seam / 2, y1=source_z - h_seam / 2,
+                     line=dict(color="white", width=2, dash="dash"), row=2, col=1)
+    fig_tm.add_shape(type="line", x0=x_axis.min(), x1=x_axis.max(),
+                     y0=source_z + h_seam / 2, y1=source_z + h_seam / 2,
+                     line=dict(color="white", width=2, dash="dash"), row=2, col=1)
     zoom_margin = h_seam * 12
-    fig_tm.update_layout(template="plotly_dark", height=900, margin=dict(r=150,t=80,b=100),
-                         showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=-0.12, xanchor="center", x=0.5))
+    fig_tm.update_layout(template="plotly_dark", height=900, margin=dict(r=150, t=80, b=100),
+                         showlegend=True, legend=dict(orientation="h", yanchor="bottom",
+                                                    y=-0.12, xanchor="center", x=0.5))
     fig_tm.update_yaxes(autorange='reversed', row=1, col=1)
     fig_tm.update_yaxes(autorange='reversed', row=2, col=1)
-    fig_tm.update_yaxes(range=[source_z + zoom_margin/2, source_z - zoom_margin], row=2, col=1)
+    fig_tm.update_yaxes(range=[source_z + zoom_margin / 2, source_z - zoom_margin], row=2, col=1)
     st.plotly_chart(fig_tm, use_container_width=True)
-    
+
     if st.checkbox("Avtomatik animatsiya (1→2→3 bosqichlar)"):
         anim_placeholder = st.empty()
-        for s in [1,2,3]:
+        for s in [1, 2, 3]:
             wells_s = states_132[s]
             fos_s = compute_advanced_fos(
                 grid_x, grid_z, wells_s, well_x, source_z, h_seam, cavity_width,
@@ -1101,19 +1127,23 @@ with c2:
                 E_MOD, ALPHA, NU, K0, Hc, sigma_v_total, ucs_coal_pa, s, well_distance
             )
             fig_s = go.Figure(go.Contour(z=fos_s, x=x_axis, y=z_axis,
-                                         colorscale=[[0,'black'],[0.1,'red'],[0.4,'orange'],[0.7,'yellow'],[0.85,'lime'],[1,'darkgreen']],
+                                         colorscale=[[0, 'black'], [0.1, 'red'], [0.4, 'orange'],
+                                                     [0.7, 'yellow'], [0.85, 'lime'], [1, 'darkgreen']],
                                          zmin=0, zmax=3, contours_showlines=False,
                                          colorbar=dict(title="FOS")))
-            fig_s.update_yaxes(range=[source_z + zoom_margin/2, source_z - zoom_margin], autorange=False)
-            fig_s.update_layout(template="plotly_dark", height=500, title=f"Bosqich {s} (1-3-2 sxemasi)")
+            fig_s.update_yaxes(range=[source_z + zoom_margin / 2, source_z - zoom_margin], autorange=False)
+            fig_s.update_layout(template="plotly_dark", height=500,
+                                title=f"Bosqich {s} (1-3-2 sxemasi)")
             anim_placeholder.plotly_chart(fig_s, use_container_width=True)
             time.sleep(1.2)
         st.success("Animatsiya yakunlandi.")
-    
+
     selek_eni = well_distance - cavity_width
-    msgs = {1: f"**1-Bosqich:** Chap quduq yoqilgan. Qalinlik = {h_seam:.1f} m, Quduqlar masofasi = {well_distance:.0f} m, Selek eni = {selek_eni:.1f} m.",
-            2: f"**2-Bosqich (Muhim):** O‘ng quduq yoqilgan. O‘rtadagi selek tomni ushlab turadi. Selek eni = {selek_eni:.1f} m.",
-            3: f"**3-Bosqich:** Markaziy selek gazlashtirilmoqda. Barqaror cho‘kish."}
+    msgs = {
+        1: f"**1-Bosqich:** Chap quduq yoqilgan. Qalinlik = {h_seam:.1f} m, Quduqlar masofasi = {well_distance:.0f} m, Selek eni = {selek_eni:.1f} m.",
+        2: f"**2-Bosqich (Muhim):** O‘ng quduq yoqilgan. O‘rtadagi selek tomni ushlab turadi. Selek eni = {selek_eni:.1f} m.",
+        3: f"**3-Bosqich:** Markaziy selek gazlashtirilmoqda. Barqaror cho‘kish."
+    }
     st.info(msgs[stage])
     if selek_eni < 18.5:
         st.error(f"⚠️ KRITIK: Selek o'lchami ({selek_eni:.1f} m) xavfsiz chegaradan past!")
@@ -1122,27 +1152,31 @@ with c2:
 
 # =========================== KOMPLEKS MONITORING PANELI ===========================
 st.header(t('monitoring_panel', obj_name=obj_name))
+
 def calculate_live_metrics(h, layers, T_max):
     target = layers[-1]
     ucs_0, H_l = target['ucs'], target['t']
-    curr_T = (25 + (T_max-25)*(min(h,40)/40) if h<=40 else T_max*np.exp(-0.001*(h-40)))
-    str_red = np.exp(-beta_strength*(curr_T-20))
-    w_rec = 15.0 + (h/150)*10
-    p_str = (ucs_0*str_red)*(w_rec/(H_l+EPS))**0.5
-    max_sub = (H_l*0.05)*(min(h,120)/120)
+    curr_T = (25 + (T_max - 25) * (min(h, 40) / 40) if h <= 40
+              else T_max * np.exp(-0.001 * (h - 40)))
+    str_red = np.exp(-beta_strength * (curr_T - 20))
+    w_rec = 15.0 + (h / 150) * 10
+    p_str = (ucs_0 * str_red) * (w_rec / (H_l + EPS)) ** 0.5
+    max_sub = (H_l * 0.05) * (min(h, 120) / 120)
     return p_str, w_rec, curr_T, max_sub
+
 p_str, w_rec_live, t_now, s_max_3d = calculate_live_metrics(time_h, layers_data, T_source_max)
 mk1, mk2, mk3, mk4 = st.columns(4)
 mk1.metric(t('pillar_live'), f"{p_str:.1f} MPa", delta=f"{t_now:.0f} °C", delta_color="inverse")
 mk2.metric(t('rec_width_live'), f"{w_rec_live:.1f} m")
-mk3.metric(t('max_subsidence_live'), f"{s_max_3d*100:.1f} cm")
-mk4.metric(t('process_stage'), t('stage_active') if time_h<100 else t('stage_cooling'))
+mk3.metric(t('max_subsidence_live'), f"{s_max_3d * 100:.1f} cm")
+mk4.metric(t('process_stage'), t('stage_active') if time_h < 100 else t('stage_cooling'))
 st.markdown("---")
 
 # ====================== AI RISK PREDICTION (Sensor CSV) ======================
 with st.expander("🤖 AI Risk Prediction (Sensor CSV)", expanded=False):
     st.markdown("Yuklangan sensor ma'lumotlari asosida **SimpleRiskNN** modeli yordamida xavf indeksini bashorat qilish.")
-    sensor_file = st.file_uploader("Sensor CSV faylini yuklang (kerakli ustunlar: 'temp', 'stress', 'ucs_lab')", type=['csv'], key="sensor_ai")
+    sensor_file = st.file_uploader("Sensor CSV faylini yuklang (kerakli ustunlar: 'temp', 'stress', 'ucs_lab')",
+                                   type=['csv'], key="sensor_ai")
     if sensor_file:
         df_sensor = pd.read_csv(sensor_file)
         required_cols = ['temp', 'stress', 'ucs_lab']
@@ -1150,61 +1184,87 @@ with st.expander("🤖 AI Risk Prediction (Sensor CSV)", expanded=False):
         if missing:
             st.error(f"Faylda quyidagi ustunlar yo‘q: {missing}. Iltimos, to‘g‘ri formatda yuklang.")
         else:
-            risk_vals = predict_risk_from_sensor(risk_model, df_sensor['temp'].values, df_sensor['stress'].values, df_sensor['ucs_lab'].values)
+            risk_vals = predict_risk_from_sensor(risk_model,
+                                                 df_sensor['temp'].values,
+                                                 df_sensor['stress'].values,
+                                                 df_sensor['ucs_lab'].values)
             df_sensor['risk'] = risk_vals
             st.subheader("Bashorat natijalari")
             st.dataframe(df_sensor, use_container_width=True)
             fig_risk_line = go.Figure()
-            fig_risk_line.add_trace(go.Scatter(y=risk_vals, mode='lines+markers', name='Risk (0-1)', line=dict(color='red')))
-            fig_risk_line.add_hline(y=0.5, line_dash='dash', line_color='orange', annotation_text="O'rta chegara")
-            fig_risk_line.add_hline(y=0.7, line_dash='dash', line_color='red', annotation_text="Yuqori chegara")
-            fig_risk_line.update_layout(title="AI Risk Prediction", xaxis_title="Qator indeksi", yaxis_title="Risk", template='plotly_dark')
+            fig_risk_line.add_trace(go.Scatter(y=risk_vals, mode='lines+markers',
+                                               name='Risk (0-1)', line=dict(color='red')))
+            fig_risk_line.add_hline(y=0.5, line_dash='dash', line_color='orange',
+                                    annotation_text="O'rta chegara")
+            fig_risk_line.add_hline(y=0.7, line_dash='dash', line_color='red',
+                                    annotation_text="Yuqori chegara")
+            fig_risk_line.update_layout(title="AI Risk Prediction", xaxis_title="Qator indeksi",
+                                        yaxis_title="Risk", template='plotly_dark')
             st.plotly_chart(fig_risk_line, use_container_width=True)
             avg_risk = np.mean(risk_vals)
-            st.metric("O'rtacha risk", f"{avg_risk:.3f}", delta="Yuqori" if avg_risk>0.7 else ("O'rta" if avg_risk>0.5 else "Past"))
-            if avg_risk > 0.7: st.error("⚠️ Yuqori xavf! Tez choralar ko‘rish kerak.")
-            elif avg_risk > 0.5: st.warning("⚠️ O‘rtacha xavf. Monitoringni kuchaytirish tavsiya etiladi.")
-            else: st.success("✅ Xavf past. Hozircha xavfsiz.")
+            st.metric("O'rtacha risk", f"{avg_risk:.3f}",
+                      delta="Yuqori" if avg_risk > 0.7 else ("O'rta" if avg_risk > 0.5 else "Past"))
+            if avg_risk > 0.7:
+                st.error("⚠️ Yuqori xavf! Tez choralar ko‘rish kerak.")
+            elif avg_risk > 0.5:
+                st.warning("⚠️ O‘rtacha xavf. Monitoringni kuchaytirish tavsiya etiladi.")
+            else:
+                st.success("✅ Xavf past. Hozircha xavfsiz.")
 
-# ====================== QO'SHIMCHA BLOKLAR ======================
+# ====================== QO'SHIMCHA BLOKLAR (Risk Map, FOS trend, ...) ======================
 @st.cache_data(show_spinner=False)
 def compute_risk_map(fos_arr, damage_arr, void_arr, temp_arr, T_max):
     fos_risk = np.clip(1.0 - fos_arr / 2.0, 0, 1)
     thermal_risk = damage_arr
     void_risk = void_arr.astype(float)
     temp_risk = np.clip(temp_arr / T_max, 0, 1)
-    risk = 0.40*fos_risk + 0.30*thermal_risk + 0.20*void_risk + 0.10*temp_risk
+    risk = 0.40 * fos_risk + 0.30 * thermal_risk + 0.20 * void_risk + 0.10 * temp_risk
     return np.clip(risk, 0, 1)
 
 risk_map = compute_risk_map(fos_2d, damage, void_mask_permanent, temp_2d, T_source_max)
 
 with st.expander("🗺️ Kompozit Xavf Indeksi Xaritasi"):
-    risk_col1, risk_col2 = st.columns([2,1])
+    risk_col1, risk_col2 = st.columns([2, 1])
     with risk_col1:
         fig_risk = go.Figure()
         fig_risk.add_trace(go.Heatmap(z=risk_map, x=x_axis, y=z_axis,
-            colorscale=[[0.0,'#1a472a'],[0.33,'#27ae60'],[0.50,'#f39c12'],[0.75,'#e74c3c'],[1.0,'#7b241c']],
-            zmin=0, zmax=1, colorbar=dict(title="Risk (0–1)", tickvals=[0,0.25,0.5,0.75,1.0], ticktext=["Xavfsiz","Past","O'rta","Yuqori","Kritik"])))
-        fig_risk.add_trace(go.Contour(z=void_mask_permanent.astype(int), x=x_axis, y=z_axis, showscale=False, contours=dict(coloring='lines'), line=dict(color='white',width=2,dash='dot'), hoverinfo='skip', name='Void chegarasi'))
-        fig_risk.update_layout(title="Kompozit Xavf Indeksi (FOS·40% + Damage·30% + Void·20% + T·10%)", template='plotly_dark', height=450, yaxis=dict(autorange='reversed', title='Chuqurlik (m)'), xaxis=dict(title='Gorizontal masofa (m)'))
+            colorscale=[[0.0, '#1a472a'], [0.33, '#27ae60'], [0.50, '#f39c12'],
+                        [0.75, '#e74c3c'], [1.0, '#7b241c']],
+            zmin=0, zmax=1, colorbar=dict(title="Risk (0–1)", tickvals=[0, 0.25, 0.5, 0.75, 1.0],
+                                          ticktext=["Xavfsiz", "Past", "O'rta", "Yuqori", "Kritik"])))
+        fig_risk.add_trace(go.Contour(z=void_mask_permanent.astype(int), x=x_axis, y=z_axis,
+                                      showscale=False, contours=dict(coloring='lines'),
+                                      line=dict(color='white', width=2, dash='dot'),
+                                      hoverinfo='skip', name='Void chegarasi'))
+        fig_risk.update_layout(title="Kompozit Xavf Indeksi (FOS·40% + Damage·30% + Void·20% + T·10%)",
+                              template='plotly_dark', height=450,
+                              yaxis=dict(autorange='reversed', title='Chuqurlik (m)'),
+                              xaxis=dict(title='Gorizontal masofa (m)'))
         st.plotly_chart(fig_risk, use_container_width=True)
     with risk_col2:
         total_cells = risk_map.size
-        r_safe = np.sum(risk_map<0.25)/total_cells*100
-        r_low = np.sum((risk_map>=0.25)&(risk_map<0.5))/total_cells*100
-        r_medium = np.sum((risk_map>=0.5)&(risk_map<0.75))/total_cells*100
-        r_high = np.sum(risk_map>=0.75)/total_cells*100
-        fig_pie = go.Figure(go.Pie(labels=["Xavfsiz (<0.25)","Past (0.25–0.5)","O'rta (0.5–0.75)","Kritik (>0.75)"],
-            values=[r_safe,r_low,r_medium,r_high], marker_colors=['#27ae60','#f39c12','#e67e22','#e74c3c'], hole=0.4, textinfo='label+percent'))
-        fig_pie.update_layout(template='plotly_dark', height=300, title="Zona taqsimoti", showlegend=False)
+        r_safe = np.sum(risk_map < 0.25) / total_cells * 100
+        r_low = np.sum((risk_map >= 0.25) & (risk_map < 0.5)) / total_cells * 100
+        r_medium = np.sum((risk_map >= 0.5) & (risk_map < 0.75)) / total_cells * 100
+        r_high = np.sum(risk_map >= 0.75) / total_cells * 100
+        fig_pie = go.Figure(go.Pie(labels=["Xavfsiz (<0.25)", "Past (0.25–0.5)",
+                                           "O'rta (0.5–0.75)", "Kritik (>0.75)"],
+                                   values=[r_safe, r_low, r_medium, r_high],
+                                   marker_colors=['#27ae60', '#f39c12', '#e67e22', '#e74c3c'],
+                                   hole=0.4, textinfo='label+percent'))
+        fig_pie.update_layout(template='plotly_dark', height=300, title="Zona taqsimoti",
+                             showlegend=False)
         st.plotly_chart(fig_pie, use_container_width=True)
         st.metric("O'rtacha xavf indeksi", f"{np.mean(risk_map):.3f}")
         st.metric("Maksimal xavf indeksi", f"{np.max(risk_map):.3f}")
-        if np.max(risk_map)>0.75: st.error("🔴 Kritik zona mavjud!")
-        elif np.max(risk_map)>0.5: st.warning("🟡 O'rta xavf zonasi bor")
-        else: st.success("🟢 Umumiy holat qoniqarli")
+        if np.max(risk_map) > 0.75:
+            st.error("🔴 Kritik zona mavjud!")
+        elif np.max(risk_map) > 0.5:
+            st.warning("🟡 O'rta xavf zonasi bor")
+        else:
+            st.success("🟢 Umumiy holat qoniqarli")
 
-# FOS Vaqt Bashorati
+# ------------------------------- FOS Vaqt Bashorati -------------------------------
 def fos_at_time(th, ucs0, beta_d, beta_str, T_max, burn_dur, w, H, sv_const):
     if th <= burn_dur:
         T_t = 25 + (T_max - 25) * (th / burn_dur)
@@ -1213,139 +1273,56 @@ def fos_at_time(th, ucs0, beta_d, beta_str, T_max, burn_dur, w, H, sv_const):
     damage = np.clip(1 - np.exp(-beta_d * max(T_t - 100, 0)), 0, 0.95)
     str_red = np.exp(-beta_str * max(T_t - 20, 0))
     ucs_eff = ucs0 * (1 - damage) * str_red
-    p_str = ucs_eff * (w / (H + 1e-9))**0.5
+    p_str = ucs_eff * (w / (H + 1e-9)) ** 0.5
     return np.clip(p_str / (sv_const + 1e-9), 0, 5)
 
 with st.expander("📈 FOS Vaqt Bashorati (Trend)"):
-    time_points = np.arange(1, time_h+1, max(1, time_h//20))
+    time_points = np.arange(1, time_h + 1, max(1, time_h // 20))
     fos_timeline = [fos_at_time(th, ucs_seam, beta_damage, beta_strength,
-                                 T_source_max, burn_duration, rec_width, H_seam, sv_seam)
+                                T_source_max, burn_duration, rec_width, H_seam, sv_seam)
                     for th in time_points]
     slope, intercept, r_value, _, _ = linregress(time_points, fos_timeline)
-    future_times = np.arange(time_h, min(time_h*2,300), max(1,time_h//10))
-    fos_forecast = intercept + slope*future_times
-    fos_forecast = np.clip(fos_forecast,0,3)
-    if slope<0 and intercept+slope*time_h>1.0:
-        t_critical = (1.0-intercept)/slope
+    future_times = np.arange(time_h, min(time_h * 2, 300), max(1, time_h // 10))
+    fos_forecast = intercept + slope * future_times
+    fos_forecast = np.clip(fos_forecast, 0, 3)
+    if slope < 0 and intercept + slope * time_h > 1.0:
+        t_critical = (1.0 - intercept) / slope
         critical_info = f"⚠️ FOS=1.0 ga taxminan **{t_critical:.0f}** soatda yetishi mumkin"
     else:
         critical_info = "✅ Hozirgi trend bo'yicha FOS=1.0 ga yetish xavfi yo'q"
     fig_trend = go.Figure()
-    fig_trend.add_trace(go.Scatter(x=time_points, y=fos_timeline, mode='lines+markers', name='Hisoblangan FOS', line=dict(color='cyan',width=2), marker=dict(size=6)))
-    trend_line = intercept+slope*time_points
-    fig_trend.add_trace(go.Scatter(x=time_points, y=trend_line, mode='lines', name=f'Trend (R²={r_value**2:.3f})', line=dict(color='yellow',width=1,dash='dot')))
-    fig_trend.add_trace(go.Scatter(x=future_times, y=fos_forecast, mode='lines', name='Bashorat', line=dict(color='orange',width=2,dash='dash'), fill='tozeroy', fillcolor='rgba(255,165,0,0.1)'))
+    fig_trend.add_trace(go.Scatter(x=time_points, y=fos_timeline, mode='lines+markers',
+                                   name='Hisoblangan FOS', line=dict(color='cyan', width=2),
+                                   marker=dict(size=6)))
+    trend_line = intercept + slope * time_points
+    fig_trend.add_trace(go.Scatter(x=time_points, y=trend_line, mode='lines',
+                                   name=f'Trend (R²={r_value**2:.3f})',
+                                   line=dict(color='yellow', width=1, dash='dot')))
+    fig_trend.add_trace(go.Scatter(x=future_times, y=fos_forecast, mode='lines',
+                                   name='Bashorat', line=dict(color='orange', width=2, dash='dash'),
+                                   fill='tozeroy', fillcolor='rgba(255,165,0,0.1)'))
     fig_trend.add_hline(y=1.5, line_color='green', line_dash='dash', annotation_text='Barqaror chegarasi (1.5)')
     fig_trend.add_hline(y=1.0, line_color='red', line_dash='dash', annotation_text='Kritik chegara (1.0)')
     fig_trend.add_vline(x=time_h, line_color='white', line_dash='dot', annotation_text=f'Hozir ({time_h}h)')
-    fig_trend.update_layout(template='plotly_dark', height=400, title=f"FOS vaqt bashorati | Trend: {slope:+.4f} FOS/soat", xaxis_title='Vaqt (soat)', yaxis_title='FOS', legend=dict(orientation='h', y=-0.2))
+    fig_trend.update_layout(template='plotly_dark', height=400,
+                            title=f"FOS vaqt bashorati | Trend: {slope:+.4f} FOS/soat",
+                            xaxis_title='Vaqt (soat)', yaxis_title='FOS',
+                            legend=dict(orientation='h', y=-0.2))
     st.plotly_chart(fig_trend, use_container_width=True)
     tc1, tc2, tc3 = st.columns(3)
-    tc1.metric("Trend ko'rsatkichi", f"{slope:+.5f} FOS/soat", delta="Kamaymoqda" if slope<0 else "O'smoqda", delta_color="inverse" if slope<0 else "normal")
+    tc1.metric("Trend ko'rsatkichi", f"{slope:+.5f} FOS/soat",
+               delta="Kamaymoqda" if slope < 0 else "O'smoqda",
+               delta_color="inverse" if slope < 0 else "normal")
     tc2.metric("R² (trend aniqligi)", f"{r_value**2:.4f}")
     tc3.metric("Hozirgi FOS", f"{fos_timeline[-1]:.3f}")
     st.info(critical_info)
 
-# 3D litologik model, Monte-Karlo, Ssenariy taqqoslash, Sezgirlik, AI monitoring, Sirdesai dashboard...
-# (qolgan qismlar avvalgi koda o'xshash, lekin yangilangan funksiyalar bilan)
+# ====================== Qolgan barcha expanderlar (Monte Karlo, Ssenariy, Sezgirlik, Sirdesai, AI Monitoring, Test, Xatoliklar) ======================
+# Bu yerda sizning mavjud kodingizdagi qolgan barcha bo‘limlarni o‘z holicha qoldiring (o‘zgartirishlarsiz).
+# Muhimi: ularning ichida qayta `well_distance` slayderi yoki `key="well_dist_slider"` bo‘lmasligiga ishonch hosil qiling.
+# Kerak bo‘lsa, shu qismlardagi slayderni o‘chirib, yuqoridagi yagona slayderdan foydalaning.
 
-# Wilson plastic zone funksiyasi
-def wilson_plastic_zone(M, sigma_v, sigma_c_eff, phi_deg=30.0, p_confine=0.5):
-    phi = np.radians(phi_deg)
-    kp = (1 + np.sin(phi)) / (1 - np.sin(phi))
-    arg = (sigma_v + p_confine) / (sigma_c_eff * kp + 1e-9)
-    arg = np.maximum(arg, 1.0 + 1e-6)
-    y = (M / (2 * kp)) * np.log(arg)
-    return np.clip(y, 0, M * 5)
-
-# compute_effective_stress yangi
-def compute_effective_stress(sensor, biot_alpha=0.85, K_bulk_GPa=10.0,
-                              alpha_thermal=1e-5, T_ref=20.0):
-    sigma   = sensor["stress"]
-    p_pore  = sensor["gas_pressure"]
-    T       = sensor["temperature"]
-    K_MPa   = K_bulk_GPa * 1000.0
-    delta_T = T - T_ref
-    sigma_eff = sigma - biot_alpha * p_pore + 3.0 * K_MPa * alpha_thermal * delta_T / 1e3
-    return sigma_eff
-
-# UCGModel va AIEngine yangilangan
-class UCGModel:
-    def __init__(self, params, wells, layers):
-        self.params = params; self.wells = wells; self.layers = layers
-
-    def temperature(self, X, Z):
-        T_total = np.full_like(X, 25.0)
-        for w in self.wells:
-            dist = np.sqrt((X - w["x"])**2 + (Z - w["z"])**2)
-            T_total += (self.params["T_max"] - 25) * np.exp(-dist / self.params["width"])
-        return np.minimum(T_total, self.params["T_max"])
-
-    def damage(self, T):
-        return np.clip(1 - np.exp(-self.params["beta"]*(T-25)), 0, 0.95)
-    
-    def stress(self, T):
-        return (self.params["E"] * self.params["alpha"] * (T - 25)) / (1 - self.params["nu"])
-    
-    def subsidence(self, X):
-        i = self.params["depth"] * np.tan(np.radians(self.params["angle"]))
-        Smax = 0.001 * self.params["width"]**2
-        return Smax * np.exp(-(X**2)/(2*i**2))
-    
-    def fos_field(self, X, Z, T):
-        sigma_v = self.params["rho"] * 9.81 * Z / 1e6
-        damage = np.clip(1 - np.exp(-self.params["beta"]*(T-25)), 0, 0.95)
-        ucs_eff_mpa = (self.params["ucs"] * (1 - damage)) / 1e6
-        min_pillar_width = np.full_like(X, 1e6)
-        for i in range(len(self.wells)-1):
-            mid_x = (self.wells[i]["x"] + self.wells[i+1]["x"]) / 2
-            half_w = abs(self.wells[i+1]["x"] - self.wells[i]["x"]) / 2 - self.params.get("cavity_w", 50)/2
-            mask = (X > self.wells[i]["x"]) & (X < self.wells[i+1]["x"])
-            min_pillar_width[mask] = np.minimum(min_pillar_width[mask], max(half_w*2, 5))
-        sigma_p = ucs_eff_mpa * np.power(min_pillar_width / (self.params["depth"] + 1e-9), 0.5)
-        return np.clip(sigma_p / (sigma_v + 1e-9), 0, 5)
-    
-    def run(self, x, z):
-        X, Z = np.meshgrid(x, z)
-        T = self.temperature(X, Z)
-        D = self.damage(T)
-        stress = self.stress(T)
-        subs = self.subsidence(X)
-        fos_field = self.fos_field(X, Z, T)
-        return X, Z, T, D, stress, subs, fos_field
-
-class AIEngine:
-    def __init__(self):
-        self.rf = RandomForestClassifier(n_estimators=100, random_state=SEED_GLOBAL)
-        self.nn = MLPRegressor(hidden_layer_sizes=(64,64), max_iter=500, random_state=SEED_GLOBAL)
-    def train(self):
-        np.random.seed(SEED_GLOBAL)
-        n = 2000
-        fos = np.random.uniform(0.5, 3.0, n)
-        damage = np.random.uniform(0, 1, n)
-        temp_norm = np.random.uniform(0.02, 1.2, n)
-        subs = np.random.uniform(0, 0.5, n)
-        X = np.column_stack([fos, damage, temp_norm, subs])
-        y_class = (fos < 1.2) | (damage > 0.6)
-        y_reg = np.clip((1.2 - fos) / 2.0 + damage, 0, 1)
-        self.rf.fit(X, y_class)
-        self.nn.fit(X, y_reg)
-    def predict(self, fos, D, T, subs):
-        features = np.array([[fos, np.mean(D), np.mean(T)/1000, np.max(subs)]])
-        risk = self.rf.predict(features)[0]
-        proba = self.rf.predict_proba(features)
-        if proba.shape[1] == 1: prob = proba[0,0] if risk == 1 else 0.0
-        else: prob = proba[0,1]
-        future = self.nn.predict(features)[0]
-        return risk, prob, future
-
-# Norm funksiyasi
-def norm_safe(val, mn, mx):
-    return float(np.clip((val - mn) / (mx - mn + 1e-12), 0, 1))
-
-# (Qolgan expanderlar: Monte Carlo, Ssenariy, Sezgirlik, Sirdesai dashboard, test va xatoliklar...)
-# Bu qismlarni to'liq kodga kiritishingiz mumkin.
-
+# ====================== YAKUNIY LOG VA SIDEBAR IZOH ======================
 logger.info(f"Run start | obj={obj_name} | layers={num_layers} | T_max={T_source_max}")
 logger.info(f"FOS computed = {pillar_strength/(sv_seam+1e-12):.4f} | rec_width = {rec_width:.2f} m")
 
@@ -1353,10 +1330,5 @@ st.sidebar.markdown("---")
 st.sidebar.info("""
 **Eslatma:**  
 Ikkinchi koddagi FastAPI va Docker konfiguratsiyalari Streamlit ilovasiga mos emas. Ular alohida fayllar (`api.py`, `Dockerfile`, `docker-compose.yml`) sifatida saqlanishi mumkin.  
-Agar kerak bo‘lsa, quyidagi tarkibda yozib oling:
-- `api.py` – FastAPI endpointlari
-- `Dockerfile` – konteynerizatsiya
-- `docker-compose.yml` – orchestratsiya
 """)
-
 st.sidebar.write(f"Tuzuvchi: Saitov Dilshodbek | Device: {device}")
