@@ -9,6 +9,7 @@ from scipy.stats import linregress
 import time
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.neural_network import MLPRegressor
+from sklearn.ensemble import IsolationForest
 import io
 from docx import Document
 from docx.shared import Pt, Cm, RGBColor, Inches
@@ -888,23 +889,18 @@ with c2:
         bottom_layer = layers_data[-1]
         bottom_boundary = bottom_layer['z_start'] + bottom_layer['t']
         fos[grid_z > bottom_boundary] = 2.5
-        # --- BIRLASHTIRILGAN YANGI BLOK: Quduqlar va selek ---
-        all_wells = [0, 1, 2]
+        all_wells = [0,1,2]
         for i in all_wells:
             if i not in active_wells:
                 px = well_x[i]
                 pillar_mask = (np.abs(grid_x - px) < h_seam * 1.5) & (np.abs(grid_z - source_z) < h_seam * 1.2)
                 fos[pillar_mask] = 2.5
         if stage == 2:
-            # Selek kengligini aniqroq hisoblash
             selek_eni = well_distance - cavity_width
-            # Pillar zonasini aniqlash (markaziy quduq atrofida)
-            # well_x[1] odatda 0 nuqtasi bo'lishi kerak
             pillar_zone = (np.abs(grid_x - well_x[1]) < (selek_eni / 2)) & \
                           (grid_z > (source_z - h_seam)) & (grid_z < (source_z + h_seam))
-            # Test uchun: to'g'ridan-to'g'ri FOS = 2.2 qiymat beramiz
+            # Ikkinchi kod bo'yicha test uchun to'g'ridan-to'g'ri 2.2 qiymat beramiz
             fos[pillar_zone] = 2.2
-        # --- BLOK TUGADI ---
         fos = np.nan_to_num(fos, nan=3.0, posinf=3.0, neginf=0.0)
         return fos
     
@@ -1708,6 +1704,156 @@ with st.expander("⚙️ Multi-well model (PARAMS → MODEL → RESULT → VISUA
                 st.plotly_chart(fig_s, use_container_width=True, key=f"sens_{step}")
             time.sleep(0.3)
         st.success("Simulation finished.")
+
+# =========================== IKKINCHI KOD: TEST, XATOLIKLAR VA LINTER/DEBUGGER ===========================
+st.markdown("---")
+st.header("🧪 Dasturlash bo‘yicha qo‘shimcha: test, xatolik tahlillari va vositalar")
+tab_test, tab_errors, tab_tools = st.tabs(["✅ Test (test_math)", "🐞 Xatoliklar namunalari", "🛠️ Linter / Formatter / Debugger"])
+with tab_test:
+    st.subheader("file: test_math.py – test funksiyasi")
+    code_test = '''def add(x, y):
+    return x + y
+
+def test_add():
+    assert add(1, 2) == 3
+    assert add(-1, -2) == -3
+'''
+    st.code(code_test, language="python")
+    if st.button("▶️ test_add() ni ishga tushirish"):
+        try:
+            test_add()
+            st.success("✅ Barcha testlar muvaffaqiyatli o‘tdi!")
+        except AssertionError as e:
+            st.error(f"❌ Test xatosi: {e}")
+with tab_errors:
+    st.subheader("Turli dasturlash tillarida sintaksis, mantiqiy va resurs xatolari (tuzatilgan)")
+    lang_choice = st.selectbox("Tilni tanlang", ["Python", "JavaScript", "Java", "C++ (misol yo'q, lekin jadvalda ko'rsatilgan)"], key="err_lang")
+    if lang_choice == "Python":
+        st.markdown("**Sintaksis xatosi (to'g'rilangan)**")
+        st.code('''# Noto'g'ri: if operatorida ':' yo'q
+# x = 5
+# if x == 5 print(x)
+
+# Tuzatilgan:
+if x == 5:
+    print(x)''', language="python")
+        st.markdown("**Mantiqiy xato (o'rtacha hisoblash)**")
+        st.code('''# Noto'g'ri: // butun bo'linish, kasr qismini tashlaydi
+def average(nums):
+    total = sum(nums)
+    return total // len(nums)
+
+# Tuzatilgan:
+def average(nums):
+    total = sum(nums)
+    return total / len(nums)''', language="python")
+        st.markdown("**Resurs oqishi (fayl yopilmasligi)**")
+        st.code('''# Noto'g'ri: fayl yopilmagan
+def read_file(path):
+    f = open(path, 'r')
+    data = f.read()
+    # f.close() unutib qolingan
+
+# Tuzatilgan (context manager):
+def read_file(path):
+    with open(path, 'r') as f:
+        data = f.read()
+    return data''', language="python")
+    elif lang_choice == "JavaScript":
+        st.markdown("**Sintaksis xatosi**")
+        st.code('''// Noto'g'ri: if sharti noto'g'ri
+// if (x === 10) console.log("Ten");
+
+// Tuzatilgan:
+if (x === 10) {
+    console.log("Ten");
+}''', language="javascript")
+        st.markdown("**Mantiqiy xato (sort)**")
+        st.code('''// Noto'g'ri: lexikografik tartib
+function sortNumbers(arr) {
+    return arr.sort();
+}
+
+// Tuzatilgan:
+function sortNumbers(arr) {
+    return arr.sort((a, b) => a - b);
+}''', language="javascript")
+        st.markdown("**Resurs oqishi (fayl oqishning yo'q)**")
+        st.code('''// Noto'g'ri: fayl ochilgan, lekin yopilmaydi
+const fs = require('fs');
+function readFile(path) {
+    const data = fs.readFileSync(path, 'utf-8');
+    return data;
+}
+
+// Tuzatilgan (finally bilan yopish):
+const fs = require('fs');
+function readFile(path) {
+    try {
+        const data = fs.readFileSync(path, 'utf-8');
+        return data;
+    } finally {
+        fs.closeSync(fs.openSync(path, 'r'));
+    }
+}''', language="javascript")
+    elif lang_choice == "Java":
+        st.markdown("**Sintaksis xatosi (nuqta-vergul)**")
+        st.code('''// Noto'g'ri: nuqta-vergul yo'q
+// int x = 7;
+// if (x == 7) System.out.println("Seven")
+
+// Tuzatilgan:
+if (x == 7) {
+    System.out.println("Seven");
+}''', language="java")
+        st.markdown("**Mantiqiy xato (butun bo'linma)**")
+        st.code('''// Noto'g'ri: int / int -> int
+public double divide(int a, int b) {
+    return a / b;   // butun qismi
+}
+
+// Tuzatilgan:
+public double divide(int a, int b) {
+    return (double) a / b;
+}''', language="java")
+        st.markdown("**Resurs oqishi (FileInputStream ochilgan, yopilmagan)**")
+        st.code('''// Noto'g'ri: in, out yopilmagan
+public void copyFile(String src, String dest) throws IOException {
+    FileInputStream in = new FileInputStream(src);
+    FileOutputStream out = new FileOutputStream(dest);
+    byte[] buf = new byte[1024];
+    int len;
+    while ((len = in.read(buf)) > 0) {
+        out.write(buf, 0, len);
+    }
+    // in.close(), out.close() chaqirilmagan
+}
+
+// Tuzatilgan: try-with-resources
+public void copyFile(String src, String dest) throws IOException {
+    try (FileInputStream in = new FileInputStream(src);
+         FileOutputStream out = new FileOutputStream(dest)) {
+        byte[] buf = new byte[1024];
+        int len;
+        while ((len = in.read(buf)) > 0) {
+            out.write(buf, 0, len);
+        }
+    }
+}''', language="java")
+with tab_tools:
+    st.subheader("Tillar bo‘yicha linter / formatter va debugger vositalari")
+    tools_data = [
+        {"Til": "Python", "Linter / Formatter": "Pylint, Flake8, Black", "Buyruq": "pylint mycode.py\nflake8 path/to/code.py\nblack mycode.py", "Debugger / Profiler": "PDB (python -m pdb mycode.py), ipdb"},
+        {"Til": "JavaScript/Node.js", "Linter / Formatter": "ESLint, Prettier", "Buyruq": "npx eslint file.js\nnpx prettier --write .", "Debugger / Profiler": "node --inspect file.js, Chrome DevTools"},
+        {"Til": "Java", "Linter / Formatter": "Checkstyle, SpotBugs", "Buyruq": "mvn checkstyle:checkstyle\nmvn spotbugs:spotbugs", "Debugger / Profiler": "jdb, IDE debugger (IntelliJ, Eclipse)"},
+        {"Til": "C#", "Linter / Formatter": "dotnet-format, StyleCop", "Buyruq": "dotnet format\n(Visual Studio integratsiyasi)", "Debugger / Profiler": "Visual Studio debugger, dbgclr"},
+        {"Til": "C/C++", "Linter / Formatter": "clang-format, cppcheck", "Buyruq": "clang-format -i file.cpp\ncppcheck .", "Debugger / Profiler": "gdb, Valgrind (valgrind --leak-check=full ./program)"},
+        {"Til": "Go", "Linter / Formatter": "go fmt, go vet", "Buyruq": "go fmt ./...\ngo vet ./...", "Debugger / Profiler": "Delve (dlv debug)"},
+        {"Til": "Rust", "Linter / Formatter": "rustfmt, Clippy", "Buyruq": "cargo fmt -- --check\ncargo clippy", "Debugger / Profiler": "gdb target/debug/myprog, rust-lldb"},
+        {"Til": "PHP", "Linter / Formatter": "phpcs (PHP_CodeSniffer)", "Buyruq": "./vendor/bin/phpcs src/", "Debugger / Profiler": "Xdebug, php -a"}
+    ]
+    df_tools = pd.DataFrame(tools_data)
+    st.dataframe(df_tools, use_container_width=True)
 
 st.sidebar.markdown("---")
 st.sidebar.info("""
