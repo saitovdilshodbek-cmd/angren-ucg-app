@@ -25,7 +25,7 @@ import matplotlib.pyplot as plt
 import warnings
 warnings.filterwarnings('ignore')
 
-# =========================== PYTORCH IMPORT ===========================
+# =========================== PYTORCH IMPORT (xatolikka chidamli) ===========================
 try:
     import torch
     import torch.nn as nn
@@ -36,7 +36,7 @@ except ImportError as e:
     device = "cpu"
     st.sidebar.info(f"PyTorch yuklanmadi: {e}. Klassik ML ishlatiladi.")
 
-# =========================== SEED / LOGGING ===========================
+# =========================== GLOBAL SEED / LOGGING ===========================
 SEED_GLOBAL = 42
 np.random.seed(SEED_GLOBAL)
 import random
@@ -442,9 +442,9 @@ def t(key, **kwargs):
     return text.format(**kwargs) if kwargs else text
 
 EPS = 1e-12
-EPS_PA = 1e3
+EPS_PA = 1e3   # 1 kPa
 
-# Sahifa konfiguratsiyasi
+# =========================== SAHIFA KONFIGURATSIYASI ===========================
 if 'language' not in st.session_state:
     st.session_state.language = 'uz'
 
@@ -452,14 +452,14 @@ st.set_page_config(page_title=t('app_title'), layout="wide")
 st.title(t('app_title'))
 st.markdown(f"### {t('app_subtitle')}")
 
-# Til tanlash
+# =========================== TILNI SOZLASH ===========================
 LANGUAGES = {'uz': "🇺🇿 O'zbek", 'en': '🇬🇧 English', 'ru': '🇷🇺 Русский'}
 lang = st.sidebar.selectbox("Til / Language / Язык", options=list(LANGUAGES.keys()),
                             format_func=lambda x: LANGUAGES[x],
                             index=list(LANGUAGES.keys()).index(st.session_state.language))
 st.session_state.language = lang
 
-# QR kod
+# =========================== QR KOD GENERATORI ===========================
 st.sidebar.markdown("---")
 st.sidebar.subheader("📱 Mobil ilovaga o'tish")
 url = "https://angren-ucg-app-a7rxktm6usxqixabhaq576.streamlit.app/#ucg-termo-mexanik-dinamik-3-d-model"
@@ -477,7 +477,7 @@ def generate_qr(link):
 qr_img_bytes = generate_qr(url)
 st.sidebar.image(qr_img_bytes, caption="Scan QR: Angren UCG API", use_container_width=True)
 
-# Matematik metodologiya
+# =========================== MATEMATIK METODOLOGIYA ===========================
 st.sidebar.header(t('sidebar_header_params'))
 formula_opts = FORMULA_OPTIONS[st.session_state.language]
 formula_option = st.sidebar.selectbox(t('formula_show'), formula_opts)
@@ -520,20 +520,21 @@ tensile_ratio = st.sidebar.slider(t('tensile_ratio'), 0.03, 0.15, 0.08)
 
 st.sidebar.subheader("🔬 Termal koeffitsientlar (kalibrlangan)")
 beta_damage = st.sidebar.number_input("β_damage (UCS yo'qolish)", value=0.002, format="%.4f",
-                                       help="Shao et al. 2015 bo'yicha 0.0015–0.0035")
+                                      help="Shao et al. 2015 bo'yicha 0.0015–0.0035")
 beta_strength = st.sidebar.number_input("β_strength (Pillar redaktsiyasi)", value=0.0025, format="%.4f",
-                                         help="Yang 2010 PhD: 0.002–0.003 ko'mir uchun")
+                                        help="Yang 2010 PhD: 0.002–0.003 ko'mir uchun")
 beta_tensile = st.sidebar.number_input("β_tensile (Cho'zilish)", value=0.0035, format="%.4f",
-                                        help="Tensile strength faster decay")
+                                       help="Tensile strength faster decay")
 
 st.sidebar.subheader(t('combustion'))
-burn_duration = st.sidebar.number_input(t('burn_duration'), value=40, min_value=1, max_value=500, step=1)
+burn_duration = st.sidebar.number_input(t('burn_duration'), value=40,
+                                        min_value=1, max_value=500, step=1)
 T_source_max = st.sidebar.slider(t('max_temp'), 600, 1200, 1075)
 
 with st.sidebar.expander(t('timeline')):
     st.markdown(t('timeline_table'))
 
-# Qatlam ma'lumotlari
+# =========================== QATLAM MA'LUMOTLARI ===========================
 strata_colors = ['#87CEEB', '#F4A460', '#D3D3D3', '#F5DEB3', '#555555']
 layers_data = []
 total_depth = 0.0
@@ -567,7 +568,7 @@ if errors:
     for e in errors: st.error(e)
     st.stop()
 
-# =========================== HARORAT MAYDONI ===========================
+# =========================== KESHLANGAN HARORAT MAYDONI ===========================
 @st.cache_data(show_spinner=False, max_entries=20)
 def compute_temperature_field_moving(time_h: int, T_source_max: int, burn_duration: int,
                                      total_depth: float, source_z: float,
@@ -611,10 +612,9 @@ temp_2d, x_axis, z_axis, grid_x, grid_z = compute_temperature_field_moving(
 grid_sigma_v = np.zeros_like(grid_z)
 grid_ucs = np.zeros_like(grid_z); grid_mb = np.zeros_like(grid_z); grid_s_hb = np.zeros_like(grid_z)
 grid_a_hb = np.zeros_like(grid_z); grid_sigma_t0_manual = np.zeros_like(grid_z)
-layer_bounds = [(l['z_start'], l['z_start'] + l['t']) for l in layers_data]
-for i, (z0, z1) in enumerate(layer_bounds):
+layer_bounds = [(l['z_start'], l['z_start'] + l['t'], l) for l in layers_data]   # *** TUZATILDI: 3 ta element ***
+for i, (z0, z1, layer) in enumerate(layer_bounds):
     mask = (grid_z >= z0) & (grid_z < z1 if i < len(layer_bounds)-1 else True)
-    layer = layers_data[i]
     overburden = sum(l['rho']*9.81*l['t'] for l in layers_data[:i]) / 1e6
     depth_local = grid_z[mask] - z0
     grid_sigma_v[mask] = overburden + (layer['rho']*9.81*depth_local) / 1e6
@@ -696,7 +696,7 @@ sigma1_act *= void_factor
 sigma3_act *= void_factor
 sigma_ci *= void_factor
 
-# Ideal gaz qonuni + Darcy
+# Ideal gaz + Darcy
 R_SPECIFIC_SYNGAS = 350.0
 RHO_GAS = 0.7
 T_KELVIN = temp_2d + 273.15
@@ -796,7 +796,6 @@ if nn_model is None or not PT_AVAILABLE:
     else:
         collapse_pred = np.zeros_like(temp_2d)
 
-# SimpleRiskNN
 if PT_AVAILABLE:
     class SimpleRiskNN(nn.Module):
         def __init__(self, input_dim=3):
@@ -828,10 +827,10 @@ def predict_risk_from_sensor(model, temp, stress, ucs_lab):
         pred = model(X_t).cpu().numpy()
     return pred.flatten()
 
-# =========================== 1-QISM TUGADI – 2-QISMGA DAVOM ETING ===========================
-# =========================== 2-QISM ===========================
+# =========================== 1-QISM TUGADI – DAVOMI 2-QISMDA ===========================
+# =========================== 2-QISM (davomi) ===========================
 
-# ---------- Quduqlar konfiguratsiyasi (metrikalardan oldin) ----------
+# ---------- Quduqlar konfiguratsiyasi (yagona slayder) ----------
 st.sidebar.markdown("---")
 st.sidebar.subheader("Quduqlar konfiguratsiyasi")
 well_distance = st.sidebar.slider(
@@ -880,9 +879,8 @@ m1, m2, m3, m4, m5 = st.columns(5)
 m1.metric(t('pillar_strength'), f"{pillar_strength:.1f} MPa")
 m2.metric(t('plastic_zone'), f"{y_zone:.1f} m")
 
-# 2D kesim yuzasi va 3D taxminiy hajm
-cavity_length_y = well_distance                  # endi aniqlangan
-void_volume_3d = void_volume * cavity_length_y   # m³
+cavity_length_y = well_distance
+void_volume_3d = void_volume * cavity_length_y
 m3.metric(t('cavity_volume'), f"{void_volume_3d:.1f} m³")
 m4.metric(t('max_permeability'), f"{np.max(perm):.1e} m²")
 m5.metric(t('ai_recommendation'), f"{optimal_width_ai:.1f} m",
@@ -919,7 +917,7 @@ with col_g3:
                                          legend=dict(orientation="h", y=-0.3, x=0.5, xanchor="center")),
                     use_container_width=True)
 
-# =========================== TM MAYDONI (QUDIQ MASOFASI ISHLATILDI) ===========================
+# =========================== TM MAYDONI ===========================
 st.markdown("---")
 c1, c2 = st.columns([1, 2.5])
 
@@ -1211,7 +1209,7 @@ with st.expander("🤖 AI Risk Prediction (Sensor CSV)", expanded=False):
             else:
                 st.success("✅ Xavf past. Hozircha xavfsiz.")
 
-# ====================== QO'SHIMCHA BLOKLAR (Risk Map, FOS trend, ...) ======================
+# ====================== Risk Map ======================
 @st.cache_data(show_spinner=False)
 def compute_risk_map(fos_arr, damage_arr, void_arr, temp_arr, T_max):
     fos_risk = np.clip(1.0 - fos_arr / 2.0, 0, 1)
@@ -1317,10 +1315,659 @@ with st.expander("📈 FOS Vaqt Bashorati (Trend)"):
     tc3.metric("Hozirgi FOS", f"{fos_timeline[-1]:.3f}")
     st.info(critical_info)
 
-# ====================== Qolgan barcha expanderlar (Monte Karlo, Ssenariy, Sezgirlik, Sirdesai, AI Monitoring, Test, Xatoliklar) ======================
-# Bu yerda sizning mavjud kodingizdagi qolgan barcha bo‘limlarni o‘z holicha qoldiring (o‘zgartirishlarsiz).
-# Muhimi: ularning ichida qayta `well_distance` slayderi yoki `key="well_dist_slider"` bo‘lmasligiga ishonch hosil qiling.
-# Kerak bo‘lsa, shu qismlardagi slayderni o‘chirib, yuqoridagi yagona slayderdan foydalaning.
+# =========================== 3D LITOLOGIK KESIM ===========================
+with st.expander("🌍 3D Litologik Kesim"):
+    fig_3d = go.Figure()
+    y_3d = np.linspace(-total_depth * 0.5, total_depth * 0.5, 30)
+    for i, layer in enumerate(layers_data):
+        z_top = layer['z_start']
+        z_bot = layer['z_start'] + layer['t']
+        x_3d = np.linspace(x_axis.min(), x_axis.max(), 30)
+        X3, Y3 = np.meshgrid(x_3d, y_3d)
+        Z_top = np.full_like(X3, z_top)
+        hex_color = layer['color'].lstrip('#')
+        r, g, b = tuple(int(hex_color[j:j+2], 16) for j in (0, 2, 4))
+        rgb_str = f"rgb({r},{g},{b})"
+        fig_3d.add_trace(go.Surface(x=X3, y=Y3, z=Z_top, colorscale=[[0, rgb_str], [1, rgb_str]],
+                                    showscale=False, opacity=0.7, name=layer['name'],
+                                    hovertemplate=f"{layer['name']}<br>UCS: {layer['ucs']} MPa<br>GSI: {layer['gsi']}<extra></extra>"))
+    for src_x in [-total_depth/3, 0, total_depth/3]:
+        theta = np.linspace(0, 2*np.pi, 30)
+        phi = np.linspace(0, np.pi, 20)
+        THETA, PHI = np.meshgrid(theta, phi)
+        R = H_seam * 0.4
+        cx = src_x + R * np.sin(PHI) * np.cos(THETA)
+        cy = R * np.sin(PHI) * np.sin(THETA)
+        cz = source_z + R * np.cos(PHI)
+        fig_3d.add_trace(go.Surface(x=cx, y=cy, z=cz, colorscale=[[0, 'orange'], [1, 'red']],
+                                    showscale=False, opacity=0.85, name='Yonish kamerasi'))
+    fig_3d.update_layout(scene=dict(xaxis_title='X (m)', yaxis_title='Y (m)', zaxis_title='Chuqurlik (m)',
+                                    zaxis=dict(autorange='reversed'),
+                                    camera=dict(eye=dict(x=1.5, y=1.5, z=1.0))),
+                         template='plotly_dark', height=600,
+                         title="3D Litologik Model + Yonish Kameralari", showlegend=True)
+    st.plotly_chart(fig_3d, use_container_width=True)
+    st.caption("Sariq/qizil sferalar — yonish kameralari joylashuvi")
+
+# =========================== MONTE CARLO NOANIQLIK TAHLILI ===========================
+@st.cache_data(show_spinner=False)
+def monte_carlo_fos(ucs_mean, ucs_std, gsi_mean, gsi_std, d_mean, temp_mean, H_seam, n_sim=2000):
+    np.random.seed(42)
+    ucs_s = np.random.normal(ucs_mean, ucs_std, n_sim).clip(1, 300)
+    gsi_s = np.random.normal(gsi_mean, gsi_std, n_sim).clip(10, 100)
+    T_s = np.random.normal(temp_mean, temp_mean * 0.1, n_sim).clip(20, 1200)
+    dmg_s = np.clip(1 - np.exp(-0.002 * np.maximum(T_s - 100, 0)), 0, 0.95)
+    sci_s = ucs_s * (1 - dmg_s)
+    str_r = np.exp(-0.0025 * (T_s - 20))
+    p_str = (sci_s * str_r) * (20 / (H_seam + 1e-12)) ** 0.5
+    sv_s = ucs_s * 0.025
+    fos_s = np.clip(p_str / (sv_s + 1e-12), 0, 5)
+    pf = float(np.mean(fos_s < 1.0))
+    return fos_s, pf
+
+with st.expander("🎲 Monte Carlo Noaniqlik Tahlili"):
+    mc_col1, mc_col2 = st.columns([1, 2])
+    with mc_col1:
+        ucs_std = st.number_input("UCS standart og'ish (MPa)", value=5.0, min_value=0.1)
+        gsi_std = st.number_input("GSI standart og'ish", value=5.0, min_value=0.1)
+        n_mc = st.selectbox("Simulyatsiya soni", [500, 1000, 2000, 5000], index=1)
+    with mc_col2:
+        fos_mc, pf = monte_carlo_fos(layers_data[-1]['ucs'], ucs_std, layers_data[-1]['gsi'], gsi_std,
+                                     D_factor, avg_t_p, H_seam, n_sim=n_mc)
+        fig_mc = go.Figure()
+        fig_mc.add_histogram(x=fos_mc, nbinsx=40, marker_color=np.where(fos_mc < 1.0, '#E74C3C', '#27AE60'),
+                             name='FOS taqsimoti')
+        fig_mc.add_vline(x=1.0, line_color='red', line_dash='dash', annotation_text='FOS=1.0')
+        fig_mc.add_vline(x=1.5, line_color='yellow', line_dash='dash', annotation_text='FOS=1.5')
+        fig_mc.add_vline(x=np.mean(fos_mc), line_color='cyan', line_dash='dot',
+                         annotation_text=f"O'rtacha={np.mean(fos_mc):.2f}")
+        fig_mc.update_layout(template='plotly_dark', height=350,
+                             title=f"FOS taqsimoti | Failure ehtimoli: {pf*100:.1f}%",
+                             xaxis_title='FOS', yaxis_title='Chastota')
+        st.plotly_chart(fig_mc, use_container_width=True)
+    mc_stats = pd.DataFrame({
+        'Ko\'rsatkich': ['O\'rtacha FOS', 'Mediana', 'Std og\'ish', '5-percentil', '95-percentil', 'Failure ehtimoli'],
+        'Qiymat': [f"{np.mean(fos_mc):.3f}", f"{np.median(fos_mc):.3f}", f"{np.std(fos_mc):.3f}",
+                   f"{np.percentile(fos_mc, 5):.3f}", f"{np.percentile(fos_mc, 95):.3f}", f"{pf*100:.2f}%"]
+    })
+    st.dataframe(mc_stats, hide_index=True, use_container_width=True)
+
+# =========================== SSENARIY TAQQOSLASH (A vs B) ===========================
+with st.expander("⚖️ Ssenariy Taqqoslash (A vs B)"):
+    sc1, sc2 = st.columns(2)
+    with sc1:
+        st.markdown("**Ssenariy A**")
+        a_ucs  = st.number_input("UCS_A (MPa)", value=float(layers_data[-1]['ucs']), key="a_ucs")
+        a_gsi  = st.slider("GSI_A", 10, 100, layers_data[-1]['gsi'], key="a_gsi")
+        a_temp = st.number_input("T_A (°C)", value=float(T_source_max), key="a_t")
+    with sc2:
+        st.markdown("**Ssenariy B**")
+        b_ucs  = st.number_input("UCS_B (MPa)", value=float(layers_data[-1]['ucs'])*0.8, key="b_ucs")
+        b_gsi  = st.slider("GSI_B", 10, 100, max(10, layers_data[-1]['gsi']-10), key="b_gsi")
+        b_temp = st.number_input("T_B (°C)", value=float(T_source_max)*1.1, key="b_t")
+
+    # To'g'rilangan FOS hisobi
+    sigma_v_total_scenario = sum(l['rho']*9.81*l['t'] for l in layers_data[:-1])/1e6 + \
+                             layers_data[-1]['rho']*9.81*(H_seam/2)/1e6
+    fos_a = (a_ucs * np.exp(-0.0025 * (a_temp - 20))) / (sigma_v_total_scenario + 1e-12)
+    fos_b = (b_ucs * np.exp(-0.0025 * (b_temp - 20))) / (sigma_v_total_scenario + 1e-12)
+
+    def norm_safe(val, mn, mx):
+        return float(np.clip((val - mn) / (mx - mn + 1e-12), 0, 1))
+
+    ucs_max = max(a_ucs, b_ucs, 100)
+    gsi_max = 100
+    vals_a = [norm_safe(a_ucs, 0, ucs_max), norm_safe(a_gsi, 10, gsi_max),
+              norm_safe(fos_a, 0, 3), 1 - norm_safe(a_temp, 20, 1200)]
+    vals_b = [norm_safe(b_ucs, 0, ucs_max), norm_safe(b_gsi, 10, gsi_max),
+              norm_safe(fos_b, 0, 3), 1 - norm_safe(b_temp, 20, 1200)]
+
+    categories = ['UCS', 'GSI', 'FOS (taxmin)', 'Termal risk']
+    fig_radar = go.Figure()
+    for name, vals, color in [("A", vals_a, '#3498DB'), ("B", vals_b, '#E74C3C')]:
+        fig_radar.add_trace(go.Scatterpolar(r=vals + [vals[0]], theta=categories + [categories[0]],
+                                            fill='toself', name=f"Ssenariy {name}",
+                                            line=dict(color=color, width=2), fillcolor=color, opacity=0.3))
+    fig_radar.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
+                            template='plotly_dark', height=400, title="Ssenariylar radar taqqoslama")
+    st.plotly_chart(fig_radar, use_container_width=True)
+    comp_df = pd.DataFrame({
+        'Ko\'rsatkich': ['UCS (MPa)', 'GSI', 'FOS (taxmin)', 'Harorat (°C)'],
+        'Ssenariy A': [f"{a_ucs:.1f}", f"{a_gsi}", f"{fos_a:.2f}", f"{a_temp:.0f}"],
+        'Ssenariy B': [f"{b_ucs:.1f}", f"{b_gsi}", f"{fos_b:.2f}", f"{b_temp:.0f}"],
+        'Farq': [f"{b_ucs - a_ucs:+.1f}", f"{b_gsi - a_gsi:+d}", f"{fos_b - fos_a:+.2f}", f"{b_temp - a_temp:+.0f}"]
+    })
+    st.dataframe(comp_df, use_container_width=True, hide_index=True)
+
+# =========================== SEZGIRLIK TAHLILI (TORNADO) ===========================
+def hoek_brown_params(gsi, mi, d):
+    mb = mi * np.exp((gsi - 100) / (28 - 14 * d))
+    s  = np.exp((gsi - 100) / (9 - 3 * d))
+    a  = 0.5 + (1/6)*(np.exp(-gsi/15) - np.exp(-20/3))
+    return mb, s, a
+
+def thermal_damage_func(T):
+    return np.clip(1 - np.exp(-0.002 * np.maximum(T - 100, 0)), 0, 0.95)
+
+def thermal_reduction_func(T):
+    return np.exp(-0.0025 * (T - 20))
+
+def in_situ_stress(rho, H, nu):
+    sigma_v = rho * 9.81 * H / 1e6
+    k = nu / (1 - nu)
+    sigma_h = k * sigma_v
+    return sigma_v, sigma_h
+
+def pillar_strength_func(ucs, gsi, mi, d, T, width, H):
+    dmg = thermal_damage_func(T)
+    ucs_eff = ucs * (1 - dmg)
+    str_red = thermal_reduction_func(T)
+    return (ucs_eff * str_red) * (width / (H + 1e-12)) ** 0.5
+
+def compute_fos_func(ucs, gsi, mi, d, nu, T, width, H, rho):
+    sigma_v, _ = in_situ_stress(rho, H, nu)
+    p_str = pillar_strength_func(ucs, gsi, mi, d, T, width, H)
+    return np.clip(p_str / (sigma_v + 1e-12), 0, 5)
+
+def sensitivity_analysis(base_params, H, rho, range_pct=0.2):
+    base_fos = compute_fos_func(**base_params, H=H, rho=rho)
+    results = []
+    for key in base_params.keys():
+        low_params = base_params.copy()
+        high_params = base_params.copy()
+        if key == 'nu':
+            low_params[key] = max(0.1, base_params[key] - 0.05)
+            high_params[key] = min(0.4, base_params[key] + 0.05)
+        elif key == 'd':
+            low_params[key] = max(0, base_params[key] - 0.2)
+            high_params[key] = min(1, base_params[key] + 0.2)
+        else:
+            low_params[key] = base_params[key] * (1 - range_pct)
+            high_params[key] = base_params[key] * (1 + range_pct)
+        fos_low = compute_fos_func(**low_params, H=H, rho=rho)
+        fos_high = compute_fos_func(**high_params, H=H, rho=rho)
+        results.append({'param': key, 'low': fos_low - base_fos, 'high': fos_high - base_fos})
+    df = pd.DataFrame(results)
+    df['impact'] = np.maximum(np.abs(df['low']), np.abs(df['high']))
+    return df.sort_values('impact', ascending=True), base_fos
+
+with st.expander("🌪️ Sezgirlik Tahlili (Tornado Plot) - Yangi Ilmiy Model"):
+    st.markdown("Quyidagi tahlilda **Hoek-Brown**, **termal degradatsiya** va **Wilson pillar** nazariyalari asosida FOS sezgirligi baholanadi.")
+    df_sens, fos_base = sensitivity_analysis(
+        base_params={'ucs': layers_data[-1]['ucs'], 'gsi': layers_data[-1]['gsi'], 'mi': layers_data[-1]['mi'],
+                     'd': D_factor, 'nu': nu_poisson, 'T': avg_t_p, 'width': rec_width},
+        H=H_seam, rho=layers_data[-1]['rho'], range_pct=0.2)
+    fig_tornado = go.Figure()
+    fig_tornado.add_bar(y=df_sens['param'], x=df_sens['low'], orientation='h',
+                        name='−20% (yoki pasaytirilgan)', marker_color='#E74C3C')
+    fig_tornado.add_bar(y=df_sens['param'], x=df_sens['high'], orientation='h',
+                        name='+20% (yoki oshirilgan)', marker_color='#27AE60')
+    fig_tornado.add_vline(x=0, line_color='white', line_width=2)
+    fig_tornado.update_layout(title=f"FOS Sezgirligi (asosiy FOS = {fos_base:.2f})",
+                              barmode='relative', template='plotly_dark', height=450,
+                              xaxis_title='ΔFOS', yaxis_title='Parametr',
+                              legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1))
+    st.plotly_chart(fig_tornado, use_container_width=True)
+    st.caption("Parametrlar: ucs – bir oʻqli mustahkamlik, gsi – geologik kuch indeksi, mi – Hoek-Brown doimiysi, d – buzilish koeffitsiyenti, nu – Puasson koeffitsiyenti, T – harorat, width – selek eni.")
+    st.info(f"**Xulosa:** Asosiy FOS = {fos_base:.2f}. Eng ta'sirchan parametr: **{df_sens.iloc[-1]['param']}** (ΔFOS = {df_sens.iloc[-1]['high']:.3f}).")
+
+# =========================== SIRDESAI DASHBOARD ===========================
+st.header("🕹️ Ultimate Interactive Dashboard (Real-time Animation)")
+st.markdown("Ushbu panelda Sirdesai va boshqalar (2017) modeli asosida termal buzilish, kuchlanish va sirt deformatsiyalari interaktiv tarzda kuzatiladi.")
+
+@st.cache_data
+def calculate_comprehensive_metrics_sird(x, z, E, nu, alpha, beta_th, angle_draw, t_max, width, depth, shift):
+    X, Z = np.meshgrid(x, z, indexing='ij')
+    reaktor_x = shift
+    dist = np.sqrt((X - reaktor_x)**2 + (Z - depth)**2)
+    temp = 25 + (t_max - 25) * np.exp(-dist / (width / 2))
+    dT = np.maximum(temp - 25, 0)
+    dmg = np.clip(1 - np.exp(-beta_th * dT), 0, 1)
+    sth = (E * alpha * dT) / (1 - nu)
+    i = depth * np.tan(np.radians(angle_draw))
+    s_max = (0.001 * (width**2)) / (1 + depth / 450)
+    sv = s_max * np.exp(-((x - reaktor_x)**2) / (2 * i**2))
+    sh = ((x - reaktor_x) / i) * sv * 0.55
+    return dmg, sth, sv.reshape(-1), sh.reshape(-1)
+
+with st.sidebar.expander("📊 Sirdesai Dashboard sozlamalari", expanded=False):
+    method_sird = st.radio("UCG Usuli", ["LVW", "CRIP"], key="sird_method")
+    reaktor_shift_sird = st.slider("Reaktor siljishi (m)", -100, 100, 0, key="sird_shift") if method_sird == "CRIP" else 0
+    c_width_sird = st.slider("Reaktor kengligi (W) [m]", 20, 200, 100, key="sird_width")
+    c_depth_sird = st.selectbox("Chuqurlik (h) [m]", [100, 500, 1000], index=1, key="sird_depth")
+    t_core_sird = st.slider("Reaktor Harorati (°C)", 25, 1100, 950, key="sird_temp")
+
+p_sird = {'E': 25.45e9, 'nu': 0.24, 'alpha': 11e-6, 'beta_th': 0.0025, 'angle_draw': 35}
+x_axis_sird = np.linspace(-350, 350, 150)
+z_axis_sird = np.linspace(0, c_depth_sird + 150, 80)
+
+dmg_sird, sth_sird, sv_sird, sh_sird = calculate_comprehensive_metrics_sird(
+    x_axis_sird, z_axis_sird,
+    p_sird['E'], p_sird['nu'], p_sird['alpha'], p_sird['beta_th'], p_sird['angle_draw'],
+    t_core_sird, c_width_sird, c_depth_sird, reaktor_shift_sird
+)
+
+main_col_sird, theory_col_sird = st.columns([2.5, 1])
+with main_col_sird:
+    fig_sird = make_subplots(rows=2, cols=2, subplot_titles=("A) Vertikal Cho'kish (sv)", "B) Gorizontal Siljish (sh)", "C) Termal Buzilish D(T)", "D) Termal Kuchlanish (MPa)"), vertical_spacing=0.25, horizontal_spacing=0.12)
+    fig_sird.add_trace(go.Scatter(x=x_axis_sird, y=-sv_sird, fill='tozeroy', name="sv", line=dict(color='#00f2ff', width=3), hovertemplate='X: %{x} m<br>Cho\'kish: %{y} mm'), row=1, col=1)
+    fig_sird.add_trace(go.Scatter(x=[x_axis_sird[np.argmax(sv_sird)]], y=[-np.max(sv_sird)], mode='markers+text', text=f'Max: {np.max(sv_sird):.2f}mm', textposition='top center', marker=dict(color='red', size=12, symbol='x')), row=1, col=1)
+    fig_sird.add_trace(go.Scatter(x=x_axis_sird, y=sh_sird, name="sh", line=dict(color='orange'), hovertemplate='X: %{x} m<br>Siljish: %{y} mm'), row=1, col=2)
+    fig_sird.add_trace(go.Heatmap(z=dmg_sird.T, x=x_axis_sird, y=z_axis_sird, colorscale='Viridis', zmin=0, zmax=1, colorbar=dict(title="D(T)", x=0.43, len=0.35, y=0.2, thickness=15)), row=2, col=1)
+    fig_sird.add_trace(go.Heatmap(z=(sth_sird.T / 1e6), x=x_axis_sird, y=z_axis_sird, colorscale='Cividis', colorbar=dict(title="MPa", x=1.05, len=0.35, y=0.2, thickness=15)), row=2, col=2)
+    fig_sird.update_yaxes(title_text="Chuqurlik (m)", autorange="reversed", row=2, col=1)
+    fig_sird.update_yaxes(autorange="reversed", row=2, col=2)
+    fig_sird.update_layout(height=850, template='plotly_dark', showlegend=False, margin=dict(t=80, l=60, r=80))
+    st.plotly_chart(fig_sird, use_container_width=True)
+with theory_col_sird:
+    st.markdown("### 📚 Ilmiy Mexanizm")
+    st.markdown("**Sirdesai modeli asosidagi cho'kish mexanizmi:**")
+    st.code("""
+    Yer yuzasi
+─────────────────────────
+     ^
+     | S (maks. cho'kish)
+     |
+─────┼─────   γ (tortish burchagi)
+     |    ╱
+M ───┼───╱  (qatlam qalinligi)
+     |  ╱
+─────┼─╱───
+     |╱
+[=====W=====]  Reaktor kengligi
+    """, language="text")
+    st.info("**Grafik ko'rsatkichlari:**\n- **M**: Qatlam qalinligi (m)\n- **W**: Reaktor kengligi (m)\n- **S**: Maksimal vertikal cho'kish (mm)\n- **γ (gamma)**: Tortish burchagi (daraja)")
+    st.success("**Tahlil (PhD Xulosasi):**\nReaktor yer yuzasiga qanchalik yaqin bo'lsa (h kam bo'lsa), sirt deformatsiyasi shunchalik keskinlashadi. Kenglik (W) 100 metrdan oshganda yuqori cho'kish kutiladi.")
+
+# =========================== AI MONITORING (LIVE 3D, ANOMALIYA, FOS PREDICTION) ===========================
+st.header("🔄 Live 3D Monitoring (Real-time)")
+tab_live, tab_ai_orig, tab_advanced = st.tabs([t('live_monitoring_tab'), t('ai_monitor_title'), t('advanced_analysis')])
+
+with tab_live:
+    st.markdown("### Real-time subsidence, temperature, anomalies and alerts")
+    TIME_STEPS = st.slider("Simulation steps", 10, 200, 50, key="live_steps")
+    run_live = st.button("▶️ Run Live Monitoring", key="run_live")
+    stop_live = st.button("⏹ Stop Monitoring", key="stop_live")
+    if 'stop_flag_live' not in st.session_state: st.session_state.stop_flag_live = False
+    if stop_live: st.session_state.stop_flag_live = True
+    col_live1, col_live2 = st.columns(2)
+    subs_plot_live = col_live1.empty()
+    temp_plot_live = col_live2.empty()
+    col_live3, col_live4 = st.columns(2)
+    pillar_plot_live = col_live3.empty()
+    trend_plot_live = col_live4.empty()
+    surface_3d_plot_live = st.empty()
+    alert_box_live = st.empty()
+    if 'live_history_df' not in st.session_state:
+        st.session_state.live_history_df = pd.DataFrame(columns=['step', 'mean_subsidence_cm', 'max_temp_c', 'FOS', 'pillar_width_m'])
+    if run_live:
+        st.session_state.stop_flag_live = False
+        X_live = np.linspace(-20, 20, 50); Y_live = np.linspace(-20, 20, 50)
+        X_grid_live, Y_grid_live = np.meshgrid(X_live, Y_live)
+        subs_history_live = []; fos_history_live = []; width_history_live = []; temp_history_live = []; steps_done = 0
+        rf_live = RandomForestRegressor(n_estimators=10, random_state=42)
+        dummy_X = np.random.rand(10, 3); dummy_y = np.random.rand(10); rf_live.fit(dummy_X, dummy_y)
+        for t_step in range(TIME_STEPS):
+            if st.session_state.stop_flag_live: break
+            Z_subs = np.exp(-(X_grid_live**2 + Y_grid_live**2) / (2 * (5 + t_step * 0.1)**2)) * 5 * t_step / TIME_STEPS
+            Z_temp = np.exp(-(X_grid_live**2 + Y_grid_live**2) / (2 * 8**2)) * T_source_max * t_step / TIME_STEPS
+            Z_filtered = gaussian_filter(Z_subs, sigma=1)
+            anomalies = Z_subs - Z_filtered
+            anomaly_points = np.where(np.abs(anomalies) > 0.2)
+            avg_ucs = np.mean([l['ucs'] for l in layers_data])
+            X_feat = np.array([[burn_duration, T_source_max, avg_ucs]]).reshape(1, -1)
+            pillar_width_pred = rf_live.predict(X_feat)[0]
+            FOS_live = np.clip(2.5 - t_step * 0.03, 0.8, 2.5)
+            mean_subs = np.mean(Z_subs)
+            subs_history_live.append(mean_subs); fos_history_live.append(FOS_live); width_history_live.append(pillar_width_pred); temp_history_live.append(np.mean(Z_temp))
+            new_row = pd.DataFrame({'step': [t_step + 1], 'mean_subsidence_cm': [mean_subs * 100], 'max_temp_c': [np.max(Z_temp)], 'FOS': [FOS_live], 'pillar_width_m': [pillar_width_pred]})
+            st.session_state.live_history_df = pd.concat([st.session_state.live_history_df, new_row], ignore_index=True).tail(1000)
+            fig_subs = go.Figure(go.Heatmap(z=Z_subs * 100, x=X_live, y=Y_live, colorscale='Viridis')).update_layout(title='Surface Subsidence (cm)', xaxis_title='X (m)', yaxis_title='Y (m)', height=350)
+            subs_plot_live.plotly_chart(fig_subs, use_container_width=True, key=f"subs_{t_step}")
+            fig_temp = go.Figure(go.Heatmap(z=Z_temp, x=X_live, y=Y_live, colorscale='Hot')).update_layout(title='Temperature Field (°C)', xaxis_title='X (m)', yaxis_title='Y (m)', height=350)
+            temp_plot_live.plotly_chart(fig_temp, use_container_width=True, key=f"temp_{t_step}")
+            pillar_plot_live.metric(label="Recommended Pillar Width (m)", value=f"{pillar_width_pred:.2f}", delta=f"FOS = {FOS_live:.2f}")
+            trend_fig = go.Figure(go.Scatter(y=subs_history_live, mode='lines+markers', name='Subsidence (cm)')).update_layout(title='Subsidence Trend', xaxis_title='Time step', yaxis_title='Mean subsidence (cm)', height=350)
+            trend_plot_live.plotly_chart(trend_fig, use_container_width=True, key=f"trend_{t_step}")
+            surface_fig = go.Figure(data=[go.Surface(z=Z_subs * 100, x=X_live, y=Y_live, colorscale='Viridis', opacity=0.9)])
+            if anomaly_points[0].size > 0:
+                surface_fig.add_trace(go.Scatter3d(x=X_grid_live[anomaly_points], y=Y_grid_live[anomaly_points], z=Z_subs[anomaly_points] * 100, mode='markers', marker=dict(color='red', size=5), name='Anomaly'))
+            surface_fig.update_layout(title='3D Surface & Anomalies', scene=dict(zaxis_title='Subsidence (cm)'), height=500)
+            surface_3d_plot_live.plotly_chart(surface_fig, use_container_width=True, key=f"surf_{t_step}")
+            alerts = []
+            if FOS_live < 1.2: alerts.append("⚠️ FOS Critical!")
+            if mean_subs * 100 > 3: alerts.append("⚠️ High Subsidence!")
+            if np.max(Z_temp) > 1100: alerts.append("🔥 Overheating Alert!")
+            if alerts: alert_box_live.markdown("### 🔴 ALERTS\n" + "\n".join(alerts))
+            else: alert_box_live.markdown("### 🟢 All systems normal")
+            time.sleep(0.1); steps_done += 1
+        st.success(f"✅ Live monitoring completed after {steps_done} steps.")
+    if not st.session_state.live_history_df.empty:
+        st.markdown("---"); st.subheader("📥 Download Monitoring Results (CSV)")
+        csv_data = st.session_state.live_history_df.to_csv(index=False).encode('utf-8')
+        st.download_button(label=t('download_data'), data=csv_data, file_name="ucg_live_monitoring.csv", mime="text/csv")
+
+with tab_ai_orig:
+    st.markdown(f"*{t('ai_monitor_desc')}*")
+    def get_sensor_data_sim(step, total_steps, base_temp):
+        trend = step / total_steps
+        temp = base_temp * (0.5 + 0.7 * trend) + np.random.normal(0, 10)
+        pressure = 2 + 5 * trend + np.random.normal(0, 0.5)
+        stress = 5 + 10 * trend + np.random.normal(0, 0.5)
+        return {"temperature": temp, "gas_pressure": pressure, "stress": stress}
+
+    def compute_effective_stress(sensor, biot_alpha=0.85, K_bulk_GPa=10.0,
+                                  alpha_thermal=1e-5, T_ref=20.0):
+        """Termo-poro-mexanik effektiv kuchlanish (Coussy, 2004; Biot-Terzaghi)."""
+        sigma   = sensor["stress"]
+        p_pore  = sensor["gas_pressure"]
+        T       = sensor["temperature"]
+        K_MPa   = K_bulk_GPa * 1000.0
+        delta_T = T - T_ref
+        sigma_eff = sigma - biot_alpha * p_pore + 3.0 * K_MPa * alpha_thermal * delta_T / 1e3
+        return sigma_eff
+
+    def detect_anomaly_z(history, value, threshold=2.0, window=20):
+        if len(history) < window: return False
+        recent = history[-window:]; mean = np.mean(recent); std = np.std(recent) + 1e-6
+        return abs(value - mean) > threshold * std
+
+    def simulate_sensors_fos(n_steps):
+        T = np.linspace(20, min(1100, T_source_max), n_steps) + np.random.normal(0, 10, n_steps)
+        sigma_v = np.linspace(5, min(15, sv_seam * 10), n_steps) + np.random.normal(0, 0.5, n_steps)
+        return pd.DataFrame({'Temperature': T, 'VerticalStress': sigma_v})
+
+    if PT_AVAILABLE:
+        class SimpleNN(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.fc1 = nn.Linear(2, 16); self.fc2 = nn.Linear(16, 16); self.fc3 = nn.Linear(16, 1)
+            def forward(self, x): x = torch.relu(self.fc1(x)); x = torch.relu(self.fc2(x)); return self.fc3(x)
+        fos_nn_model = SimpleNN().to(device); fos_criterion = nn.MSELoss(); fos_optimizer = torch.optim.Adam(fos_nn_model.parameters(), lr=0.01)
+    else:
+        fos_rf_model = RandomForestRegressor(n_estimators=50, random_state=42)
+
+    ai_tab1, ai_tab2 = st.tabs(["📡 Anomaliya Aniqlash (Digital Twin)", "📊 FOS Prediction (SimpleNN / RF)"])
+    with ai_tab1:
+        st.markdown("#### Sensor ma'lumotlari asosida real-vaqt anomaliya aniqlash")
+        t1_col1, t1_col2, t1_col3 = st.columns([1, 1, 2])
+        with t1_col1: ai_steps_1 = st.number_input(t('ai_steps'), min_value=10, max_value=500, value=60, step=10, key="ai_steps_1")
+        with t1_col2: anomaly_threshold = st.slider("Anomaliya chegarasi (σ)", 1.0, 4.0, 2.0, 0.5, key="thresh_1")
+        with t1_col3: run_ai_1 = st.button(t('ai_run_btn'), type="primary", use_container_width=True, key="run_ai_1")
+        if run_ai_1:
+            placeholder_1 = st.empty()
+            history_eff = []; anomalies_eff = []; temp_history = []; gas_history = []; stress_history = []
+            for step in range(int(ai_steps_1)):
+                sensor = get_sensor_data_sim(step, int(ai_steps_1), T_source_max * 0.6)
+                effective = compute_effective_stress(sensor)
+                is_anomaly = detect_anomaly_z(history_eff, effective, threshold=anomaly_threshold)
+                history_eff.append(effective); anomalies_eff.append(effective if is_anomaly else None)
+                temp_history.append(sensor["temperature"]); gas_history.append(sensor["gas_pressure"]); stress_history.append(sensor["stress"])
+                with placeholder_1.container():
+                    acol1, acol2, acol3, acol4 = st.columns(4)
+                    acol1.metric("🌡 Harorat", f"{sensor['temperature']:.1f} °C", delta=f"{sensor['temperature'] - np.mean(temp_history):.1f}" if len(temp_history) > 1 else None)
+                    acol2.metric("💨 Gaz bosimi", f"{sensor['gas_pressure']:.2f} MPa")
+                    acol3.metric("🧱 Effektiv σ", f"{effective:.2f} MPa", delta_color="inverse", delta="⚠️ Anomaliya!" if is_anomaly else "Normal")
+                    acol4.metric("📈 Qadam", f"{step+1}/{int(ai_steps_1)}")
+                    fig_a = make_subplots(rows=2, cols=2, subplot_titles=("Effektiv Kuchlanish & Anomaliyalar", "Harorat Tarixi (°C)", "Gaz Bosimi (MPa)", "Stress Tarixi (MPa)"), vertical_spacing=0.15, horizontal_spacing=0.1)
+                    fig_a.add_trace(go.Scatter(y=history_eff, mode='lines', name='Effektiv σ', line=dict(color='cyan', width=2)), row=1, col=1)
+                    fig_a.add_trace(go.Scatter(y=anomalies_eff, mode='markers', name='Anomaliya', marker=dict(color='red', size=10, symbol='x')), row=1, col=1)
+                    fig_a.add_trace(go.Scatter(y=temp_history, mode='lines', name='Harorat', line=dict(color='orange', width=2)), row=1, col=2)
+                    fig_a.add_trace(go.Scatter(y=gas_history, mode='lines+markers', name='Gaz bosimi', line=dict(color='lime', width=1), marker=dict(size=4)), row=2, col=1)
+                    fig_a.add_trace(go.Scatter(y=stress_history, mode='lines', name='Stress', line=dict(color='magenta', width=2)), row=2, col=2)
+                    fig_a.update_layout(template="plotly_dark", height=500, showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5), margin=dict(t=60, b=60))
+                    st.plotly_chart(fig_a, use_container_width=True, key=f"anom_{step}")
+                    anomaly_count = sum(1 for a in anomalies_eff if a is not None)
+                    if is_anomaly: st.error(f"🚨 ANOMALIYA ANIQLANDI! (Jami: {anomaly_count}) — Collapse ehtimoli yuqori!")
+                    elif effective > pillar_strength * 0.8: st.warning(f"⚠️ Kuchlanish Pillar Strength ({pillar_strength:.1f} MPa) ning 80% dan oshdi!")
+                    else: st.success(f"✅ Normal holat — Effektiv σ: {effective:.2f} MPa")
+                    st.progress((step+1)/int(ai_steps_1))
+                time.sleep(0.15)
+            st.balloons(); st.success(f"✅ Monitoring yakunlandi! Jami anomaliyalar: {sum(1 for a in anomalies_eff if a is not None)}")
+    with ai_tab2:
+        st.markdown("#### SimpleNN yoki RandomForest yordamida FOS (Factor of Safety) bashorati")
+        t2_col1, t2_col2 = st.columns([1, 3])
+        with t2_col1: ai_steps_2 = st.number_input(t('ai_steps'), min_value=10, max_value=500, value=50, step=10, key="ai_steps_2"); fos_target = st.number_input("Maqsad FOS qiymati", min_value=5.0, max_value=30.0, value=12.0, step=0.5)
+        with t2_col2: run_ai_2 = st.button(t('ai_run_btn'), type="primary", use_container_width=True, key="run_ai_2")
+        if run_ai_2:
+            placeholder_2 = st.empty()
+            sensor_data_fos = simulate_sensors_fos(int(ai_steps_2))
+            pillar_strength_pred = []
+            fos_rf_trained = False
+            for i in range(int(ai_steps_2)):
+                row = sensor_data_fos.iloc[i]
+                X = np.array([[row.Temperature, row.VerticalStress]])
+                if PT_AVAILABLE:
+                    X_t = torch.tensor(X, dtype=torch.float32).to(device)
+                    y_pred = fos_nn_model(X_t).detach().cpu().numpy()[0][0]
+                    target = torch.tensor([[fos_target]], dtype=torch.float32).to(device)
+                    fos_optimizer.zero_grad(); loss = fos_criterion(fos_nn_model(X_t), target); loss.backward(); fos_optimizer.step()
+                else:
+                    if not fos_rf_trained: fos_rf_model.fit(X, [fos_target]); fos_rf_trained = True
+                    y_pred = fos_rf_model.predict(X)[0]
+                pillar_strength_pred.append(float(y_pred))
+                if y_pred < 10: fos_color = t('fos_red')
+                elif y_pred <= 15: fos_color = t('fos_yellow')
+                else: fos_color = t('fos_green')
+                with placeholder_2.container():
+                    p2c1, p2c2, p2c3 = st.columns(3)
+                    p2c1.metric("🌡 Harorat", f"{row.Temperature:.1f} °C")
+                    p2c2.metric("🧱 Vertikal Stress", f"{row.VerticalStress:.2f} MPa")
+                    p2c3.metric("📊 Bashorat FOS", f"{y_pred:.2f}", delta=fos_color)
+                    fig_fos = make_subplots(rows=1, cols=2, subplot_titles=("FOS Bashorati (Tarixiy)", "Sensor: Harorat vs Stress"))
+                    fig_fos.add_trace(go.Scatter(y=pillar_strength_pred, mode='lines+markers', name=t('pillar_live'), line=dict(color='lime', width=2), marker=dict(size=5)), row=1, col=1)
+                    fig_fos.add_hline(y=fos_target, line_dash="dash", line_color="yellow", annotation_text=f"Maqsad: {fos_target}", row=1, col=1)
+                    fig_fos.add_trace(go.Scatter(x=sensor_data_fos['Temperature'].iloc[:i+1].tolist(), y=sensor_data_fos['VerticalStress'].iloc[:i+1].tolist(), mode='markers', name='Sensor yo\'li', marker=dict(color=list(range(i+1)), colorscale='Viridis', size=6, showscale=False)), row=1, col=2)
+                    fig_fos.update_layout(template="plotly_dark", height=420, showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5), margin=dict(t=60, b=60))
+                    fig_fos.update_xaxes(title_text="Qadam", row=1, col=1); fig_fos.update_yaxes(title_text="FOS / Strength", row=1, col=1)
+                    fig_fos.update_xaxes(title_text="Harorat (°C)", row=1, col=2); fig_fos.update_yaxes(title_text="Vertikal Stress (MPa)", row=1, col=2)
+                    st.plotly_chart(fig_fos, use_container_width=True, key=f"fospred_{i}")
+                    st.info(f"Qadam {i+1}/{int(ai_steps_2)} | Model: {'PyTorch SimpleNN' if PT_AVAILABLE else 'RandomForest'} | {fos_color}")
+                    st.progress((i+1)/int(ai_steps_2))
+                time.sleep(0.05)
+            st.balloons()
+            final_fos = pillar_strength_pred[-1] if pillar_strength_pred else 0
+            if final_fos < 10: st.error(f"🔴 Yakuniy FOS: {final_fos:.2f} — Xavfli zona!")
+            elif final_fos <= 15: st.warning(f"🟡 Yakuniy FOS: {final_fos:.2f} — Noaniq holat")
+            else: st.success(f"🟢 Yakuniy FOS: {final_fos:.2f} — Barqaror!")
+
+with tab_advanced:
+    st.header(t('advanced_analysis'))
+    E_MODULUS_R, ALPHA_THERM, BETA_CONST = 5000.0, 1.0e-5, beta_damage
+    target_l = layers_data[-1]
+    ucs_0_r, gsi_val, mi_val = target_l['ucs'], target_l['gsi'], target_l['mi']
+    gamma_kn = target_l['rho'] * 9.81 / 1000
+    H_depth_tot = sum(l['t'] for l in layers_data[:-1]) + target_l['t']/2
+    sigma_v_tot = (gamma_kn * H_depth_tot) / 1000
+    mb_dyn = mi_val * np.exp((gsi_val-100)/(28-14*D_factor))
+    s_dyn = np.exp((gsi_val-100)/(9-3*D_factor))
+    ucs_t_dyn = ucs_0_r * np.exp(-beta_damage*(T_source_max-20))
+    p_str_final = ucs_t_dyn * (rec_width/(H_seam+EPS))**0.5
+    fos_final = p_str_final/(sigma_v_tot+EPS)
+    t1,t2,t3 = st.tabs([t('tab_mass'), t('tab_thermal'), t('tab_stability')])
+    with t1:
+        st.subheader(t('hb_class'))
+        c1r,c2r = st.columns(2)
+        with c1r:
+            st.latex(t('hb_mb', mb=mb_dyn))
+            st.caption(t('hb_caption_mb', mi=mi_val))
+            st.latex(t('hb_s', s=s_dyn))
+            st.caption(t('hb_caption_s', gsi=gsi_val))
+        with c2r:
+            st.markdown(t('hb_interpret', gsi=gsi_val, perc=((1 - s_dyn)*100)))
+    with t2:
+        st.subheader(t('thermal_params'))
+        params_df = pd.DataFrame({t('param_table_param'): [t('modulus'), t('alpha'), t('temp0')],
+                                  t('param_table_value'): [f"{E_MODULUS_R} MPa", f"{ALPHA_THERM} 1/°C", "20 °C"],
+                                  t('param_table_reason'): [t('modulus_reason'), t('alpha_reason'), t('temp0_reason')]})
+        st.table(params_df)
+        st.markdown(t('ucs_decay'))
+        st.latex(t('ucs_decay_eq', ucs=ucs_t_dyn))
+        st.write(t('ucs_interpret', temp=T_source_max, perc=((1 - ucs_t_dyn/ucs_0_r)*100)))
+        st.markdown(t('thermal_stress'))
+        st.latex(t('thermal_stress_eq', sigma=sigma_thermal.max()))
+    with t3:
+        st.subheader(t('pillar_stability'))
+        st.latex(t('fos_eq', fos=fos_final))
+        st.write(t('pillar_wilson', w=rec_width, sv=sigma_v_tot, y=y_zone))
+        st.markdown("---")
+        st.write(t('references'))
+        for ref in [t('ref1'), t('ref2'), t('ref3'), t('ref4'), t('ref5'), t('ref6'), t('ref7'), t('ref8'), t('ref9'), t('ref10'), t('ref11')]:
+            st.markdown(f"📖 {ref}")
+        if fos_final < 1.3: st.error(t('conclusion_danger', fos=fos_final))
+        else: st.success(t('conclusion_safe', fos=fos_final))
+
+# ====================== TEST, XATOLIKLAR VA LINTER/DEBUGGER ======================
+st.markdown("---")
+st.header("🧪 Dasturlash bo‘yicha qo‘shimcha: test, xatolik tahlillari va vositalar")
+tab_test, tab_errors, tab_tools = st.tabs(["✅ Test (test_math)", "🐞 Xatoliklar namunalari", "🛠️ Linter / Formatter / Debugger"])
+with tab_test:
+    st.subheader("file: test_math.py – test funksiyasi")
+    code_test = '''def add(x, y):
+    return x + y
+
+def test_add():
+    assert add(1, 2) == 3
+    assert add(-1, -2) == -3
+'''
+    st.code(code_test, language="python")
+    if st.button("▶️ test_add() ni ishga tushirish"):
+        try:
+            def add(x, y): return x + y
+            assert add(1, 2) == 3
+            assert add(-1, -2) == -3
+            st.success("✅ Barcha testlar muvaffaqiyatli o‘tdi!")
+        except AssertionError as e:
+            st.error(f"❌ Test xatosi: {e}")
+with tab_errors:
+    st.subheader("Turli dasturlash tillarida sintaksis, mantiqiy va resurs xatolari (tuzatilgan)")
+    lang_choice = st.selectbox("Tilni tanlang", ["Python", "JavaScript", "Java", "C++ (misol yo'q, lekin jadvalda ko'rsatilgan)"], key="err_lang")
+    if lang_choice == "Python":
+        st.markdown("**Sintaksis xatosi (to'g'rilangan)**")
+        st.code('''# Noto'g'ri: if operatorida ':' yo'q
+# x = 5
+# if x == 5 print(x)
+
+# Tuzatilgan:
+if x == 5:
+    print(x)''', language="python")
+        st.markdown("**Mantiqiy xato (o'rtacha hisoblash)**")
+        st.code('''# Noto'g'ri: // butun bo'linish, kasr qismini tashlaydi
+def average(nums):
+    total = sum(nums)
+    return total // len(nums)
+
+# Tuzatilgan:
+def average(nums):
+    total = sum(nums)
+    return total / len(nums)''', language="python")
+        st.markdown("**Resurs oqishi (fayl yopilmasligi)**")
+        st.code('''# Noto'g'ri: fayl yopilmagan
+def read_file(path):
+    f = open(path, 'r')
+    data = f.read()
+    # f.close() unutib qolingan
+
+# Tuzatilgan (context manager):
+def read_file(path):
+    with open(path, 'r') as f:
+        data = f.read()
+    return data''', language="python")
+    elif lang_choice == "JavaScript":
+        st.markdown("**Sintaksis xatosi**")
+        st.code('''// Noto'g'ri: if sharti noto'g'ri
+// if (x === 10) console.log("Ten");
+
+// Tuzatilgan:
+if (x === 10) {
+    console.log("Ten");
+}''', language="javascript")
+        st.markdown("**Mantiqiy xato (sort)**")
+        st.code('''// Noto'g'ri: lexikografik tartib
+function sortNumbers(arr) {
+    return arr.sort();
+}
+
+// Tuzatilgan:
+function sortNumbers(arr) {
+    return arr.sort((a, b) => a - b);
+}''', language="javascript")
+        st.markdown("**Resurs oqishi (fayl oqishning yo'q)**")
+        st.code('''// Noto'g'ri: fayl ochilgan, lekin yopilmaydi
+const fs = require('fs');
+function readFile(path) {
+    const data = fs.readFileSync(path, 'utf-8');
+    return data;
+}
+
+// Tuzatilgan (finally bilan yopish):
+const fs = require('fs');
+function readFile(path) {
+    try {
+        const data = fs.readFileSync(path, 'utf-8');
+        return data;
+    } finally {
+        fs.closeSync(fs.openSync(path, 'r'));
+    }
+}''', language="javascript")
+    elif lang_choice == "Java":
+        st.markdown("**Sintaksis xatosi (nuqta-vergul)**")
+        st.code('''// Noto'g'ri: nuqta-vergul yo'q
+// int x = 7;
+// if (x == 7) System.out.println("Seven")
+
+// Tuzatilgan:
+if (x == 7) {
+    System.out.println("Seven");
+}''', language="java")
+        st.markdown("**Mantiqiy xato (butun bo'linma)**")
+        st.code('''// Noto'g'ri: int / int -> int
+public double divide(int a, int b) {
+    return a / b;   // butun qismi
+}
+
+// Tuzatilgan:
+public double divide(int a, int b) {
+    return (double) a / b;
+}''', language="java")
+        st.markdown("**Resurs oqishi (FileInputStream ochilgan, yopilmagan)**")
+        st.code('''// Noto'g'ri: in, out yopilmagan
+public void copyFile(String src, String dest) throws IOException {
+    FileInputStream in = new FileInputStream(src);
+    FileOutputStream out = new FileOutputStream(dest);
+    byte[] buf = new byte[1024];
+    int len;
+    while ((len = in.read(buf)) > 0) {
+        out.write(buf, 0, len);
+    }
+    // in.close(), out.close() chaqirilmagan
+}
+
+// Tuzatilgan: try-with-resources
+public void copyFile(String src, String dest) throws IOException {
+    try (FileInputStream in = new FileInputStream(src);
+         FileOutputStream out = new FileOutputStream(dest)) {
+        byte[] buf = new byte[1024];
+        int len;
+        while ((len = in.read(buf)) > 0) {
+            out.write(buf, 0, len);
+        }
+    }
+}''', language="java")
+with tab_tools:
+    st.subheader("Tillar bo‘yicha linter / formatter va debugger vositalari")
+    tools_data = [
+        {"Til": "Python", "Linter / Formatter": "Pylint, Flake8, Black", "Buyruq": "pylint mycode.py\nflake8 path/to/code.py\nblack mycode.py", "Debugger / Profiler": "PDB (python -m pdb mycode.py), ipdb"},
+        {"Til": "JavaScript/Node.js", "Linter / Formatter": "ESLint, Prettier", "Buyruq": "npx eslint file.js\nnpx prettier --write .", "Debugger / Profiler": "node --inspect file.js, Chrome DevTools"},
+        {"Til": "Java", "Linter / Formatter": "Checkstyle, SpotBugs", "Buyruq": "mvn checkstyle:checkstyle\nmvn spotbugs:spotbugs", "Debugger / Profiler": "jdb, IDE debugger (IntelliJ, Eclipse)"},
+        {"Til": "C#", "Linter / Formatter": "dotnet-format, StyleCop", "Buyruq": "dotnet format\n(Visual Studio integratsiyasi)", "Debugger / Profiler": "Visual Studio debugger, dbgclr"},
+        {"Til": "C/C++", "Linter / Formatter": "clang-format, cppcheck", "Buyruq": "clang-format -i file.cpp\ncppcheck .", "Debugger / Profiler": "gdb, Valgrind (valgrind --leak-check=full ./program)"},
+        {"Til": "Go", "Linter / Formatter": "go fmt, go vet", "Buyruq": "go fmt ./...\ngo vet ./...", "Debugger / Profiler": "Delve (dlv debug)"},
+        {"Til": "Rust", "Linter / Formatter": "rustfmt, Clippy", "Buyruq": "cargo fmt -- --check\ncargo clippy", "Debugger / Profiler": "gdb target/debug/myprog, rust-lldb"},
+        {"Til": "PHP", "Linter / Formatter": "phpcs (PHP_CodeSniffer)", "Buyruq": "./vendor/bin/phpcs src/", "Debugger / Profiler": "Xdebug, php -a"}
+    ]
+    df_tools = pd.DataFrame(tools_data)
+    st.dataframe(df_tools, use_container_width=True)
 
 # ====================== YAKUNIY LOG VA SIDEBAR IZOH ======================
 logger.info(f"Run start | obj={obj_name} | layers={num_layers} | T_max={T_source_max}")
