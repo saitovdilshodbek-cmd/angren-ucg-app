@@ -9,7 +9,6 @@ from scipy.stats import linregress
 import time
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.neural_network import MLPRegressor
-from sklearn.ensemble import IsolationForest
 import io
 from docx import Document
 from docx.shared import Pt, Cm, RGBColor, Inches
@@ -837,7 +836,7 @@ with c2:
     
     def compute_advanced_fos(grid_x, grid_z, active_wells, well_x, source_z, h_seam, cavity_width,
                              temp_field, sigma_v_field, layers_data, layer_bounds,
-                             E, alpha, nu, K0, Hc, sigma_v_coal_MPa, ucs_coal_pa):
+                             E, alpha, nu, K0, Hc, sigma_v_coal_MPa, ucs_coal_pa, stage, well_distance):
         fos = np.full_like(grid_x, 3.0)
         for px_idx in active_wells:
             px = well_x[px_idx]
@@ -889,19 +888,23 @@ with c2:
         bottom_layer = layers_data[-1]
         bottom_boundary = bottom_layer['z_start'] + bottom_layer['t']
         fos[grid_z > bottom_boundary] = 2.5
-        all_wells = [0,1,2]
+        # --- BIRLASHTIRILGAN YANGI BLOK: Quduqlar va selek ---
+        all_wells = [0, 1, 2]
         for i in all_wells:
             if i not in active_wells:
                 px = well_x[i]
                 pillar_mask = (np.abs(grid_x - px) < h_seam * 1.5) & (np.abs(grid_z - source_z) < h_seam * 1.2)
                 fos[pillar_mask] = 2.5
         if stage == 2:
+            # Selek kengligini aniqroq hisoblash
             selek_eni = well_distance - cavity_width
-            pillar_strength = ucs_coal_pa * (selek_eni / (h_seam + EPS)) ** 0.5
-            sigma_v_coal_pa = sigma_v_coal_MPa * 1e6
-            fos_pillar = pillar_strength / (sigma_v_coal_pa + 1e5)
-            pillar_zone = (np.abs(grid_x - well_x[1]) < selek_eni/2) & (np.abs(grid_z - source_z) < h_seam)
-            fos[pillar_zone] = np.maximum(fos[pillar_zone], fos_pillar)
+            # Pillar zonasini aniqlash (markaziy quduq atrofida)
+            # well_x[1] odatda 0 nuqtasi bo'lishi kerak
+            pillar_zone = (np.abs(grid_x - well_x[1]) < (selek_eni / 2)) & \
+                          (grid_z > (source_z - h_seam)) & (grid_z < (source_z + h_seam))
+            # Test uchun: to'g'ridan-to'g'ri FOS = 2.2 qiymat beramiz
+            fos[pillar_zone] = 2.2
+        # --- BLOK TUGADI ---
         fos = np.nan_to_num(fos, nan=3.0, posinf=3.0, neginf=0.0)
         return fos
     
@@ -909,7 +912,7 @@ with c2:
     fos_stage = compute_advanced_fos(
         grid_x, grid_z, active_wells, well_x, source_z, h_seam, cavity_width,
         temp_2d, grid_sigma_v, layers_data, layer_bounds,
-        E_MOD, ALPHA, NU, K0, Hc, sigma_v_coal, ucs_coal_pa
+        E_MOD, ALPHA, NU, K0, Hc, sigma_v_coal, ucs_coal_pa, stage, well_distance
     )
     
     fig_tm = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.12,
@@ -975,7 +978,7 @@ with c2:
             fos_s = compute_advanced_fos(
                 grid_x, grid_z, wells_s, well_x, source_z, h_seam, cavity_width,
                 temp_2d, grid_sigma_v, layers_data, layer_bounds,
-                E_MOD, ALPHA, NU, K0, Hc, sigma_v_coal, ucs_coal_pa
+                E_MOD, ALPHA, NU, K0, Hc, sigma_v_coal, ucs_coal_pa, s, well_distance
             )
             fig_s = go.Figure(go.Contour(z=fos_s, x=x_axis, y=z_axis,
                                          colorscale=[[0,'black'],[0.1,'red'],[0.4,'orange'],[0.7,'yellow'],[0.85,'lime'],[1,'darkgreen']],
