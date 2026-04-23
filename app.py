@@ -867,17 +867,29 @@ except (ValueError, RuntimeError) as e:
     st.warning(f"Optimizatsiya xatosi: {e}. Klassik tavsiya ishlatiladi.")
     optimal_width_ai = rec_width
 
+# =========================== YANGI QO‘SHIMCHA: QUDUQLAR SLADERI ===========================
+st.sidebar.markdown("---")
+st.sidebar.subheader("Quduqlar konfiguratsiyasi")
+well_distance = st.sidebar.slider(
+    "Quduqlar orasidagi masofa (m):",
+    50.0, 500.0, 200.0, 10.0,
+    key="well_dist_slider"
+)
+
 # =========================== METRIKALAR ===========================
 st.subheader(t('monitoring_header', obj_name=obj_name))
 m1, m2, m3, m4, m5 = st.columns(5)
 m1.metric(t('pillar_strength'), f"{pillar_strength:.1f} MPa")
 m2.metric(t('plastic_zone'), f"{y_zone:.1f} m")
-# Bo'shliq yuzasi (2D kesim) va taxminiy 3D hajm
-cavity_length_y = well_distance
+
+# Bo‘shliq yuzasi (2D) va 3D hajm
+cavity_length_y = well_distance            # endi xatolik yo‘q
 void_volume_3d = void_volume * cavity_length_y
 m3.metric(t('cavity_volume'), f"{void_volume_3d:.1f} m³")
+
 m4.metric(t('max_permeability'), f"{np.max(perm):.1e} m²")
-m5.metric(t('ai_recommendation'), f"{optimal_width_ai:.1f} m", delta=f"Klassik: {rec_width} m", delta_color="off")
+m5.metric(t('ai_recommendation'), f"{optimal_width_ai:.1f} m",
+          delta=f"Klassik: {rec_width} m", delta_color="off")
 
 # =========================== CHO'KISH VA HOEK-BROWN GRAFIKALARI ===========================
 st.markdown("---")
