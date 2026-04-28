@@ -1632,8 +1632,10 @@ with tab_live:
         st.subheader("📥 Download Monitoring Results (CSV)")
         csv_data = st.session_state.live_history_df.to_csv(index=False).encode('utf-8')
         st.download_button(label=t('download_data'), data=csv_data, file_name="ucg_live_monitoring.csv", mime="text/csv")
-       with tab_ai_orig:
-    with tab_ai_orig:
+       with tab_live:
+    # ... (tab_live ichidagi kodlar qanday bo'lsa o'sha holida qoladi) ...
+
+with tab_ai_orig:
     st.markdown(f"*{t('ai_monitor_desc')}*")
     def get_sensor_data_sim(step, total_steps, base_temp):
         trend = step / total_steps
@@ -1641,8 +1643,10 @@ with tab_live:
         pressure = 2 + 5*trend + np.random.normal(0, 0.5)
         stress = 5 + 10*trend + np.random.normal(0, 0.5)
         return {"temperature": temp, "gas_pressure": pressure, "stress": stress}
+
     def compute_effective_stress(sensor):
         return sensor["stress"] - sensor["gas_pressure"] + 0.002 * sensor["temperature"]
+
     def detect_anomaly_z(history, value, threshold=2.0, window=20):
         if len(history) < window:
             return False
@@ -1650,10 +1654,12 @@ with tab_live:
         mean = np.mean(recent)
         std = np.std(recent) + 1e-6
         return abs(value - mean) > threshold * std
+
     def simulate_sensors_fos(n_steps):
         T = np.linspace(20, min(1100,T_source_max), n_steps) + np.random.normal(0,10,n_steps)
         sigma_v = np.linspace(5, min(15, sv_seam*10), n_steps) + np.random.normal(0,0.5,n_steps)
         return pd.DataFrame({'Temperature':T, 'VerticalStress':sigma_v})
+
     if PT_AVAILABLE:
         class SimpleNN(nn.Module):
             def __init__(self):
@@ -1670,7 +1676,9 @@ with tab_live:
         fos_optimizer = torch.optim.Adam(fos_nn_model.parameters(), lr=0.01)
     else:
         fos_rf_model = RandomForestRegressor(n_estimators=50, random_state=42)
+
     ai_tab1, ai_tab2 = st.tabs(["📡 Anomaliya Aniqlash (Digital Twin)", "📊 FOS Prediction (SimpleNN / RF)"])
+
     with ai_tab1:
         st.markdown("#### Sensor ma'lumotlari asosida real-vaqt anomaliya aniqlash")
         t1_col1, t1_col2, t1_col3 = st.columns([1,1,2])
@@ -1721,6 +1729,7 @@ with tab_live:
                 time.sleep(0.15)
             st.balloons()
             st.success(f"✅ Monitoring yakunlandi! Jami anomaliyalar: {sum(1 for a in anomalies_eff if a is not None)}")
+
     with ai_tab2:
         st.markdown("#### SimpleNN yoki RandomForest yordamida FOS (Factor of Safety) bashorati")
         t2_col1, t2_col2 = st.columns([1,3])
