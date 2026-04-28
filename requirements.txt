@@ -10,3 +10,4 @@ requests
 numpy
 pandas
 streamlit
+numba>=0.56
