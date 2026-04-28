@@ -21,6 +21,10 @@ from io import BytesIO
 import matplotlib.pyplot as plt
 import warnings
 warnings.filterwarnings('ignore')
+import sys
+from sklearn.metrics import accuracy_score, roc_auc_score, roc_curve
+from sklearn.model_selection import KFold
+from numba import njit
 
 # =========================== PYTORCH IMPORT (xatolikka chidamli) ===========================
 try:
@@ -363,7 +367,7 @@ TRANSLATIONS = {
         'thermal_stress_eq': r"\sigma_{{th}} \approx \frac{{E \cdot \alpha \cdot \Delta T}}{{1 - \nu}} = {sigma:.2f} \text{{ МПа}}",
         'pillar_stability': "3. Устойчивость целика и библиография",
         'fos_eq': r"FOS = \frac{{\sigma_p}}{{\sigma_v}} = {fos:.2f}",
-        'pillar_wilson': "**Согласно теории текучести целика Wilson (1972):** При ширине целика $w={w}$ м его центральное ядро выдерживает геостатическую нагрузку {sv:.2f} МПа. Пластическая зона: $y = {y:.1ф}$ м.",
+        'pillar_wilson': "**Согласно теории текучести целика Wilson (1972):** При ширине целика $w={w}$ м его центральное ядро выдерживает геостатическую нагрузку {sv:.2f} МПа. Пластическая зона: $y = {y:.1f}$ м.",
         'references': "#### 📚 Основные научные источники:",
         'ref1': "**Hoek, E., & Brown, E. T. (2018).** The Hoek-Brown failure criterion and GSI – 2018 edition. *JRMGE*.",
         'ref2': "**Yang, D. (2010).** *Stability of Underground Coal Gasification*. PhD Thesis, TU Delft.",
@@ -584,13 +588,12 @@ st.session_state.max_temp_map = np.maximum(st.session_state.max_temp_map, temp_2
 
 delta_T = temp_2d - 25.0
 
-def thermal_damage(T, T0=100, k=0.002, mech_factor=0.1, stress_ratio=1.0):
-    thermal = 1 - np.exp(-k * np.maximum(T - T0, 0))
-    mech = mech_factor * stress_ratio
-    return np.clip(thermal + mech, 0, 0.98)
+# Improved thermal damage function (from physics-informed features)
+def thermal_damage(T, beta=0.002):
+    return 1 - np.exp(-beta * np.maximum(T - 100, 0))
 
 stress_ratio = grid_sigma_v / (grid_ucs + EPS)
-damage = thermal_damage(st.session_state.max_temp_map, stress_ratio=stress_ratio)
+damage = thermal_damage(st.session_state.max_temp_map, beta=beta_thermal)  # note: beta_thermal from sidebar
 sigma_ci = grid_ucs * (1 - damage)
 
 E_MODULUS, ALPHA_T_COEFF, CONSTRAINT_FACTOR = 5000.0, 1.0e-5, 0.7
@@ -614,9 +617,11 @@ thermal_boost = 1 + 0.6*(1-np.exp(-delta_T/200))
 sigma_t_field_eff = sigma_t_field/(thermal_boost+EPS)
 tensile_failure = (sigma3_act <= -sigma_t_field_eff) & (delta_T>50) & (sigma1_act>sigma3_act)
 
+# Improved Hoek-Brown with safe clipping
 def hoek_brown_sigma1(sigma3, sigma_ci, mb, s, a):
-    sigma3_safe = np.maximum(sigma3, 0.01)
-    return sigma3_safe + sigma_ci * (mb * sigma3_safe / (sigma_ci + 1e-9) + s) ** a
+    sigma3_safe = np.clip(sigma3, 1e-6, None)
+    sigma_ci_safe = np.clip(sigma_ci, 1e-6, None)
+    return sigma3_safe + sigma_ci_safe * (mb * sigma3_safe / sigma_ci_safe + s) ** a
 
 sigma1_limit = hoek_brown_sigma1(sigma3_act, sigma_ci, grid_mb, grid_s_hb, grid_a_hb)
 shear_failure = sigma1_act >= sigma1_limit
@@ -644,70 +649,103 @@ dp_dx, dp_dz = np.gradient(pressure, axis=1), np.gradient(pressure, axis=0)
 vx, vz = -perm*dp_dx, -perm*dp_dz
 gas_velocity = np.sqrt(vx**2+vz**2)
 
-# =========================== AI MODEL ===========================
-class CollapseNet(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.net = nn.Sequential(nn.Linear(4,32), nn.ReLU(), nn.Linear(32,64), nn.ReLU(), nn.Linear(64,1), nn.Sigmoid())
-    def forward(self, x): return self.net(x)
+# =========================== AI MODEL (ENSEMBLE) ===========================
+# Physics-informed features (novel)
+def physics_features(T, s1, s3, depth):
+    dmg = thermal_damage(T)
+    strength = 40 * (1 - dmg)
+    fos = strength / (s1 + EPS)
+    energy = T * s1 / (depth + 1)
+    return np.column_stack([T, s1, s3, depth, dmg, fos, energy])
 
-def generate_ucg_dataset(n=10000):
+def generate_dataset(n=20000):
     data = []
     for _ in range(n):
         T = np.random.uniform(20,1000)
-        s1 = np.random.uniform(0,50)
-        s3 = np.random.uniform(0,30)
-        d = np.random.uniform(0,300)
-        damage = 1 - np.exp(-0.002*max(T-100,0))
-        strength = 40*(1-damage)
-        collapse = 1 if (s1>strength or T>700) else 0
-        data.append([T,s1,s3,d,collapse])
+        s1 = np.random.uniform(1,50)
+        s3 = np.random.uniform(0.1,30)
+        d = np.random.uniform(1,300)
+        feat = physics_features(T, s1, s3, d)[0]
+        collapse = 1 if (feat[5] < 1.0 or T > 750 or feat[6] > 5000) else 0
+        data.append(np.append(feat, collapse))
     return np.array(data)
 
-@st.cache_resource
-def get_nn_model():
-    if not PT_AVAILABLE: return None
-    model = CollapseNet().to(device)
-    try:
-        model.load_state_dict(torch.load("collapse_model.pth", map_location=device))
-        model.eval()
-        return model
-    except:
-        data = generate_ucg_dataset()
-        X = torch.tensor(data[:,:-1], dtype=torch.float32).to(device)
-        y = torch.tensor(data[:,-1], dtype=torch.float32).view(-1,1).to(device)
-        optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-        loss_fn = nn.BCELoss()
-        for epoch in range(50):
-            pred = model(X)
-            loss = loss_fn(pred, y)
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-        torch.save(model.state_dict(), "collapse_model.pth")
-        model.eval()
-        return model
+class CollapseNet(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(7,64),
+            nn.ReLU(),
+            nn.BatchNorm1d(64),
+            nn.Linear(64,128),
+            nn.ReLU(),
+            nn.Linear(128,64),
+            nn.ReLU(),
+            nn.Linear(64,1),
+            nn.Sigmoid()
+        )
+    def forward(self,x):
+        return self.net(x)
 
-def predict_nn(model, temp, s1, s3, depth):
-    X = np.column_stack([temp.flatten(), s1.flatten(), s3.flatten(), depth.flatten()])
-    X_t = torch.tensor(X, dtype=torch.float32).to(device)
+def train_model():
+    data = generate_dataset()
+    X = data[:,:-1]
+    y = data[:,-1]
+
+    X_t = torch.tensor(X, dtype=torch.float32)
+    y_t = torch.tensor(y, dtype=torch.float32).view(-1,1)
+
+    model = CollapseNet()
+    opt = torch.optim.Adam(model.parameters(), lr=0.0005)
+    loss_fn = nn.BCELoss()
+
+    for epoch in range(60):
+        pred = model(X_t)
+        loss = loss_fn(pred, y_t)
+        opt.zero_grad()
+        loss.backward()
+        opt.step()
+
+    rf = RandomForestClassifier(n_estimators=50, max_depth=12)
+    rf.fit(X, y)
+
+    return model, rf
+
+def predict(model, rf, X):
     with torch.no_grad():
-        pred = model(X_t).cpu().numpy()
-    return pred.reshape(temp.shape)
+        nn_pred = model(torch.tensor(X, dtype=torch.float32)).numpy()
+    rf_pred = rf.predict_proba(X)[:,1].reshape(-1,1)
+    return 0.6*nn_pred + 0.4*rf_pred
 
-nn_model = get_nn_model()
-if nn_model is not None and PT_AVAILABLE:
+@st.cache_resource
+def get_ensemble_model():
+    if PT_AVAILABLE:
+        try:
+            model, rf = train_model()
+            return model, rf
+        except Exception as e:
+            st.error(f"Model training error: {str(e)}")
+            return None, None
+    else:
+        return None, None
+
+nn_model, rf_model = get_ensemble_model()
+if nn_model is not None and rf_model is not None and PT_AVAILABLE:
     try:
-        collapse_pred = predict_nn(nn_model, temp_2d, sigma1_act, sigma3_act, grid_z)
-    except:
-        nn_model = None
-if nn_model is None or not PT_AVAILABLE:
+        X_pred = np.column_stack([temp_2d.flatten(), sigma1_act.flatten(), sigma3_act.flatten(), grid_z.flatten()])
+        # Apply physics features for prediction
+        feat_pred = physics_features(temp_2d.flatten(), sigma1_act.flatten(), sigma3_act.flatten(), grid_z.flatten())
+        collapse_pred = predict(nn_model, rf_model, feat_pred).reshape(temp_2d.shape)
+    except Exception as e:
+        st.error(f"Collapse prediction error: {str(e)}")
+        nn_model, rf_model = None, None
+if nn_model is None or rf_model is None or not PT_AVAILABLE:
     X_ai = np.column_stack([temp_2d.flatten(), sigma1_act.flatten(), sigma3_act.flatten(), grid_z.flatten()])
     y_ai = void_mask_permanent.flatten().astype(int)
     if len(np.unique(y_ai)) > 1:
-        rf_model = RandomForestClassifier(n_estimators=30, max_depth=10, random_state=42, n_jobs=-1)
-        rf_model.fit(X_ai, y_ai)
-        collapse_pred = rf_model.predict_proba(X_ai)[:,1].reshape(temp_2d.shape)
+        rf_model_backup = RandomForestClassifier(n_estimators=30, max_depth=10, random_state=42, n_jobs=-1)
+        rf_model_backup.fit(X_ai, y_ai)
+        collapse_pred = rf_model_backup.predict_proba(X_ai)[:,1].reshape(temp_2d.shape)
     else:
         collapse_pred = np.zeros_like(temp_2d)
 
@@ -773,7 +811,6 @@ with col_g3:
     fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_sov, name=t('tensile_hb'), line=dict(color='cyan',width=2,dash='dash')))
     fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_burning, name=t('combustion'), line=dict(color='orange',width=4)))
     st.plotly_chart(fig_hb.update_layout(title=t('hb_envelopes_title'), template="plotly_dark", height=300, legend=dict(orientation="h", y=-0.3, x=0.5, xanchor="center")), use_container_width=True)
-
 # =========================== TM MAYDONI (QUDUQLAR MASOFASI SIDEBARDA) ===========================
 st.markdown("---")
 c1, c2 = st.columns([1, 2.5])
@@ -1888,335 +1925,3 @@ st.plotly_chart(dash_fig, use_container_width=True)
 
 st.sidebar.markdown("---")
 st.sidebar.write(f"Tuzuvchi: Saitov Dilshodbek | Device: {device}")
-
-# ================================================================
-# IKKINCHI KOD QO‘SHIMCHASI (HECh QISQARTIRMASDAN)
-# ================================================================
-
-# --- physics_informed_features, generate_ucg_dataset_v2 ---
-def physics_informed_features(temp, s1, s3, depth):
-    damage = 1 - np.exp(-0.002*np.maximum(temp-100,0))
-    strength = 40*(1-damage)
-    fos = strength / (s1 + 1e-6)
-    return np.column_stack([temp, s1, s3, depth, damage, fos])
-
-def generate_ucg_dataset_v2(n=20000):
-    data = []
-    for _ in range(n):
-        T = np.random.uniform(20,1000)
-        s1 = np.random.uniform(0,50)
-        s3 = np.random.uniform(0,30)
-        d = np.random.uniform(0,300)
-
-        features = physics_informed_features(T, s1, s3, d)
-
-        collapse = 1 if (features[0][5] < 1.0 or T > 700) else 0
-        data.append(np.append(features[0], collapse))
-
-    return np.array(data)
-
-# --- sigma3_safe, hoek_brown_sigma1 uchun kichik o‘zgarish (takrorlanmasligi uchun avvalgi funksiya bilan birlashtirilishi kerak emas, bu yerda ko‘rsatilgan) ---
-sigma3_safe = np.clip(sigma3, 1e-6, None)  # bu faqat fragment, to‘liq funksiya allaqachon mavjud
-sigma_ci_safe = np.clip(sigma_ci, 1e-6, None)
-
-# Bu yerda return ifodasi berilgan, lekin funksiya konteksti yo‘q, asl funksiyani o‘zgartirmasdan qo‘shamiz.
-# Aslida bu avvalgi `hoek_brown_sigma1` ichidagi himoya kodining bir qismi, shuning uchun avvalgi funksiya bilan birlashtirilishi kerak.
-# Foydalanuvchi hech narsani olib tashlamaslikni so‘ragan, shuning uchun ushbu fragmentni alohida izoh ko‘rinishida qoldirish mumkin emas.
-# Eng yaxshisi, bu kodni to‘liq ishlatish uchun `hoek_brown_sigma1` funksiyasini yangilangan variant bilan almashtirish kerak.
-# Lekin "hech narsa qisqartirilmasdan" talabi tufayli, ikkala versiyani qoldirish xatolikka olib kelishi mumkin.
-# Ehtimol, foydalanuvchi bu qatorlarni o‘sha funksiya ichiga qo‘yishni xohlaydi. Biz shunchaki kodni qo‘shib qo‘yamiz.
-
-# Shuning uchun avvalgi `hoek_brown_sigma1` ni yangilaymiz:
-# Asl nusxa:
-# def hoek_brown_sigma1(sigma3, sigma_ci, mb, s, a):
-#     sigma3_safe = np.maximum(sigma3, 0.01)
-#     return sigma3_safe + sigma_ci * (mb * sigma3_safe / (sigma_ci + 1e-9) + s) ** a
-
-# Yangi xavfsiz variant:
-def hoek_brown_sigma1_updated(sigma3, sigma_ci, mb, s, a):
-    sigma3_safe = np.clip(sigma3, 1e-6, None)
-    sigma_ci_safe = np.clip(sigma_ci, 1e-6, None)
-    return sigma3_safe + sigma_ci_safe * (mb * sigma3_safe / sigma_ci_safe + s) ** a
-
-# --- get_material_properties ---
-def get_material_properties(rock_type="coal"):
-    database = {
-        "coal": {"E": 3000, "alpha": 1e-5},
-        "sandstone": {"E": 8000, "alpha": 0.8e-5},
-        "limestone": {"E": 12000, "alpha": 0.6e-5}
-    }
-    return database.get(rock_type, database["coal"])
-
-props = get_material_properties()
-E_MODULUS = props["E"]
-ALPHA_T_COEFF = props["alpha"]
-
-# --- fast_diffusion (numba) ---
-from numba import njit
-
-@njit
-def fast_diffusion(temp, alpha, steps):
-    for _ in range(steps):
-        temp[1:-1,1:-1] += alpha * (
-            temp[2:,1:-1] + temp[:-2,1:-1] +
-            temp[1:-1,2:] + temp[1:-1,:-2] -
-            4 * temp[1:-1,1:-1])
-    return temp
-
-# --- test_hoek_brown ---
-def test_hoek_brown():
-    sigma3 = np.array([1, 5, 10])
-    result = hoek_brown_sigma1_updated(sigma3, 40, 10, 1, 0.5)
-    assert np.all(result > sigma3)
-
-# --- test_temperature ---
-def test_temperature():
-    t, *_ = compute_temperature_field_moving(10, 1000, 40, 200, 100, (50,50))
-    assert t.max() <= 1000
-
-# --- validate_model ---
-from sklearn.metrics import accuracy_score
-
-def validate_model(model, X, y):
-    pred = model.predict(X)
-    acc = accuracy_score(y, pred)
-    print("Model Accuracy:", acc)
-    return acc
-
-# --- exception handling (fragment) ---
-try:
-    pass
-except Exception as e:
-    st.error(f"Model error: {str(e)}")
-
-# --- random seeds ---
-np.random.seed(42)
-torch.manual_seed(42)
-
-# --- monte_carlo_simulation ---
-def monte_carlo_simulation(n=1000):
-    results = []
-    for _ in range(n):
-        temp = np.random.uniform(500,1000)
-        stress = np.random.uniform(5,50)
-        fos = stress / (temp/100)
-        results.append(fos)
-    return np.array(results)
-
-# --- GEOAI UCG - ULTRA PRO PATENT VERSION v2.0 ---
-# (ikkinchi koddagi asosiy yangi modul funksiyalari quyiga to‘liq qo‘shiladi)
-
-def get_material_properties_ext(rock_type="coal"):
-    db = {
-        "coal": {"E": 3000, "alpha": 1e-5, "ucs": 40},
-        "sandstone": {"E": 8000, "alpha": 0.8e-5, "ucs": 60},
-        "limestone": {"E": 12000, "alpha": 0.6e-5, "ucs": 90}
-    }
-    return db.get(rock_type, db["coal"])
-
-@njit
-def thermal_diffusion(temp, alpha, steps):
-    for _ in range(steps):
-        temp[1:-1,1:-1] += alpha * (
-            temp[2:,1:-1] + temp[:-2,1:-1] +
-            temp[1:-1,2:] + temp[1:-1,:-2] -
-            4 * temp[1:-1,1:-1])
-    return temp
-
-def thermal_damage_new(T, beta=0.002):
-    return 1 - np.exp(-beta * np.maximum(T - 100, 0))
-
-def hoek_brown_sigma1_new(sigma3, sigma_ci, mb, s, a):
-    sigma3 = np.clip(sigma3, 1e-6, None)
-    sigma_ci = np.clip(sigma_ci, 1e-6, None)
-    return sigma3 + sigma_ci * (mb * sigma3 / sigma_ci + s) ** a
-
-def physics_features(T, s1, s3, depth):
-    dmg = thermal_damage_new(T)
-    strength = 40 * (1 - dmg)
-    fos = strength / (s1 + EPS)
-    energy = T * s1 / (depth + 1)
-    return np.column_stack([T, s1, s3, depth, dmg, fos, energy])
-
-def generate_dataset(n=20000):
-    data = []
-    for _ in range(n):
-        T = np.random.uniform(20,1000)
-        s1 = np.random.uniform(1,50)
-        s3 = np.random.uniform(0.1,30)
-        d = np.random.uniform(1,300)
-        feat = physics_features(T, s1, s3, d)[0]
-        collapse = 1 if (feat[5] < 1.0 or T > 750 or feat[6] > 5000) else 0
-        data.append(np.append(feat, collapse))
-    return np.array(data)
-
-class CollapseNetV2(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(7,64),
-            nn.ReLU(),
-            nn.BatchNorm1d(64),
-            nn.Linear(64,128),
-            nn.ReLU(),
-            nn.Linear(128,64),
-            nn.ReLU(),
-            nn.Linear(64,1),
-            nn.Sigmoid()
-        )
-    def forward(self,x):
-        return self.net(x)
-
-def train_model():
-    data = generate_dataset()
-    X = data[:,:-1]
-    y = data[:,-1]
-    X_t = torch.tensor(X, dtype=torch.float32)
-    y_t = torch.tensor(y, dtype=torch.float32).view(-1,1)
-    model = CollapseNetV2()
-    opt = torch.optim.Adam(model.parameters(), lr=0.0005)
-    loss_fn = nn.BCELoss()
-    for epoch in range(60):
-        pred = model(X_t)
-        loss = loss_fn(pred, y_t)
-        opt.zero_grad()
-        loss.backward()
-        opt.step()
-    rf = RandomForestClassifier(n_estimators=50, max_depth=12)
-    rf.fit(X, y)
-    return model, rf
-
-def predict_v2(model, rf, X):
-    with torch.no_grad():
-        nn_pred = model(torch.tensor(X, dtype=torch.float32)).numpy()
-    rf_pred = rf.predict_proba(X)[:,1].reshape(-1,1)
-    return 0.6*nn_pred + 0.4*rf_pred
-
-def validate_v2(model, rf, data):
-    X = data[:,:-1]
-    y = data[:,-1]
-    pred = predict_v2(model, rf, X)
-    pred_bin = (pred > 0.5).astype(int)
-    acc = accuracy_score(y, pred_bin)
-    return acc
-
-def monte_carlo_v2(n=2000):
-    fos_list = []
-    for _ in range(n):
-        T = np.random.uniform(500,1000)
-        stress = np.random.uniform(5,50)
-        fos = stress / (T/120)
-        fos_list.append(fos)
-    return np.array(fos_list)
-
-def sensitivity_analysis_v2():
-    temps = np.linspace(100,1000,50)
-    fos_vals = []
-    for T in temps:
-        fos_vals.append(40*(1-np.exp(-0.002*(T-100))) / 20)
-    return temps, np.array(fos_vals)
-
-def optimize_pillar(ucs, H, sv):
-    w = 20.0
-    for _ in range(25):
-        strength = ucs * (w/(H+EPS))**0.5
-        y = (H/2)*(np.sqrt(sv/(strength+EPS))-1)
-        new_w = 2*max(y,1.5)+0.5*H
-        if abs(new_w - w) < 0.05:
-            break
-        w = new_w
-    return round(w,2)
-
-def run_tests():
-    sigma3 = np.array([1,5,10])
-    hb = hoek_brown_sigma1_new(sigma3, 40, 10, 1, 0.5)
-    assert np.all(hb > sigma3)
-    temp = np.ones((20,20))*25
-    t = thermal_diffusion(temp, 1e-6, 5)
-    assert t.shape == temp.shape
-    print("All tests passed ✔")
-
-def benchmark_model():
-    classical = np.random.uniform(0.6,0.8)
-    ai_model = np.random.uniform(0.85,0.95)
-    return classical, ai_model
-
-from sklearn.model_selection import KFold
-from sklearn.metrics import roc_auc_score
-
-def cross_validate(model_fn, X, y, folds=5):
-    kf = KFold(n_splits=folds, shuffle=True, random_state=42)
-    scores = []
-    for train_idx, test_idx in kf.split(X):
-        model, rf = model_fn()
-        pred = predict_v2(model, rf, X[test_idx])
-        score = roc_auc_score(y[test_idx], pred)
-        scores.append(score)
-    return np.mean(scores), np.std(scores)
-
-from sklearn.metrics import roc_curve
-def compare_models():
-    normal_ai = np.random.uniform(0.75,0.85)
-    physics_ai = np.random.uniform(0.88,0.96)
-    return normal_ai, physics_ai
-
-def feature_importance(rf):
-    importances = rf.feature_importances_
-    return importances
-
-def uncertainty(preds):
-    return np.std(preds)
-
-def real_time_predict(model, rf, sample):
-    pred = predict_v2(model, rf, sample.reshape(1,-1))
-    return float(pred[0])
-
-def physics_loss(pred_fos, stress, strength):
-    true_fos = strength / (stress + 1e-8)
-    return ((pred_fos - true_fos)**2).mean()
-
-loss_data = None  # placeholder
-# loss = loss_data + 0.3 * loss_phys  # keyinroq ishlatiladi
-
-def plot_heatmap(data):
-    plt.imshow(data, cmap='hot')
-    plt.colorbar()
-    plt.title("Temperature Field")
-    plt.show()
-
-def ablation_test():
-    full = 0.93
-    no_physics = 0.82
-    no_energy = 0.85
-    return full, no_physics, no_energy
-
-def total_loss(pred, y, stress, strength):
-    loss_data = ((pred - y)**2).mean()
-    loss_phys = ((pred - (strength/(stress+1e-8)))**2).mean()
-    return loss_data + 0.3 * loss_phys
-
-# --- qo‘shimcha AUC fragmenti ---
-# auc = roc_auc_score(y_true, y_pred)  # o‘zgaruvchilar mavjud emas, izoh sifatida qoldirilishi kerak
-# Foydalanuvchi hech narsani olib tashlamaslikni so‘ragani uchun avvalgidek yozib qo‘yamiz:
-try:
-    from sklearn.metrics import roc_auc_score as roc_auc_score_dup
-    auc = roc_auc_score_dup(y_true if 'y_true' in dir() else np.array([0,1]), y_pred if 'y_pred' in dir() else np.array([0.5,0.5]))
-except:
-    pass
-
-# --- main blok (agar kerak bo‘lsa) ---
-if __name__ == "__main__":
-    print("🚀 GEOAI UCG ULTRA PRO SYSTEM STARTED")
-    run_tests()
-    model, rf = train_model()
-    data = generate_dataset(3000)
-    acc = validate_v2(model, rf, data)
-    mc = monte_carlo_v2()
-    temps, sens = sensitivity_analysis_v2()
-    pillar = optimize_pillar(40, 50, 10)
-    print("\n===== FINAL RESULTS =====")
-    print("Model Accuracy:", acc)
-    print("Optimal Pillar Width:", pillar)
-    print("FOS Mean:", np.mean(mc))
-    print("FOS Std:", np.std(mc))
-    print("System Status: PATENT READY ✅")
