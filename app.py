@@ -1632,7 +1632,7 @@ with tab_live:
         st.subheader("📥 Download Monitoring Results (CSV)")
         csv_data = st.session_state.live_history_df.to_csv(index=False).encode('utf-8')
         st.download_button(label=t('download_data'), data=csv_data, file_name="ucg_live_monitoring.csv", mime="text/csv")
-        with tab_ai_orig:
+       with tab_ai_orig:
     st.markdown(f"*{t('ai_monitor_desc')}*")
     def get_sensor_data_sim(step, total_steps, base_temp):
         trend = step / total_steps
@@ -1640,7 +1640,7 @@ with tab_live:
         pressure = 2 + 5*trend + np.random.normal(0, 0.5)
         stress = 5 + 10*trend + np.random.normal(0, 0.5)
         return {"temperature": temp, "gas_pressure": pressure, "stress": stress}
-    def compute_effective_stress(sensor):
+     def compute_effective_stress(sensor):
         return sensor["stress"] - sensor["gas_pressure"] + 0.002 * sensor["temperature"]
     def detect_anomaly_z(history, value, threshold=2.0, window=20):
         if len(history) < window:
