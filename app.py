@@ -25,6 +25,9 @@ import sys
 from sklearn.metrics import accuracy_score, roc_auc_score, roc_curve
 from sklearn.model_selection import KFold
 from numba import njit
+import joblib
+from sklearn.preprocessing import StandardScaler
+from fastapi import FastAPI
 
 # =========================== PYTORCH IMPORT (xatolikka chidamli) ===========================
 try:
@@ -600,7 +603,10 @@ E_MODULUS, ALPHA_T_COEFF, CONSTRAINT_FACTOR = 5000.0, 1.0e-5, 0.7
 dT_dx = np.gradient(temp_2d, axis=1, edge_order=2)
 dT_dz = np.gradient(temp_2d, axis=0, edge_order=2)
 thermal_gradient = np.sqrt(dT_dx**2 + dT_dz**2)
-sigma_thermal = CONSTRAINT_FACTOR*(E_MODULUS*ALPHA_T_COEFF*delta_T)/(1-nu_poisson+EPS) + 0.3*thermal_gradient
+sigma_thermal = CONSTRAINT_FACTOR * (
+    E_MODULUS * ALPHA_T_COEFF * delta_T
+) / (1 - nu_poisson + EPS)
+sigma_thermal = np.clip(sigma_thermal, 0, sigma_ci * 0.3)
 grid_sigma_h = k_ratio * grid_sigma_v - sigma_thermal
 sigma1_act = np.maximum(grid_sigma_v, grid_sigma_h)
 sigma3_act = np.minimum(grid_sigma_v, grid_sigma_h)
@@ -621,18 +627,21 @@ tensile_failure = (sigma3_act <= -sigma_t_field_eff) & (delta_T>50) & (sigma1_ac
 def hoek_brown_sigma1(sigma3, sigma_ci, mb, s, a):
     sigma3_safe = np.clip(sigma3, 1e-6, None)
     sigma_ci_safe = np.clip(sigma_ci, 1e-6, None)
-    return sigma3_safe + sigma_ci_safe * (mb * sigma3_safe / sigma_ci_safe + s) ** a
+    term = mb * sigma3_safe / (sigma_ci_safe + 1e-6) + s
+    term = np.clip(term, 1e-6, 1e6)
+    return sigma3_safe + sigma_ci_safe * (term ** a)
 
 sigma1_limit = hoek_brown_sigma1(sigma3_act, sigma_ci, grid_mb, grid_s_hb, grid_a_hb)
 shear_failure = sigma1_act >= sigma1_limit
 
+strain_energy = sigma1_act * delta_T
 spalling = tensile_failure & (temp_2d>400)
 crushing = shear_failure & (temp_2d>600)
 depth_factor = np.exp(-grid_z/(total_depth+EPS))
 local_collapse_T = np.clip((st.session_state.max_temp_map-600)/300,0,1)
 time_factor = np.clip((time_h-40)/60,0,1)
 collapse_final = local_collapse_T * time_factor * (1-depth_factor)
-void_mask_raw = spalling | crushing | (st.session_state.max_temp_map>900)
+void_mask_raw = spalling | crushing | (st.session_state.max_temp_map>900) | (strain_energy > 5000)
 void_mask_smooth = gaussian_filter(void_mask_raw.astype(float), sigma=1.5)
 void_mask_permanent = (void_mask_smooth>0.3) & (collapse_final>0.05)
 
@@ -658,98 +667,228 @@ def physics_features(T, s1, s3, depth):
     energy = T * s1 / (depth + 1)
     return np.column_stack([T, s1, s3, depth, dmg, fos, energy])
 
-def generate_dataset(n=20000):
-    data = []
-    for _ in range(n):
-        T = np.random.uniform(20,1000)
-        s1 = np.random.uniform(1,50)
-        s3 = np.random.uniform(0.1,30)
-        d = np.random.uniform(1,300)
-        feat = physics_features(T, s1, s3, d)[0]
-        collapse = 1 if (feat[5] < 1.0 or T > 750 or feat[6] > 5000) else 0
-        data.append(np.append(feat, collapse))
-    return np.array(data)
+# Second kodning yangi dataset generatori
+def generate_physics_dataset(temp_field, sigma1, sigma3, depth):
+    feat = physics_features(
+        temp_field.flatten(),
+        sigma1.flatten(),
+        sigma3.flatten(),
+        depth.flatten()
+    )
+    fos = feat[:,5]
+    energy = feat[:,6]
+    collapse = (
+        (fos < 1.0) |
+        (temp_field.flatten() > 800) |
+        (energy > 4000)
+    ).astype(int)
+    return feat, collapse
 
+# Yangi CollapseNet (Dropout qo'shilgan)
 class CollapseNet(nn.Module):
     def __init__(self):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(7,64),
             nn.ReLU(),
-            nn.BatchNorm1d(64),
+            nn.Dropout(0.2),
+
             nn.Linear(64,128),
             nn.ReLU(),
+            nn.Dropout(0.3),
+
             nn.Linear(128,64),
             nn.ReLU(),
+
             nn.Linear(64,1),
             nn.Sigmoid()
         )
     def forward(self,x):
         return self.net(x)
 
-def train_model():
-    data = generate_dataset()
-    X = data[:,:-1]
-    y = data[:,-1]
+# HybridCollapseNet (physics loss bilan)
+class HybridCollapseNet(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(7, 128),
+            nn.ReLU(),
+            nn.Dropout(0.3),
 
-    X_t = torch.tensor(X, dtype=torch.float32)
-    y_t = torch.tensor(y, dtype=torch.float32).view(-1,1)
+            nn.Linear(128, 256),
+            nn.ReLU(),
+            nn.Dropout(0.3),
 
-    model = CollapseNet()
-    opt = torch.optim.Adam(model.parameters(), lr=0.0005)
-    loss_fn = nn.BCELoss()
+            nn.Linear(256, 128),
+            nn.ReLU(),
 
-    for epoch in range(60):
+            nn.Linear(128, 1),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+def physics_loss(pred, sigma1, sigma_ci):
+    fos = sigma_ci / (sigma1 + 1e-6)
+    penalty = torch.mean((1 - fos) * pred)
+    return penalty
+
+def train_hybrid_model(X, y, sigma1, sigma_ci):
+    model = HybridCollapseNet().to(device)
+    X_t = torch.tensor(X, dtype=torch.float32).to(device)
+    y_t = torch.tensor(y, dtype=torch.float32).view(-1,1).to(device)
+    sigma1_t = torch.tensor(sigma1, dtype=torch.float32).to(device)
+    sigma_ci_t = torch.tensor(sigma_ci, dtype=torch.float32).to(device)
+    opt = torch.optim.Adam(model.parameters(), lr=0.0003)
+    for epoch in range(80):
         pred = model(X_t)
-        loss = loss_fn(pred, y_t)
+        bce = nn.BCELoss()(pred, y_t)
+        phys = physics_loss(pred, sigma1_t, sigma_ci_t)
+        loss = bce + 0.4 * phys
         opt.zero_grad()
         loss.backward()
         opt.step()
+    return model
 
-    rf = RandomForestClassifier(n_estimators=50, max_depth=12)
-    rf.fit(X, y)
+def train_random_forest(X_scaled, y):
+    rf = RandomForestClassifier(n_estimators=50, max_depth=12, random_state=42, n_jobs=-1)
+    rf.fit(X_scaled, y)
+    return rf
 
-    return model, rf
-
-def predict(model, rf, X):
-    with torch.no_grad():
-        nn_pred = model(torch.tensor(X, dtype=torch.float32)).numpy()
-    rf_pred = rf.predict_proba(X)[:,1].reshape(-1,1)
-    return 0.6*nn_pred + 0.4*rf_pred
-
+# Asosiy ensemble modelni yuklash yoki o'qitish
 @st.cache_resource
 def get_ensemble_model():
     if PT_AVAILABLE:
         try:
-            model, rf = train_model()
-            return model, rf
+            # Datasetni yaratish
+            X, y = generate_physics_dataset(temp_2d, sigma1_act, sigma3_act, grid_z)
+            # Masshtablash
+            scaler = StandardScaler()
+            X_scaled = scaler.fit_transform(X)
+            # Hybrid modelni o'qitish
+            model = train_hybrid_model(X_scaled, y, sigma1_act.flatten(), sigma_ci.flatten())
+            # RandomForest o'qitish
+            rf = train_random_forest(X_scaled, y)
+            # Cross-validation AUC
+            kf = KFold(n_splits=5)
+            scores = []
+            for train_idx, test_idx in kf.split(X_scaled):
+                rf.fit(X_scaled[train_idx], y[train_idx])
+                pred = rf.predict_proba(X_scaled[test_idx])[:,1]
+                scores.append(roc_auc_score(y[test_idx], pred))
+            st.write("Model AUC:", np.mean(scores))
+            # Anomaliya detektori
+            iso = IsolationForest(contamination=0.01, random_state=42)
+            anomaly = iso.fit_predict(X_scaled)
+            # Saqlash
+            save_all(model, rf, scaler)
+            return model, rf, scaler
         except Exception as e:
             st.error(f"Model training error: {str(e)}")
-            return None, None
+            return None, None, None
     else:
-        return None, None
+        return None, None, None
 
-nn_model, rf_model = get_ensemble_model()
-if nn_model is not None and rf_model is not None and PT_AVAILABLE:
+hybrid_model, rf_model, scaler = get_ensemble_model()
+
+# Model bilan bashorat qilish funksiyasi
+def predict_collapse(model, rf, scaler, X_raw):
+    if model is None or rf is None:
+        return np.zeros((X_raw.shape[0], 1))
+    X_scaled = scaler.transform(X_raw)
+    with torch.no_grad():
+        nn_pred = model(torch.tensor(X_scaled, dtype=torch.float32).to(device)).cpu().numpy()
+    rf_pred = rf.predict_proba(X_scaled)[:,1].reshape(-1,1)
+    return 0.6*nn_pred + 0.4*rf_pred
+
+# Digital Twin funksiyalari
+def update_with_sensor(model, sensor_data):
+    X_new = physics_features(
+        sensor_data[:,0],
+        sensor_data[:,1],
+        sensor_data[:,2],
+        sensor_data[:,3]
+    )
+    with torch.no_grad():
+        pred = model(torch.tensor(X_new, dtype=torch.float32).to(device))
+    return pred.cpu().numpy()
+
+class SmartAnomalyDetector:
+    def __init__(self):
+        self.model = IsolationForest(
+            n_estimators=200,
+            contamination=0.02,
+            random_state=42
+        )
+
+    def fit(self, X):
+        self.model.fit(X)
+
+    def detect(self, X):
+        return self.model.predict(X)
+
+anomaly_detector = SmartAnomalyDetector()
+# Fit qilish (birinchi ishga tushirishda)
+if hybrid_model is not None:
+    X_all, _ = generate_physics_dataset(temp_2d, sigma1_act, sigma3_act, grid_z)
+    anomaly_detector.fit(X_all)
+
+def digital_twin_update(temp, sigma1, sigma3, depth):
+    features = physics_features(temp, sigma1, sigma3, depth)
+    anomaly = anomaly_detector.detect(features)
+    collapse = hybrid_model(
+        torch.tensor(features, dtype=torch.float32).to(device)
+    ).detach().cpu().numpy()
+    return {
+        "collapse": collapse,
+        "anomaly": anomaly
+    }
+
+# Optimallashtirish funksiyasi (qo'shimcha)
+def optimize_pillar_multiobjective(ucs, stress, temp):
+    def objective(w):
+        strength = ucs * (w/10)**0.5
+        risk = np.exp(-0.01*w) * temp/1000
+        cost = w * 0.5
+        return -(0.6*strength - 0.3*risk - 0.1*cost)
+    result = minimize(objective, x0=[20], bounds=[(5,100)])
+    return result.x[0]
+
+# Modellarni saqlash/yuklash funksiyalari
+def save_all(model, rf, scaler):
+    torch.save(model.state_dict(), "model.pt")
+    joblib.dump(rf, "rf.pkl")
+    joblib.dump(scaler, "scaler.pkl")
+
+def load_all():
+    model = HybridCollapseNet()
+    model.load_state_dict(torch.load("model.pt"))
+    rf = joblib.load("rf.pkl")
+    scaler = joblib.load("scaler.pkl")
+    return model, rf, scaler
+
+# Eski predict funksiyasini yangi bilan almashtirish uchun o'zgaruvchi
+collapse_pred = np.zeros_like(temp_2d)
+if hybrid_model is not None:
+    feat_pred = physics_features(temp_2d.flatten(), sigma1_act.flatten(), sigma3_act.flatten(), grid_z.flatten())
+    # Masshtablagich mavjud bo'lsa, ishga tushiramiz
     try:
-        X_pred = np.column_stack([temp_2d.flatten(), sigma1_act.flatten(), sigma3_act.flatten(), grid_z.flatten()])
-        # Apply physics features for prediction
-        feat_pred = physics_features(temp_2d.flatten(), sigma1_act.flatten(), sigma3_act.flatten(), grid_z.flatten())
-        collapse_pred = predict(nn_model, rf_model, feat_pred).reshape(temp_2d.shape)
+        collapse_pred = predict_collapse(hybrid_model, rf_model, scaler, feat_pred).reshape(temp_2d.shape)
     except Exception as e:
         st.error(f"Collapse prediction error: {str(e)}")
-        nn_model, rf_model = None, None
-if nn_model is None or rf_model is None or not PT_AVAILABLE:
+else:
+    st.warning(t('warning_pytorch'))
+    # Fallback: oddiy RF
     X_ai = np.column_stack([temp_2d.flatten(), sigma1_act.flatten(), sigma3_act.flatten(), grid_z.flatten()])
     y_ai = void_mask_permanent.flatten().astype(int)
     if len(np.unique(y_ai)) > 1:
-        rf_model_backup = RandomForestClassifier(n_estimators=30, max_depth=10, random_state=42, n_jobs=-1)
-        rf_model_backup.fit(X_ai, y_ai)
-        collapse_pred = rf_model_backup.predict_proba(X_ai)[:,1].reshape(temp_2d.shape)
+        rf_backup = RandomForestClassifier(n_estimators=30, max_depth=10, random_state=42, n_jobs=-1)
+        rf_backup.fit(X_ai, y_ai)
+        collapse_pred = rf_backup.predict_proba(X_ai)[:,1].reshape(temp_2d.shape)
     else:
         collapse_pred = np.zeros_like(temp_2d)
-
-# =========================== SELEK OPTIMIZATSIYASI ===========================
+        # =========================== SELEK OPTIMIZATSIYASI ===========================
 avg_t_p = np.mean(temp_2d[np.abs(z_axis-source_z).argmin(), :])
 strength_red = np.exp(-0.0025*(avg_t_p-20))
 ucs_seam = layers_data[-1]['ucs']
@@ -769,13 +908,13 @@ fos_2d = np.clip(sigma1_limit/(sigma1_act+EPS), 0, 3.0)
 fos_2d = np.where(void_mask_permanent, 0.0, fos_2d)
 void_frac_base = float(np.mean(void_mask_permanent))
 
-def objective(w_arr):
+def optimize_pillar_ai(w_arr):
     w = w_arr[0]
     strength = (ucs_seam*strength_red)*(w/(H_seam+EPS))**0.5
     risk = void_frac_base * np.exp(-0.01*(w-rec_width))
     return -(strength - 15.0*risk)
 try:
-    opt_result = minimize(objective, x0=[rec_width], bounds=[(5.0,100.0)], method='SLSQP')
+    opt_result = minimize(optimize_pillar_ai, x0=[rec_width], bounds=[(5.0,100.0)], method='SLSQP')
     optimal_width_ai = float(np.clip(opt_result.x[0], 5.0, 100.0))
 except:
     optimal_width_ai = rec_width
@@ -811,6 +950,7 @@ with col_g3:
     fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_sov, name=t('tensile_hb'), line=dict(color='cyan',width=2,dash='dash')))
     fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_burning, name=t('combustion'), line=dict(color='orange',width=4)))
     st.plotly_chart(fig_hb.update_layout(title=t('hb_envelopes_title'), template="plotly_dark", height=300, legend=dict(orientation="h", y=-0.3, x=0.5, xanchor="center")), use_container_width=True)
+
 # =========================== TM MAYDONI (QUDUQLAR MASOFASI SIDEBARDA) ===========================
 st.markdown("---")
 c1, c2 = st.columns([1, 2.5])
@@ -819,7 +959,6 @@ c1, c2 = st.columns([1, 2.5])
 with c1:
     st.subheader(t('scientific_analysis'))
     st.error(t('fos_red')); st.warning(t('fos_yellow')); st.success(t('fos_green'))
-    
     fig_layers = go.Figure()
     for lyr in layers_data:
         fig_layers.add_trace(go.Bar(
@@ -848,79 +987,57 @@ well_distance = st.sidebar.slider("Quduqlar orasidagi masofa (m):", 50.0, 500.0,
 # ----------- Right Panel: Advanced UCG Geomechanical Model -----------
 with c2:
     st.subheader("UCG Yonish Bosqichlari (1 → 3 → 2 sxemasi) – Yangi Ilmiy Model")
-    
-    # Asosiy koddan kerakli parametrlarni olish
     coal_layer = layers_data[-1]
-    h_seam = coal_layer['t']                     # ko'mir qatlami qalinligi (m)
-    ucs_coal_pa = coal_layer['ucs'] * 1e6        # Pa
+    h_seam = coal_layer['t']
+    ucs_coal_pa = coal_layer['ucs'] * 1e6
     rho_coal = coal_layer['rho']
-    
-    # Quduq koordinatalari (chap, markaz, o‘ng) – well_distance asosida
     well_x = [-well_distance, 0, well_distance]
-    
-    # Kamera kengligi (cavity_width) – optimallashtirilgan pillar eni rec_width dan hisoblanadi
     cavity_width = well_distance - rec_width
-    cavity_width = max(cavity_width, 10)         # minimal 10 m
-    
-    # Fizik doimiylar
-    E_MOD = 25e9          # 25 GPa (Pa)
-    ALPHA = 1.0e-5        # 1/°C
-    NU = nu_poisson        # asl koddan
-    K0 = NU / (1 - NU)    # yon bosim koeffitsiyenti
-    
-    # Qatlamlarning yuqori va pastki chegaralari
+    cavity_width = max(cavity_width, 10)
+    E_MOD = 25e9
+    ALPHA = 1.0e-5
+    NU = nu_poisson
+    K0 = NU / (1 - NU)
     layer_bounds = []
     for l in layers_data:
         top = l['z_start']
         bot = top + l['t']
         layer_bounds.append((top, bot, l))
-    
-    # Ko'mir qatlamidagi o'rtacha vertikal kuchlanish
     sigma_v_coal = 0.0
     for l in layers_data[:-1]:
         sigma_v_coal += l['rho'] * 9.81 * l['t']
     sigma_v_coal += rho_coal * 9.81 * (h_seam / 2)
-    sigma_v_coal = sigma_v_coal / 1e6   # MPa
-    
-    # Kritik gumbaz balandligi Hc
+    sigma_v_coal = sigma_v_coal / 1e6
     Hc = h_seam * np.sqrt(sigma_v_coal / (coal_layer['ucs'] + 1e-5))
     Hc = np.clip(Hc, h_seam, h_seam * 4)
-    
-    # 1-3-2 ketma-ketligi
     states_132 = {1: [0], 2: [0, 2], 3: [0, 1, 2]}
     stage = st.select_slider("Bosqichni tanlang:", options=[1, 2, 3], value=1, key="ucg_stage_132")
     active_wells = states_132[stage]
-    
-    # ------------------- FOS hisoblash funksiyasi (yuqoridagi bilan bir xil) -------------------
+
+    # FOS hisoblash funksiyasi
     def compute_advanced_fos(grid_x, grid_z, active_wells, well_x, source_z, h_seam, cavity_width,
                              temp_field, sigma_v_field, layers_data, layer_bounds,
                              E, alpha, nu, K0, Hc, sigma_v_coal_MPa, ucs_coal_pa):
         fos = np.full_like(grid_x, 3.0)
-        
         for px_idx in active_wells:
             px = well_x[px_idx]
             dist = np.sqrt((grid_x - px)**2 + (grid_z - source_z)**2)
             dz = source_z - grid_z
-            
             T = temp_field
             delta_T = np.maximum(T - 20, 0)
             thermal_zone = dist < (h_seam * 3)
-            
             for (top, bot, layer) in layer_bounds:
                 mask = (grid_z >= top) & (grid_z < bot)
                 if not np.any(mask): continue
-                
                 ucs_pa = layer['ucs'] * 1e6
                 gsi = layer['gsi']; mi = layer['mi']
                 mb = mi * np.exp((gsi - 100) / (28 - 14 * D_factor))
                 s_hb = np.exp((gsi - 100) / (9 - 3 * D_factor))
                 a_hb = 0.5 + (1/6)*(np.exp(-gsi/15) - np.exp(-20/3))
-                
                 sigma_v = sigma_v_field[mask]
                 delta_T_m = delta_T[mask]
                 D_T = 1 - np.exp(-beta_thermal * delta_T_m)
                 sigma_ci_T = ucs_pa * (1 - D_T)
-                
                 sigma_3 = K0 * sigma_v * (0.6 + 0.4 * (1 - D_T))
                 sigma_th = np.zeros_like(sigma_v)
                 local_thermal = thermal_zone[mask]
@@ -928,18 +1045,16 @@ with c2:
                     th_vals = (E * alpha * delta_T_m[local_thermal]) / (1 - nu)
                     sigma_th[local_thermal] = np.clip(th_vals, 0, sigma_ci_T[local_thermal] * 0.25)
                 sigma_1 = sigma_v + sigma_th
-                
                 term = mb * sigma_3 / (sigma_ci_T + 1e5) + s_hb
+                term = np.clip(term, 1e-6, 1e6)
                 sigma_limit = sigma_3 + sigma_ci_T * (term)**a_hb
                 fos_val = np.clip(sigma_limit / (sigma_1 + 1e6), 0, 3)
                 yield_mask = sigma_1 > (sigma_limit * 0.85)
                 fos_val[yield_mask] = np.minimum(fos_val[yield_mask], 0.8)
-                
                 fos_sub = fos[mask]
                 fos_sub = np.minimum(fos_sub, fos_val)
                 fos[mask] = fos_sub
-                
-                if layer == layers_data[-1]:  # ko'mir qatlami
+                if layer == layers_data[-1]:
                     dome_width = (cavity_width / 2) * np.clip(1 - dz[mask] / (Hc + 1e-5), 0, 1)
                     failure_zone = fos_val < 1.2
                     dome_condition = (dz[mask] > 0) & (dz[mask] < Hc) & (np.abs(grid_x[mask] - px) < dome_width) & failure_zone
@@ -947,25 +1062,21 @@ with c2:
                         decay = np.clip(1 - (dz[mask][dome_condition] / (Hc + 1e-5)), 0.3, 1.0)
                         fos_sub[dome_condition] = np.minimum(fos_sub[dome_condition], decay)
                         fos[mask] = fos_sub
-        
         for px_idx in active_wells:
             px = well_x[px_idx]
             a = cavity_width / 2
             b = h_seam / 2
             cavity_ellipse = ((grid_x - px)**2 / (a**2 + EPS) + (grid_z - source_z)**2 / (b**2 + EPS)) < 1
             fos[cavity_ellipse] = 0.05
-        
         bottom_layer = layers_data[-1]
         bottom_boundary = bottom_layer['z_start'] + bottom_layer['t']
         fos[grid_z > bottom_boundary] = 2.5
-        
         all_wells = [0, 1, 2]
         for i in all_wells:
             if i not in active_wells:
                 px = well_x[i]
                 pillar_mask = (np.abs(grid_x - px) < h_seam * 1.5) & (np.abs(grid_z - source_z) < h_seam * 1.2)
                 fos[pillar_mask] = 2.5
-        
         if stage == 2:
             selek_eni = well_distance - cavity_width
             pillar_strength = ucs_coal_pa * (selek_eni / (h_seam + EPS)) ** 0.5
@@ -973,25 +1084,21 @@ with c2:
             fos_pillar = pillar_strength / (sigma_v_coal_pa + 1e5)
             pillar_zone = (np.abs(grid_x - well_x[1]) < selek_eni/2) & (np.abs(grid_z - source_z) < h_seam)
             fos[pillar_zone] = np.maximum(fos[pillar_zone], fos_pillar)
-        
         fos = np.nan_to_num(fos, nan=3.0, posinf=3.0, neginf=0.0)
         return fos
-    
+
     source_z = total_depth - (h_seam / 2)
     fos_stage = compute_advanced_fos(
         grid_x, grid_z, active_wells, well_x, source_z, h_seam, cavity_width,
         temp_2d, grid_sigma_v, layers_data, layer_bounds,
         E_MOD, ALPHA, NU, K0, Hc, sigma_v_coal, ucs_coal_pa
     )
-    
-    # ------------------- GRAFIK (2 QATOR) -------------------
+
+    # Grafika (2 qator)
     fig_tm = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.12,
                            subplot_titles=(t('temp_subplot'), "Geomexanik Holat (Yangi Ilmiy Model)"))
-    
-    # Temperatura
     fig_tm.add_trace(go.Heatmap(z=temp_2d, x=x_axis, y=z_axis, colorscale='Hot', zmin=25, zmax=T_source_max,
                                 colorbar=dict(title="T (°C)", x=1.05, y=0.78, len=0.42, thickness=15), name=t('temp_subplot')), row=1, col=1)
-    # Gaz oqimi
     step = 12
     qx, qz = grid_x[::step, ::step].flatten(), grid_z[::step, ::step].flatten()
     qu, qw = vx[::step, ::step].flatten(), vz[::step, ::step].flatten()
@@ -1003,36 +1110,30 @@ with c2:
                                 marker=dict(symbol='arrow', size=10, color=qmag[mask_q], colorscale='ice',
                                             cmin=0, cmax=qmag_max, angle=angles, opacity=0.85, showscale=False, line=dict(width=0)),
                                 name=t('gas_flow')), row=1, col=1)
-    # FOS
     fig_tm.add_trace(go.Contour(z=fos_stage, x=x_axis, y=z_axis,
                                 colorscale=[[0,'black'],[0.1,'red'],[0.4,'orange'],[0.7,'yellow'],[0.85,'lime'],[1,'darkgreen']],
                                 zmin=0, zmax=3, contours_showlines=False,
                                 colorbar=dict(title="FOS", x=1.05, y=0.22, len=0.42, thickness=15), name="FOS"), row=2, col=1)
-    # Yielded zones
     fracture_mask = np.where(fos_stage < 1.2, 1.0, np.nan)
     fig_tm.add_trace(go.Heatmap(z=fracture_mask, x=x_axis, y=z_axis,
                                 colorscale=[[0,'rgba(0,0,0,0)'],[1,'rgba(255,0,0,0.5)']],
                                 showscale=False, opacity=0.6, hoverinfo='skip', name="Yielded Zones"), row=2, col=1)
-    # Yonish doiralari
     r_burn_vis = h_seam * 1.5
     for idx in active_wells:
         px = well_x[idx]
         fig_tm.add_shape(type="circle", x0=px-r_burn_vis, x1=px+r_burn_vis,
                          y0=source_z-r_burn_vis, y1=source_z+r_burn_vis,
                          line=dict(color="orange", width=2), fillcolor='rgba(255,165,0,0.15)', row=2, col=1)
-    # Seleklar (to‘rtburchaklar)
     for px in well_x:
         fig_tm.add_shape(type="rect", x0=px-rec_width/2, x1=px+rec_width/2,
                          y0=source_z-h_seam/2, y1=source_z+h_seam/2,
                          line=dict(color="lime", width=3), fillcolor="rgba(0,255,0,0.1)", row=2, col=1)
-    # 2-bosqichda maxsus selek
     if stage == 2:
         fig_tm.add_shape(type="rect", x0=well_x[1]-80, x1=well_x[1]+80,
                          y0=source_z-30, y1=source_z+30,
                          line=dict(color="cyan", width=4, dash="dash"), fillcolor='rgba(0,255,255,0.1)', row=2, col=1)
         fig_tm.add_annotation(x=well_x[1], y=source_z+100, text="HIMOYA SELEGI (PILLAR)",
                               showarrow=True, arrowhead=2, font=dict(color="cyan", size=12), row=2, col=1)
-    # AI collapse, shear, tensile, void
     fig_tm.add_trace(go.Heatmap(z=collapse_pred, x=x_axis, y=z_axis, colorscale='Viridis', opacity=0.4, showscale=False, name="AI Collapse"), row=2, col=1)
     shear_disp = np.copy(shear_failure); shear_disp[void_mask_permanent]=False
     tens_disp = np.copy(tensile_failure); tens_disp[void_mask_permanent]=False
@@ -1040,12 +1141,10 @@ with c2:
     fig_tm.add_trace(go.Scatter(x=grid_x[tens_disp][::2], y=grid_z[tens_disp][::2], mode='markers', marker=dict(color='blue',size=3,symbol='cross'), name='Tensile'), row=2, col=1)
     void_visual = np.where(void_mask_permanent>0.1, 1.0, np.nan)
     fig_tm.add_trace(go.Heatmap(z=void_visual, x=x_axis, y=z_axis, colorscale=[[0,'black'],[1,'black']], showscale=False, opacity=0.8, hoverinfo='skip'), row=2, col=1)
-    # Qatlam chegaralari
     fig_tm.add_shape(type="line", x0=x_axis.min(), x1=x_axis.max(), y0=source_z-h_seam/2, y1=source_z-h_seam/2,
                      line=dict(color="white", width=2, dash="dash"), row=2, col=1)
     fig_tm.add_shape(type="line", x0=x_axis.min(), x1=x_axis.max(), y0=source_z+h_seam/2, y1=source_z+h_seam/2,
                      line=dict(color="white", width=2, dash="dash"), row=2, col=1)
-    # Layout
     zoom_margin = h_seam * 12
     fig_tm.update_layout(template="plotly_dark", height=900, margin=dict(r=150,t=80,b=100),
                          showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=-0.12, xanchor="center", x=0.5))
@@ -1053,8 +1152,7 @@ with c2:
     fig_tm.update_yaxes(autorange='reversed', row=2, col=1)
     fig_tm.update_yaxes(range=[source_z + zoom_margin/2, source_z - zoom_margin], row=2, col=1)
     st.plotly_chart(fig_tm, use_container_width=True)
-    
-    # Animatsiya (ixtiyoriy)
+
     if st.checkbox("Avtomatik animatsiya (1→2→3 bosqichlar)"):
         anim_placeholder = st.empty()
         for s in [1, 2, 3]:
@@ -1073,8 +1171,7 @@ with c2:
             anim_placeholder.plotly_chart(fig_s, use_container_width=True)
             time.sleep(1.2)
         st.success("Animatsiya yakunlandi.")
-    
-    # Xulosa va ogohlantirish
+
     selek_eni = well_distance - cavity_width
     msgs = {
         1: f"**1-Bosqich:** Chap quduq yoqilgan. Qalinlik = {h_seam:.1f} m, Quduqlar masofasi = {well_distance:.0f} m, Selek eni = {selek_eni:.1f} m.",
@@ -1820,11 +1917,10 @@ with tab_advanced:
         for r in [t('ref1'), t('ref2'), t('ref3'), t('ref4'), "**Brady, B. H., & Brown, E. T. (2006).** Rock Mechanics for Underground Mining."]:
             st.write(r)
 
-# =========================== INTEGRATSIYA QISMI: INTERACTIVE UCG DASHBOARD (Tuzatilgan) ===========================
+# =========================== INTEGRATSIYA QISMI: INTERACTIVE UCG DASHBOARD ===========================
 st.header("🕹️ Ultimate Interactive Dashboard (Real-time Animation)")
 st.markdown("Bu panelda FOS, siljish maydoni va vaqt bo‘yicha sirt siljishlarini interaktiv kuzatishingiz mumkin. Quyidagi slayderlar yordamida FOS chegarasini va rang sxemasini o‘zgartiring.")
 
-# Tuzatilgan funksiya (to‘g‘ridan-to‘g‘ri layout orqali o‘qlarni sozlash)
 def draw_interactive_ucg_dashboard(x_axis, z_axis, fos_2d, displacement_2d, surface_x, surface_h_disp, surface_v_disp, time_steps=None, fos_threshold=1.0, disp_colorscale='Turbo'):
     if time_steps is None:
         time_steps = np.arange(surface_h_disp.shape[0])
@@ -1835,7 +1931,6 @@ def draw_interactive_ucg_dashboard(x_axis, z_axis, fos_2d, displacement_2d, surf
                                         "C) Horizontal Surface Displacement (mm)",
                                         "D) Vertical Surface Displacement (mm)"),
                         horizontal_spacing=0.1, vertical_spacing=0.15)
-    # FOS Heatmap
     fig.add_trace(go.Heatmap(
         z=fos_2d, x=x_axis, y=z_axis,
         colorscale=[[0, 'rgb(255, 0, 0)'], [0.33, 'rgb(255, 165, 0)'], [0.5, 'rgb(173, 255, 47)'], [1, 'rgb(0, 128, 0)']],
@@ -1843,42 +1938,33 @@ def draw_interactive_ucg_dashboard(x_axis, z_axis, fos_2d, displacement_2d, surf
     ), row=1, col=1)
     mask_fos = np.where(fos_2d < fos_threshold, 1, np.nan)
     fig.add_trace(go.Heatmap(z=mask_fos, x=x_axis, y=z_axis, colorscale=[[0,'rgba(255,0,0,0.5)'],[1,'rgba(255,0,0,0.5)']], showscale=False, name="Yielded Zone"), row=1, col=1)
-    # 2D Displacement
     fig.add_trace(go.Heatmap(z=displacement_2d, x=x_axis, y=z_axis, colorscale=disp_colorscale, colorbar=dict(title="Disp (cm)", x=1.0, y=0.78, thickness=12, len=0.42), name="2D Disp"), row=1, col=2)
-    # Surface displacement traces
     for i, t in enumerate(time_steps):
         fig.add_trace(go.Heatmap(z=surface_h_disp[i:i+1,:], x=surface_x, y=[t], colorscale='Turbo', zmin=np.min(surface_h_disp), zmax=np.max(surface_h_disp), showscale=False, visible=(i==0), name="H Disp"), row=2, col=1)
         fig.add_trace(go.Heatmap(z=surface_v_disp[i:i+1,:], x=surface_x, y=[t], colorscale='Viridis', zmin=np.min(surface_v_disp), zmax=np.max(surface_v_disp), showscale=False, visible=(i==0), name="V Disp"), row=2, col=2)
-    # Pillars
     for pos in pillar_locations:
         fig.add_shape(type="rect", x0=pos-25, x1=pos+25, y0=550, y1=600, line=dict(color="Lime", width=3), row=1, col=1)
         fig.add_shape(type="rect", x0=pos-25, x1=pos+25, y0=550, y1=600, line=dict(color="Lime", width=3), row=1, col=2)
-    # ========== O‘QLARNI TO‘G‘RIDAN-TO‘G‘RI LAYOUT ORQALI SOZLASH ==========
-    # 1-qator, 1-ustun (FOS)
     fig.layout.xaxis.title.text = "X (m)"
     fig.layout.xaxis.gridcolor = 'rgba(255,255,255,0.1)'
     fig.layout.xaxis.range = [x_axis.min(), x_axis.max()]
     fig.layout.yaxis.title.text = "Depth (m)"
     fig.layout.yaxis.gridcolor = 'rgba(255,255,255,0.1)'
     fig.layout.yaxis.autorange = "reversed"
-    # 1-qator, 2-ustun (Displacement)
     fig.layout.xaxis2.title.text = "X (m)"
     fig.layout.xaxis2.gridcolor = 'rgba(255,255,255,0.1)'
     fig.layout.xaxis2.range = [x_axis.min(), x_axis.max()]
     fig.layout.yaxis2.title.text = "Depth (m)"
     fig.layout.yaxis2.gridcolor = 'rgba(255,255,255,0.1)'
     fig.layout.yaxis2.autorange = "reversed"
-    # 2-qator, 1-ustun (Horizontal displacement)
     fig.layout.xaxis3.title.text = "Masofa (m)"
     fig.layout.xaxis3.gridcolor = 'rgba(255,255,255,0.1)'
     fig.layout.yaxis3.title.text = "Vaqt bosqichi"
     fig.layout.yaxis3.gridcolor = 'rgba(255,255,255,0.1)'
-    # 2-qator, 2-ustun (Vertical displacement)
     fig.layout.xaxis4.title.text = "Masofa (m)"
     fig.layout.xaxis4.gridcolor = 'rgba(255,255,255,0.1)'
     fig.layout.yaxis4.title.text = "Vaqt bosqichi"
     fig.layout.yaxis4.gridcolor = 'rgba(255,255,255,0.1)'
-    # Layout
     fig.update_layout(
         title=dict(text="Interactive Ultimate UCG Monitoring Dashboard", x=0.5, font=dict(size=22, color="white")),
         plot_bgcolor='black', paper_bgcolor='black', template='plotly_dark', height=900,
@@ -1891,7 +1977,6 @@ def draw_interactive_ucg_dashboard(x_axis, z_axis, fos_2d, displacement_2d, surf
     )
     return fig
 
-# Dashboard uchun kerakli ma'lumotlar
 if 'displacement_2d' not in locals():
     sub_2d = np.tile(sub_p.reshape(1,-1)*100, (len(z_axis), 1))
     uplift_2d = np.tile(uplift.reshape(1,-1), (len(z_axis), 1))
@@ -1925,3 +2010,22 @@ st.plotly_chart(dash_fig, use_container_width=True)
 
 st.sidebar.markdown("---")
 st.sidebar.write(f"Tuzuvchi: Saitov Dilshodbek | Device: {device}")
+
+# =========================== FASTAPI ENDPOINT (QO'SHIMCHA) ===========================
+# Ikkinchi koddan olingan API qismi saqlanadi
+app = FastAPI()
+
+@app.post("/predict")
+def predict_api(data: dict):
+    temp = np.array(data["temp"])
+    s1   = np.array(data["sigma1"])
+    s3   = np.array(data["sigma3"])
+    d    = np.array(data["depth"])
+
+    features = physics_features(temp, s1, s3, d)
+
+    pred = hybrid_model(
+        torch.tensor(features, dtype=torch.float32).to(device)
+    )
+
+    return {"collapse": pred.detach().cpu().numpy().tolist()}
