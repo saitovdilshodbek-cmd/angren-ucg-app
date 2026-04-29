@@ -2011,21 +2011,24 @@ st.plotly_chart(dash_fig, use_container_width=True)
 st.sidebar.markdown("---")
 st.sidebar.write(f"Tuzuvchi: Saitov Dilshodbek | Device: {device}")
 
-# =========================== FASTAPI ENDPOINT (QO'SHIMCHA) ===========================
-# Ikkinchi koddan olingan API qismi saqlanadi
-app = FastAPI()
+# =========================== FASTAPI ENDPOINT (agar mavjud bo'lsa) ===========================
+if FASTAPI_AVAILABLE:
+    app = FastAPI()
 
-@app.post("/predict")
-def predict_api(data: dict):
-    temp = np.array(data["temp"])
-    s1   = np.array(data["sigma1"])
-    s3   = np.array(data["sigma3"])
-    d    = np.array(data["depth"])
+    @app.post("/predict")
+    def predict_api(data: dict):
+        temp = np.array(data["temp"])
+        s1   = np.array(data["sigma1"])
+        s3   = np.array(data["sigma3"])
+        d    = np.array(data["depth"])
 
-    features = physics_features(temp, s1, s3, d)
+        features = physics_features(temp, s1, s3, d)
 
-    pred = hybrid_model(
-        torch.tensor(features, dtype=torch.float32).to(device)
+        pred = hybrid_model(
+            torch.tensor(features, dtype=torch.float32).to(device)
+        )
+
+        return {"collapse": pred.detach().cpu().numpy().tolist()}
     )
 
     return {"collapse": pred.detach().cpu().numpy().tolist()}
