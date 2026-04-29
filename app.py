@@ -1,4 +1,3 @@
-# ===================== 1-QISM: Importlar, sozlamalar, AI modelgacha =====================
 import streamlit as st
 import numpy as np
 import pandas as pd
@@ -686,10 +685,6 @@ vx, vz = -perm*dp_dx, -perm*dp_dz
 gas_velocity = np.sqrt(vx**2+vz**2)
 
 # =========================== YANGI AI MODEL (GEOAI PATENT) ===========================
-# Eski klasslar saqlanadi (CollapseNet, HybridCollapseNet), lekin asosiy model sifatida GeoAIModel ishlatiladi.
-# Quyida to'liq yangi funksiyalar keltirilgan.
-
-# Physics functions
 def thermal_damage_geo(T, beta=0.002):
     return 1 - np.exp(-beta * np.maximum(T - 100, 0))
 
@@ -717,7 +712,6 @@ def generate_physics_dataset_geo(n=20000):
 
     return X, y
 
-# YANGI NEYRON TARMOQ (Multi-task)
 class GeoAIModel(nn.Module):
     def __init__(self):
         super().__init__()
@@ -734,18 +728,15 @@ class GeoAIModel(nn.Module):
         fos = self.reg_head(h)
         return p, fos
 
-# Physics loss
 def physics_loss_geo(pred, stress, strength):
     true_fos = strength / (stress + EPS)
     return ((pred.squeeze() - true_fos) ** 2).mean()
 
-# Umumiy loss
 def total_loss(p_pred, y, fos_pred, stress, strength):
     bce = nn.BCELoss()(p_pred, y)
     mse_phys = physics_loss_geo(fos_pred, stress, strength)
     return bce + 0.5 * mse_phys
 
-# Modelni o'qitish
 def train_geoai_model(X, y):
     X_t = torch.tensor(X, dtype=torch.float32)
     y_t = torch.tensor(y, dtype=torch.float32).view(-1, 1)
@@ -757,7 +748,6 @@ def train_geoai_model(X, y):
         model.train()
         p_pred, fos_pred = model(X_t)
 
-        # Stress = X[:,1], strength = X[:,4]
         stress = X_t[:, 1].to(device)
         strength = X_t[:, 4].to(device)
 
@@ -772,7 +762,6 @@ def train_geoai_model(X, y):
 
     return model, rf
 
-# Bashorat (ensemble)
 def predict_geoai(model, rf, X):
     model.eval()
     with torch.no_grad():
@@ -781,7 +770,6 @@ def predict_geoai(model, rf, X):
     rf_pred = rf.predict_proba(X)[:, 1].reshape(-1, 1)
     return 0.6 * nn_pred + 0.4 * rf_pred
 
-# Cross-validation
 def cross_validation_geoai(X, y, n_splits=5):
     kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
     accs, aucs = [], []
@@ -793,7 +781,6 @@ def cross_validation_geoai(X, y, n_splits=5):
         aucs.append(roc_auc_score(y[test_idx], pred))
     return np.mean(accs), np.mean(aucs), np.std(accs), np.std(aucs)
 
-# Monte Carlo
 def monte_carlo_geo(n=2000):
     results = []
     for _ in range(n):
@@ -803,7 +790,6 @@ def monte_carlo_geo(n=2000):
         results.append(fos)
     return np.array(results)
 
-# Sezgirlik
 def sensitivity_geo():
     temps = np.linspace(100, 1000, 50)
     fos_vals = []
@@ -814,7 +800,6 @@ def sensitivity_geo():
         fos_vals.append(fos)
     return temps, np.array(fos_vals)
 
-# Pillar optimizatsiyasi (yangi)
 def optimize_pillar_geo(ucs, H, stress):
     w = 20.0
     for _ in range(25):
@@ -826,7 +811,6 @@ def optimize_pillar_geo(ucs, H, stress):
         w = new_w
     return round(w, 2)
 
-# Ablatsion tahlil (statik)
 def ablation_geo():
     return {
         "full_model": 0.93,
@@ -834,44 +818,35 @@ def ablation_geo():
         "no_energy": 0.85
     }
 
-# YANGI MODELNI O'QITISH VA PREDIKTLASH (ASOSIY)
 @st.cache_resource
 def get_geoai_model():
     if not PT_AVAILABLE:
         st.warning(t('warning_pytorch'))
         return None, None, None
 
-    # Dataset yaratish
     X, y = generate_physics_dataset_geo(15000)
-    # Modelni o'rgatish
     geo_model, rf = train_geoai_model(X, y)
-    # Validatsiya natijalari
     acc, auc, acc_std, auc_std = cross_validation_geoai(X, y)
     st.write(f"GeoAI Accuracy: {acc:.3f} ± {acc_std:.3f}, AUC: {auc:.3f} ± {auc_std:.3f}")
 
     return geo_model, rf, X, y
 
-# Modelni yuklash yoki o'qitish
 geo_model, rf_geo, X_geo, y_geo = get_geoai_model()
 
-# Collapse bashorati (grid ma'lumotlari asosida)
+# Collapse bashorati (TUZATILGAN qism)
 collapse_pred = np.zeros_like(temp_2d)
 if geo_model is not None:
-    # Feature tayyorlash (physics_features yordamida)
     feat_grid = np.column_stack([
-        temp_2d.flatten(),
-        sigma1_act.flatten(),
-        sigma3_act.flatten(),
-        grid_z.flatten(),
-        thermal_damage_geo(temp_2d.flatten()),
-        compute_strength(thermal_damage_geo(temp_2d.flatten())),
-        compute_fos(compute_strength(thermal_damage_geo(temp_2d.flatten())), sigma1_act.flatten()),
+        temp_2d.flatten(),                                 # T
+        sigma1_act.flatten(),                              # stress
+        grid_z.flatten(),                                  # depth
+        thermal_damage_geo(temp_2d.flatten()),             # damage
+        compute_strength(thermal_damage_geo(temp_2d.flatten())), # strength
+        compute_fos(compute_strength(thermal_damage_geo(temp_2d.flatten())), sigma1_act.flatten()), # fos
         sigma1_act.flatten() * (temp_2d.flatten() - 100) / (grid_z.flatten() + 1)  # energy
     ])
-    # Bashorat
     collapse_pred = predict_geoai(geo_model, rf_geo, feat_grid).reshape(temp_2d.shape)
 else:
-    # Fallback: eski usul
     st.warning("GeoAI model yuklanmadi. Eski RandomForest ishlatiladi.")
     X_ai = np.column_stack([temp_2d.flatten(), sigma1_act.flatten(), sigma3_act.flatten(), grid_z.flatten()])
     y_ai = void_mask_permanent.flatten().astype(int)
@@ -1114,8 +1089,8 @@ with c2:
     else:
         st.success(f"✅ BARQAROR: Selek o'lchami ({selek_eni:.1f} m) me'yorda.")
 
-# =========================== QO‘SHIMCHALAR (YANGI) ===========================
-# Sobol sezgirlik (SALib)
+# =========================== QO‘SHIMCHALAR ===========================
+# Sobol sezgirlik
 if SALIB_AVAILABLE:
     with st.expander("📊 Global sezgirlik tahlili (Sobol')"):
         st.markdown("Kirish parametrlarining model chiqishiga umumiy ta’siri (birinchi va umumiy tartib indekslari).")
@@ -1133,7 +1108,7 @@ if SALIB_AVAILABLE:
         st.write("First-order Sobol:", Si['S1'])
         st.write("Total Sobol:", Si['ST'])
 
-# LHS (pyDOE) va collapse ehtimolligi
+# LHS va collapse ehtimolligi
 if PYDOE_AVAILABLE:
     with st.expander("🎲 Latin Hypercube Sampling (Collapse ehtimolligi)"):
         N = 5000
@@ -1149,7 +1124,7 @@ if PYDOE_AVAILABLE:
         ci_high = np.percentile(collapse_prob, 95)
         st.write(f"90% ishonch intervali: [{ci_low:.3f}, {ci_high:.3f}]")
 
-# 3D hajm (PyVista yoki plotly)
+# 3D hajm
 if PYVISTA_AVAILABLE:
     with st.expander("🌋 3D litologik hajm (PyVista)"):
         try:
@@ -1174,7 +1149,7 @@ else:
         st.plotly_chart(fig_vol, use_container_width=True)
 
 # Dinamik risk indeksi va entropiya
-weights = np.array([0.4, 0.3, 0.2, 0.1])  # expert-based
+weights = np.array([0.4, 0.3, 0.2, 0.1])
 risk_index = (
     weights[0]*collapse_pred +
     weights[1]*(1-fos_2d) +
@@ -1185,7 +1160,7 @@ p = risk_index / np.sum(risk_index + 1e-12)
 entropy = -np.sum(p * np.log(p + 1e-12))
 st.metric("Tizim entropiyasi (noaniqlik)", f"{entropy:.3f}")
 
-# Real-time harorat animatsiyasi
+# Harorat dinamik animatsiyasi
 placeholder = st.empty()
 if st.button("Harorat dinamik animatsiyasini ishga tushirish"):
     for t_anim in range(100):
@@ -1195,7 +1170,7 @@ if st.button("Harorat dinamik animatsiyasini ishga tushirish"):
         placeholder.plotly_chart(fig_anim, use_container_width=True)
         time.sleep(0.1)
 
-# Sensor API so‘rovi (simulyatsiya)
+# Sensor API
 st.markdown("---")
 st.subheader("📡 Tashqi sensor API ulanishi")
 try:
@@ -1238,7 +1213,7 @@ mk3.metric(t('max_subsidence_live'), f"{s_max_3d*100:.1f} cm")
 mk4.metric(t('process_stage'), t('stage_active') if time_h<100 else t('stage_cooling'))
 st.markdown("---")
 
-# AI risk prediction (sensor CSV)
+# AI Risk Prediction (Sensor CSV)
 class SimpleRiskNN(nn.Module):
     def __init__(self, input_dim=3):
         super().__init__()
@@ -1470,7 +1445,7 @@ with st.expander("⚖️ Ssenariy Taqqoslash (A vs B)"):
                             'Farq': [f"{b_ucs-a_ucs:+.1f}", f"{b_gsi-a_gsi:+d}", f"{fos_b-fos_a:+.2f}", f"{b_temp-a_temp:+.0f}"]})
     st.dataframe(comp_df, use_container_width=True, hide_index=True)
 
-# Sezgirlik tahlili (Tornado)
+# Sezgirlik tahlili
 @st.cache_data(show_spinner=False)
 def sensitivity_analysis(base_ucs, base_gsi, base_d, base_nu, base_t, H_seam, range_pct=0.2):
     def quick_fos(ucs, gsi, d, nu, T):
