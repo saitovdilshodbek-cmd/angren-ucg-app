@@ -5,9 +5,10 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from scipy.ndimage import gaussian_filter
 from scipy.optimize import minimize
-from scipy.stats import linregress, norm
+from scipy.stats import linregress
 import time
-from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor, IsolationForest
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.ensemble import IsolationForest
 import io
 from docx import Document
 from docx.shared import Pt, Cm, RGBColor, Inches
@@ -23,9 +24,9 @@ warnings.filterwarnings('ignore')
 import sys
 from sklearn.metrics import accuracy_score, roc_auc_score, roc_curve
 from sklearn.model_selection import KFold
+from numba import njit
 import joblib
 from sklearn.preprocessing import StandardScaler
-import requests
 
 # =========================== FASTAPI IMPORT (xatolikka chidamli) ===========================
 try:
@@ -34,7 +35,7 @@ try:
 except ImportError:
     FASTAPI_AVAILABLE = False
 
-# =========================== PYTORCH IMPORT ===========================
+# =========================== PYTORCH IMPORT (xatolikka chidamli) ===========================
 try:
     import torch
     import torch.nn as nn
@@ -43,28 +44,6 @@ try:
 except:
     PT_AVAILABLE = False
     device = "cpu"
-
-# =========================== SALib IMPORT ===========================
-try:
-    from SALib.sample import saltelli
-    from SALib.analyze import sobol
-    SALIB_AVAILABLE = True
-except ImportError:
-    SALIB_AVAILABLE = False
-
-# =========================== pyDOE IMPORT ===========================
-try:
-    from pyDOE import lhs
-    PYDOE_AVAILABLE = True
-except ImportError:
-    PYDOE_AVAILABLE = False
-
-# =========================== PyVista IMPORT ===========================
-try:
-    import pyvista as pv
-    PYVISTA_AVAILABLE = True
-except ImportError:
-    PYVISTA_AVAILABLE = False
 
 # =========================== GLOBAL TRANSLATIONS ===========================
 TRANSLATIONS = {
@@ -683,7 +662,7 @@ dp_dx, dp_dz = np.gradient(pressure, axis=1), np.gradient(pressure, axis=0)
 vx, vz = -perm*dp_dx, -perm*dp_dz
 gas_velocity = np.sqrt(vx**2+vz**2)
 
-# AI MODEL
+# AI MODEL (Physics-informed)
 def physics_features(T, s1, s3, depth):
     dmg = thermal_damage(T)
     strength = 40 * (1 - dmg)
@@ -692,33 +671,58 @@ def physics_features(T, s1, s3, depth):
     return np.column_stack([T, s1, s3, depth, dmg, fos, energy])
 
 def generate_physics_dataset(temp_field, sigma1, sigma3, depth):
-    feat = physics_features(temp_field.flatten(), sigma1.flatten(), sigma3.flatten(), depth.flatten())
+    feat = physics_features(
+        temp_field.flatten(),
+        sigma1.flatten(),
+        sigma3.flatten(),
+        depth.flatten()
+    )
     fos = feat[:,5]
     energy = feat[:,6]
-    collapse = ((fos < 1.0) | (temp_field.flatten() > 800) | (energy > 4000)).astype(int)
+    collapse = (
+        (fos < 1.0) |
+        (temp_field.flatten() > 800) |
+        (energy > 4000)
+    ).astype(int)
     return feat, collapse
 
+# CollapseNet (simple)
 class CollapseNet(nn.Module):
     def __init__(self):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(7,64), nn.ReLU(), nn.Dropout(0.2),
-            nn.Linear(64,128), nn.ReLU(), nn.Dropout(0.3),
-            nn.Linear(128,64), nn.ReLU(),
-            nn.Linear(64,1), nn.Sigmoid()
+            nn.Linear(7,64),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(64,128),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(128,64),
+            nn.ReLU(),
+            nn.Linear(64,1),
+            nn.Sigmoid()
         )
-    def forward(self,x): return self.net(x)
+    def forward(self,x):
+        return self.net(x)
 
+# Hybrid model with physics loss
 class HybridCollapseNet(nn.Module):
     def __init__(self):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(7, 128), nn.ReLU(), nn.Dropout(0.3),
-            nn.Linear(128, 256), nn.ReLU(), nn.Dropout(0.3),
-            nn.Linear(256, 128), nn.ReLU(),
-            nn.Linear(128, 1), nn.Sigmoid()
+            nn.Linear(7, 128),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(128, 256),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(256, 128),
+            nn.ReLU(),
+            nn.Linear(128, 1),
+            nn.Sigmoid()
         )
-    def forward(self, x): return self.net(x)
+    def forward(self, x):
+        return self.net(x)
 
 def physics_loss(pred, sigma1, sigma_ci):
     fos = sigma_ci / (sigma1 + 1e-6)
@@ -787,6 +791,7 @@ def predict_collapse(model, rf, scaler, X_raw):
     rf_pred = rf.predict_proba(X_scaled)[:,1].reshape(-1,1)
     return 0.6*nn_pred + 0.4*rf_pred
 
+# Collapse prediction
 collapse_pred = np.zeros_like(temp_2d)
 if hybrid_model is not None:
     feat_pred = physics_features(temp_2d.flatten(), sigma1_act.flatten(), sigma3_act.flatten(), grid_z.flatten())
@@ -836,13 +841,16 @@ try:
 except:
     optimal_width_ai = rec_width
 
+# Metrikalar
 st.subheader(t('monitoring_header', obj_name=obj_name))
 m1, m2, m3, m4, m5 = st.columns(5)
 m1.metric(t('pillar_strength'), f"{pillar_strength:.1f} MPa")
 m2.metric(t('plastic_zone'), f"{y_zone:.1f} m")
 m3.metric(t('cavity_volume'), f"{void_volume:.1f} m²")
 m4.metric(t('max_permeability'), f"{np.max(perm):.1e} m²")
-m5.metric(t('ai_recommendation'), f"{optimal_width_ai:.1f} m", delta=f"Klassik: {rec_width} m", delta_color="off")# Cho‘kish va Hoek-Brown grafikalari
+m5.metric(t('ai_recommendation'), f"{optimal_width_ai:.1f} m", delta=f"Klassik: {rec_width} m", delta_color="off")
+
+# Cho‘kish va Hoek-Brown grafikalari
 st.markdown("---")
 col_g1, col_g2, col_g3 = st.columns([1.5,1.5,2])
 s_max = (H_seam*0.04)*(min(time_h,120)/120)
@@ -868,6 +876,7 @@ with col_g3:
 # TM Maydoni va quduqlar
 st.markdown("---")
 c1, c2 = st.columns([1, 2.5])
+
 with c1:
     st.subheader(t('scientific_analysis'))
     st.error(t('fos_red')); st.warning(t('fos_yellow')); st.success(t('fos_green'))
@@ -1072,111 +1081,6 @@ with c2:
         st.error(f"⚠️ KRITIK: Selek o'lchami ({selek_eni:.1f} m) xavfsiz chegaradan past!")
     else:
         st.success(f"✅ BARQAROR: Selek o'lchami ({selek_eni:.1f} m) me'yorda.")
-
-# =========================== QO‘SHIMCHALAR (YANGI) ===========================
-# Sobol sezgirlik (SALib)
-if SALIB_AVAILABLE:
-    with st.expander("📊 Global sezgirlik tahlili (Sobol')"):
-        st.markdown("Kirish parametrlarining model chiqishiga umumiy ta’siri (birinchi va umumiy tartib indekslari).")
-        problem = {
-            'num_vars': 4,
-            'names': ['UCS', 'Temp', 'Depth', 'GSI'],
-            'bounds': [[10, 80], [20, 1000], [10, 300], [20, 100]]
-        }
-        param_values = saltelli.sample(problem, 1024)
-        def model_eval(params):
-            ucs, T, d, gsi = params
-            return ucs * np.exp(-0.002*T) / (d+1)
-        Y = np.array([model_eval(p) for p in param_values])
-        Si = sobol.analyze(problem, Y)
-        st.write("First-order Sobol:", Si['S1'])
-        st.write("Total Sobol:", Si['ST'])
-
-# LHS (pyDOE) va collapse ehtimolligi
-if PYDOE_AVAILABLE:
-    with st.expander("🎲 Latin Hypercube Sampling (Collapse ehtimolligi)"):
-        N = 5000
-        lhs_sample = lhs(3, samples=N)
-        T_lhs = norm.ppf(lhs_sample[:,0], loc=800, scale=100)
-        UCS_lhs = norm.ppf(lhs_sample[:,1], loc=40, scale=10)
-        Depth_lhs = norm.ppf(lhs_sample[:,2], loc=200, scale=50)
-        collapse_prob = 1 / (1 + np.exp(-(T_lhs/100 + Depth_lhs/200 - UCS_lhs/50)))
-        fig_lhs = go.Figure(go.Histogram(x=collapse_prob, nbinsx=50, marker_color='orange'))
-        fig_lhs.update_layout(title="Collapse ehtimolligi taqsimoti", template='plotly_dark')
-        st.plotly_chart(fig_lhs, use_container_width=True)
-        ci_low = np.percentile(collapse_prob, 5)
-        ci_high = np.percentile(collapse_prob, 95)
-        st.write(f"90% ishonch intervali: [{ci_low:.3f}, {ci_high:.3f}]")
-
-# 3D hajm (PyVista yoki plotly)
-if PYVISTA_AVAILABLE:
-    with st.expander("🌋 3D litologik hajm (PyVista)"):
-        try:
-            grid_pv = pv.UniformGrid()
-            grid_pv.dimensions = (50, 50, 30)
-            values = np.random.rand(50*50*30)
-            grid_pv["lithology"] = values
-            plotter = pv.Plotter()
-            plotter.add_volume(grid_pv, cmap="viridis")
-            st.image(plotter.screenshot(), use_container_width=True)
-        except Exception as e:
-            st.warning(f"PyVista vizualizatsiyasi amalga oshmadi: {e}")
-else:
-    with st.expander("🌋 3D hajm (plotly)"):
-        st.info("PyVista mavjud emas, plotly orqali sodda hajm ko‘rinishi.")
-        fig_vol = go.Figure(data=go.Volume(
-            x=grid_x.flatten(), y=np.zeros_like(grid_x.flatten()), z=grid_z.flatten(),
-            value=temp_2d.flatten(),
-            isomin=100, isomax=800,
-            opacity=0.1, surface_count=20, colorscale='Hot'))
-        fig_vol.update_layout(title="Harorat hajmi (proxy)", height=500)
-        st.plotly_chart(fig_vol, use_container_width=True)
-
-# Dinamik risk indeksi va entropiya
-weights = np.array([0.4, 0.3, 0.2, 0.1])  # expert-based
-risk_index = (
-    weights[0]*collapse_pred +
-    weights[1]*(1-fos_2d) +
-    weights[2]*perm/np.max(perm) +
-    weights[3]*(temp_2d/np.max(temp_2d))
-)
-p = risk_index / np.sum(risk_index + 1e-12)
-entropy = -np.sum(p * np.log(p + 1e-12))
-st.metric("Tizim entropiyasi (noaniqlik)", f"{entropy:.3f}")
-
-# Real-time harorat animatsiyasi
-placeholder = st.empty()
-if st.button("Harorat dinamik animatsiyasini ishga tushirish"):
-    for t_anim in range(100):
-        temp_dynamic = temp_2d + np.sin(t_anim/5)*50
-        fig_anim = go.Figure(data=go.Heatmap(z=temp_dynamic, x=x_axis, y=z_axis, colorscale='Hot'))
-        fig_anim.update_layout(title=f"Vaqt qadami {t_anim}", template='plotly_dark')
-        placeholder.plotly_chart(fig_anim, use_container_width=True)
-        time.sleep(0.1)
-
-# Sensor API so‘rovi (simulyatsiya)
-st.markdown("---")
-st.subheader("📡 Tashqi sensor API ulanishi")
-try:
-    response = requests.get("http://sensor-api/data", timeout=5)
-    if response.status_code == 200:
-        data = response.json()
-        st.success("Sensor ma'lumotlari olindi!")
-        st.json(data)
-        final_risk = (
-            collapse_pred * 0.35 +
-            (1/fos_2d) * 0.25 +
-            (perm/np.max(perm)) * 0.2 +
-            (temp_2d/np.max(temp_2d)) * 0.2
-        )
-        uncertainty = np.std(final_risk)
-        sensitivity = Si['ST'] if SALIB_AVAILABLE else "SALib mavjud emas"
-        st.write(f"Yakuniy risk noaniqligi: {uncertainty:.4f}")
-        st.write("Sezgirlik:", sensitivity)
-    else:
-        st.warning("Sensor API javob bermadi.")
-except:
-    st.info("Sensor API hozirda ulanmagan (simulyatsiya).")
 
 # Kompleks monitoring paneli
 st.header(t('monitoring_panel', obj_name=obj_name))
@@ -1429,7 +1333,7 @@ with st.expander("⚖️ Ssenariy Taqqoslash (A vs B)"):
                             'Farq': [f"{b_ucs-a_ucs:+.1f}", f"{b_gsi-a_gsi:+d}", f"{fos_b-fos_a:+.2f}", f"{b_temp-a_temp:+.0f}"]})
     st.dataframe(comp_df, use_container_width=True, hide_index=True)
 
-# Sezgirlik tahlili (Tornado)
+# Sezgirlik tahlili
 @st.cache_data(show_spinner=False)
 def sensitivity_analysis(base_ucs, base_gsi, base_d, base_nu, base_t, H_seam, range_pct=0.2):
     def quick_fos(ucs, gsi, d, nu, T):
@@ -2015,7 +1919,7 @@ st.plotly_chart(dash_fig, use_container_width=True)
 st.sidebar.markdown("---")
 st.sidebar.write(f"Tuzuvchi: Saitov Dilshodbek | Device: {device}")
 
-# =========================== FASTAPI ENDPOINT ===========================
+# =========================== FASTAPI ENDPOINT (agar kerak bo'lsa) ===========================
 if FASTAPI_AVAILABLE:
     app = FastAPI()
 
