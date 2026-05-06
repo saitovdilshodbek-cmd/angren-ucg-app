@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from scipy.ndimage import gaussian_filter
 from scipy.optimize import minimize
-from scipy.stats import linregress, norm as gaussian_dist  # <-- TUZATILDI (2)
+from scipy.stats import linregress, norm as gaussian_dist
 import time
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor, IsolationForest
 import io
@@ -447,7 +447,8 @@ def t(key, **kwargs):
     text = TRANSLATIONS.get(lang, TRANSLATIONS['uz']).get(key, key)
     return text.format(**kwargs) if kwargs else text
 
-EPS = 1e-12
+# Umumiy xavfsiz qiymat (EPS)
+EPS = 1e-6
 
 st.set_page_config(page_title=t('app_title'), layout="wide")
 st.title(t('app_title'))
@@ -522,7 +523,14 @@ k_ratio       = st.sidebar.slider(t('stress_ratio'), 0.1, 2.0, 0.5)
 
 st.sidebar.subheader(t('tensile_params'))
 tensile_ratio = st.sidebar.slider(t('tensile_ratio'), 0.03, 0.15, 0.08)
-beta_thermal  = st.sidebar.number_input(t('thermal_decay'), value=0.0035, format="%.4f")
+# *** FIX 1: beta_thermal slider ***
+beta_thermal = st.sidebar.slider(
+    "Thermal expansion coefficient",
+    min_value=0.0005,
+    max_value=0.02,
+    value=0.005,
+    step=0.0005
+)
 
 st.sidebar.subheader(t('combustion'))
 burn_duration = st.sidebar.number_input(t('burn_duration'), value=40)
@@ -605,26 +613,54 @@ class ThermalDamage:
         """Calculate thermal damage factor."""
         return 1 - np.exp(-self.beta * np.maximum(T - 20, 0))
 
+# *** FIX 15: FULL ThermoMechanicalModel ***
 class ThermoMechanicalModel:
-    def compute_stress(self, *args, **kwargs):
-        pass
+    def __init__(self, params):
+        self.params = params
 
-    def compute_damage(self, *args, **kwargs):
-        pass
+    def compute_stress(self, T):
+        sigma_v = (
+            self.params['density'] * 9.81 *
+            self.params['depth'] / 1e6
+        )
+        sigma1 = sigma_v * (1 + 0.002*(T-20))
+        sigma3 = 0.3 * sigma1
+        return sigma1, sigma3
 
-class PINN(nn.Module):
-    def __init__(self):
+    def compute_damage(self, T):
+        damage = 1 - np.exp(-0.002*(T-20))
+        return np.clip(damage, 0, 1)
+
+    def compute_fos(self, sigma1, sigma_ci):
+        return sigma_ci / (sigma1 + EPS)
+
+    def run(self, T, sigma_ci):
+        sigma1, sigma3 = self.compute_stress(T)
+        damage = self.compute_damage(T)
+        fos = self.compute_fos(sigma1, sigma_ci)
+        return {
+            "sigma1": sigma1,
+            "sigma3": sigma3,
+            "damage": damage,
+            "fos": fos
+        }
+
+# *** FIX 2: activate PINN as HybridPINN ***
+class HybridPINN(nn.Module):
+    def __init__(self, input_dim=10):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(7,128),
-            nn.ReLU(),
-            nn.Linear(128,256),
-            nn.ReLU(),
-            nn.Linear(256,1),
+            nn.Linear(input_dim, 128),
+            nn.BatchNorm1d(128),
+            nn.Tanh(),
+            nn.Linear(128, 64),
+            nn.BatchNorm1d(64),
+            nn.Tanh(),
+            nn.Linear(64, 1),
             nn.Sigmoid()
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x):
         return self.net(x)
 
 class DigitalTwin:
@@ -792,21 +828,25 @@ def hoek_brown_sigma1(sigma3: np.ndarray, sigma_ci: np.ndarray, mb: np.ndarray,
     """Hoek-Brown sigma1 hisoblash."""
     sigma3_safe = np.clip(sigma3, 1e-6, None)
     sigma_ci_safe = np.clip(sigma_ci, 1e-6, None)
-    term = mb * sigma3_safe / (sigma_ci_safe + 1e-6) + s
+    term = mb * sigma3_safe / (sigma_ci_safe + EPS) + s
     term = np.clip(term, 1e-6, 1e6)
     return sigma3_safe + sigma_ci_safe * (term ** a)
 
 sigma1_limit = hoek_brown_sigma1(sigma3_act, sigma_ci, grid_mb, grid_s_hb, grid_a_hb)
 shear_failure = sigma1_act >= sigma1_limit
 
-strain_energy = sigma1_act * delta_T
+# *** FIX 4: strain_energy using new formula ***
+strain_energy = (sigma1_act**2) / (2 * E_MODULUS + EPS)
+
 spalling = tensile_failure & (temp_2d>400)
 crushing = shear_failure & (temp_2d>600)
 depth_factor = np.exp(-grid_z/(total_depth+EPS))
 local_collapse_T = np.clip((st.session_state.max_temp_map-600)/300,0,1)
 time_factor = np.clip((time_h-40)/60,0,1)
 collapse_final = local_collapse_T * time_factor * (1-depth_factor)
-void_mask_raw = spalling | crushing | (st.session_state.max_temp_map>900) | (strain_energy > 5000)
+
+# *** FIX 5: void mask with stress threshold and depth dependency ***
+void_mask_raw = spalling | crushing | (st.session_state.max_temp_map>900) | (sigma1_act > 100.0) | (sigma1_act > 0.3 * grid_sigma_v)
 void_mask_smooth = gaussian_filter(void_mask_raw.astype(float), sigma=1.5)
 void_mask_permanent = (void_mask_smooth>0.3) & (collapse_final>0.05)
 
@@ -849,41 +889,18 @@ def generate_physics_dataset(temp_field: np.ndarray, sigma1: np.ndarray,
     collapse = ((fos < 1.0) | (temp_field.flatten() > 800) | (energy > 4000)).astype(int)
     return feat, collapse
 
-class CollapseNet(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(7,64), nn.ReLU(), nn.Dropout(0.2),
-            nn.Linear(64,128), nn.ReLU(), nn.Dropout(0.3),
-            nn.Linear(128,64), nn.ReLU(),
-            nn.Linear(64,1), nn.Sigmoid()
-        )
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x)
+# *** FIX 6: bidirectional physics loss ***
+def physics_loss(pred, sigma1, sigma_ci, threshold=1.0):
+    fos = sigma_ci / (sigma1 + EPS)
+    loss_fn = torch.relu(threshold - fos) * (1 - pred)
+    loss_fp = torch.relu(fos - threshold) * pred
+    return torch.mean(loss_fn + 0.5 * loss_fp)
 
-class HybridCollapseNet(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(7, 128), nn.ReLU(), nn.Dropout(0.3),
-            nn.Linear(128, 256), nn.ReLU(), nn.Dropout(0.3),
-            nn.Linear(256, 128), nn.ReLU(),
-            nn.Linear(128, 1), nn.Sigmoid()
-        )
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x)
-
-def physics_loss(pred: torch.Tensor, sigma1: torch.Tensor,
-                 sigma_ci: torch.Tensor) -> torch.Tensor:
-    """Fizik qonuniyatga asoslangan jarima."""
-    fos = sigma_ci / (sigma1 + 1e-6)
-    penalty = torch.mean((1 - fos) * pred)
-    return penalty
-
+# *** Use HybridPINN instead of HybridCollapseNet ***
 def train_hybrid_model(X: np.ndarray, y: np.ndarray,
                        sigma1: np.ndarray, sigma_ci: np.ndarray) -> nn.Module:
-    """HybridCollapseNet o'qitish."""
-    model = HybridCollapseNet().to(device)
+    """HybridPINN o'qitish."""
+    model = HybridPINN(input_dim=X.shape[1]).to(device)
     X_t = torch.tensor(X, dtype=torch.float32).to(device)
     y_t = torch.tensor(y, dtype=torch.float32).view(-1,1).to(device)
     sigma1_t = torch.tensor(sigma1, dtype=torch.float32).to(device)
@@ -904,11 +921,6 @@ def train_random_forest(X_scaled: np.ndarray, y: np.ndarray) -> RandomForestClas
     rf = RandomForestClassifier(n_estimators=50, max_depth=12, random_state=42, n_jobs=-1)
     rf.fit(X_scaled, y)
     return rf
-
-def save_all(model: nn.Module, rf: RandomForestClassifier, scaler: StandardScaler):
-    torch.save(model.state_dict(), "model.pt")
-    joblib.dump(rf, "rf.pkl")
-    joblib.dump(scaler, "scaler.pkl")
 
 # =========================== ENSEMBLE MODELNI SOZLASH (3) ===========================
 @st.cache_resource
@@ -971,6 +983,10 @@ y_zone = max(y_zone_calc, 1.5)
 fos_2d = np.clip(sigma1_limit/(sigma1_act+EPS), 0, 3.0)
 fos_2d = np.where(void_mask_permanent, 0.0, fos_2d)
 void_frac_base = float(np.mean(void_mask_permanent))
+
+# *** FIX 12: risk_index as simplified version ***
+risk_index = np.clip(1 - fos_2d, 0, 1)
+risk_map = risk_index   # for ISO generation compatibility
 
 def optimize_pillar_ai(w_arr: np.ndarray) -> float:
     w = w_arr[0]
@@ -1050,7 +1066,7 @@ with c2:
         sigma_v_coal += l['rho'] * 9.81 * l['t']
     sigma_v_coal += rho_coal * 9.81 * (h_seam / 2)
     sigma_v_coal = sigma_v_coal / 1e6
-    Hc = h_seam * np.sqrt(sigma_v_coal / (coal_layer['ucs'] + 1e-5))
+    Hc = h_seam * np.sqrt(sigma_v_coal / (coal_layer['ucs'] + EPS))
     Hc = np.clip(Hc, h_seam, h_seam * 4)
     states_132 = {1: [0], 2: [0, 2], 3: [0, 1, 2]}
     stage = st.select_slider("Bosqichni tanlang:", options=[1, 2, 3], value=1, key="ucg_stage_132")
@@ -1086,21 +1102,21 @@ with c2:
                     th_vals = (E * alpha * delta_T_m[local_thermal]) / (1 - nu)
                     sigma_th[local_thermal] = np.clip(th_vals, 0, sigma_ci_T[local_thermal] * 0.25)
                 sigma_1 = sigma_v + sigma_th
-                term = mb * sigma_3 / (sigma_ci_T + 1e5) + s_hb
+                term = mb * sigma_3 / (sigma_ci_T + EPS) + s_hb
                 term = np.clip(term, 1e-6, 1e6)
                 sigma_limit = sigma_3 + sigma_ci_T * (term)**a_hb
-                fos_val = np.clip(sigma_limit / (sigma_1 + 1e6), 0, 3)
+                fos_val = np.clip(sigma_limit / (sigma_1 + EPS), 0, 3)
                 yield_mask = sigma_1 > (sigma_limit * 0.85)
                 fos_val[yield_mask] = np.minimum(fos_val[yield_mask], 0.8)
                 fos_sub = fos[mask]
                 fos_sub = np.minimum(fos_sub, fos_val)
                 fos[mask] = fos_sub
                 if layer == layers_data[-1]:
-                    dome_width = (cavity_width / 2) * np.clip(1 - dz[mask] / (Hc + 1e-5), 0, 1)
+                    dome_width = (cavity_width / 2) * np.clip(1 - dz[mask] / (Hc + EPS), 0, 1)
                     failure_zone = fos_val < 1.2
                     dome_condition = (dz[mask] > 0) & (dz[mask] < Hc) & (np.abs(grid_x[mask] - px) < dome_width) & failure_zone
                     if np.any(dome_condition):
-                        decay = np.clip(1 - (dz[mask][dome_condition] / (Hc + 1e-5)), 0.3, 1.0)
+                        decay = np.clip(1 - (dz[mask][dome_condition] / (Hc + EPS)), 0.3, 1.0)
                         fos_sub[dome_condition] = np.minimum(fos_sub[dome_condition], decay)
                         fos[mask] = fos_sub
         for px_idx in active_wells:
@@ -1122,7 +1138,7 @@ with c2:
             selek_eni = well_distance - cavity_width
             pillar_strength = ucs_coal_pa * (selek_eni / (h_seam + EPS)) ** 0.5
             sigma_v_coal_pa = sigma_v_coal_MPa * 1e6
-            fos_pillar = pillar_strength / (sigma_v_coal_pa + 1e5)
+            fos_pillar = pillar_strength / (sigma_v_coal_pa + EPS)
             pillar_zone = (np.abs(grid_x - well_x[1]) < selek_eni/2) & (np.abs(grid_z - source_z) < h_seam)
             fos[pillar_zone] = np.maximum(fos[pillar_zone], fos_pillar)
         fos = np.nan_to_num(fos, nan=3.0, posinf=3.0, neginf=0.0)
@@ -1299,14 +1315,14 @@ else:
 
 # Dinamik risk indeksi va entropiya
 weights = np.array([0.4, 0.3, 0.2, 0.1])
-risk_index = (
+risk_index_var = (
     weights[0]*collapse_pred +
     weights[1]*(1-fos_2d) +
     weights[2]*perm/np.max(perm) +
     weights[3]*(temp_2d/np.max(temp_2d))
 )
-p = risk_index / np.sum(risk_index + 1e-12)
-entropy = -np.sum(p * np.log(p + 1e-12))
+p = risk_index_var / np.sum(risk_index_var + EPS)
+entropy = -np.sum(p * np.log(p + EPS))
 st.metric("Tizim entropiyasi (noaniqlik)", f"{entropy:.3f}")
 
 # Real-time harorat animatsiyasi
@@ -1382,7 +1398,7 @@ def get_risk_model() -> nn.Module:
     stress_r = np.random.uniform(1, 20, n_samples)
     ucs_r = np.random.uniform(10, 80, n_samples)
     # Oddiy risk indikatori: FOS = ucs/stress, risk = 1 - clamp(FOS/3, 0,1)
-    fos_r = np.clip(ucs_r / (stress_r + 1e-6), 0, 3)
+    fos_r = np.clip(ucs_r / (stress_r + EPS), 0, 3)
     risk_r = (1 - fos_r/3).reshape(-1,1)
     X_r = np.column_stack([temp_r, stress_r, ucs_r])
     y_r = risk_r.flatten()
@@ -1454,8 +1470,6 @@ mk2.metric(t('rec_width_live'), f"{w_rec_live:.1f} m")
 mk3.metric(t('max_subsidence_live'), f"{s_max_3d*100:.1f} cm")
 mk4.metric(t('process_stage'), t('stage_active') if time_h<100 else t('stage_cooling'))
 st.markdown("---")
-
-# AI risk prediction (sensor CSV) – above already integrated
 
 # FOS trend
 with st.expander("📈 FOS Vaqt Bashorati (Trend)"):
@@ -1539,9 +1553,9 @@ def monte_carlo_fos(ucs_mean: float, ucs_std: float, gsi_mean: float, gsi_std: f
     dmg_s = np.clip(1-np.exp(-0.002*np.maximum(T_s-100,0)),0,0.95)
     sci_s = ucs_s*(1-dmg_s)
     str_r = np.exp(-0.0025*(T_s-20))
-    p_str = (sci_s*str_r)*(20/(H_seam+1e-12))**0.5
+    p_str = (sci_s*str_r)*(20/(H_seam+EPS))**0.5
     sv_s = vertical_stress(depth_s, rho_s)   # MPa
-    fos_s = np.clip(p_str/(sv_s+1e-12),0,5)
+    fos_s = np.clip(p_str/(sv_s+EPS),0,5)
     pf = float(np.mean(fos_s<1.0))
     return fos_s, pf
 
@@ -1587,9 +1601,9 @@ with st.expander("⚖️ Ssenariy Taqqoslash (A vs B)"):
         b_gsi  = st.slider("GSI_B", 10, 100, max(10, layers_data[-1]['gsi']-10), key="b_gsi")
         b_temp = st.number_input("T_B (°C)", value=float(T_source_max)*1.1, key="b_t")
     def norm(val, mn, mx):
-        return (val-mn)/(mx-mn+1e-12)
-    fos_a = (a_ucs*np.exp(-0.0025*(a_temp-20))) / (layers_data[-1]['rho']*9.81*H_seam/1e6+1e-12)
-    fos_b = (b_ucs*np.exp(-0.0025*(b_temp-20))) / (layers_data[-1]['rho']*9.81*H_seam/1e6+1e-12)
+        return (val-mn)/(mx-mn+EPS)
+    fos_a = (a_ucs*np.exp(-0.0025*(a_temp-20))) / (layers_data[-1]['rho']*9.81*H_seam/1e6+EPS)
+    fos_b = (b_ucs*np.exp(-0.0025*(b_temp-20))) / (layers_data[-1]['rho']*9.81*H_seam/1e6+EPS)
     vals_a = [norm(a_ucs,0,100), norm(a_gsi,10,100), norm(fos_a,0,3), 1-norm(a_temp,20,1200)]
     vals_b = [norm(b_ucs,0,100), norm(b_gsi,10,100), norm(fos_b,0,3), 1-norm(b_temp,20,1200)]
     categories = ['UCS','GSI','FOS (taxmin)','Termal risk']
@@ -1613,9 +1627,9 @@ def sensitivity_analysis(base_ucs, base_gsi, base_d, base_nu, base_t, H_seam, ra
         damage = np.clip(1-np.exp(-0.002*max(T-100,0)),0,0.95)
         sigma_ci = ucs*(1-damage)
         str_red = np.exp(-0.0025*(T-20))
-        p_str = (sigma_ci*str_red)*(20/(H_seam+1e-12))**0.5
+        p_str = (sigma_ci*str_red)*(20/(H_seam+EPS))**0.5
         sv = ucs*0.025
-        return np.clip(p_str/(sv+1e-12),0,5)
+        return np.clip(p_str/(sv+EPS),0,5)
     params = {
         'UCS (MPa)': (base_ucs, base_ucs*(1-range_pct), base_ucs*(1+range_pct)),
         'GSI': (base_gsi, base_gsi*(1-range_pct), min(100,base_gsi*(1+range_pct))),
@@ -1722,7 +1736,6 @@ def generate_full_iso_report(obj_name: str, lang: str, layers_data: list,
         row[2].text = f"{layer['ucs']:.1f}"
         row[3].text = str(layer['gsi'])
         row[4].text = f"{layer['mi']:.1f}"
-    # Qo'shimcha risk bo'limlari (3,4)
     doc.add_heading(t['sec3'], level=2)
     doc.add_paragraph(t['risk_ident'])
     avg_risk = np.mean(risk_map)
@@ -1913,13 +1926,12 @@ with tab_ai_orig:
             return False
         recent = history[-window:]
         mean = np.mean(recent)
-        std = np.std(recent) + 1e-6
+        std = np.std(recent) + EPS
         return abs(value - mean) > threshold * std
     def simulate_sensors_fos(n_steps):
         T = np.linspace(20, min(1100,T_source_max), n_steps) + np.random.normal(0,10,n_steps)
         sigma_v = np.linspace(5, min(15, sv_seam*10), n_steps) + np.random.normal(0,0.5,n_steps)
         return pd.DataFrame({'Temperature':T, 'VerticalStress':sigma_v})
-    # FOS diapazoni to'g'rilangan (6)
     if PT_AVAILABLE:
         class SimpleNN(nn.Module):
             def __init__(self):
@@ -1930,7 +1942,7 @@ with tab_ai_orig:
             def forward(self, x):
                 x = torch.relu(self.fc1(x))
                 x = torch.relu(self.fc2(x))
-                return 3.0 * torch.sigmoid(self.fc3(x))  # [0,3] oralig'i
+                return 3.0 * torch.sigmoid(self.fc3(x))
         fos_nn_model = SimpleNN().to(device)
         fos_criterion = nn.MSELoss()
         fos_optimizer = torch.optim.Adam(fos_nn_model.parameters(), lr=0.01)
@@ -1992,7 +2004,8 @@ with tab_ai_orig:
         t2_col1, t2_col2 = st.columns([1,3])
         with t2_col1:
             ai_steps_2 = st.number_input(t('ai_steps'), min_value=10, max_value=500, value=50, step=10, key="ai_steps_2")
-            fos_target = st.number_input("Maqsad FOS qiymati", min_value=0.5, max_value=3.0, value=1.5, step=0.1, key="fos_target")
+            # *** FIX 13: min_value=1.0 ***
+            fos_target = st.number_input("Maqsad FOS qiymati", min_value=1.0, max_value=3.0, value=1.5, step=0.1, key="fos_target")
         with t2_col2:
             run_ai_2 = st.button(t('ai_run_btn'), type="primary", use_container_width=True, key="run_ai_2")
         if run_ai_2:
@@ -2074,8 +2087,9 @@ with tab_advanced:
             st.latex(t('hb_s', s=s_dyn))
             st.caption(t('hb_caption_s', gsi=gsi_val))
         with c2r:
-            # To'g'ri foiz hisobi (9)
-            strength_red_perc = (1 - s_dyn**a_dyn) * 100
+            # *** FIX 9: Hoek-Brown ratio using sqrt(s) ***
+            hb_ratio = np.sqrt(s_dyn) * 100
+            strength_red_perc = 100 - hb_ratio
             st.markdown(t('hb_interpret', gsi=gsi_val, perc=strength_red_perc))
     with t2:
         st.subheader(t('thermal_params'))
