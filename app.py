@@ -501,14 +501,18 @@ if formula_option != formula_opts[0]:
             st.info("**Termal degradatsiya:** Harorat ta'sirida jins strukturasining emirilishi va o'tkazuvchanlik ortishi.")
         elif formula_option == formula_opts[3]:
             st.latex(r"\sigma_{th} = \frac{E \cdot \alpha \cdot \Delta T}{1 - \nu} + \xi \cdot \nabla T")
+            # To'g'ri Hoek-Brown (2002) tensile strength formulasi
+            st.latex(r"\sigma_{t0} = \frac{\sigma_{ci}}{2}\left(m_b - \sqrt{m_b^2 + 4s}\right) \quad \text{(Hoek-Brown 2002)}")
             st.latex(r"\sigma_{t(T)} = \sigma_{t0} \cdot \exp\left(-\beta_{th} (T - 20)\right)")
             st.latex(r"FOS = \frac{\sigma_{limit}}{\sigma_{actual}}")
-            st.info("**Termo-mexanika:** Termal kengayish kuchlanishi va cho'zilish mustahkamligining kamayishi.")
+            st.info("**Termo-mexanika:** Termal kengayish kuchlanishi va cho'zilish mustahkamligining kamayishi. HB tensile: Hoek & Brown (2002) mezoniga muvofiq.")
         elif formula_option == formula_opts[4]:
             st.latex(r"\sigma_{p} = (UCS \cdot \eta) \cdot \left( \frac{w}{H} \right)^{0.5}")
             st.latex(r"y = \frac{H}{2} \left( \sqrt{\frac{\sigma_v}{\sigma_p}} - 1 \right)")
-            st.latex(r"S(x) = S_{max} \cdot \exp\left( -\frac{x^2}{2i^2} \right); \quad \epsilon = 1.52 \frac{S(x)}{R}")
-            st.info("**Geomexanika:** Selek barqarorligi, plastik zona va yer yuzasining gorizontal deformatsiyasi.")
+            st.latex(r"S(x) = S_{max} \cdot \exp\left( -\frac{x^2}{2i^2} \right)")
+            # O'Reilly & New (1982) to'g'ri gorizontal siljish formulasi
+            st.latex(r"u_h(x) = \frac{x}{i^2} \cdot S(x) \quad \text{(O'Reilly \& New, 1982)}")
+            st.info("**Geomexanika:** Selek barqarorligi, plastik zona va yer yuzasining gorizontal deformatsiyasi (O'Reilly & New, 1982).")
 
 # Sidebar parametrlar
 obj_name      = st.sidebar.text_input(t('project_name'), value="Angren-UCG-001")
@@ -818,7 +822,14 @@ sigma3_act = np.minimum(grid_sigma_v, grid_sigma_h)
 if tensile_mode == t('tensile_empirical'):
     grid_sigma_t0_base = tensile_ratio * sigma_ci
 elif tensile_mode == t('tensile_hb'):
-    grid_sigma_t0_base = (sigma_ci * grid_s_hb)/(1+grid_mb+EPS)
+    # To'g'ri Hoek-Brown (2002) tensile strength formulasi:
+    # sigma_t = (sigma_ci / 2) * (mb - sqrt(mb^2 + 4s))
+    # Bu sigma_1=0, sigma_3=-sigma_t holatiga mos (uniaxial tensile)
+    # Manfiy qiymat olinadi, shuning uchun abs() ishlatamiz
+    hb_term = np.sqrt(np.maximum(grid_mb**2 + 4*grid_s_hb, EPS))
+    grid_sigma_t0_base = np.abs((sigma_ci / 2) * (grid_mb - hb_term))
+    # Juda kichik qiymatlarni cheklash (numerik barqarorlik)
+    grid_sigma_t0_base = np.clip(grid_sigma_t0_base, EPS, sigma_ci * 0.3)
 else:
     grid_sigma_t0_base = grid_sigma_t0_manual
 
@@ -862,9 +873,19 @@ sigma1_act *= void_factor
 sigma3_act *= void_factor
 sigma_ci *= void_factor
 
-pressure = temp_2d*10.0
+# Gaz bosimi proxy (vizualizatsiya uchun):
+# Ideal gaz qonunidan: P ∝ T (V=const, n=const)
+# Boshlang'ich bosim P0 ≈ lithostatik ~ sigma_v (MPa)
+# Gradient oqim yo'nalishini ko'rsatish uchun P_proxy = P0 * (T/T0)
+# Birlik: nisbiy (adimensional) — faqat oqim vektori yo'nalishi muhim
+P0_proxy = grid_sigma_v * 1e6  # Pa (lithostatik)
+T0_ref = 25.0  # °C
+pressure = P0_proxy * (np.maximum(temp_2d, T0_ref) / T0_ref)  # Pa (fizik o'lchovda)
 dp_dx, dp_dz = np.gradient(pressure, axis=1), np.gradient(pressure, axis=0)
-vx, vz = -perm*dp_dx, -perm*dp_dz
+# Darcy qonuni: v = -k/mu * grad(P)
+# mu (gaz yopishqoqligi) ≈ 3e-5 Pa·s (1000°C da havo/CO2)
+mu_gas = 3e-5  # Pa·s
+vx, vz = -perm * dp_dx / mu_gas, -perm * dp_dz / mu_gas
 gas_velocity = np.sqrt(vx**2+vz**2)
 
 # =========================== AI MODEL FUNKSIYALARI (TYPE HINTS) ===========================
@@ -1560,7 +1581,8 @@ def monte_carlo_fos(ucs_mean: float, ucs_std: float, gsi_mean: float, gsi_std: f
     depth_s = np.random.normal(depth_seam, depth_seam*0.05, n_sim).clip(10, 500)
     mb_s = 10*np.exp((gsi_s-100)/(28-14*d_mean))
     s_s = np.exp((gsi_s-100)/(9-3*d_mean))
-    dmg_s = np.clip(1-np.exp(-0.002*np.maximum(T_s-100,0)),0,0.95)
+    # T0 = 20°C — Shao et al. (2015) standarti bilan izchil (asosiy thermal_damage bilan bir xil)
+    dmg_s = np.clip(1-np.exp(-0.002*np.maximum(T_s-20, 0)), 0, 0.95)
     sci_s = ucs_s*(1-dmg_s)
     str_r = np.exp(-0.0025*(T_s-20))
     p_str = (sci_s*str_r)*(20/(H_seam+EPS))**0.5
@@ -1634,7 +1656,8 @@ def sensitivity_analysis(base_ucs, base_gsi, base_d, base_nu, base_t, H_seam, ra
     def quick_fos(ucs, gsi, d, nu, T):
         mb = 10*np.exp((gsi-100)/(28-14*d))
         s = np.exp((gsi-100)/(9-3*d))
-        damage = np.clip(1-np.exp(-0.002*max(T-100,0)),0,0.95)
+        # T0 = 20°C — Shao et al. (2015) standarti, asosiy thermal_damage bilan izchil
+        damage = np.clip(1-np.exp(-0.002*max(T-20, 0)), 0, 0.95)
         sigma_ci = ucs*(1-damage)
         str_red = np.exp(-0.0025*(T-20))
         p_str = (sigma_ci*str_red)*(20/(H_seam+EPS))**0.5
@@ -1787,10 +1810,28 @@ def generate_full_iso_report(obj_name: str, lang: str, layers_data: list,
     final_run.font.color.rgb = color
     doc.add_page_break()
     doc.add_heading("APPENDIX: Mathematical Models Used", level=2)
-    doc.add_paragraph("1. Hoek-Brown Failure Criterion (Rock Mass Strength)")
+    doc.add_paragraph("1. Hoek-Brown Failure Criterion — Rock Mass Strength (Hoek & Brown, 2018)")
     doc.add_paragraph("σ1 = σ3 + σci * (mb * σ3 / σci + s)^a", style='Intense Quote')
-    doc.add_paragraph("2. Thermal Strength Decay (Exponential Model)")
-    doc.add_paragraph("UCS(T) = UCS_0 * exp(-β * (T - T0))", style='Intense Quote')
+    doc.add_paragraph("mb = mi * exp((GSI-100)/(28-14D));  s = exp((GSI-100)/(9-3D));  a = 0.5 + (1/6)*(e^(-GSI/15) - e^(-20/3))", style='Intense Quote')
+    doc.add_paragraph("2. Hoek-Brown Tensile Strength (Hoek & Brown, 2002)")
+    doc.add_paragraph("σt0 = (σci/2) * (mb - sqrt(mb² + 4s))", style='Intense Quote')
+    doc.add_paragraph("3. Thermal Strength Decay — Shao et al. (2015)")
+    doc.add_paragraph("UCS(T) = UCS_0 * exp(-β * (T - T0)),  T0 = 20°C", style='Intense Quote')
+    doc.add_paragraph("D(T) = 1 - exp(-β * max(T - 20, 0))", style='Intense Quote')
+    doc.add_paragraph("4. Thermal Stress (Thermo-Elastic Theory)")
+    doc.add_paragraph("σth = CF * E * α * ΔT / (1 - ν),  CF=0.7 (constraint factor)", style='Intense Quote')
+    doc.add_paragraph("5. Wilson (1972) Pillar Strength & Plastic Zone")
+    doc.add_paragraph("σp = UCS(T) * (w/H)^0.5;  y = H/2 * (sqrt(σv/σp) - 1) if σv≥σp else 0", style='Intense Quote')
+    doc.add_paragraph("6. Peck (1969) Surface Subsidence — Gaussian Model")
+    doc.add_paragraph("S(x) = Smax * exp(-x²/(2i²)),  i = inflection point distance ≈ H/2", style='Intense Quote')
+    doc.add_paragraph("7. O'Reilly & New (1982) Horizontal Displacement")
+    doc.add_paragraph("u_h(x) = x / i² * S(x)", style='Intense Quote')
+    doc.add_paragraph("8. Darcy Gas Flow (with viscosity)")
+    doc.add_paragraph("v = -k/μ * grad(P),  μ_gas ≈ 3×10⁻⁵ Pa·s (at 1000°C)", style='Intense Quote')
+    doc.add_paragraph("9. Kozeny-Carman Permeability")
+    doc.add_paragraph("k = φ³/(1-φ)² * 1×10⁻¹² m²", style='Intense Quote')
+    doc.add_paragraph("10. Risk Index (Composite)")
+    doc.add_paragraph("R = 0.4*P_collapse + 0.3*(1-FOS/3) + 0.2*(k/kmax) + 0.1*(T/Tmax)", style='Intense Quote')
     buffer = io.BytesIO()
     doc.save(buffer)
     buffer.seek(0)
@@ -2131,7 +2172,14 @@ with tab_advanced:
     st.markdown("---")
     with st.expander(t('methodology_expander')):
         st.markdown("#### Ushbu model quyidagi fundamental ilmiy ishlar asosida tuzilgan:")
-        for r in [t('ref1'), t('ref2'), t('ref3'), t('ref4'), "**Brady, B. H., & Brown, E. T. (2006).** Rock Mechanics for Underground Mining."]:
+        for r in [
+            t('ref1'), t('ref2'), t('ref3'), t('ref4'),
+            "**Brady, B. H., & Brown, E. T. (2006).** Rock Mechanics for Underground Mining. Springer.",
+            "**Peck, R. B. (1969).** Deep excavations and tunneling in soft ground. *7th ICSMFE*, Mexico City.",
+            "**O'Reilly, M. P., & New, B. M. (1982).** Settlements above tunnels in the UK. *Tunnelling '82*, IMM London.",
+            "**Darcy, H. (1856).** Les fontaines publiques de la ville de Dijon. Dalmont, Paris.",
+            "**Terzaghi, K. (1943).** Theoretical Soil Mechanics. Wiley, New York."
+        ]:
             st.write(r)
 
 # Interactive Dashboard (o'zgarishsiz)
@@ -2149,7 +2197,11 @@ surface_h_disp = []
 surface_v_disp = []
 for time_step in time_steps_dash:
     v_disp = -s_max * np.exp(-(surface_x**2)/(2*(total_depth/2)**2)) * (min(time_step, burn_duration)/burn_duration) * 100
-    h_disp = np.gradient(v_disp) * 0.5
+    # O'Reilly & New (1982) formulasi: u_h(x) = x / i^2 * S(x)
+    # Bu cho'kish egri chizig'ining nuzul nuqtasiga nisbatan gorizontal siljishni beradi
+    # i = infleksion nuqta masofasi = total_depth/2 (Peck approx)
+    i_inflection = total_depth / 2  # m
+    h_disp = (surface_x / (i_inflection**2 + EPS)) * v_disp  # mm
     surface_v_disp.append(v_disp)
     surface_h_disp.append(h_disp)
 surface_h_disp = np.array(surface_h_disp)
