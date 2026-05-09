@@ -450,44 +450,6 @@ def t(key, **kwargs):
 # Umumiy xavfsiz qiymat (EPS)
 EPS = 1e-6
 
-# =========================== REALISTIC GEOLOGICAL SURFACE ===========================
-def geological_surface(X, Y, base_z, amp=20, freq=0.05, fault_x=0, slip=12):
-    """
-    Ultra-realistic geologic surface:
-    - folding (sin/cos)
-    - fault displacement
-    - multi-scale noise
-    """
-    fold = amp * (
-        np.sin(freq * X) * np.cos(freq * Y) +
-        0.5 * np.sin(0.5 * freq * X + 0.3 * Y)
-    )
-    fault = np.where(X > fault_x, slip, 0)
-    noise = 2 * np.sin(0.2 * X + 0.1 * Y)
-    return base_z + fold + fault + noise
-
-# =========================== PHYSICS‑BASED FAULT DEFORMATION ===========================
-def physics_fault_surface(X, Y, Z, fault_x=0, stress=1.0, rigidity=25e9):
-    """
-    Stress‑driven fault displacement (physics‑inspired approximation).
-    """
-    distance = X - fault_x
-    stress_field = stress / (1 + distance**2)
-    displacement = (stress_field / rigidity) * 1e5
-    return Z + displacement
-
-# =========================== PSEUDO‑VOLUME DEFORMATION ===========================
-def volume_deformation(X, Y, Z, amp=10):
-    """
-    Adds pseudo‑3D volumetric behavior (shear + depth effect).
-    """
-    shear = amp * np.sin(0.05 * X) * np.cos(0.05 * Y)
-    depth_effect = 0.1 * Z
-    return Z + shear + depth_effect
-
-# =========================== GLOBAL TRANSLATIONS ===========================
-# (yuqorida berilgan tarjimalar saqlanib qolgan)
-
 st.set_page_config(page_title=t('app_title'), layout="wide")
 st.title(t('app_title'))
 st.markdown(f"### {t('app_subtitle')}")
@@ -724,7 +686,21 @@ class DigitalTwin:
 # =========================== FIZIK MODEL FUNKSIYALARI (DOCSTRINGS + TYPE HINTS) ===========================
 
 def thermal_damage(T: np.ndarray, beta: float = 0.002) -> np.ndarray:
-    """Termal shikastlanish faktorini hisoblaydi."""
+    """
+    Termal shikastlanish faktorini hisoblaydi.
+    
+    Parameters
+    ----------
+    T : np.ndarray
+        Harorat maydoni (°C).
+    beta : float
+        Termal semirish koeffitsiyenti.
+        
+    Returns
+    -------
+    np.ndarray
+        Shikastlanish faktori (0–1).
+    """
     return 1 - np.exp(-beta * np.maximum(T - 100, 0))
 
 def vertical_stress(depth: float, density: float) -> float:
@@ -890,7 +866,14 @@ gas_velocity = np.sqrt(vx**2+vz**2)
 # =========================== AI MODEL FUNKSIYALARI (TYPE HINTS) ===========================
 def physics_features(T: np.ndarray, s1: np.ndarray, s3: np.ndarray,
                      depth: np.ndarray) -> np.ndarray:
-    """Fizik xususiyatlarni yaratish."""
+    """
+    Fizik xususiyatlarni yaratish.
+    
+    Returns
+    -------
+    np.ndarray
+        Xususiyat matritsasi (N x 7).
+    """
     dmg = thermal_damage(T)
     strength = 40 * (1 - dmg)
     fos = strength / (s1 + EPS)
@@ -1523,85 +1506,33 @@ with st.expander("📈 FOS Vaqt Bashorati (Trend)"):
     tc3.metric("Hozirgi FOS", f"{fos_timeline[-1]:.3f}")
     st.info(critical_info)
 
-# 🔥 3D Litologik kesim (REALISTIC GEOLOGY IMPROVED)
+# 3D Litologik kesim
 with st.expander("🌍 3D Litologik Kesim"):
     fig_3d = go.Figure()
-    x_3d = np.linspace(x_axis.min(), x_axis.max(), 40)
-    y_3d = np.linspace(-total_depth*0.5, total_depth*0.5, 40)
-    X3, Y3 = np.meshgrid(x_3d, y_3d)
-
-    fault_line = 0  # markaziy fault chizig‘i
-
+    y_3d = np.linspace(-total_depth*0.5, total_depth*0.5, 30)
     for i, layer in enumerate(layers_data):
         z_top = layer['z_start']
-        z_bot = layer['z_start'] + layer['t']
-
-        # Realistik geologik sirtlar (burilish, yoriq, shovqin)
-        Z_top = geological_surface(X3, Y3, z_top, amp=20, freq=0.05, fault_x=fault_line, slip=12 + i*2)
-        # Fizik asoslangan deformatsiyani qo‘shish
-        Z_top = physics_fault_surface(X3, Y3, Z_top, fault_x=fault_line, stress=1.2)
-        Z_top = volume_deformation(X3, Y3, Z_top, amp=10)
-
-        Z_bot = geological_surface(X3, Y3, z_bot, amp=20, freq=0.05, fault_x=fault_line, slip=12 + i*2)
-        Z_bot = physics_fault_surface(X3, Y3, Z_bot, fault_x=fault_line, stress=1.2)
-        Z_bot = volume_deformation(X3, Y3, Z_bot, amp=10)
-
+        z_bot = layer['z_start']+layer['t']
+        x_3d = np.linspace(x_axis.min(), x_axis.max(), 30)
+        X3, Y3 = np.meshgrid(x_3d, y_3d)
+        Z_top = np.full_like(X3, z_top)
+        Z_bot = np.full_like(X3, z_bot)
         hex_color = layer['color'].lstrip('#')
-        r, g, b = tuple(int(hex_color[j:j+2], 16) for j in (0, 2, 4))
+        r,g,b = tuple(int(hex_color[j:j+2],16) for j in (0,2,4))
         rgb_str = f"rgb({r},{g},{b})"
-
-        # Yuqori sirt
-        fig_3d.add_trace(go.Surface(
-            x=X3, y=Y3, z=Z_top,
-            colorscale=[[0, rgb_str], [1, rgb_str]],
-            showscale=False,
-            opacity=0.85,
-            name=f"{layer['name']} (top)",
-            hovertemplate=f"{layer['name']}<br>UCS: {layer['ucs']} MPa<br>GSI: {layer['gsi']}<extra></extra>"
-        ))
-        # Pastki sirt
-        fig_3d.add_trace(go.Surface(
-            x=X3, y=Y3, z=Z_bot,
-            colorscale=[[0, rgb_str], [1, rgb_str]],
-            showscale=False,
-            opacity=0.85,
-            name=f"{layer['name']} (bottom)"
-        ))
-
-    # Yonish kameralari (realistik ko‘rinish)
+        fig_3d.add_trace(go.Surface(x=X3, y=Y3, z=Z_top, colorscale=[[0,rgb_str],[1,rgb_str]], showscale=False, opacity=0.7, name=layer['name'], hovertemplate=f"{layer['name']}<br>UCS: {layer['ucs']} MPa<br>GSI: {layer['gsi']}<extra></extra>"))
     for src_x in [-total_depth/3, 0, total_depth/3]:
-        theta = np.linspace(0, 2*np.pi, 40)
-        phi = np.linspace(0, np.pi, 25)
+        theta = np.linspace(0,2*np.pi,30)
+        phi = np.linspace(0,np.pi,20)
         THETA, PHI = np.meshgrid(theta, phi)
-        R = H_seam * 0.4
-        cx = src_x + R * np.sin(PHI) * np.cos(THETA)
-        cy =       R * np.sin(PHI) * np.sin(THETA)
-        # Kamera sirtini ham geologik deformatsiyaga moslashtirish
-        cz = geological_surface(cx, cy, source_z, amp=3, freq=0.1, fault_x=fault_line, slip=0)
-        cz = volume_deformation(cx, cy, cz, amp=2)
-        fig_3d.add_trace(go.Surface(
-            x=cx, y=cy, z=cz,
-            colorscale=[[0, 'orange'], [1, 'red']],
-            showscale=False,
-            opacity=0.9,
-            name='Yonish kamerasi'
-        ))
-
-    fig_3d.update_layout(
-        scene=dict(
-            xaxis_title='X (m)',
-            yaxis_title='Y (m)',
-            zaxis_title='Chuqurlik (m)',
-            zaxis=dict(autorange='reversed'),
-            camera=dict(eye=dict(x=1.5, y=1.5, z=1.0))
-        ),
-        template='plotly_dark',
-        height=600,
-        title="3D Litologik Model + Yonish Kameralari (Fizik deformatsiyalangan)",
-        showlegend=True
-    )
+        R = H_seam*0.4
+        cx = src_x + R*np.sin(PHI)*np.cos(THETA)
+        cy = R*np.sin(PHI)*np.sin(THETA)
+        cz = source_z + R*np.cos(PHI)
+        fig_3d.add_trace(go.Surface(x=cx, y=cy, z=cz, colorscale=[[0,'orange'],[1,'red']], showscale=False, opacity=0.85, name='Yonish kamerasi'))
+    fig_3d.update_layout(scene=dict(xaxis_title='X (m)', yaxis_title='Y (m)', zaxis_title='Chuqurlik (m)', zaxis=dict(autorange='reversed'), camera=dict(eye=dict(x=1.5,y=1.5,z=1.0))), template='plotly_dark', height=600, title="3D Litologik Model + Yonish Kameralari", showlegend=True)
     st.plotly_chart(fig_3d, use_container_width=True)
-    st.caption("Sariq/qizil sferalar — yonish kameralari joylashuvi. Qatlamlar burilgan, kuchlanish va hajm deformatsiyasi bilan.")
+    st.caption("Sariq/qizil sferalar — yonish kameralari joylashuvi")
 
 # Monte Carlo (TUZATILGAN – 10)
 @st.cache_data(show_spinner=False)
