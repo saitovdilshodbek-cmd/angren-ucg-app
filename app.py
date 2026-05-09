@@ -466,6 +466,25 @@ def geological_surface(X, Y, base_z, amp=20, freq=0.05, fault_x=0, slip=12):
     noise = 2 * np.sin(0.2 * X + 0.1 * Y)
     return base_z + fold + fault + noise
 
+# =========================== PHYSICS‑BASED FAULT DEFORMATION ===========================
+def physics_fault_surface(X, Y, Z, fault_x=0, stress=1.0, rigidity=25e9):
+    """
+    Stress‑driven fault displacement (physics‑inspired approximation).
+    """
+    distance = X - fault_x
+    stress_field = stress / (1 + distance**2)
+    displacement = (stress_field / rigidity) * 1e5
+    return Z + displacement
+
+# =========================== PSEUDO‑VOLUME DEFORMATION ===========================
+def volume_deformation(X, Y, Z, amp=10):
+    """
+    Adds pseudo‑3D volumetric behavior (shear + depth effect).
+    """
+    shear = amp * np.sin(0.05 * X) * np.cos(0.05 * Y)
+    depth_effect = 0.1 * Z
+    return Z + shear + depth_effect
+
 # =========================== GLOBAL TRANSLATIONS ===========================
 # (yuqorida berilgan tarjimalar saqlanib qolgan)
 
@@ -1519,7 +1538,13 @@ with st.expander("🌍 3D Litologik Kesim"):
 
         # Realistik geologik sirtlar (burilish, yoriq, shovqin)
         Z_top = geological_surface(X3, Y3, z_top, amp=20, freq=0.05, fault_x=fault_line, slip=12 + i*2)
+        # Fizik asoslangan deformatsiyani qo‘shish
+        Z_top = physics_fault_surface(X3, Y3, Z_top, fault_x=fault_line, stress=1.2)
+        Z_top = volume_deformation(X3, Y3, Z_top, amp=10)
+
         Z_bot = geological_surface(X3, Y3, z_bot, amp=20, freq=0.05, fault_x=fault_line, slip=12 + i*2)
+        Z_bot = physics_fault_surface(X3, Y3, Z_bot, fault_x=fault_line, stress=1.2)
+        Z_bot = volume_deformation(X3, Y3, Z_bot, amp=10)
 
         hex_color = layer['color'].lstrip('#')
         r, g, b = tuple(int(hex_color[j:j+2], 16) for j in (0, 2, 4))
@@ -1553,6 +1578,7 @@ with st.expander("🌍 3D Litologik Kesim"):
         cy =       R * np.sin(PHI) * np.sin(THETA)
         # Kamera sirtini ham geologik deformatsiyaga moslashtirish
         cz = geological_surface(cx, cy, source_z, amp=3, freq=0.1, fault_x=fault_line, slip=0)
+        cz = volume_deformation(cx, cy, cz, amp=2)
         fig_3d.add_trace(go.Surface(
             x=cx, y=cy, z=cz,
             colorscale=[[0, 'orange'], [1, 'red']],
@@ -1571,11 +1597,11 @@ with st.expander("🌍 3D Litologik Kesim"):
         ),
         template='plotly_dark',
         height=600,
-        title="3D Litologik Model + Yonish Kameralari (Realistik Geologiya)",
+        title="3D Litologik Model + Yonish Kameralari (Fizik deformatsiyalangan)",
         showlegend=True
     )
     st.plotly_chart(fig_3d, use_container_width=True)
-    st.caption("Sariq/qizil sferalar — yonish kameralari joylashuvi. Qatlamlar burilgan, yoriqli va shovqinli.")
+    st.caption("Sariq/qizil sferalar — yonish kameralari joylashuvi. Qatlamlar burilgan, kuchlanish va hajm deformatsiyasi bilan.")
 
 # Monte Carlo (TUZATILGAN – 10)
 @st.cache_data(show_spinner=False)
