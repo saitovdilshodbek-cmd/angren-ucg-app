@@ -573,6 +573,10 @@ if errors:
     for e in errors: st.error(e)
     st.stop()
 
+# Chuqurlik va o'rtacha zichlik (keyingi hisoblar uchun)
+depth_seam = sum(l['t'] for l in layers_data[:-1]) + layers_data[-1]['t'] / 2
+avg_rho = np.mean([l['rho'] for l in layers_data])
+
 # ============================================================
 # QO'SHIMCHA SINFLAR VA FUNKSIYALAR (TUZATILGAN)
 # ============================================================
@@ -1323,7 +1327,7 @@ with st.expander("🧠 Real PINN: Heat Equation Residual Loss"):
     else:
         st.warning("PyTorch yo‘q, PINN ishlamaydi.")
 
-# Uncertainty quantification
+# Uncertainty quantification (TUZATILGAN: depth_seam, avg_rho endi oldin e'lon qilingan)
 with st.expander("📊 Uncertainty Quantification (UQ) for FOS"):
     N = 500
     ucs_samples = np.random.normal(ucs_seam, 0.1*ucs_seam, N)
@@ -1331,7 +1335,7 @@ with st.expander("📊 Uncertainty Quantification (UQ) for FOS"):
     fos_samples = []
     for ucs_i, temp_i in zip(ucs_samples, temp_samples):
         sig_p = (ucs_i * np.exp(-0.002*(temp_i-20))) * (rec_width/(H_seam+EPS))**0.5
-        fos_i = sig_p / (vertical_stress(depth_seam, avg_rho) + EPS)
+        fos_i = sig_p / (vertical_stress(depth_seam, avg_rho) + EPS)  # depth_seam va avg_rho endi mavjud
         fos_samples.append(fos_i)
     fos_samples = np.array(fos_samples)
     fig_uq = go.Figure()
@@ -1659,9 +1663,6 @@ def monte_carlo_fos(ucs_mean: float, ucs_std: float, gsi_mean: float, gsi_std: f
     fos_s = np.clip(p_str/(sv_s+EPS),0,5)
     pf = float(np.mean(fos_s<1.0))
     return fos_s, pf
-
-depth_seam = sum(l['t'] for l in layers_data[:-1]) + H_seam/2
-avg_rho = np.mean([l['rho'] for l in layers_data])
 
 with st.expander("🎲 Monte Carlo Noaniqlik Tahlili"):
     mc_col1, mc_col2 = st.columns([1,2])
