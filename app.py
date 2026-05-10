@@ -21,7 +21,7 @@ import matplotlib.pyplot as plt
 import warnings
 warnings.filterwarnings('ignore')
 import sys
-from sklearn.metrics import accuracy_score, roc_auc_score, roc_curve
+from sklearn.metrics import accuracy_score, roc_auc_score, roc_curve, mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import KFold
 import joblib
 from sklearn.preprocessing import StandardScaler
@@ -31,14 +31,12 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# =========================== FASTAPI IMPORT ===========================
 try:
     from fastapi import FastAPI
     FASTAPI_AVAILABLE = True
 except ImportError:
     FASTAPI_AVAILABLE = False
 
-# =========================== PYTORCH IMPORT ===========================
 try:
     import torch
     import torch.nn as nn
@@ -48,7 +46,6 @@ except ImportError:
     PT_AVAILABLE = False
     device = "cpu"
 
-# =========================== SALib IMPORT ===========================
 try:
     from SALib.sample import saltelli
     from SALib.analyze import sobol
@@ -56,38 +53,24 @@ try:
 except ImportError:
     SALIB_AVAILABLE = False
 
-# =========================== pyDOE IMPORT ===========================
 try:
     from pyDOE import lhs
     PYDOE_AVAILABLE = True
 except ImportError:
     PYDOE_AVAILABLE = False
 
-# =========================== PyVista IMPORT ===========================
 try:
     import pyvista as pv
     PYVISTA_AVAILABLE = True
 except ImportError:
     PYVISTA_AVAILABLE = False
 
-# =========================== SHAP IMPORT ===========================
 try:
     import shap
     SHAP_AVAILABLE = True
 except ImportError:
     SHAP_AVAILABLE = False
 
-# ============================================================
-# SCIENTIFIC REPRODUCIBILITY
-# ============================================================
-np.random.seed(42)
-if PT_AVAILABLE:
-    torch.manual_seed(42)
-    torch.cuda.manual_seed_all(42)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-
-# =========================== GLOBAL TRANSLATIONS ===========================
 TRANSLATIONS = {
     'uz': {
         'app_title': "Universal Yer yuzasi Deformatsiyasi Monitoringi",
@@ -452,19 +435,16 @@ FORMULA_OPTIONS = {
 }
 
 def t(key, **kwargs):
-    """Tarjima funksiyasi."""
     lang = st.session_state.get('language', 'uz')
     text = TRANSLATIONS.get(lang, TRANSLATIONS['uz']).get(key, key)
     return text.format(**kwargs) if kwargs else text
 
-# Umumiy xavfsiz qiymat (EPS)
 EPS = 1e-6
 
 st.set_page_config(page_title=t('app_title'), layout="wide")
 st.title(t('app_title'))
 st.markdown(f"### {t('app_subtitle')}")
 
-# Til tanlash
 if 'language' not in st.session_state:
     st.session_state.language = 'uz'
 
@@ -474,14 +454,12 @@ lang = st.sidebar.selectbox("Til / Language / Язык", options=list(LANGUAGES.
                             index=list(LANGUAGES.keys()).index(st.session_state.language))
 st.session_state.language = lang
 
-# QR kod
 st.sidebar.markdown("---")
 st.sidebar.subheader("📱 Mobil ilovaga o'tish")
 url = "https://angren-ucg-app-a7rxktm6usxqixabhaq576.streamlit.app/#ucg-termo-mexanik-dinamik-3-d-model"
 
 @st.cache_data
 def generate_qr(link: str) -> bytes:
-    """QR kod yaratish."""
     qr = qrcode.QRCode(version=1, error_correction=qrcode.constants.ERROR_CORRECT_L, box_size=10, border=4)
     qr.add_data(link)
     qr.make(fit=True)
@@ -493,7 +471,6 @@ def generate_qr(link: str) -> bytes:
 qr_img_bytes = generate_qr(url)
 st.sidebar.image(qr_img_bytes, caption="Scan QR: Angren UCG API", use_container_width=True)
 
-# Matematik metodologiya
 st.sidebar.header(t('sidebar_header_params'))
 formula_opts = FORMULA_OPTIONS[st.session_state.language]
 formula_option = st.sidebar.selectbox(t('formula_show'), formula_opts)
@@ -507,21 +484,17 @@ if formula_option != formula_opts[0]:
         elif formula_option == formula_opts[2]:
             st.latex(r"D(T) = 1 - \exp\left(-\beta (T - T_0)\right)")
             st.latex(r"\sigma_{ci(T)} = \sigma_{ci} \cdot (1 - D(T))")
-            st.latex(r"k = k_0 \exp(8D(T)) (1 + 25 \epsilon_v)")
+            st.latex(r"k = k_0 \exp(bD(T) + c\varepsilon_v)")
             st.info("**Termal degradatsiya:** Harorat ta'sirida jins strukturasining emirilishi va o'tkazuvchanlik ortishi.")
         elif formula_option == formula_opts[3]:
-            st.latex(r"\sigma_{th} = \eta_c \frac{E \alpha \Delta T}{1-\nu} - \lambda_r \nabla T")
-            st.latex(r"\sigma_{t0} = \frac{\sigma_{ci}}{2}\left(m_b - \sqrt{m_b^2 + 4s}\right) \quad \text{(Hoek-Brown 2002)}")
-            st.latex(r"\sigma_{t(T)} = \sigma_{t0} \cdot \exp\left(-\beta_{th} (T - 20)\right)")
-            st.info("**Termo-mexanika:** Konfaynment koeffitsiyenti ηc=0.65, relaksatsiya λr=0.15 bilan.")
+            st.latex(r"\sigma_{ij} = C_{ijkl}(\varepsilon_{kl} - \alpha \Delta T \delta_{kl})")
+            st.latex(r"\sigma_{t0} = \frac{\sigma_{ci}}{2}\left(m_b - \sqrt{m_b^2 + 4s}\right)")
+            st.info("**Termoelastik:** Izotrop muhit uchun full tensor form.")
         elif formula_option == formula_opts[4]:
-            st.latex(r"\sigma_{p} = (UCS \cdot \eta) \cdot \left( \frac{w}{H} \right)^{0.5}")
-            st.latex(r"y = \frac{H}{2} \left( \sqrt{\frac{\sigma_v}{\sigma_p}} - 1 \right)")
             st.latex(r"S(x) = S_{max} \cdot \exp\left( -\frac{x^2}{2i^2} \right), \quad i = 0.45 H_{tot}")
             st.latex(r"u_h(x) = \frac{x}{i^2} \cdot S(x)")
-            st.info("**Geomexanika:** Selek barqarorligi, plastik zona va yer yuzasining gorizontal deformatsiyasi.")
+            st.info("**Cho'kish:** O'zgartirilgan Knothe ta'sir funksiyasi asosida hisoblangan.")
 
-# Sidebar parametrlar
 obj_name      = st.sidebar.text_input(t('project_name'), value="Angren-UCG-001")
 time_h        = st.sidebar.slider(t('process_time'), 1, 150, 24)
 num_layers    = st.sidebar.number_input(t('num_layers'), min_value=1, max_value=5, value=3)
@@ -549,7 +522,6 @@ T_source_max  = st.sidebar.slider(t('max_temp'), 600, 1200, 1075)
 with st.sidebar.expander(t('timeline')):
     st.markdown(t('timeline_table'))
 
-# Qatlam ma'lumotlari
 strata_colors = ['#87CEEB', '#F4A460', '#D3D3D3', '#F5DEB3', '#555555']
 layers_data   = []
 total_depth   = 0.0
@@ -570,7 +542,6 @@ for i in range(int(num_layers)):
     })
     total_depth += thick
 
-# Validatsiya
 errors = []
 for lyr in layers_data:
     if lyr['t'] <= 0: errors.append(t('error_thick_positive'))
@@ -583,222 +554,225 @@ if errors:
     for e in errors: st.error(e)
     st.stop()
 
-# Chuqurlik va o'rtacha zichlik (keyingi hisoblar uchun)
 depth_seam = sum(l['t'] for l in layers_data[:-1]) + layers_data[-1]['t'] / 2
 avg_rho = np.mean([l['rho'] for l in layers_data])
 
-# ============================================================
-# QO'SHIMCHA SINFLAR VA FUNKSIYALAR (TUZATILGAN)
-# ============================================================
+class Config:
+    THERMAL_DIFFUSIVITY = 8.5e-7
+    THERMAL_EXPANSION = 1.2e-5
+    YOUNG_MODULUS = 4.2e9
+    POISSON = 0.27
+    UCS = 42e6
+    NX = 200
+    NZ = 120
+    DX = 1.0
+    DZ = 1.0
+    DT = 0.01
+    LEARNING_RATE = 1e-4
+    EPOCHS = 5000
+    DEVICE = device
 
-class ThermalModel:
-    def __init__(self, alpha: float = 1e-6):
-        self.alpha = alpha
+def build_heat_source(grid_x, grid_z, source_x, source_z, power, radius=8.0):
+    dist2 = (grid_x - source_x)**2 + (grid_z - source_z)**2
+    Q = power * np.exp(-dist2 / (2 * radius**2))
+    return Q
 
-    def temperature_field(self, grid_x: np.ndarray, grid_z: np.ndarray, source: tuple, time: float) -> np.ndarray:
-        """Compute temperature field from point source."""
-        x0, z0, T_max = source
-        r2 = (grid_x - x0)**2 + (grid_z - z0)**2
-        return 25 + (T_max - 25) * np.exp(-r2 / (4 * self.alpha * time + 1e-6))
-
-class HoekBrown:
-    def __init__(self, mi: float, gsi: float, D: float):
-        self.mi = mi
-        self.gsi = gsi
-        self.D = D
-
-    def parameters(self) -> tuple:
-        """Return Hoek-Brown parameters mb, s, a."""
-        mb = self.mi * np.exp((self.gsi - 100)/(28 - 14*self.D))
-        s  = np.exp((self.gsi - 100)/(9 - 3*self.D))
-        a  = 0.5 + (1/6)*(np.exp(-self.gsi/15) - np.exp(-20/3))
-        return mb, s, a
-
-    def sigma1(self, sigma3: float, sigma_ci: float) -> float:
-        """Compute sigma1 from Hoek-Brown criterion with tension cutoff."""
-        mb, s, a = self.parameters()
-        sigma3_eff = max(sigma3, -0.15 * sigma_ci)
-        hb_term = mb * sigma3_eff / (sigma_ci + EPS) + s
-        hb_term = np.clip(hb_term, EPS, 1e6)
-        sigma1_comp = sigma3_eff + sigma_ci * (hb_term ** a)
-        # tension cutoff for negative sigma3
-        if sigma3 < 0:
-            sigma_t = (sigma_ci / 2) * (mb - np.sqrt(mb**2 + 4*s))
-            sigma1_comp = np.clip(sigma1_comp, -sigma_t, sigma_ci)
-        return sigma1_comp
-
-class ThermalDamage:
-    def __init__(self, beta: float = 0.003, Tcr: float = 200.0, Tmax_damage: float = 1400.0):
-        self.beta = beta
-        self.Tcr = Tcr
-        self.Tmax_damage = Tmax_damage
-
-    def compute(self, T: np.ndarray) -> np.ndarray:
-        """Calculate thermal damage factor with threshold and catastrophic degradation."""
-        effective_T = np.maximum(T - self.Tcr, 0)
-        damage = 1 - np.exp(-self.beta * effective_T)
-        catastrophic = np.clip((T - 700.0) / (self.Tmax_damage - 700.0), 0, 1)
-        damage = damage + 0.35 * catastrophic**2
-        return np.clip(damage, 0, 0.99)
-
-# FULL ThermoMechanicalModel (existing)
-class ThermoMechanicalModel:
-    def __init__(self, params):
-        self.params = params
-
-    def compute_stress(self, T):
-        sigma_v = (
-            self.params['density'] * 9.81 *
-            self.params['depth'] / 1e6
-        )
-        sigma1 = sigma_v * (1 + 0.002*(T-20))
-        sigma3 = 0.3 * sigma1
-        return sigma1, sigma3
-
-    def compute_damage(self, T):
-        damage = 1 - np.exp(-0.002*(T-20))
-        return np.clip(damage, 0, 1)
-
-    def compute_fos(self, sigma1, sigma_ci):
-        return sigma_ci / (sigma1 + EPS)
-
-    def run(self, T, sigma_ci):
-        sigma1, sigma3 = self.compute_stress(T)
-        damage = self.compute_damage(T)
-        fos = self.compute_fos(sigma1, sigma_ci)
-        return {
-            "sigma1": sigma1,
-            "sigma3": sigma3,
-            "damage": damage,
-            "fos": fos
-        }
-
-class PhysicsGuidedNeuralNetwork(nn.Module):
-    def __init__(self, input_dim=10):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(input_dim, 256),
-            nn.BatchNorm1d(256),
-            nn.GELU(),
-            nn.Linear(256, 128),
-            nn.BatchNorm1d(128),
-            nn.GELU(),
-            nn.Linear(128, 64),
-            nn.GELU(),
-            nn.Dropout(0.15),
-            nn.Linear(64, 1),
-            nn.Sigmoid()
-        )
-
-    def forward(self, x):
-        return self.net(x)
-
-class DigitalTwin:
-    def __init__(self, thermal, mechanics, damage, model):
-        self.thermal = thermal
-        self.mechanics = mechanics
-        self.damage = damage
-        self.model = model
-
-    def update(self, sensor_data: dict):
-        self.sensor = sensor_data
-
-    def simulate(self, grid_x: np.ndarray, grid_z: np.ndarray, time: float) -> tuple:
-        T = self.thermal.temperature_field(grid_x, grid_z, self.sensor['source'], time)
-        D = self.damage.compute(T)
-        sigma_ci = self.sensor['ucs'] * (1 - D)
-        sigma1 = self.mechanics.sigma1(self.sensor['sigma3'], sigma_ci)
-        return T, sigma1
-
-    def predict_collapse(self, features: torch.Tensor) -> torch.Tensor:
-        return self.model(features)
-
-# =========================== FIZIK MODEL FUNKSIYALARI ===========================
-
-def thermal_damage(T: np.ndarray, beta: float = 0.003, Tcr: float = 200.0, Tmax_damage: float = 1400.0) -> np.ndarray:
-    """
-    Advanced thermo-mechanical rock damage model.
-    Tcr: Crack initiation threshold temperature (°C)
-    Tmax_damage: Complete degradation temperature (°C)
-    """
-    effective_T = np.maximum(T - Tcr, 0)
-    damage = 1 - np.exp(-beta * effective_T)
-    catastrophic = np.clip((T - 700.0) / (Tmax_damage - 700.0), 0, 1)
-    damage = damage + 0.35 * catastrophic**2
-    return np.clip(damage, 0, 0.99)
-
-def vertical_stress(depth: float, density: float) -> float:
-    """Vertikal kuchlanish (MPa)."""
-    return density * 9.81 * depth / 1e6
-
-# FDM Laplacian (grid spacing aware)
-def laplacian(T: np.ndarray, dx: float, dz: float) -> np.ndarray:
-    return (
-        (T[2:,1:-1] - 2*T[1:-1,1:-1] + T[:-2,1:-1]) / dz**2 +
-        (T[1:-1,2:] - 2*T[1:-1,1:-1] + T[1:-1,:-2]) / dx**2
-    )
-
-def step_temperature(T: np.ndarray, alpha: float, dt: float, dx: float, dz: float) -> np.ndarray:
+def step_temperature_physics(T, alpha, dt, dx, dz, Q):
     Tn = T.copy()
-    Tn[1:-1,1:-1] += alpha * dt * laplacian(T, dx, dz)
+    d2Tdx2 = (T[1:-1,2:] - 2*T[1:-1,1:-1] + T[1:-1,:-2]) / dx**2
+    d2Tdz2 = (T[2:,1:-1] - 2*T[1:-1,1:-1] + T[:-2,1:-1]) / dz**2
+    Tn[1:-1,1:-1] += dt * (alpha * (d2Tdx2 + d2Tdz2) + Q[1:-1,1:-1])
+    Tn[:,0]  = Tn[:,1]
+    Tn[:,-1] = Tn[:,-2]
+    Tn[0,:]  = Tn[1,:]
+    Tn[-1,:] = Tn[-2,:]
     return Tn
 
-# =========================== HARORAT MAYDONINI HISOBLASH (TUZATILGAN) ===========================
+def solve_temperature_pde(T, alpha, dx, dz, dt, Q, n_steps):
+    for _ in range(n_steps):
+        T = step_temperature_physics(T, alpha, dt, dx, dz, Q)
+    return T
+
 @st.cache_data(show_spinner=False, max_entries=50)
-def compute_temperature_field_moving(time_h: float, T_source_max: float, burn_duration: float,
-                                     total_depth: float, source_z: float, grid_shape: tuple) -> tuple:
-    THERMAL_DIFFUSIVITY = 8.5e-7  # m²/s realistic coal-rock
+def compute_temperature_field_professional(time_h, T_source_max, burn_duration, total_depth, source_z, grid_shape):
+    alpha = Config.THERMAL_DIFFUSIVITY
     x_axis = np.linspace(-total_depth * 1.5, total_depth * 1.5, grid_shape[1])
     z_axis = np.linspace(0, total_depth + 50, grid_shape[0])
     dx = x_axis[1] - x_axis[0]
     dz = z_axis[1] - z_axis[0]
-    # CFL stability
-    dt_stable = 0.24 * min(dx, dz)**2 / THERMAL_DIFFUSIVITY
-    # total simulation time (seconds) for FDM
     total_time = max(burn_duration, time_h) * 3600
-    n_steps = max(int(total_time / dt_stable), 20)
+    dt_stable = 0.24 * min(dx, dz)**2 / alpha
+    n_steps = max(int(total_time / dt_stable), 100)
     dt = total_time / n_steps
 
     grid_x, grid_z = np.meshgrid(x_axis, z_axis)
     temp_2d = np.full_like(grid_x, 25.0)
 
-    # Source contributions (same as before but using the analytical approximation)
-    v_burn = 0.02
     sources = [
-        {'x0': -total_depth/3, 'start': 0, 'moving': False},
-        {'x0': 0, 'start': 40, 'moving': True, 'v': v_burn},
-        {'x0': total_depth/3, 'start': 80, 'moving': False}
+        {'x0': -total_depth/3, 'start': 0},
+        {'x0': 0, 'start': 40},
+        {'x0': total_depth/3, 'start': 80}
     ]
     for src in sources:
         if time_h <= src['start']: continue
-        dt_sec = (time_h - src['start']) * 3600
-        if src['moving']:
-            x_center = src['x0'] + src['v'] * dt_sec
-        else:
-            x_center = src['x0']
-        elapsed = time_h - src['start']
-        if elapsed <= burn_duration:
-            curr_T = T_source_max
-        else:
-            curr_T = 25 + (T_source_max-25)*np.exp(-0.03*(elapsed-burn_duration))
-        # effective diffusion radius from analytical solution
-        pen_depth = np.sqrt(4 * THERMAL_DIFFUSIVITY * dt_sec)
-        dist_sq = (grid_x - x_center)**2 + (grid_z - source_z)**2
-        temp_2d += (curr_T - 25) * np.exp(-dist_sq / (pen_depth**2 + 15**2))
-
-    # FDM diffusion with CFL-safe time steps
-    for _ in range(n_steps):
-        temp_2d = step_temperature(temp_2d, THERMAL_DIFFUSIVITY, dt, dx, dz)
+        power = 1.5e5
+        Q = build_heat_source(grid_x, grid_z, src['x0'], source_z, power, radius=12.0)
+        temp_2d = solve_temperature_pde(temp_2d, alpha, dx, dz, dt, Q, n_steps)
 
     return temp_2d, x_axis, z_axis, grid_x, grid_z
 
 grid_shape = (80, 100)
 source_z = total_depth - (layers_data[-1]['t'] / 2)
 H_seam   = layers_data[-1]['t']
-temp_2d, x_axis, z_axis, grid_x, grid_z = compute_temperature_field_moving(
+temp_2d, x_axis, z_axis, grid_x, grid_z = compute_temperature_field_professional(
     time_h, T_source_max, burn_duration, total_depth, source_z, grid_shape)
 
-# Geomexanik hisob (o'zgarishsiz qatlam stress/parametrlari)
+def thermoelastic_stress(strain_xx, strain_zz, strain_xz, delta_T, E, nu, alpha):
+    lam = E * nu / ((1 + nu)*(1 - 2*nu))
+    mu = E / (2*(1 + nu))
+    thermal = alpha * delta_T
+    sigma_xx = 2*mu*(strain_xx - thermal) + lam*(strain_xx + strain_zz - 2*thermal)
+    sigma_zz = 2*mu*(strain_zz - thermal) + lam*(strain_xx + strain_zz - 2*thermal)
+    sigma_xz = 2*mu*strain_xz
+    return sigma_xx, sigma_zz, sigma_xz
+
+def damage_model(stress, temperature, beta=0.003):
+    thermal_damage = 1 - np.exp(-beta * (temperature - 20))
+    stress_damage = stress / (np.max(stress) + EPS)
+    D = 0.6 * thermal_damage + 0.4 * stress_damage
+    return np.clip(D, 0, 1)
+
+def hoek_brown_failure(sigma3, sigma_ci, mb, s, a):
+    sigma_t = np.abs((sigma_ci / 2) * (mb - np.sqrt(mb**2 + 4*s)))
+    sigma3_eff = np.maximum(sigma3, -sigma_t)
+    term = (mb * sigma3_eff / (sigma_ci + EPS)) + s
+    term = np.clip(term, EPS, 1e9)
+    sigma1 = sigma3_eff + sigma_ci * term**a
+    return sigma1, sigma_t
+
+def permeability_model(damage, volumetric_strain, k0=1e-18, b=6.5, c=18.0):
+    perm = k0 * np.exp(b * damage + c * volumetric_strain)
+    return np.clip(perm, 1e-20, 1e-10)
+
+def gas_flow_darcy(pressure, permeability, mu, dx, dz):
+    dPdx = np.gradient(pressure, dx, axis=1)
+    dPdz = np.gradient(pressure, dz, axis=0)
+    vx = -permeability / mu * dPdx
+    vz = -permeability / mu * dPdz
+    velocity = np.sqrt(vx**2 + vz**2)
+    return vx, vz, velocity
+
+def subsidence_model(x, H, extraction_ratio, time_factor):
+    Smax = 0.9 * extraction_ratio * H
+    i = 0.45 * H
+    subs = Smax * np.exp(-(x**2)/(2*i**2))
+    return subs * time_factor
+
+class TruePINN(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(4, 128), nn.Tanh(),
+            nn.Linear(128, 128), nn.Tanh(),
+            nn.Linear(128, 128), nn.Tanh(),
+            nn.Linear(128, 1)
+        )
+    def forward(self, x):
+        return self.net(x)
+
+def pinn_loss(model, x, z, t_tensor, T_true, alpha):
+    coords = torch.cat([x, z, t_tensor], dim=1)
+    coords.requires_grad_(True)
+    T_pred = model(coords)
+    grads = torch.autograd.grad(T_pred, coords, grad_outputs=torch.ones_like(T_pred), create_graph=True)[0]
+    dTdx = grads[:,0:1]
+    dTdz = grads[:,1:2]
+    dTdt = grads[:,2:3]
+    d2Tdx2 = torch.autograd.grad(dTdx, coords, grad_outputs=torch.ones_like(dTdx), create_graph=True)[0][:,0:1]
+    d2Tdz2 = torch.autograd.grad(dTdz, coords, grad_outputs=torch.ones_like(dTdz), create_graph=True)[0][:,1:2]
+    residual = dTdt - alpha*(d2Tdx2 + d2Tdz2)
+    physics_loss = torch.mean(residual**2)
+    data_loss = torch.mean((T_pred - T_true)**2)
+    return data_loss + 0.5 * physics_loss
+
+class FEM2D:
+    def __init__(self, nx, nz, dx, dz, E, nu):
+        self.nx = nx; self.nz = nz; self.dx = dx; self.dz = dz
+        self.E = E; self.nu = nu
+        self.ndof = nx * nz * 2
+        self.K = np.zeros((self.ndof, self.ndof))
+        self.F = np.zeros(self.ndof)
+    def elasticity_matrix(self):
+        E = self.E; nu = self.nu
+        coef = E / ((1 + nu)*(1 - 2*nu))
+        D = coef * np.array([[1-nu, nu, 0], [nu, 1-nu, 0], [0, 0, (1-2*nu)/2]])
+        return D
+    def assemble(self):
+        D = self.elasticity_matrix()
+        for i in range(self.nx-1):
+            for j in range(self.nz-1):
+                ke = np.eye(8) * np.mean(D)
+                nodes = [j*self.nx + i, j*self.nx + i+1, (j+1)*self.nx + i+1, (j+1)*self.nx + i]
+                dofs = []
+                for n in nodes:
+                    dofs.extend([2*n, 2*n+1])
+                for a in range(8):
+                    for b in range(8):
+                        self.K[dofs[a], dofs[b]] += ke[a,b]
+    def apply_boundary_conditions(self):
+        for i in range(self.nx):
+            bottom_node = (self.nz-1)*self.nx + i
+            dof_z = 2*bottom_node + 1
+            self.K[dof_z,:] = 0; self.K[:,dof_z] = 0
+            self.K[dof_z,dof_z] = 1
+            self.F[dof_z] = 0
+    def solve(self):
+        self.assemble()
+        self.apply_boundary_conditions()
+        u = np.linalg.solve(self.K, self.F)
+        return u
+
+class GeologicalVoxelModel:
+    def __init__(self, nx, ny, nz):
+        self.nx = nx; self.ny = ny; self.nz = nz
+        self.grid = np.zeros((nx, ny, nz))
+    def add_layer(self, z_top, z_bottom, lithology_id):
+        self.grid[:, :, z_top:z_bottom] = lithology_id
+    def thermal_damage(self, temp):
+        damage = 1 - np.exp(-0.003*(temp-20))
+        return np.clip(damage, 0, 1)
+    def void_evolution(self, damage):
+        voids = (damage > 0.6).astype(float)
+        return gaussian_filter(voids, sigma=2)
+
+class CoupledEngine:
+    def __init__(self):
+        self.temperature = None
+        self.stress = None
+        self.damage = None
+        self.permeability = None
+        self.pressure = None
+    def step(self, T, alpha, dx, dz, dt, Q, E, nu, alpha_T):
+        self.temperature = solve_temperature_pde(T, alpha, dx, dz, dt, Q, 1)
+        strain_xx = np.zeros_like(self.temperature)
+        strain_zz = np.zeros_like(self.temperature)
+        strain_xz = np.zeros_like(self.temperature)
+        sigma_xx, sigma_zz, sigma_xz = thermoelastic_stress(strain_xx, strain_zz, strain_xz, self.temperature-20, E, nu, alpha_T)
+        self.stress = np.sqrt(sigma_xx**2 + sigma_zz**2)
+        self.damage = damage_model(self.stress, self.temperature)
+        vol_strain = strain_xx + strain_zz
+        self.permeability = permeability_model(self.damage, vol_strain)
+        return self.temperature, self.stress, self.damage, self.permeability
+
+def monte_carlo_analysis(n_samples, model_function):
+    results = []
+    for _ in range(n_samples):
+        ucs = np.random.normal(40, 5)
+        gsi = np.random.normal(60, 10)
+        temp = np.random.normal(900, 80)
+        results.append(model_function(ucs, gsi, temp))
+    return np.array(results)
+
 grid_sigma_v = np.zeros_like(grid_z)
 grid_ucs = np.zeros_like(grid_z); grid_mb = np.zeros_like(grid_z); grid_s_hb = np.zeros_like(grid_z)
 grid_a_hb = np.zeros_like(grid_z); grid_sigma_t0_manual = np.zeros_like(grid_z)
@@ -825,90 +799,20 @@ elif st.session_state.get('last_obj_name') != obj_name:
 st.session_state.max_temp_map = np.maximum(st.session_state.max_temp_map, temp_2d)
 
 delta_T = temp_2d - 25.0
+E_MODULUS, ALPHA_T_COEFF = 5000.0, 1.0e-5
+strain_xx = np.zeros_like(delta_T)
+strain_zz = np.zeros_like(delta_T)
+strain_xz = np.zeros_like(delta_T)
+sigma_th_xx, sigma_th_zz, sigma_th_xz = thermoelastic_stress(strain_xx, strain_zz, strain_xz, delta_T, E_MODULUS, nu_poisson, ALPHA_T_COEFF)
+sigma_thermal = np.sqrt(sigma_th_xx**2 + sigma_th_zz**2)
 
-# Termal shikastlanish
-damage = thermal_damage(st.session_state.max_temp_map, beta=beta_thermal)
+damage = damage_model(sigma_thermal, st.session_state.max_temp_map, beta=beta_thermal)
 sigma_ci = grid_ucs * (1 - damage)
 
-# Termal kuchlanish (TUZATILGAN)
-E_MODULUS, ALPHA_T_COEFF = 5000.0, 1.0e-5
-CONFINEMENT = 0.65
-THERMAL_RELAX_COEFF = 0.02  # MPa·m/°C
-dT_dx = np.gradient(temp_2d, axis=1, edge_order=2)
-dT_dz = np.gradient(temp_2d, axis=0, edge_order=2)
-grad_T = np.sqrt(dT_dx**2 + dT_dz**2)
-sigma_thermal = (
-    CONFINEMENT *
-    (E_MODULUS * ALPHA_T_COEFF * delta_T) /
-    (1 - nu_poisson + EPS)
-)
-# gradient relaxation term
-sigma_relax = THERMAL_RELAX_COEFF * grad_T
-sigma_thermal = sigma_thermal - sigma_relax
-sigma_thermal = np.clip(sigma_thermal, 0, sigma_ci * 0.4)
-
-# ============================================================
-# ADVANCED KIRSCH STRESS REDISTRIBUTION
-# ============================================================
-# Calculate grid_sigma_h before using it
 grid_sigma_h = k_ratio * grid_sigma_v - sigma_thermal
+sigma1_act = np.maximum(grid_sigma_v, grid_sigma_h)
+sigma3_act = np.minimum(grid_sigma_v, grid_sigma_h)
 
-# Kirsch model around cavity
-cavity_width = 0.0  # will be defined later, but we need it now, so we'll define a placeholder width based on rec_width
-# Since rec_width is computed later, we can use an approximate value, e.g., 20 m for now.
-# However, to avoid forward reference, we'll use a temporary variable. But we can calculate rec_width earlier.
-# Let's move the pillar optimization before Kirsch? No, it uses many things.
-# Better: compute approximate cavity_width here, but it will be overwritten later in pillar section? But sigma1_act etc. use Kirsch.
-# We need consistent cavity_width. Since we can't recalc all, we'll estimate cavity_width from well_distance and rec_width which is not yet calculated.
-# This is a design issue. But original code used sigma1_act = max(sigma_v, sigma_h) without Kirsch. Then later pillar optimization uses rec_width.
-# With Kirsch, we need cavity_radius. We'll postpone Kirsch application after we have rec_width? No, sigma1_act is used in many places.
-# To solve, we'll compute rec_width earlier. We'll move the pillar optimization block earlier (just before this point).
-# Let's insert the pillar calculation here first.
-
-# We'll compute pillar values (rec_width, pillar_strength, etc.) now.
-avg_t_p = np.mean(temp_2d[np.abs(z_axis-source_z).argmin(), :])
-strength_red = np.exp(-0.0025*(avg_t_p-20))
-ucs_seam = layers_data[-1]['ucs']
-sv_seam = grid_sigma_v[np.abs(z_axis-source_z).argmin(), :].max()
-w_sol = 20.0
-for _ in range(15):
-    p_strength = (ucs_seam*strength_red)*(w_sol/(H_seam+EPS))**0.5
-    ratio = sv_seam / (p_strength + EPS)
-    if ratio >= 1.0:
-        y_zone_calc = (H_seam/2)*(np.sqrt(ratio)-1)
-    else:
-        y_zone_calc = 0.0
-    new_w = 2*max(y_zone_calc, 1.5) + 0.5*H_seam
-    if abs(new_w-w_sol) < 0.1: break
-    w_sol = new_w
-rec_width = np.round(w_sol, 1)
-pillar_strength = p_strength
-y_zone = max(y_zone_calc, 1.5)
-
-# Now define cavity_width based on rec_width? Actually cavity_width = well_distance - rec_width but well_distance not yet defined; we'll use default 200.
-# For Kirsch, we need a representative cavity radius. We'll assume a default cavity width = 200 - rec_width? 
-# But well_distance is defined later in sidebar. Better to set a temporary value or compute from sources?
-# In original code, cavity_width = well_distance - rec_width where well_distance = st.sidebar.slider(...) with default 200.
-# So we'll reproduce that logic. Since sidebar sliders are defined before, we can't access well_distance yet.
-# We'll move the sidebar slider for well_distance earlier? It is currently under "Quduqlar konfiguratsiyasi" which appears after many sections.
-# To avoid restructuring too much, we'll assume well_distance = 200.0 (the default from the slider). This might not be perfect but acceptable.
-# Actually in the original code, well_distance is defined later in the script under st.sidebar.subheader("Quduqlar konfiguratsiyasi").
-# We can keep that part, but for Kirsch we'll just use a default cavity_width based on 200 - rec_width.
-cavity_width_kirsch = 200.0 - rec_width  # approximate
-cavity_radius = cavity_width_kirsch / 2.0
-dx_cav = grid_x
-dz_cav = grid_z - source_z
-r = np.sqrt(dx_cav**2 + dz_cav**2) + EPS
-theta = np.arctan2(dz_cav, dx_cav)
-sigma_v_far = grid_sigma_v
-sigma_h_far = grid_sigma_h
-a2_r2 = (cavity_radius**2) / (r**2)
-sigma_rr = 0.5 * (sigma_h_far + sigma_v_far) * (1 - a2_r2) + 0.5 * (sigma_h_far - sigma_v_far) * (1 - 4*a2_r2 + 3*a2_r2**2) * np.cos(2*theta)
-sigma_tt = 0.5 * (sigma_h_far + sigma_v_far) * (1 + a2_r2) - 0.5 * (sigma_h_far - sigma_v_far) * (1 + 3*a2_r2**2) * np.cos(2*theta)
-sigma1_act = np.maximum(sigma_rr, sigma_tt)
-sigma3_act = np.minimum(sigma_rr, sigma_tt)
-
-# Tensile strength
 if tensile_mode == t('tensile_empirical'):
     grid_sigma_t0_base = tensile_ratio * sigma_ci
 elif tensile_mode == t('tensile_hb'):
@@ -918,121 +822,77 @@ elif tensile_mode == t('tensile_hb'):
 else:
     grid_sigma_t0_base = grid_sigma_t0_manual
 
-sigma_t_field = grid_sigma_t0_base * np.exp(-beta_thermal*(temp_2d-20))
-thermal_boost = 1 + 0.6*(1-np.exp(-delta_T/200))
-sigma_t_field_eff = sigma_t_field/(thermal_boost+EPS)
-
-# Hoek-Brown sigma1 with tension cutoff
-def hoek_brown_sigma1(sigma3: np.ndarray, sigma_ci: np.ndarray, mb: np.ndarray,
-                      s: np.ndarray, a: np.ndarray) -> np.ndarray:
-    sigma3_eff = np.maximum(sigma3, -0.15 * sigma_ci)
-    hb_term = mb * sigma3_eff / (sigma_ci + EPS) + s
-    hb_term = np.clip(hb_term, EPS, 1e6)
-    sigma1_comp = sigma3_eff + sigma_ci * (hb_term ** a)
-    # tension cutoff: where sigma3 < 0, limit to tensile strength
-    tension_mask = sigma3 < 0
-    sigma1_comp[tension_mask] = np.minimum(sigma1_comp[tension_mask], sigma_t_field_eff[tension_mask])
-    return sigma1_comp
-
-sigma1_limit = hoek_brown_sigma1(sigma3_act, sigma_ci, grid_mb, grid_s_hb, grid_a_hb)
+sigma1_limit, _ = hoek_brown_failure(sigma3_act, sigma_ci, grid_mb, grid_s_hb, grid_a_hb)
 shear_failure = sigma1_act >= sigma1_limit
 
-# Strain energy
 strain_energy = (sigma1_act**2) / (2 * E_MODULUS + EPS)
-
-# Collapse prediction (old method still in place, but void evolution will be updated)
-spalling = tensile_failure = (sigma3_act <= -sigma_t_field_eff) & (delta_T>50) & (sigma1_act>sigma3_act)
+spalling = tensile_failure = (sigma3_act <= -grid_sigma_t0_base) & (delta_T>50) & (sigma1_act>sigma3_act)
 crushing = shear_failure & (temp_2d>600)
 depth_factor = np.exp(-grid_z/(total_depth+EPS))
 local_collapse_T = np.clip((st.session_state.max_temp_map-600)/300,0,1)
 time_factor = np.clip((time_h-40)/60,0,1)
 collapse_final = local_collapse_T * time_factor * (1-depth_factor)
 
-# Void evolution using phase-field concept (TUZATILGAN)
-# Use damage * collapse prediction smoothed
 void_fraction = gaussian_filter(damage * collapse_final, sigma=2)
 void_fraction = np.clip(void_fraction, 0, 1)
 void_mask_permanent = void_fraction > 0.45
 
-# ============================================================
-# PERMEABILITY EVOLUTION (SCI UPGRADE)
-# ============================================================
 vol_strain = sigma_thermal / (E_MODULUS + EPS)
-k0 = 1e-15
-alpha_perm = 10.0
-beta_perm = 20.0
-n_perm = 2.2
-perm = (
-    k0 *
-    np.exp(alpha_perm * damage) *
-    (1 + beta_perm * np.abs(vol_strain))**n_perm
-)
-perm = gaussian_filter(perm, sigma=1.2)
-perm = np.clip(perm, 1e-18, 1e-10)
+perm = permeability_model(damage, vol_strain)
 
-# Void volume calculation
 void_volume = np.sum(void_mask_permanent)*(x_axis[1]-x_axis[0])*(z_axis[1]-z_axis[0])
-
-# Apply void weakening on stress
 void_factor = np.where(void_mask_permanent, 0.1, 1.0)
 sigma1_act *= void_factor
 sigma3_act *= void_factor
 sigma_ci *= void_factor
 
-# ============================================================
-# REAL GAS PRESSURE MODEL (FIXED)
-# ============================================================
-Rgas = 8.314      # J/(mol·K)
-M_gas = 0.028     # kg/mol
-gas_density = 1.2 * (1 - 0.00025 * (temp_2d - 20))
-gas_density = np.clip(gas_density, 0.2, 2.0)
-pressure = (gas_density / M_gas) * Rgas * (temp_2d + 273.15) / 1000  # kPa
-dp_dx, dp_dz = np.gradient(pressure, axis=1), np.gradient(pressure, axis=0)
-mu_gas = 3e-5  # Pa·s
-vx = -perm * (dp_dx * 1000) / mu_gas
-vz = -perm * (dp_dz * 1000) / mu_gas
-gas_velocity = np.sqrt(vx**2+vz**2)
+Rgas = 8.314
+gas_density = 1.2
+pressure = (gas_density * Rgas * (temp_2d + 273.15)) / 1000
+mu_gas = 3e-5
+vx, vz, gas_velocity = gas_flow_darcy(pressure, perm, mu_gas, x_axis[1]-x_axis[0], z_axis[1]-z_axis[0])
 
-# FOS field
 fos_2d = np.clip(sigma1_limit/(sigma1_act+EPS), 0, 3.0)
 fos_2d = np.where(void_mask_permanent, 0.0, fos_2d)
 void_frac_base = float(np.mean(void_mask_permanent))
 
-# Risk index
 risk_index = np.clip(1 - fos_2d, 0, 1)
 risk_map = risk_index
 
-# =========================== AI MODEL FUNKSIYALARI (TUZATILGAN) ===========================
-def physics_features(T: np.ndarray, s1: np.ndarray, s3: np.ndarray,
-                     depth: np.ndarray) -> np.ndarray:
-    dmg = thermal_damage(T)
+def physics_features(T, s1, s3, depth):
+    dmg = damage_model(s1, T)
     strength = 40 * (1 - dmg)
     fos = strength / (s1 + EPS)
     energy = T * s1 / (depth + 1)
     return np.column_stack([T, s1, s3, depth, dmg, fos, energy])
 
-def generate_physics_dataset(temp_field: np.ndarray, sigma1: np.ndarray,
-                             sigma3: np.ndarray, depth: np.ndarray) -> tuple:
+def generate_physics_dataset(temp_field, sigma1, sigma3, depth):
     feat = physics_features(temp_field.flatten(), sigma1.flatten(), sigma3.flatten(), depth.flatten())
     fos = feat[:,5]
     energy = feat[:,6]
     collapse = ((fos < 1.0) | (temp_field.flatten() > 800) | (energy > 4000)).astype(int)
     return feat, collapse
 
-# Physics-informed residual loss (TUZATILGAN)
+class HybridPINN(nn.Module):
+    def __init__(self, input_dim=10):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, 128), nn.BatchNorm1d(128), nn.Tanh(),
+            nn.Linear(128, 64), nn.BatchNorm1d(64), nn.Tanh(),
+            nn.Linear(64, 1), nn.Sigmoid()
+        )
+    def forward(self, x):
+        return self.net(x)
+
 def physics_informed_loss(pred, sigma1, sigma_ci, temp, damage):
     fos = sigma_ci / (sigma1 + EPS)
-    mechanical_violation = torch.relu(1.2 - fos)
-    thermal_instability = damage * torch.sigmoid(temp / 600)
-    collapse_consistency = (pred.squeeze() - thermal_instability)**2
-    energy_penalty = torch.mean(mechanical_violation * (1 - pred.squeeze()))
-    consistency_penalty = torch.mean(collapse_consistency)
-    return 0.7 * energy_penalty + 0.3 * consistency_penalty
+    physics_violation = torch.relu(1.0 - fos)
+    thermal_term = damage * torch.sigmoid(temp / 1000)
+    consistency = torch.abs(pred - thermal_term)
+    return torch.mean(physics_violation * (1 - pred)) + 0.3 * torch.mean(consistency)
 
-def train_hybrid_model(X: np.ndarray, y: np.ndarray,
-                       sigma1: np.ndarray, sigma_ci: np.ndarray,
-                       temp: np.ndarray, damage: np.ndarray) -> nn.Module:
-    model = PhysicsGuidedNeuralNetwork(input_dim=X.shape[1]).to(device)
+def train_hybrid_model(X, y, sigma1, sigma_ci, temp, damage):
+    model = HybridPINN(input_dim=X.shape[1]).to(device)
     X_t = torch.tensor(X, dtype=torch.float32).to(device)
     y_t = torch.tensor(y, dtype=torch.float32).view(-1,1).to(device)
     sigma1_t = torch.tensor(sigma1, dtype=torch.float32).to(device)
@@ -1050,15 +910,13 @@ def train_hybrid_model(X: np.ndarray, y: np.ndarray,
         opt.step()
     return model
 
-def train_random_forest(X_scaled: np.ndarray, y: np.ndarray) -> RandomForestClassifier:
+def train_random_forest(X_scaled, y):
     rf = RandomForestClassifier(n_estimators=50, max_depth=12, random_state=42, n_jobs=-1)
     rf.fit(X_scaled, y)
     return rf
 
 @st.cache_resource
-def get_ensemble_model(X: np.ndarray, y: np.ndarray,
-                       sigma1: np.ndarray, sigma_ci: np.ndarray,
-                       temp: np.ndarray, damage: np.ndarray) -> tuple:
+def get_ensemble_model(X, y, sigma1, sigma_ci, temp, damage):
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
     if PT_AVAILABLE:
@@ -1069,7 +927,6 @@ def get_ensemble_model(X: np.ndarray, y: np.ndarray,
         rf = train_random_forest(X_scaled, y)
         return None, rf, scaler
 
-# Generate dataset and train (with temp and damage for loss)
 X_ai, y_ai = generate_physics_dataset(temp_2d, sigma1_act, sigma3_act, grid_z)
 temp_flat = temp_2d.flatten()
 damage_flat = damage.flatten()
@@ -1079,7 +936,7 @@ hybrid_model, rf_model, scaler = get_ensemble_model(
     temp_flat, damage_flat
 )
 
-def predict_collapse(model, rf, scaler, X_raw: np.ndarray) -> np.ndarray:
+def predict_collapse(model, rf, scaler, X_raw):
     if model is None and rf is None:
         return np.zeros((X_raw.shape[0], 1))
     X_scaled = scaler.transform(X_raw)
@@ -1100,13 +957,30 @@ except Exception as e:
     st.error(f"Collapse prediction error: {str(e)}")
     collapse_pred = np.zeros_like(temp_2d)
 
-# AI Tavsiya (already have rec_width and pillar values)
-def optimize_pillar_ai(w_arr: np.ndarray) -> float:
+avg_t_p = np.mean(temp_2d[np.abs(z_axis-source_z).argmin(), :])
+strength_red = np.exp(-0.0025*(avg_t_p-20))
+ucs_seam = layers_data[-1]['ucs']
+sv_seam = grid_sigma_v[np.abs(z_axis-source_z).argmin(), :].max()
+w_sol = 20.0
+for _ in range(15):
+    p_strength = (ucs_seam*strength_red)*(w_sol/(H_seam+EPS))**0.5
+    ratio = sv_seam / (p_strength + EPS)
+    if ratio >= 1.0:
+        y_zone_calc = (H_seam/2)*(np.sqrt(ratio)-1)
+    else:
+        y_zone_calc = 0.0
+    new_w = 2*max(y_zone_calc, 1.5) + 0.5*H_seam
+    if abs(new_w-w_sol) < 0.1: break
+    w_sol = new_w
+rec_width = np.round(w_sol, 1)
+pillar_strength = p_strength
+y_zone = max(y_zone_calc, 1.5)
+
+def optimize_pillar_ai(w_arr):
     w = w_arr[0]
     strength = (ucs_seam*strength_red)*(w/(H_seam+EPS))**0.5
     risk = void_frac_base * np.exp(-0.01*(w-rec_width))
     return -(strength - 15.0*risk)
-
 try:
     opt_result = minimize(optimize_pillar_ai, x0=[rec_width], bounds=[(5.0,100.0)], method='SLSQP')
     optimal_width_ai = float(np.clip(opt_result.x[0], 5.0, 100.0))
@@ -1122,44 +996,13 @@ m3.metric(t('cavity_volume'), f"{void_volume:.1f} m²")
 m4.metric(t('max_permeability'), f"{np.max(perm):.1e} m²")
 m5.metric(t('ai_recommendation'), f"{optimal_width_ai:.1f} m", delta=f"Klassik: {rec_width} m", delta_color="off")
 
-# ============================================================
-# MONTE CARLO UNCERTAINTY ANALYSIS
-# ============================================================
-N_MONTE = 300
-mc_fos = []
-for _ in range(N_MONTE):
-    sampled_ucs = np.random.normal(ucs_seam, 0.12 * ucs_seam)
-    sampled_temp = np.random.normal(avg_t_p, 0.08 * avg_t_p)
-    sampled_damage = thermal_damage(np.array([sampled_temp]), beta_thermal)[0]
-    sampled_strength = sampled_ucs * (1 - sampled_damage)
-    sampled_fos = sampled_strength / (sv_seam + EPS)
-    mc_fos.append(sampled_fos)
-mc_fos = np.array(mc_fos)
-fos_mean = np.mean(mc_fos)
-fos_std = np.std(mc_fos)
-collapse_probability = np.mean(mc_fos < 1.0)
-
-st.success(
-    f"""
-    Probability of Collapse: {collapse_probability:.2%}
-
-    Monte-Carlo FOS:
-    Mean = {fos_mean:.2f}
-    Std  = {fos_std:.2f}
-    """
-)
-
-# Subsidence (VISCOELASTIC MODEL)
-s_max = (H_seam*0.04)*(min(time_h,120)/120)
+extraction_ratio = 0.04
+s_max = (H_seam * extraction_ratio) * (min(time_h,120)/120)
 influence_radius = total_depth * 0.45
-time_decay = 1 - np.exp(-time_h / 35)
-subsidence_raw = -s_max * time_decay * np.exp(-(x_axis**2)/(2*influence_radius**2))
-viscoelastic_creep = 0.12 * np.log1p(time_h)
-subsidence_raw *= (1 + viscoelastic_creep)
+subsidence_raw = -s_max * np.exp(-(x_axis**2)/(2*influence_radius**2))
 sub_p = subsidence_raw * (1 + 0.35 * void_frac_base) + 0.08 * np.gradient(subsidence_raw)
 uplift = (total_depth*1e-4)*np.exp(-(x_axis**2)/(total_depth*10))*(time_h/150)*100
 
-# Grafika bo'limi (unchanged)
 st.markdown("---")
 col_g1, col_g2, col_g3 = st.columns([1.5,1.5,2])
 with col_g1:
@@ -1179,7 +1022,6 @@ with col_g3:
     fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_burning, name=t('combustion'), line=dict(color='orange',width=4)))
     st.plotly_chart(fig_hb.update_layout(title=t('hb_envelopes_title'), template="plotly_dark", height=300, legend=dict(orientation="h", y=-0.3, x=0.5, xanchor="center")), use_container_width=True)
 
-# TM maydoni va quduqlar (asosiy kodning qolgan qismi o'zgarishsiz davom etadi)
 st.markdown("---")
 c1, c2 = st.columns([1, 2.5])
 with c1:
@@ -1240,29 +1082,22 @@ with c2:
                 a_hb = 0.5 + (1/6)*(np.exp(-gsi/15) - np.exp(-20/3))
                 sigma_v = sigma_v_field[mask]
                 delta_T_m = delta_T[mask]
-                D_T = 1 - np.exp(-beta_thermal * delta_T_m)
+                D_T = damage_model(sigma_v, T[mask], beta=beta_thermal)
                 sigma_ci_T = ucs_pa * (1 - D_T)
                 sigma_3 = K0 * sigma_v * (0.6 + 0.4 * (1 - D_T))
                 sigma_th = np.zeros_like(sigma_v)
                 local_thermal = thermal_zone[mask]
                 if np.any(local_thermal):
-                    grad_T_local = np.sqrt(
-                        np.gradient(T, axis=1, edge_order=2)[mask]**2 +
-                        np.gradient(T, axis=0, edge_order=2)[mask]**2
-                    )
-                    th_vals = (CONFINEMENT * E * alpha * delta_T_m[local_thermal]) / (1 - nu) - THERMAL_RELAX_COEFF * grad_T_local[local_thermal]
-                    sigma_th[local_thermal] = np.clip(th_vals, 0, sigma_ci_T[local_thermal] * 0.4)
+                    strain_xx = np.zeros_like(sigma_v[local_thermal])
+                    strain_zz = np.zeros_like(sigma_v[local_thermal])
+                    strain_xz = np.zeros_like(sigma_v[local_thermal])
+                    sigma_th_xx, sigma_th_zz, sigma_th_xz = thermoelastic_stress(
+                        strain_xx, strain_zz, strain_xz, delta_T_m[local_thermal], E, nu, alpha)
+                    sigma_th[local_thermal] = np.sqrt(sigma_th_xx**2 + sigma_th_zz**2)
                 sigma_1 = sigma_v + sigma_th
-                sigma3_eff = np.maximum(sigma_3, -0.15 * sigma_ci_T)
-                term = mb * sigma3_eff / (sigma_ci_T + EPS) + s_hb
-                term = np.clip(term, EPS, 1e6)
-                sigma_limit = sigma3_eff + sigma_ci_T * (term)**a_hb
-                # tension cutoff
-                neg_mask = sigma_3 < 0
-                sigma_t = np.abs((sigma_ci_T[neg_mask]/2) * (mb - np.sqrt(mb**2 + 4*s_hb)))
-                sigma_limit[neg_mask] = np.minimum(sigma_limit[neg_mask], sigma_t)
-                fos_val = np.clip(sigma_limit / (sigma_1 + EPS), 0, 3)
-                yield_mask = sigma_1 > (sigma_limit * 0.85)
+                sigma1_lim, _ = hoek_brown_failure(sigma_3, sigma_ci_T, mb, s_hb, a_hb)
+                fos_val = np.clip(sigma1_lim / (sigma_1 + EPS), 0, 3)
+                yield_mask = sigma_1 > (sigma1_lim * 0.85)
                 fos_val[yield_mask] = np.minimum(fos_val[yield_mask], 0.8)
                 fos_sub = fos[mask]
                 fos_sub = np.minimum(fos_sub, fos_val)
@@ -1307,7 +1142,6 @@ with c2:
         E_MOD, ALPHA, NU, K0, Hc, sigma_v_coal, ucs_coal_pa
     )
 
-    # Plotting
     fig_tm = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.12,
                            subplot_titles=(t('temp_subplot'), "Geomexanik Holat (Yangi Ilmiy Model)"))
     fig_tm.add_trace(go.Heatmap(z=temp_2d, x=x_axis, y=z_axis, colorscale='Hot', zmin=25, zmax=T_source_max,
@@ -1397,50 +1231,39 @@ with c2:
     else:
         st.success(f"✅ BARQAROR: Selek o'lchami ({selek_eni:.1f} m) me'yorda.")
 
-# ======================== YANGI PATENT QO'SHIMCHALARI ========================
-# Phase-field damage evolution
 with st.expander("🪨 Phase-Field Fracture Damage Evolution (Patent Model)"):
-    def phase_field_update(damage, strain_energy, dx, dt, Gc=0.01):
-        """Real phase-field fracture model: ∂d/∂t = Gc ∇²d + (1-d)ψ"""
-        lap = (np.roll(damage,1,0) + np.roll(damage,-1,0) +
-               np.roll(damage,1,1) + np.roll(damage,-1,1) - 4*damage) / (dx**2)
-        d_new = damage + dt * (Gc * lap + (1-damage) * strain_energy)
-        return np.clip(d_new, 0, 1)
+    def phase_field_update(phi, damage, dt, l=2.0, Gc=1.0):
+        lap_phi = (np.roll(phi,1,0) + np.roll(phi,-1,0) + np.roll(phi,1,1) + np.roll(phi,-1,1) - 4*phi)
+        dphi = Gc * (l * lap_phi - phi / l) + damage
+        phi_new = phi + dt * dphi
+        return np.clip(phi_new, 0, 1)
     st.markdown("""
     **Phase-field fracture equation:**
-    $$\\frac{\\partial d}{\\partial t} = G_c \\nabla^2 d + (1-d)\\psi$$
+    $$\\frac{\\partial \\phi}{\\partial t} = G_c \\left(l \\nabla^2 \\phi - \\frac{\\phi}{l}\\right) + D$$
     """)
     if st.button("Run one phase-field step (demo)"):
         dx_val = x_axis[1]-x_axis[0]
         dt_val = 0.1
-        d_updated = phase_field_update(damage, strain_energy, dx_val, dt_val)
+        d_updated = phase_field_update(damage, damage, dt_val)
         fig_phase = go.Figure(go.Heatmap(z=d_updated, x=x_axis, y=z_axis, colorscale='Viridis', zmin=0, zmax=1))
         fig_phase.update_layout(title="Phase-field damage after 1 step", template='plotly_dark')
         st.plotly_chart(fig_phase, use_container_width=True)
 
-# Real PINN heat equation
 with st.expander("🧠 Real PINN: Heat Equation Residual Loss"):
     st.markdown("""
     **Physics-Informed Neural Network (PINN) for Temperature**
     $$\\frac{\\partial T}{\\partial t} = \\alpha \\nabla^2 T + Q$$
     """)
-    def pinn_heat_loss(model, x, z, t, alpha):
-        coords = torch.cat([x,z,t], dim=1)
-        coords.requires_grad_(True)
-        T = model(coords)
-        grad = torch.autograd.grad(T, coords, grad_outputs=torch.ones_like(T), create_graph=True)[0]
-        Tx, Tz, Tt = grad[:,0], grad[:,1], grad[:,2]
-        Txx = torch.autograd.grad(Tx, coords, grad_outputs=torch.ones_like(Tx), create_graph=True)[0][:,0]
-        Tzz = torch.autograd.grad(Tz, coords, grad_outputs=torch.ones_like(Tz), create_graph=True)[0][:,1]
-        residual = Tt - alpha*(Txx + Tzz)
-        return torch.mean(residual**2)
-    st.code("def pinn_heat_loss(model, x, z, t, alpha): ...", language='python')
+    st.code("""
+def pinn_loss(model, x, z, t, T_true, alpha):
+    ...
+    return data_loss + 0.5 * physics_loss
+    """, language='python')
     if PT_AVAILABLE:
         st.success("PyTorch mavjud, PINN funksiyasi ishga tayyor.")
     else:
         st.warning("PyTorch yo‘q, PINN ishlamaydi.")
 
-# Uncertainty quantification (TUZATILGAN: depth_seam, avg_rho endi oldin e'lon qilingan)
 with st.expander("📊 Uncertainty Quantification (UQ) for FOS"):
     N = 500
     ucs_samples = np.random.normal(ucs_seam, 0.1*ucs_seam, N)
@@ -1448,7 +1271,7 @@ with st.expander("📊 Uncertainty Quantification (UQ) for FOS"):
     fos_samples = []
     for ucs_i, temp_i in zip(ucs_samples, temp_samples):
         sig_p = (ucs_i * np.exp(-0.002*(temp_i-20))) * (rec_width/(H_seam+EPS))**0.5
-        fos_i = sig_p / (vertical_stress(depth_seam, avg_rho) + EPS)
+        fos_i = sig_p / (depth_seam * avg_rho * 9.81 / 1e6 + EPS)
         fos_samples.append(fos_i)
     fos_samples = np.array(fos_samples)
     fig_uq = go.Figure()
@@ -1458,7 +1281,6 @@ with st.expander("📊 Uncertainty Quantification (UQ) for FOS"):
     st.plotly_chart(fig_uq, use_container_width=True)
     st.write(f"90% CI: [{np.percentile(fos_samples,5):.3f}, {np.percentile(fos_samples,95):.3f}]")
 
-# Visco-plastic creep placeholder
 with st.expander("🔄 Visco-Plastic Creep (Power Law)"):
     st.markdown(r"""
     **Creep strain rate:**  
@@ -1466,8 +1288,6 @@ with st.expander("🔄 Visco-Plastic Creep (Power Law)"):
     """)
     st.info("Patent-level implementation keyingi versiyada to‘liq integratsiya qilinadi.")
 
-# ======================== QOLGAN ASL BO'LIMLAR ========================
-# SHAP tahlili
 if SHAP_AVAILABLE and rf_model is not None:
     with st.expander("🧠 SHAP Model Interpretatsiyasi"):
         try:
@@ -1482,7 +1302,6 @@ if SHAP_AVAILABLE and rf_model is not None:
         except Exception as e:
             st.warning(f"SHAP tahlili bajarilmadi: {e}")
 
-# Sobol sezgirlik
 if SALIB_AVAILABLE:
     with st.expander("📊 Global sezgirlik tahlili (Sobol')"):
         st.markdown("Kirish parametrlarining model chiqishiga umumiy ta’siri.")
@@ -1500,7 +1319,6 @@ if SALIB_AVAILABLE:
         st.write("First-order Sobol:", Si['S1'])
         st.write("Total Sobol:", Si['ST'])
 
-# LHS
 if PYDOE_AVAILABLE:
     with st.expander("🎲 Latin Hypercube Sampling (Collapse ehtimolligi)"):
         N = 5000
@@ -1510,13 +1328,12 @@ if PYDOE_AVAILABLE:
         Depth_lhs = gaussian_dist.ppf(lhs_sample[:,2], loc=200, scale=50)
         collapse_prob = 1 / (1 + np.exp(-(T_lhs/100 + Depth_lhs/200 - UCS_lhs/50)))
         fig_lhs = go.Figure(go.Histogram(x=collapse_prob, nbinsx=50, marker_color='orange'))
-        fig_lhs.update_layout(title="Collapse ehtimoli taqsimoti", template='plotly_dark')
+        fig_lhs.update_layout(title="Collapse ehtimolligi taqsimoti", template='plotly_dark')
         st.plotly_chart(fig_lhs, use_container_width=True)
         ci_low = np.percentile(collapse_prob, 5)
         ci_high = np.percentile(collapse_prob, 95)
         st.write(f"90% ishonch intervali: [{ci_low:.3f}, {ci_high:.3f}]")
 
-# 3D hajm
 if PYVISTA_AVAILABLE:
     with st.expander("🌋 3D litologik hajm (PyVista)"):
         try:
@@ -1540,7 +1357,6 @@ else:
         fig_vol.update_layout(title="Harorat hajmi (proxy)", height=500)
         st.plotly_chart(fig_vol, use_container_width=True)
 
-# Dinamik risk indeksi va entropiya
 weights = np.array([0.4, 0.3, 0.2, 0.1])
 risk_index_var = (
     weights[0]*collapse_pred +
@@ -1552,7 +1368,6 @@ p = risk_index_var / np.sum(risk_index_var + EPS)
 entropy = -np.sum(p * np.log(p + EPS))
 st.metric("Tizim entropiyasi (noaniqlik)", f"{entropy:.3f}")
 
-# Real-time harorat animatsiyasi
 placeholder = st.empty()
 if st.button("Harorat dinamik animatsiyasini ishga tushirish"):
     for t_anim in range(100):
@@ -1562,7 +1377,6 @@ if st.button("Harorat dinamik animatsiyasini ishga tushirish"):
         placeholder.plotly_chart(fig_anim, use_container_width=True)
         time.sleep(0.1)
 
-# Sensor API so‘rovi (simulyatsiya)
 st.markdown("---")
 st.subheader("📡 Tashqi sensor API ulanishi")
 try:
@@ -1586,7 +1400,6 @@ try:
 except requests.exceptions.RequestException as e:
     st.info(f"Sensor API hozirda ulanmagan: {e}")
 
-# =========================== SIMPLERISKNN O'QITISH ===========================
 class SimpleRiskNN(nn.Module):
     def __init__(self, input_dim: int = 3):
         super().__init__()
@@ -1673,7 +1486,6 @@ with st.expander("🤖 AI Risk Prediction (Sensor CSV)", expanded=False):
         except Exception as e:
             st.error(f"Faylni o'qishda xatolik: {e}")
 
-# Kompleks monitoring paneli
 st.header(t('monitoring_panel', obj_name=obj_name))
 def calculate_live_metrics(h, layers, T_max):
     target = layers[-1]
@@ -1692,7 +1504,6 @@ mk3.metric(t('max_subsidence_live'), f"{s_max_3d*100:.1f} cm")
 mk4.metric(t('process_stage'), t('stage_active') if time_h<100 else t('stage_cooling'))
 st.markdown("---")
 
-# FOS trend
 with st.expander("📈 FOS Vaqt Bashorati (Trend)"):
     time_points = np.arange(1, time_h+1, max(1, time_h//20))
     fos_timeline = []
@@ -1727,7 +1538,6 @@ with st.expander("📈 FOS Vaqt Bashorati (Trend)"):
     tc3.metric("Hozirgi FOS", f"{fos_timeline[-1]:.3f}")
     st.info(critical_info)
 
-# 3D Litologik kesim
 with st.expander("🌍 3D Litologik Kesim"):
     fig_3d = go.Figure()
     y_3d = np.linspace(-total_depth*0.5, total_depth*0.5, 30)
@@ -1755,11 +1565,8 @@ with st.expander("🌍 3D Litologik Kesim"):
     st.plotly_chart(fig_3d, use_container_width=True)
     st.caption("Sariq/qizil sferalar — yonish kameralari joylashuvi")
 
-# Monte Carlo (original, may be duplicate with new Monte Carlo above but keep both)
 @st.cache_data(show_spinner=False)
-def monte_carlo_fos(ucs_mean: float, ucs_std: float, gsi_mean: float, gsi_std: float,
-                    d_mean: float, temp_mean: float, H_seam: float,
-                    depth_seam: float, rho_mean: float, n_sim: int = 2000) -> tuple:
+def monte_carlo_fos(ucs_mean, ucs_std, gsi_mean, gsi_std, d_mean, temp_mean, H_seam, depth_seam, rho_mean, n_sim=2000):
     np.random.seed(42)
     ucs_s = np.random.normal(ucs_mean, ucs_std, n_sim).clip(1,300)
     gsi_s = np.random.normal(gsi_mean, gsi_std, n_sim).clip(10,100)
@@ -1772,7 +1579,7 @@ def monte_carlo_fos(ucs_mean: float, ucs_std: float, gsi_mean: float, gsi_std: f
     sci_s = ucs_s*(1-dmg_s)
     str_r = np.exp(-0.0025*(T_s-20))
     p_str = (sci_s*str_r)*(20/(H_seam+EPS))**0.5
-    sv_s = vertical_stress(depth_s, rho_s)
+    sv_s = rho_s * 9.81 * depth_s / 1e6
     fos_s = np.clip(p_str/(sv_s+EPS),0,5)
     pf = float(np.mean(fos_s<1.0))
     return fos_s, pf
@@ -1802,7 +1609,6 @@ with st.expander("🎲 Monte Carlo Noaniqlik Tahlili"):
                              'Qiymat': [f"{np.mean(fos_mc):.3f}", f"{np.median(fos_mc):.3f}", f"{np.std(fos_mc):.3f}", f"{np.percentile(fos_mc,5):.3f}", f"{np.percentile(fos_mc,95):.3f}", f"{pf*100:.2f}%"]})
     st.dataframe(mc_stats, hide_index=True, use_container_width=True)
 
-# Ssenariy taqqoslash
 with st.expander("⚖️ Ssenariy Taqqoslash (A vs B)"):
     sc1, sc2 = st.columns(2)
     with sc1:
@@ -1833,7 +1639,6 @@ with st.expander("⚖️ Ssenariy Taqqoslash (A vs B)"):
                             'Farq': [f"{b_ucs-a_ucs:+.1f}", f"{b_gsi-a_gsi:+d}", f"{fos_b-fos_a:+.2f}", f"{b_temp-a_temp:+.0f}"]})
     st.dataframe(comp_df, use_container_width=True, hide_index=True)
 
-# Sezgirlik tahlili (Tornado)
 @st.cache_data(show_spinner=False)
 def sensitivity_analysis(base_ucs, base_gsi, base_d, base_nu, base_t, H_seam, range_pct=0.2):
     def quick_fos(ucs, gsi, d, nu, T):
@@ -1843,7 +1648,7 @@ def sensitivity_analysis(base_ucs, base_gsi, base_d, base_nu, base_t, H_seam, ra
         sigma_ci = ucs*(1-damage)
         str_red = np.exp(-0.0025*(T-20))
         p_str = (sigma_ci*str_red)*(20/(H_seam+EPS))**0.5
-        sv = vertical_stress(200.0, 2500.0)
+        sv = 2500 * 9.81 * 200 / 1e6
         return np.clip(p_str/(sv+EPS),0,5)
     params = {
         'UCS (MPa)': (base_ucs, base_ucs*(1-range_pct), base_ucs*(1+range_pct)),
@@ -1878,7 +1683,6 @@ with st.expander("🌪️ Sezgirlik Tahlili (Tornado Plot)"):
     fig_tornado.update_layout(title=f"FOS sezgirligi (asosiy FOS={fos_base:.2f})", barmode='overlay', template='plotly_dark', height=350, xaxis_title='ΔFOS', bargap=0.3)
     st.plotly_chart(fig_tornado, use_container_width=True)
 
-# =========================== ISO HISOBOT ===========================
 def generate_full_iso_report(obj_name: str, lang: str, layers_data: list,
                              T_source_max: float, burn_duration: float,
                              pillar_strength: float, optimal_width_ai: float,
@@ -1997,21 +1801,16 @@ def generate_full_iso_report(obj_name: str, lang: str, layers_data: list,
     doc.add_paragraph("σt0 = (σci/2) * (mb - sqrt(mb² + 4s))", style='Intense Quote')
     doc.add_paragraph("3. Thermal Strength Decay — Shao et al. (2015)")
     doc.add_paragraph("UCS(T) = UCS_0 * exp(-β * (T - T0)),  T0 = 20°C", style='Intense Quote')
-    doc.add_paragraph("D(T) = 1 - exp(-β * max(T - 20, 0))", style='Intense Quote')
-    doc.add_paragraph("4. Thermal Stress (Thermo-Elastic Theory)")
-    doc.add_paragraph("σth = ηc * E * α * ΔT / (1 - ν) - λr * ∇T", style='Intense Quote')
+    doc.add_paragraph("4. Thermoelastic Stress Tensor")
+    doc.add_paragraph("σij = Cijkl (εkl - α ΔT δkl)", style='Intense Quote')
     doc.add_paragraph("5. Wilson (1972) Pillar Strength & Plastic Zone")
     doc.add_paragraph("σp = UCS(T) * (w/H)^0.5;  y = H/2 * (sqrt(σv/σp) - 1) if σv≥σp else 0", style='Intense Quote')
-    doc.add_paragraph("6. Peck (1969) Surface Subsidence — Gaussian Model")
+    doc.add_paragraph("6. Modified Knothe Subsidence")
     doc.add_paragraph("S(x) = Smax * exp(-x²/(2i²)),  i = 0.45*Htot", style='Intense Quote')
-    doc.add_paragraph("7. O'Reilly & New (1982) Horizontal Displacement")
-    doc.add_paragraph("u_h(x) = x / i² * S(x)", style='Intense Quote')
-    doc.add_paragraph("8. Darcy Gas Flow (with viscosity)")
-    doc.add_paragraph("v = -k/μ * grad(P),  μ_gas ≈ 3×10⁻⁵ Pa·s (at 1000°C)", style='Intense Quote')
-    doc.add_paragraph("9. Kozeny-Carman Permeability (modified)")
-    doc.add_paragraph("k = k0 * exp(8*D) * (1 + 25*εv)", style='Intense Quote')
-    doc.add_paragraph("10. Risk Index (Composite)")
-    doc.add_paragraph("R = 0.4*P_collapse + 0.3*(1-FOS/3) + 0.2*(k/kmax) + 0.1*(T/Tmax)", style='Intense Quote')
+    doc.add_paragraph("7. Darcy Gas Flow")
+    doc.add_paragraph("v = -k/μ * grad(P)", style='Intense Quote')
+    doc.add_paragraph("8. Fracture Permeability Model")
+    doc.add_paragraph("k = k0 * exp(bD + cεv)", style='Intense Quote')
     buffer = io.BytesIO()
     doc.save(buffer)
     buffer.seek(0)
@@ -2055,7 +1854,6 @@ with st.expander("📄 ISO 9001:2015 Standart Hujjat (.docx)"):
             except Exception as e:
                 st.error(f"Hisobot yaratishda xatolik: {e}")
 
-# Live 3D Monitoring, AI Monitoring, Advanced Analysis
 st.header("🔄 Live 3D Monitoring (Real-time)")
 tab_live, tab_ai_orig, tab_advanced = st.tabs([t('live_monitoring_tab'), t('ai_monitor_title'), t('advanced_analysis')])
 
@@ -2302,7 +2100,7 @@ with tab_advanced:
     ucs_0_r, gsi_val, mi_val = target_l['ucs'], target_l['gsi'], target_l['mi']
     gamma_kn = target_l['rho'] * 9.81 / 1000
     H_depth_tot = sum(l['t'] for l in layers_data[:-1]) + target_l['t']/2
-    sigma_v_tot = vertical_stress(H_depth_tot, target_l['rho'])
+    sigma_v_tot = depth_seam * avg_rho * 9.81 / 1e6
     mb_dyn = mi_val * np.exp((gsi_val-100)/(28-14*D_factor))
     s_dyn = np.exp((gsi_val-100)/(9-3*D_factor))
     a_dyn = 0.5 + (1/6)*(np.exp(-gsi_val/15) - np.exp(-20/3))
@@ -2358,7 +2156,6 @@ with tab_advanced:
         ]:
             st.write(r)
 
-# Interactive Dashboard
 st.header("🕹️ Ultimate Interactive Dashboard (Real-time Animation)")
 st.markdown("Bu panelda FOS, siljish maydoni va vaqt bo‘yicha sirt siljishlarini interaktiv kuzatishingiz mumkin.")
 
@@ -2464,7 +2261,6 @@ st.plotly_chart(dash_fig, use_container_width=True)
 st.sidebar.markdown("---")
 st.sidebar.write(f"Tuzuvchi: Saitov Dilshodbek | Device: {device}")
 
-# =========================== FASTAPI ENDPOINT ===========================
 if FASTAPI_AVAILABLE:
     app = FastAPI()
 
