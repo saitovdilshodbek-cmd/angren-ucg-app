@@ -582,30 +582,16 @@ avg_rho = np.mean([l['rho'] for l in layers_data])
 # ============================================================
 
 def thermoelastic_stress_2d(exx, ezz, exz, T, T0, E, nu, alpha):
-    """
-    True thermoelastic stress in 2D (plane strain assumption compatible).
-    Inputs:
-        exx, ezz, exz : strain components
-        T, T0 : temperature and reference (K)
-        E, nu, alpha : elastic properties
-    Returns:
-        sxx, szz, sxz : stress components (Pa)
-    """
     dT = T - T0
     lam = E * nu / ((1 + nu) * (1 - 2 * nu))
     mu = E / (2 * (1 + nu))
     thermal_strain = alpha * dT
-
     sxx = lam * (exx + ezz - 2 * thermal_strain) + 2 * mu * (exx - thermal_strain)
     szz = lam * (exx + ezz - 2 * thermal_strain) + 2 * mu * (ezz - thermal_strain)
     sxz = 2 * mu * exz
     return sxx, szz, sxz
 
 def hoek_brown(sigma3, sigma_ci, mb, s, a):
-    """
-    Physically consistent Hoek-Brown with tensile cutoff.
-    All stresses in consistent units (e.g., Pa or MPa).
-    """
     sigma_t = np.abs((sigma_ci / 2) * (mb - np.sqrt(mb**2 + 4 * s)))
     sigma3 = np.maximum(sigma3, -sigma_t)
     term = mb * (sigma3 / sigma_ci) + s
@@ -613,42 +599,23 @@ def hoek_brown(sigma3, sigma_ci, mb, s, a):
     sigma1 = sigma3 + sigma_ci * term**a
     return sigma1
 
+def thermal_damage(T: np.ndarray, beta: float = 0.002) -> np.ndarray:
+    return 1 - np.exp(-beta * np.maximum(T - 20, 0))
+
 def solve_heat_equation(T, Q, rho, cp, k, dx, dz, dt, h, T_air, n_steps):
-    """
-    Professional heat PDE solver with CFL control and convective top BC.
-    T : temperature field (K or °C) – updated in-place
-    Q : heat source term (W/m³)
-    rho, cp, k : density (kg/m³), specific heat (J/kg·K), thermal conductivity (W/m·K)
-    dx, dz : grid spacing (m)
-    dt : time step (s)
-    h : convective heat transfer coefficient (W/m²·K)
-    T_air : air temperature (K or °C)
-    n_steps : number of time steps
-    """
     alpha = k / (rho * cp)
     dt_max = dx**2 / (4 * alpha)
     if dt > dt_max:
         raise ValueError(f"CFL condition violated: dt = {dt:.4e} > dt_max = {dt_max:.4e}")
-
     for _ in range(n_steps):
         T_old = T.copy()
-
-        # interior Laplacian
         Txx = (T_old[1:-1, 2:] - 2 * T_old[1:-1, 1:-1] + T_old[1:-1, :-2]) / dx**2
         Tzz = (T_old[2:, 1:-1] - 2 * T_old[1:-1, 1:-1] + T_old[:-2, 1:-1]) / dz**2
-
         T[1:-1, 1:-1] += dt * (alpha * (Txx + Tzz) + Q[1:-1, 1:-1] / (rho * cp))
-
-        # Convective surface BC (top row)
         T[0, :] = T[1, :] + dz * h / k * (T_air - T[0, :])
-
-        # Insulated side walls
         T[:, 0] = T[:, 1]
         T[:, -1] = T[:, -2]
-
-        # Insulated bottom
         T[-1, :] = T[-2, :]
-
     return T
 
 # ============================================================
@@ -660,7 +627,6 @@ class ThermalModel:
         self.alpha = alpha
 
     def temperature_field(self, grid_x: np.ndarray, grid_z: np.ndarray, source: tuple, time: float) -> np.ndarray:
-        """Compute temperature field from point source."""
         x0, z0, T_max = source
         r2 = (grid_x - x0)**2 + (grid_z - z0)**2
         return 25 + (T_max - 25) * np.exp(-r2 / (4 * self.alpha * time + 1e-6))
@@ -672,7 +638,6 @@ class HoekBrown:
         self.D = D
 
     def parameters(self) -> tuple:
-        """Return Hoek-Brown parameters mb, s, a."""
         mb = self.mi * np.exp((self.gsi - 100)/(28 - 14*self.D))
         s  = np.exp((self.gsi - 100)/(9 - 3*self.D))
         a  = 0.5 + (1/6)*(np.exp(-self.gsi/15) - np.exp(-20/3))
@@ -683,10 +648,8 @@ class ThermalDamage:
         self.beta = beta
 
     def compute(self, T: np.ndarray) -> np.ndarray:
-        """Calculate thermal damage factor."""
         return 1 - np.exp(-self.beta * np.maximum(T - 20, 0))
 
-# FULL ThermoMechanicalModel (existing)
 class ThermoMechanicalModel:
     def __init__(self, params):
         self.params = params
@@ -759,29 +722,23 @@ class DigitalTwin:
 @st.cache_data(show_spinner=False, max_entries=50)
 def compute_temperature_field_moving(time_h: float, T_source_max: float, burn_duration: float,
                                      total_depth: float, source_z: float, grid_shape: tuple) -> tuple:
-    """
-    Computes temperature field using analytical point source contributions
-    followed by professional diffusion solver with CFL and BCs.
-    """
-    # Physical constants
-    THERMAL_DIFFUSIVITY = 8.5e-7  # m²/s
+    THERMAL_DIFFUSIVITY = 8.5e-7
     KAPPA = THERMAL_DIFFUSIVITY
-    RHO_ROCK = 1400.0  # kg/m³, typical coal
-    CP_ROCK = 1000.0   # J/(kg·K)
-    K = KAPPA * RHO_ROCK * CP_ROCK  # W/(m·K)
-    H_CONV = 10.0      # W/(m²·K)
-    T_AIR = 25.0       # °C
+    RHO_ROCK = 1400.0
+    CP_ROCK = 1000.0
+    K = KAPPA * RHO_ROCK * CP_ROCK
+    H_CONV = 10.0
+    T_AIR = 25.0
 
     x_axis = np.linspace(-total_depth * 1.5, total_depth * 1.5, grid_shape[1])
     z_axis = np.linspace(0, total_depth + 50, grid_shape[0])
     dx = x_axis[1] - x_axis[0]
     dz = z_axis[1] - z_axis[0]
 
-    # Analytical point sources (same as original)
     grid_x, grid_z = np.meshgrid(x_axis, z_axis)
     temp_2d = np.full_like(grid_x, 25.0)
 
-    v_burn = 0.02  # m/s
+    v_burn = 0.02
     sources = [
         {'x0': -total_depth/3, 'start': 0, 'moving': False},
         {'x0': 0, 'start': 40, 'moving': True, 'v': v_burn},
@@ -804,18 +761,15 @@ def compute_temperature_field_moving(time_h: float, T_source_max: float, burn_du
         dist_sq = (grid_x - x_center)**2 + (grid_z - source_z)**2
         temp_2d += (curr_T - 25) * np.exp(-dist_sq / (pen_depth**2 + 15**2))
 
-    # Professional diffusion solve after sources are placed
-    total_time = max(burn_duration, time_h) * 3600  # seconds
+    total_time = max(burn_duration, time_h) * 3600
     alpha = THERMAL_DIFFUSIVITY
     dt_max = dx**2 / (4 * alpha)
-    # Use dt slightly smaller than max for safety
     dt = 0.8 * dt_max
     n_steps = max(int(total_time / dt), 20)
-    dt = total_time / n_steps  # adjust to exactly cover total_time
+    dt = total_time / n_steps
 
-    Q_source = np.zeros_like(temp_2d)  # no additional heat source during diffusion
+    Q_source = np.zeros_like(temp_2d)
 
-    # Call professional solver
     temp_2d = solve_heat_equation(
         T=temp_2d, Q=Q_source, rho=RHO_ROCK, cp=CP_ROCK, k=K,
         dx=dx, dz=dz, dt=dt, h=H_CONV, T_air=T_AIR, n_steps=n_steps
@@ -829,7 +783,7 @@ H_seam   = layers_data[-1]['t']
 temp_2d, x_axis, z_axis, grid_x, grid_z = compute_temperature_field_moving(
     time_h, T_source_max, burn_duration, total_depth, source_z, grid_shape)
 
-# Geomexanik hisob (o'zgarishsiz qatlam stress/parametrlari)
+# Geomexanik hisob
 grid_sigma_v = np.zeros_like(grid_z)
 grid_ucs = np.zeros_like(grid_z)
 grid_mb = np.zeros_like(grid_z)
@@ -858,15 +812,11 @@ st.session_state.max_temp_map = np.maximum(st.session_state.max_temp_map, temp_2
 
 delta_T = temp_2d - 25.0
 
-# Termal shikastlanish
+# Termal shikastlanish - endi funksiya yuqorida mavjud
 damage = thermal_damage(st.session_state.max_temp_map, beta=beta_thermal)
-
-def thermal_damage(T: np.ndarray, beta: float = 0.002) -> np.ndarray:
-    return 1 - np.exp(-beta * np.maximum(T - 20, 0))
-
 sigma_ci = grid_ucs * (1 - damage)
 
-# Termal kuchlanish (taxminiy elastic model, strain maydoni bo'lmagani uchun soddalashtirilgan)
+# Termal kuchlanish
 E_MODULUS, ALPHA_T_COEFF = 5000.0, 1.0e-5
 CONFINEMENT = 0.65
 RELAX = 0.15
@@ -884,10 +834,10 @@ grid_sigma_h = k_ratio * grid_sigma_v - sigma_thermal
 sigma1_act = np.maximum(grid_sigma_v, grid_sigma_h)
 sigma3_act = np.minimum(grid_sigma_v, grid_sigma_h)
 
-# Hoek-Brown failure limit using professional function
+# Hoek-Brown failure limit
 sigma1_limit = hoek_brown(sigma3_act, sigma_ci, grid_mb, grid_s_hb, grid_a_hb)
 
-# Tensile strength from Hoek-Brown (for visualization)
+# Tensile strength for visualization
 grid_sigma_t = np.abs((sigma_ci / 2) * (grid_mb - np.sqrt(grid_mb**2 + 4 * grid_s_hb)))
 
 shear_failure = sigma1_act >= sigma1_limit
@@ -923,16 +873,14 @@ sigma1_act *= void_factor
 sigma3_act *= void_factor
 sigma_ci *= void_factor
 
-# Gas pressure and flow using corrected gas law (SI units)
-Rgas = 8.314      # J/(mol·K)
-MOLAR_MASS = 0.028  # kg/mol (air-like)
-# temperature in Kelvin
+# Gas pressure and flow
+Rgas = 8.314
+MOLAR_MASS = 0.028
 T_kelvin = temp_2d + 273.15
-# Gas density assumed constant for simplicity (can be improved)
-gas_density = 1.2  # kg/m³
-pressure = (gas_density * Rgas * T_kelvin) / MOLAR_MASS  # Pa
+gas_density = 1.2
+pressure = (gas_density * Rgas * T_kelvin) / MOLAR_MASS
 dp_dx, dp_dz = np.gradient(pressure, axis=1), np.gradient(pressure, axis=0)
-mu_gas = 3e-5  # Pa·s
+mu_gas = 3e-5
 vx = -perm * dp_dx / mu_gas
 vz = -perm * dp_dz / mu_gas
 gas_velocity = np.sqrt(vx**2 + vz**2)
@@ -946,7 +894,7 @@ void_frac_base = float(np.mean(void_mask_permanent))
 risk_index = np.clip(1 - fos_2d, 0, 1)
 risk_map = risk_index
 
-# =========================== AI MODEL FUNKSIYALARI (o'zgarishsiz) ===========================
+# =========================== AI MODEL FUNKSIYALARI ===========================
 def physics_features(T: np.ndarray, s1: np.ndarray, s3: np.ndarray,
                      depth: np.ndarray) -> np.ndarray:
     dmg = thermal_damage(T)
@@ -1229,7 +1177,6 @@ with c2:
         E_MOD, ALPHA, NU, K0, Hc, sigma_v_coal, ucs_coal_pa
     )
 
-    # Plotting
     fig_tm = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.12,
                            subplot_titles=(t('temp_subplot'), "Geomexanik Holat (Yangi Ilmiy Model)"))
     fig_tm.add_trace(go.Heatmap(z=temp_2d, x=x_axis, y=z_axis, colorscale='Hot', zmin=25, zmax=T_source_max,
@@ -1364,6 +1311,8 @@ with st.expander("📊 Uncertainty Quantification (UQ) for FOS"):
     ucs_samples = np.random.normal(ucs_seam, 0.1*ucs_seam, N)
     temp_samples = np.random.normal(T_source_max, 50, N)
     fos_samples = []
+    def vertical_stress(depth, density):
+        return density * 9.81 * depth / 1e6
     for ucs_i, temp_i in zip(ucs_samples, temp_samples):
         sig_p = (ucs_i * np.exp(-0.002*(temp_i-20))) * (rec_width/(H_seam+EPS))**0.5
         fos_i = sig_p / (vertical_stress(depth_seam, avg_rho) + EPS)
