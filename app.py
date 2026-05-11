@@ -2453,4 +2453,3 @@ if FASTAPI_AVAILABLE:
             torch.tensor(features, dtype=torch.float32).to(device)
         ) if hybrid_model is not None else np.zeros((features.shape[0],1))
         return {"collapse": pred.detach().cpu().numpy().tolist()}
-        
