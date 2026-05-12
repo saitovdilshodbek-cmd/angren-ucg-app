@@ -617,20 +617,33 @@ avg_rho = np.mean([l['rho'] for l in layers_data])
 # ============================================================
 
 def thermoelastic_stress_2d(exx, ezz, exz, T, T0, E, nu, alpha):
+    """
+    Plane-strain thermoelastic stress (Boley & Weiner, 1960).
+    σ_ij = λ(e_kk - 3α·ΔT)·δ_ij + 2μ·e_ij - (3λ+2μ)·α·ΔT·δ_ij
+    For plane-strain (ezz=0 imposed, but computed in-plane):
+      σ_xx = (E/((1+ν)(1-2ν)))[( 1-ν)·exx + ν·ezz] - E·α·ΔT/(1-2ν)
+      σ_zz = (E/((1+ν)(1-2ν)))[ν·exx + (1-ν)·ezz] - E·α·ΔT/(1-2ν)
+      σ_xz = E/(1+ν) · exz
+    """
     dT = T - T0
-    lam = E * nu / ((1 + nu) * (1 - 2 * nu))
-    mu = E / (2 * (1 + nu))
-    thermal_strain = alpha * dT
-    sxx = lam * (exx + ezz - 2 * thermal_strain) + 2 * mu * (exx - thermal_strain)
-    szz = lam * (exx + ezz - 2 * thermal_strain) + 2 * mu * (ezz - thermal_strain)
-    sxz = 2 * mu * exz
+    C = E / ((1 + nu) * (1 - 2 * nu))
+    thermal_term = E * alpha * dT / (1 - 2 * nu)
+    sxx = C * ((1 - nu) * exx + nu * ezz) - thermal_term
+    szz = C * (nu * exx + (1 - nu) * ezz) - thermal_term
+    sxz = E / (1 + nu) * exz
     return sxx, szz, sxz
 
 def hoek_brown(sigma3, sigma_ci, mb, s, a):
-    sigma_t = np.abs((sigma_ci / 2) * (mb - np.sqrt(mb**2 + 4 * s)))
-    sigma3 = np.maximum(sigma3, -sigma_t)
-    term = mb * (sigma3 / sigma_ci) + s
-    term = np.maximum(term, 1e-9)
+    """
+    Hoek-Brown (2018) criterion: σ1 = σ3 + σci(mb·σ3/σci + s)^a
+    Tensile cut-off per Hoek-Brown (2002):  σt = -s·σci / mb
+    (Not the approximate formula with sqrt which is only valid when a=0.5)
+    """
+    # Tensile strength (negative in compression convention)
+    sigma_t = -s * sigma_ci / (mb + EPS)
+    sigma3 = np.maximum(sigma3, sigma_t)
+    term = mb * (sigma3 / (sigma_ci + EPS)) + s
+    term = np.maximum(term, 0.0)
     sigma1 = sigma3 + sigma_ci * term**a
     return sigma1
 
@@ -699,7 +712,7 @@ class ThermoMechanicalModel:
         return sigma1, sigma3
 
     def compute_damage(self, T):
-        damage = 1 - np.exp(-0.002*(T-20))
+        damage = 1 - np.exp(-beta_thermal*(T-20))
         return np.clip(damage, 0, 1)
 
     def compute_fos(self, sigma1, sigma_ci):
@@ -885,13 +898,26 @@ def compute_damage(sigma_eq, sigma_strength, temperature, creep_dam):
     return np.clip(total, 0, 1)
 
 def von_mises_stress(sigma_x, sigma_y, tau_xy):
-    return np.sqrt(sigma_x**2 - sigma_x*sigma_y + sigma_y**2 + 3*tau_xy**2)
+    """
+    2D von Mises equivalent stress (plane stress/strain):
+    σ_vm = √(σx² - σx·σy + σy² + 3·τxy²)
+    Reference: Timoshenko & Goodier (1951), Theory of Elasticity.
+    Note: for principal stresses τxy=0 → σ_vm = √(σ1²-σ1·σ3+σ3²)
+    """
+    return np.sqrt(np.maximum(sigma_x**2 - sigma_x*sigma_y + sigma_y**2 + 3*tau_xy**2, 0.0))
 
 def mohr_coulomb_FOS(sigma1, sigma3, cohesion, friction_angle_deg):
+    """
+    Mohr-Coulomb FOS (Jaeger & Cook, 1979):
+    Shear strength on failure plane: τ_f = c + σ_n·tan(φ)
+    In principal stress form:
+      FOS = [2c·cos(φ) + (σ1+σ3)·sin(φ)] / [(σ1-σ3) + EPS]
+    Note: This is the ratio of mobilised shear strength to applied shear stress.
+    """
     phi = np.radians(friction_angle_deg)
-    numerator = 2*cohesion*np.cos(phi) + (sigma1+sigma3)*np.sin(phi)
-    denominator = sigma1 - sigma3 + 1e-9
-    return numerator / denominator
+    strength = 2 * cohesion * np.cos(phi) + (sigma1 + sigma3) * np.sin(phi)
+    driving  = (sigma1 - sigma3) + 1e-9
+    return np.clip(strength / driving, 0, 5)
 
 def validation_metrics(numerical, reference):
     rmse = np.sqrt(np.mean((numerical - reference)**2))
@@ -949,16 +975,21 @@ sigma_rr, sigma_tt, tau_rt = kirsch_stress_field(grid_x, grid_z - source_z,
 sigma1_act = np.maximum(sigma_rr, sigma_tt)
 sigma3_act = np.minimum(sigma_rr, sigma_tt)
 
-# Thermal stress (updated with temperature-dependent modulus)
+# Thermal stress (plane-strain, temperature-dependent modulus)
+# σ_th = E(T)·α(T)·ΔT / (1-ν)  [Timoshenko & Goodier, 1951]
 delta_T = np.maximum(temp_2d - 20, 0)
-sigma_thermal = (E_field * alpha_field * delta_T) / (1 - nu_poisson + EPS)
+sigma_thermal = (E_field * alpha_field * delta_T) / (1.0 - nu_poisson + EPS)
 relax_factor = np.exp(-2.5 * thermal_damage(temp_2d, beta_thermal))
 sigma_thermal *= relax_factor
-sigma_thermal = np.clip(sigma_thermal, 0, 0.45 * (layers_data[-1]['ucs']))
+# Clip at 35% of intact UCS — physically motivated upper bound
+sigma_thermal = np.clip(sigma_thermal / 1e6, 0, 0.35 * grid_ucs)  # convert Pa→MPa
 
-# Modify stresses with thermal component (simplified)
+# Modify principal stresses with thermal component
+# Thermal compression increases σ1 and also affects σ3 (Jaeger & Cook, 1979)
+# σ1_total = σ1_mech + σ_th (adds to compression)
+# σ3_total = σ3_mech + σ_th (thermal confinement — also compressive near cavity)
 sigma1_act += sigma_thermal
-sigma3_act -= sigma_thermal  # tension relief
+sigma3_act += sigma_thermal  # thermal stress adds confinement (compressive)
 
 # Hoek-Brown parameters (use original for now)
 grid_ucs = np.zeros_like(grid_z)
@@ -980,8 +1011,10 @@ sigma1_limit = hoek_brown(sigma3_act, sigma_ci, grid_mb, grid_s_hb, grid_a_hb)
 # Damage and failure
 damage = compute_damage(von_mises_stress(sigma1_act, sigma3_act, tau_rt),
                         sigma_ci, temp_2d, 0.0)
+# Hoek-Brown tensile cut-off: σt = -s·σci/mb  (Hoek & Brown, 2002)
+tensile_cutoff = -(grid_s_hb * sigma_ci) / (grid_mb + EPS)
 shear_failure = sigma1_act >= sigma1_limit
-tensile_failure = (sigma3_act <= -grid_ucs * 0.1)  # simplified tensile failure
+tensile_failure = (sigma3_act <= tensile_cutoff)
 
 # FOS
 fos_2d = np.clip(sigma1_limit / (sigma1_act + EPS), 0, 3.0)
@@ -1104,21 +1137,30 @@ except Exception as e:
     collapse_pred = np.zeros_like(temp_2d)
 
 # Selek optimizatsiyasi
+    # -----------------------------------------------------------------------
+    # PILLAR OPTIMISATION — Wilson (1972) Yield Pillar Theory
+    # σp = UCS·η · (w/H)^0.5   [Salamon & Munro, 1967 / Wilson, 1972]
+    # y  = H/2 · (√(σv/σp) - 1)  [plastic zone half-width, Wilson 1972]
+    # Convergence: min w such that y ≤ (w - e_min)/2
+    # -----------------------------------------------------------------------
 avg_t_p = np.mean(temp_2d[np.abs(z_axis-source_z).argmin(), :])
-strength_red = np.exp(-0.0025*(avg_t_p-20))
+strength_red = np.exp(-beta_thermal*(avg_t_p - 20))   # thermal reduction factor η (Yang, 2010)
 ucs_seam = layers_data[-1]['ucs']
 sv_seam = grid_sigma_v[np.abs(z_axis-source_z).argmin(), :].max()
 w_sol = 20.0
-for _ in range(15):
-    p_strength = (ucs_seam*strength_red)*(w_sol/(H_seam+EPS))**0.5
+E_MIN_CORE = 0.5 * H_seam   # minimum elastic core (Brady & Brown, 2006)
+for _ in range(30):
+    p_strength = (ucs_seam * strength_red) * (w_sol / (H_seam + EPS))**0.5
     ratio = sv_seam / (p_strength + EPS)
     if ratio >= 1.0:
-        y_zone_calc = (H_seam/2)*(np.sqrt(ratio)-1)
+        y_zone_calc = (H_seam / 2.0) * (np.sqrt(ratio) - 1.0)
     else:
         y_zone_calc = 0.0
-    new_w = 2*max(y_zone_calc, 1.5) + 0.5*H_seam
-    if abs(new_w-w_sol) < 0.1: break
-    w_sol = new_w
+    # Width must accommodate 2 plastic zones + elastic core
+    new_w = 2.0 * max(y_zone_calc, 1.5) + E_MIN_CORE
+    if abs(new_w - w_sol) < 0.05:
+        break
+    w_sol = 0.6 * new_w + 0.4 * w_sol   # relaxation for convergence
 rec_width = np.round(w_sol, 1)
 pillar_strength = p_strength
 y_zone = max(y_zone_calc, 1.5)
@@ -1145,12 +1187,20 @@ m3.metric(t('cavity_volume'), f"{void_volume:.1f} m²")
 m4.metric(t('max_permeability'), f"{np.max(perm):.1e} m²")
 m5.metric(t('ai_recommendation'), f"{optimal_width_ai:.1f} m", delta=f"Klassik: {rec_width} m", delta_color="off")
 
-# Subsidence
-s_max = (H_seam*0.04)*(min(time_h,120)/120)
-influence_radius = total_depth * 0.45
-subsidence_raw = -s_max * np.exp(-(x_axis**2)/(2*influence_radius**2))
+# -----------------------------------------------------------------------
+# SURFACE SUBSIDENCE — Gaussian trough (Peck, 1969; O'Reilly & New, 1982)
+# S(x) = S_max · exp(-x² / 2i²)
+# i = K · z_s   where K ≈ 0.45 for coal (O'Reilly & New, 1982)
+# S_max = (A · Vol_loss) / (√(2π) · i)    [Volume conservation]
+# Simplified: S_max = η_sub · H_seam · (t_burn/t_max)
+# Horizontal displacement: u_h(x) = -(x/i²) · S(x)·i  [Attewell et al., 1986]
+# -----------------------------------------------------------------------
+s_max = (H_seam * 0.04) * (min(time_h, 120) / 120)
+i_inflection = 0.45 * total_depth          # inflection point distance (m)
+subsidence_raw = -s_max * np.exp(-(x_axis**2) / (2 * i_inflection**2))
 sub_p = subsidence_raw * (1 + 0.35 * float(np.mean(void_mask_permanent))) + 0.08 * np.gradient(subsidence_raw)
-uplift = (total_depth*1e-4)*np.exp(-(x_axis**2)/(total_depth*10))*(time_h/150)*100
+# Horizontal displacement: u_h = -(x/i²)·S(x)·i  [Attewell et al., 1986]
+uplift = -(x_axis / (i_inflection + EPS)) * subsidence_raw * 100   # cm, correct sign
 
 # Grafika bo'limi
 st.markdown("---")
@@ -1163,7 +1213,7 @@ with col_g3:
     sigma3_ax = np.linspace(0, ucs_seam*0.5, 100)
     mb_s, s_s, a_s = grid_mb.max(), grid_s_hb.max(), grid_a_hb.max()
     s1_20 = sigma3_ax + ucs_seam*(mb_s*sigma3_ax/(ucs_seam+EPS)+s_s)**a_s
-    ucs_burn = ucs_seam*np.exp(-0.0025*(T_source_max-20))
+    ucs_burn = ucs_seam*np.exp(-beta_thermal*(T_source_max-20))
     s1_burning = sigma3_ax + ucs_burn*(mb_s*sigma3_ax/(ucs_burn+EPS)+s_s)**a_s
     s1_sov = sigma3_ax + (ucs_seam*strength_red)*(mb_s*sigma3_ax/(ucs_seam*strength_red+EPS)+s_s)**a_s
     fig_hb = go.Figure()
@@ -1388,14 +1438,21 @@ with c2:
 
 # ======================== YANGI PATENT QO'SHIMCHALARI ========================
 with st.expander("🪨 Phase-Field Fracture Damage Evolution (Patent Model)"):
-    def phase_field_update(damage, strain_energy, dx, dt, Gc=0.01):
+    def phase_field_update(damage, strain_energy, dx, dt, Gc=0.01, l_char=1.0):
+        """
+        Phase-field fracture (Bourdin et al., 2000; Miehe et al., 2010):
+        η·∂d/∂t = G_c·l·∇²d - (G_c/l)·d + (1-d)·ψ
+        Simplified (η=1, l=l_char, explicit Euler):
+        d_new = d + dt·[G_c·l·∇²d/dx² - G_c·d/l + (1-d)·ψ]
+        """
         lap = (np.roll(damage,1,0) + np.roll(damage,-1,0) +
                np.roll(damage,1,1) + np.roll(damage,-1,1) - 4*damage) / (dx**2)
-        d_new = damage + dt * (Gc * lap + (1-damage) * strain_energy)
+        d_new = damage + dt * (Gc * l_char * lap - (Gc / l_char) * damage + (1 - damage) * strain_energy)
         return np.clip(d_new, 0, 1)
-    st.markdown("""
-    **Phase-field fracture equation:**
-    $$\\frac{\\partial d}{\\partial t} = G_c \\nabla^2 d + (1-d)\\psi$$
+    st.markdown(r"""
+    **Phase-field fracture equation** (Bourdin et al., 2000):
+    $$\eta \frac{\partial d}{\partial t} = G_c l \nabla^2 d - \frac{G_c}{l} d + (1-d)\psi$$
+    where $G_c$ = fracture energy [J/m²], $l$ = length scale [m], $\psi$ = strain energy density.
     """)
     if st.button("Run one phase-field step (demo)"):
         dx_val = x_axis[1]-x_axis[0]
@@ -1434,7 +1491,8 @@ with st.expander("📊 Uncertainty Quantification (UQ) for FOS"):
     def vertical_stress(depth, density):
         return density * 9.81 * depth / 1e6
     for ucs_i, temp_i in zip(ucs_samples, temp_samples):
-        sig_p = (ucs_i * np.exp(-0.002*(temp_i-20))) * (rec_width/(H_seam+EPS))**0.5
+        # Use user-defined beta_thermal for consistency (Yang, 2010)
+        sig_p = (ucs_i * np.exp(-beta_thermal*(temp_i - 20))) * (rec_width/(H_seam+EPS))**0.5
         fos_i = sig_p / (vertical_stress(depth_seam, avg_rho) + EPS)
         fos_samples.append(fos_i)
     fos_samples = np.array(fos_samples)
@@ -1656,7 +1714,7 @@ def calculate_live_metrics(h, layers, T_max):
     target = layers[-1]
     ucs_0, H_l = target['ucs'], target['t']
     curr_T = (25 + (T_max-25)*(min(h,40)/40) if h<=40 else T_max*np.exp(-0.001*(h-40)))
-    str_red = np.exp(-0.0025*(curr_T-20))
+    str_red = np.exp(-beta_thermal*(curr_T-20))
     w_rec = 15.0 + (h/150)*10
     p_str = (ucs_0*str_red)*(w_rec/(H_l+EPS))**0.5
     max_sub = (H_l*0.05)*(min(h,120)/120)
@@ -1673,10 +1731,12 @@ with st.expander("📈 FOS Vaqt Bashorati (Trend)"):
     time_points = np.arange(1, time_h+1, max(1, time_h//20))
     fos_timeline = []
     for th in time_points:
-        str_red_t = np.exp(-0.0025*(T_source_max*min(th,burn_duration)/burn_duration - 20))
-        p_str_t = (ucs_seam*str_red_t)*(rec_width/(H_seam+EPS))**0.5
-        sv_t = sv_seam*(1+0.001*th)
-        fos_t = np.clip(p_str_t/(sv_t+EPS),0,3)
+        # Use beta_thermal (user-defined, Yang 2010) for thermal reduction
+        T_at_th = T_source_max * min(th, burn_duration) / (burn_duration + EPS)
+        str_red_t = np.exp(-beta_thermal * (T_at_th - 20))
+        p_str_t = (ucs_seam * str_red_t) * (rec_width/(H_seam+EPS))**0.5
+        sv_t = sv_seam * (1 + 0.001*th)
+        fos_t = np.clip(p_str_t/(sv_t+EPS), 0, 3)
         fos_timeline.append(fos_t)
     slope, intercept, r_value, _, _ = linregress(time_points, fos_timeline)
     future_times = np.arange(time_h, min(time_h*2,300), max(1,time_h//10))
@@ -1742,9 +1802,9 @@ def monte_carlo_fos(ucs_mean: float, ucs_std: float, gsi_mean: float, gsi_std: f
     depth_s = np.random.normal(depth_seam, depth_seam*0.05, n_sim).clip(10, 500)
     mb_s = 10*np.exp((gsi_s-100)/(28-14*d_mean))
     s_s = np.exp((gsi_s-100)/(9-3*d_mean))
-    dmg_s = np.clip(1-np.exp(-0.002*np.maximum(T_s-20, 0)), 0, 0.95)
+    dmg_s = np.clip(1-np.exp(-beta_thermal*np.maximum(T_s-20, 0)), 0, 0.95)
     sci_s = ucs_s*(1-dmg_s)
-    str_r = np.exp(-0.0025*(T_s-20))
+    str_r = np.exp(-beta_thermal*(T_s-20))
     p_str = (sci_s*str_r)*(20/(H_seam+EPS))**0.5
     sv_s = vertical_stress(depth_s, rho_s)
     fos_s = np.clip(p_str/(sv_s+EPS),0,5)
@@ -1790,8 +1850,8 @@ with st.expander("⚖️ Ssenariy Taqqoslash (A vs B)"):
         b_temp = st.number_input("T_B (°C)", value=float(T_source_max)*1.1, key="b_t")
     def norm(val, mn, mx):
         return (val-mn)/(mx-mn+EPS)
-    fos_a = (a_ucs*np.exp(-0.0025*(a_temp-20))) / (layers_data[-1]['rho']*9.81*H_seam/1e6+EPS)
-    fos_b = (b_ucs*np.exp(-0.0025*(b_temp-20))) / (layers_data[-1]['rho']*9.81*H_seam/1e6+EPS)
+    fos_a = (a_ucs*np.exp(-beta_thermal*(a_temp-20))) / (layers_data[-1]['rho']*9.81*H_seam/1e6+EPS)
+    fos_b = (b_ucs*np.exp(-beta_thermal*(b_temp-20))) / (layers_data[-1]['rho']*9.81*H_seam/1e6+EPS)
     vals_a = [norm(a_ucs,0,100), norm(a_gsi,10,100), norm(fos_a,0,3), 1-norm(a_temp,20,1200)]
     vals_b = [norm(b_ucs,0,100), norm(b_gsi,10,100), norm(fos_b,0,3), 1-norm(b_temp,20,1200)]
     categories = ['UCS','GSI','FOS (taxmin)','Termal risk']
@@ -1807,16 +1867,19 @@ with st.expander("⚖️ Ssenariy Taqqoslash (A vs B)"):
     st.dataframe(comp_df, use_container_width=True, hide_index=True)
 
 @st.cache_data(show_spinner=False)
-def sensitivity_analysis(base_ucs, base_gsi, base_d, base_nu, base_t, H_seam, range_pct=0.2):
+def sensitivity_analysis(base_ucs, base_gsi, base_d, base_nu, base_t, H_seam, beta_th, range_pct=0.2):
+    """Tornado plot: FOS sensitivity to ±20% parameter variation."""
     def quick_fos(ucs, gsi, d, nu, T):
         mb = 10*np.exp((gsi-100)/(28-14*d))
-        s = np.exp((gsi-100)/(9-3*d))
-        damage = np.clip(1-np.exp(-0.002*max(T-20, 0)), 0, 0.95)
+        s  = np.exp((gsi-100)/(9-3*d))
+        a  = 0.5 + (1/6)*(np.exp(-gsi/15) - np.exp(-20/3))
+        damage = np.clip(1-np.exp(-beta_th * max(T-20, 0)), 0, 0.95)
         sigma_ci = ucs*(1-damage)
-        str_red = np.exp(-0.0025*(T-20))
-        p_str = (sigma_ci*str_red)*(20/(H_seam+EPS))**0.5
+        # Mass strength at σ3=0: σcm = σci·s^a
+        sigma_cm = sigma_ci * (max(s, 1e-9)**a)
+        p_str = sigma_cm * (20/(H_seam+EPS))**0.5
         sv = vertical_stress(200.0, 2500.0)
-        return np.clip(p_str/(sv+EPS),0,5)
+        return np.clip(p_str/(sv+EPS), 0, 5)
     params = {
         'UCS (MPa)': (base_ucs, base_ucs*(1-range_pct), base_ucs*(1+range_pct)),
         'GSI': (base_gsi, base_gsi*(1-range_pct), min(100,base_gsi*(1+range_pct))),
@@ -1841,7 +1904,7 @@ def sensitivity_analysis(base_ucs, base_gsi, base_d, base_nu, base_t, H_seam, ra
     return pd.DataFrame(results), base_fos
 
 with st.expander("🌪️ Sezgirlik Tahlili (Tornado Plot)"):
-    df_sens, fos_base = sensitivity_analysis(layers_data[-1]['ucs'], layers_data[-1]['gsi'], D_factor, nu_poisson, avg_t_p, H_seam)
+    df_sens, fos_base = sensitivity_analysis(layers_data[-1]['ucs'], layers_data[-1]['gsi'], D_factor, nu_poisson, avg_t_p, H_seam, beta_thermal)
     df_sens = df_sens.sort_values('high', ascending=True)
     fig_tornado = go.Figure()
     fig_tornado.add_bar(y=df_sens['param'], x=df_sens['low'], orientation='h', name='−20%', marker_color='#E74C3C')
@@ -2276,9 +2339,14 @@ with tab_advanced:
     mb_dyn = mi_val * np.exp((gsi_val-100)/(28-14*D_factor))
     s_dyn = np.exp((gsi_val-100)/(9-3*D_factor))
     a_dyn = 0.5 + (1/6)*(np.exp(-gsi_val/15) - np.exp(-20/3))
-    ucs_t_dyn = ucs_0_r * np.exp(-BETA_CONST*(T_source_max-20))
-    p_str_final = ucs_t_dyn * (rec_width/(H_seam+EPS))**0.5
-    fos_final = p_str_final/(sigma_v_tot+EPS)
+    # Advanced tab: Hoek-Brown derived pillar FOS
+    # σp = σci(T) · (mb·s)^a · (w/H)^0.5  — fully Hoek-Brown consistent
+    # For conservative estimate use: σp = σci(T)·η · (w/H)^0.5  [Wilson/Salamon hybrid]
+    ucs_t_dyn = ucs_0_r * np.exp(-BETA_CONST * (T_source_max - 20))
+    # Hoek-Brown mass strength at σ3=0:  σcm = σci · s^a  (Hoek et al. 2002)
+    sigma_cm = ucs_t_dyn * (s_dyn ** a_dyn)
+    p_str_final = sigma_cm * (rec_width / (H_seam + EPS))**0.5
+    fos_final = p_str_final / (sigma_v_tot + EPS)
     t1,t2,t3 = st.tabs([t('tab_mass'), t('tab_thermal'), t('tab_stability')])
     with t1:
         st.subheader(t('hb_class'))
@@ -2289,8 +2357,9 @@ with tab_advanced:
             st.latex(t('hb_s', s=s_dyn))
             st.caption(t('hb_caption_s', gsi=gsi_val))
         with c2r:
-            hb_ratio = (s_dyn ** a_dyn) * 100
-            strength_red_perc = 100 - hb_ratio
+            # Hoek-Brown mass strength ratio: σcm/σci = s^a  (Hoek et al. 2002)
+            hb_ratio = (s_dyn ** a_dyn)   # dimensionless ratio (0–1)
+            strength_red_perc = (1.0 - hb_ratio) * 100.0
             st.markdown(t('hb_interpret', gsi=gsi_val, perc=strength_red_perc))
     with t2:
         st.subheader(t('thermal_params'))
@@ -2302,7 +2371,7 @@ with tab_advanced:
         st.latex(t('ucs_decay_eq', ucs=ucs_t_dyn))
         st.write(t('ucs_interpret', temp=T_source_max, perc=((1 - ucs_t_dyn/ucs_0_r)*100)))
         st.markdown(t('thermal_stress'))
-        st.latex(t('thermal_stress_eq', sigma=sigma_thermal.max()))
+        st.latex(t('thermal_stress_eq', sigma=float(np.nanmax(sigma_thermal))))
     with t3:
         st.subheader(t('pillar_stability'))
         st.latex(t('fos_eq', fos=fos_final))
@@ -2341,9 +2410,8 @@ surface_x = x_axis
 surface_h_disp = []
 surface_v_disp = []
 for time_step in time_steps_dash:
-    v_disp = -s_max * np.exp(-(surface_x**2)/(2*(total_depth/2)**2)) * (min(time_step, burn_duration)/burn_duration) * 100
-    i_inflection = total_depth / 2
-    h_disp = (surface_x / (i_inflection**2 + EPS)) * v_disp
+    v_disp = -s_max * np.exp(-(surface_x**2)/(2*i_inflection**2)) * (min(time_step, burn_duration)/(burn_duration + EPS)) * 100
+    h_disp = -(surface_x / (i_inflection + EPS)) * v_disp  # Attewell et al. (1986)
     surface_v_disp.append(v_disp)
     surface_h_disp.append(h_disp)
 surface_h_disp = np.array(surface_h_disp)
