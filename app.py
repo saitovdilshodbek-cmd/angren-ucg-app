@@ -982,8 +982,6 @@ sigma_thermal = (E_field * alpha_field * delta_T) / (1.0 - nu_poisson + EPS)
 relax_factor = np.exp(-2.5 * thermal_damage(temp_2d, beta_thermal))
 sigma_thermal *= relax_factor
 # Clip at 35% of intact UCS — physically motivated upper bound
-sigma_thermal = np.clip(sigma_thermal / 1e6, 0, 0.35 * grid_ucs)  # convert Pa→MPa
-
 # Modify principal stresses with thermal component
 # Thermal compression increases σ1 and also affects σ3 (Jaeger & Cook, 1979)
 # σ1_total = σ1_mech + σ_th (adds to compression)
