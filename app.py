@@ -1187,6 +1187,10 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("Quduqlar konfiguratsiyasi")
 well_distance = st.sidebar.slider("Quduqlar orasidagi masofa (m):", 50.0, 500.0, 200.0, 10.0, key="well_dist_slider")
 
+# Konfaynment va relaksatsiya koeffitsientlari (global)
+CONFINEMENT = 0.65
+RELAX = 0.15
+
 with c2:
     st.subheader("UCG Yonish Bosqichlari (1 → 3 → 2 sxemasi) – Yangi Ilmiy Model")
     coal_layer = layers_data[-1]
@@ -1656,7 +1660,7 @@ def calculate_live_metrics(h, layers, T_max):
     w_rec = 15.0 + (h/150)*10
     p_str = (ucs_0*str_red)*(w_rec/(H_l+EPS))**0.5
     max_sub = (H_l*0.05)*(min(h,120)/120)
-    return p_str, w_rec_live, t_now, max_sub
+    return p_str, w_rec, curr_T, max_sub
 p_str, w_rec_live, t_now, s_max_3d = calculate_live_metrics(time_h, layers_data, T_source_max)
 mk1, mk2, mk3, mk4 = st.columns(4)
 mk1.metric(t('pillar_live'), f"{p_str:.1f} MPa", delta=f"{t_now:.0f} °C", delta_color="inverse")
@@ -2345,10 +2349,10 @@ for time_step in time_steps_dash:
 surface_h_disp = np.array(surface_h_disp)
 surface_v_disp = np.array(surface_v_disp)
 
-col1, col2 = st.columns(2)
-with col1:
+col1_dash, col2_dash = st.columns(2)
+with col1_dash:
     fos_thresh_dash = st.slider("FOS Threshold (Yielded Zone)", 0.1, 2.0, 1.0, 0.05, key="fos_thresh_dash")
-with col2:
+with col2_dash:
     disp_cscale = st.selectbox("Displacement Color Scale", ['Turbo','Viridis','Cividis'], index=0, key="disp_cscale")
 
 def draw_interactive_ucg_dashboard(x_axis, z_axis, fos_2d, displacement_2d, surface_x, surface_h_disp, surface_v_disp, time_steps=None, fos_threshold=1.0, disp_colorscale='Turbo'):
