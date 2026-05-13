@@ -1167,9 +1167,6 @@ with c2:
                          line=dict(color="cyan", width=4, dash="dash"), fillcolor='rgba(0,255,255,0.1)', row=2, col=1)
         fig_tm.add_annotation(x=well_x[1], y=source_z_adv+100, text="HIMOYA SELEGI (PILLAR)",
                               showarrow=True, arrowhead=2, font=dict(color="cyan", size=12), row=2, col=1)
-    fig_tm.add_trace(go.Heatmap(z=fracture_mask, x=x_axis, y=z_axis,
-                                colorscale=[[0,'rgba(0,0,0,0)'],[1,'rgba(255,0,0,0.5)']],
-                                showscale=False, opacity=0.6, hoverinfo='skip'), row=2, col=1)
     fig_tm.update_layout(template="plotly_dark", height=900, margin=dict(r=150,t=80,b=100),
                          showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=-0.12, xanchor="center", x=0.5))
     fig_tm.update_yaxes(autorange='reversed', row=1, col=1)
@@ -1616,45 +1613,49 @@ with st.expander("📈 FOS Vaqt Bashorati (Trend)"):
 
 with st.expander("🌍 3D Litologik Kesim"):
     fig_3d = go.Figure()
-    y_3d = np.linspace(-total_depth * 0.5, total_depth * 0.5, 30)
+    y_3d = np.linspace(-total_depth*0.5, total_depth*0.5, 30)
     for i, layer in enumerate(layers_data):
         z_top = layer['z_start']
-        z_bot = layer['z_start'] + layer['t']
+        z_bot = layer['z_start']+layer['t']
         x_3d = np.linspace(x_axis.min(), x_axis.max(), 30)
         X3, Y3 = np.meshgrid(x_3d, y_3d)
         Z_top = np.full_like(X3, z_top)
         Z_bot = np.full_like(X3, z_bot)
         hex_color = layer['color'].lstrip('#')
-        r, g, b = tuple(int(hex_color[j:j+2], 16) for j in (0, 2, 4))
+        r,g,b = tuple(int(hex_color[j:j+2],16) for j in (0,2,4))
         rgb_str = f"rgb({r},{g},{b})"
-        fig_3d.add_trace(go.Surface(x=X3, y=Y3, z=Z_top, colorscale=[[0, rgb_str], [1, rgb_str]],
-                                    showscale=False, opacity=0.7, name=layer['name']))
-        fig_3d.add_trace(go.Surface(x=X3, y=Y3, z=Z_bot, colorscale=[[0, rgb_str], [1, rgb_str]],
-                                    showscale=False, opacity=0.7, name=f"{layer['name']}_bottom"))
-    stage_3d = st.session_state.get('ucg_stage', 3)
-    active_wells_3d = states_132[stage_3d]
-    for idx, px in enumerate(well_x):
-        if idx in active_wells_3d:
-            theta = np.linspace(0, 2 * np.pi, 30)
-            phi = np.linspace(0, np.pi, 20)
-            THETA, PHI = np.meshgrid(theta, phi)
-            R_use = np.mean(damage) * 10 + 5          # ← engine.damage → damage
-            cx = px + R_use * np.sin(PHI) * np.cos(THETA)
-            cy = R_use * np.sin(PHI) * np.sin(THETA)
-            cz = source_z + R_use * np.cos(PHI)
-            fig_3d.add_trace(go.Surface(x=cx, y=cy, z=cz,
-                                        colorscale=[[0, 'orange'], [1, 'red']],
-                                        showscale=False, opacity=0.85,
-                                        name=f'Yonish kamerasi {idx+1}'))
-    fig_3d.update_layout(scene=dict(xaxis_title='X (m)', yaxis_title='Y (m)',
-                                    zaxis_title='Chuqurlik (m)',
-                                    zaxis=dict(autorange='reversed'),
-                                    camera=dict(eye=dict(x=1.5, y=1.5, z=1.0))),
-                         template='plotly_dark', height=600,
-                         title="3D Litologik Model + Yonish Kameralari",
-                         showlegend=True)
+        fig_3d.add_trace(go.Surface(x=X3, y=Y3, z=Z_top, colorscale=[[0,rgb_str],[1,rgb_str]], showscale=False, opacity=0.7, name=layer['name'], hovertemplate=f"{layer['name']}<br>UCS: {layer['ucs']} MPa<br>GSI: {layer['gsi']}<extra></extra>"))
+    for src_x in [-total_depth/3, 0, total_depth/3]:
+        theta = np.linspace(0,2*np.pi,30)
+        phi = np.linspace(0,np.pi,20)
+        THETA, PHI = np.meshgrid(theta, phi)
+        R = H_seam*0.4
+        cx = src_x + R*np.sin(PHI)*np.cos(THETA)
+        cy = R*np.sin(PHI)*np.sin(THETA)
+        cz = source_z + R*np.cos(PHI)
+        fig_3d.add_trace(go.Surface(x=cx, y=cy, z=cz, colorscale=[[0,'orange'],[1,'red']], showscale=False, opacity=0.85, name='Yonish kamerasi'))
+    fig_3d.update_layout(scene=dict(xaxis_title='X (m)', yaxis_title='Y (m)', zaxis_title='Chuqurlik (m)', zaxis=dict(autorange='reversed'), camera=dict(eye=dict(x=1.5,y=1.5,z=1.0))), template='plotly_dark', height=600, title="3D Litologik Model + Yonish Kameralari", showlegend=True)
     st.plotly_chart(fig_3d, use_container_width=True)
-    
+    st.caption("Sariq/qizil sferalar — yonish kameralari joylashuvi")
+
+@st.cache_data(show_spinner=False)
+def monte_carlo_fos(ucs_mean: float, ucs_std: float, gsi_mean: float, gsi_std: float,
+                    d_mean: float, temp_mean: float, H_seam: float,
+                    depth_seam: float, rho_mean: float, n_sim: int = 2000) -> tuple:
+    np.random.seed(42)
+    ucs_s = np.random.normal(ucs_mean, ucs_std, n_sim).clip(1,300)
+    gsi_s = np.random.normal(gsi_mean, gsi_std, n_sim).clip(10,100)
+    T_s = np.random.normal(temp_mean, temp_mean*0.1, n_sim).clip(20,1200)
+    rho_s = np.random.normal(rho_mean, 50, n_sim).clip(2000, 3000)
+    depth_s = np.random.normal(depth_seam, depth_seam*0.05, n_sim).clip(10, 500)
+    D_T = np.clip(1 - np.exp(-beta_thermal * np.maximum(T_s - 20, 0)), 0, 0.95)
+    sci_T = ucs_s * (1 - D_T)
+    p_str = sci_T * (20 / (H_seam + EPS))**0.5
+    sv_s = vertical_stress(depth_s, rho_s)
+    fos_s = np.clip(p_str / (sv_s + EPS), 0, 5)
+    pf = float(np.mean(fos_s < 1.0))
+    return fos_s, pf
+
 with st.expander("🎲 Monte Carlo Noaniqlik Tahlili"):
     mc_col1, mc_col2 = st.columns([1,2])
     with mc_col1:
@@ -2236,6 +2237,7 @@ with tab_advanced:
 
 st.header("🕹️ Ultimate Interactive Dashboard (Real-time Animation)")
 st.markdown("Bu panelda FOS, siljish maydoni va vaqt bo‘yicha sirt siljishlarini interaktiv kuzatishingiz mumkin.")
+st.caption(f"Joriy qatlam: {layers_data[-1]['name']}, qalinligi={H_seam:.1f} m, chuqurlik={total_depth:.1f} m, manba chuqurligi={source_z:.1f} m")
 
 if 'displacement_2d' not in locals():
     sub_2d = np.tile(sub_p.reshape(1,-1)*100, (len(z_axis), 1))
@@ -2247,7 +2249,8 @@ surface_x = x_axis
 surface_h_disp = []
 surface_v_disp = []
 for time_step in time_steps_dash:
-    v_disp = -Smax * np.exp(-(surface_x**2)/(2*i_inflection**2)) * (min(time_step, burn_duration)/(burn_duration + EPS)) * (1 - np.exp(-c_subs * time_step)) * 100
+    subs_t_step = Smax * (1 - np.exp(-c_subs * time_step))
+    v_disp = -subs_t_step * np.exp(-(surface_x**2) / (2 * i_inflection**2)) * 100
     h_disp = -(surface_x / (i_inflection + EPS)) * v_disp
     surface_v_disp.append(v_disp)
     surface_h_disp.append(h_disp)
@@ -2260,7 +2263,9 @@ with col1_dash:
 with col2_dash:
     disp_cscale = st.selectbox("Displacement Color Scale", ['Turbo','Viridis','Cividis'], index=0, key="disp_cscale")
 
-def draw_interactive_ucg_dashboard(x_axis, z_axis, fos_2d, displacement_2d, surface_x, surface_h_disp, surface_v_disp, time_steps=None, fos_threshold=1.0, disp_colorscale='Turbo'):
+def draw_interactive_ucg_dashboard(x_axis, z_axis, fos_2d, displacement_2d, surface_x, surface_h_disp, surface_v_disp,
+                                   time_steps=None, fos_threshold=1.0, disp_colorscale='Turbo',
+                                   source_z=None, h_seam=None):
     if time_steps is None:
         time_steps = np.arange(surface_h_disp.shape[0])
     pillar_locations = np.linspace(x_axis.min() + 50, x_axis.max() - 50, 3)
@@ -2290,10 +2295,15 @@ def draw_interactive_ucg_dashboard(x_axis, z_axis, fos_2d, displacement_2d, surf
         fig.add_trace(go.Heatmap(z=surface_v_disp[i:i+1,:], x=surface_x, y=[t],
                                  colorscale='Viridis', zmin=np.min(surface_v_disp), zmax=np.max(surface_v_disp),
                                  showscale=False, visible=(i==0), name="V Disp"), row=2, col=2)
+    if source_z is not None and h_seam is not None:
+        y_rect_bottom = source_z - h_seam/2
+        y_rect_top = source_z + h_seam/2
+    else:
+        y_rect_bottom, y_rect_top = 550, 600
     for pos in pillar_locations:
-        fig.add_shape(type="rect", x0=pos-25, x1=pos+25, y0=550, y1=600,
+        fig.add_shape(type="rect", x0=pos-25, x1=pos+25, y0=y_rect_bottom, y1=y_rect_top,
                       line=dict(color="Lime", width=3), row=1, col=1)
-        fig.add_shape(type="rect", x0=pos-25, x1=pos+25, y0=550, y1=600,
+        fig.add_shape(type="rect", x0=pos-25, x1=pos+25, y0=y_rect_bottom, y1=y_rect_top,
                       line=dict(color="Lime", width=3), row=1, col=2)
     fig.layout.xaxis.title.text = "X (m)"
     fig.layout.xaxis.gridcolor = 'rgba(255,255,255,0.1)'
@@ -2331,7 +2341,8 @@ dash_fig = draw_interactive_ucg_dashboard(
     x_axis=x_axis, z_axis=z_axis, fos_2d=fos_2d,
     displacement_2d=displacement_2d, surface_x=surface_x,
     surface_h_disp=surface_h_disp, surface_v_disp=surface_v_disp,
-    time_steps=time_steps_dash, fos_threshold=fos_thresh_dash, disp_colorscale=disp_cscale
+    time_steps=time_steps_dash, fos_threshold=fos_thresh_dash, disp_colorscale=disp_cscale,
+    source_z=source_z, h_seam=H_seam
 )
 st.plotly_chart(dash_fig, use_container_width=True)
 
