@@ -955,13 +955,18 @@ with st.expander("🌍 3D Litologik Kesim"):
 st.header("🕹️ Ultimate Interactive Dashboard (Real-time Animation)")
 st.caption(f"Joriy qatlam: {layers_data[-1]['name']}, qalinligi={H_seam:.1f} m, chuqurlik={total_depth:.1f} m, manba chuqurligi={source_z:.1f} m")
 
+i_inflection = 0.45 * total_depth
+Smax = H_seam * 0.04
+c_subs = 0.15
+
 time_steps_dash = np.arange(0, time_h + 1, max(1, time_h // 20))
 surface_x = x_axis
 surface_h_disp = []
 surface_v_disp = []
 for time_step in time_steps_dash:
-    v_disp = -np.interp(time_step, [0, time_h], [0, np.max(sub_p)]) * 0.01
-    h_disp = -(surface_x / (0.45 * total_depth + EPS)) * v_disp
+    subs_magnitude = Smax * (1 - np.exp(-c_subs * time_step))
+    v_disp = -subs_magnitude * np.exp(-(surface_x**2) / (2 * i_inflection**2)) * 100
+    h_disp = -(surface_x / (i_inflection + EPS)) * v_disp
     surface_v_disp.append(v_disp)
     surface_h_disp.append(h_disp)
 surface_h_disp = np.array(surface_h_disp)
