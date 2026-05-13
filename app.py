@@ -1616,48 +1616,34 @@ with st.expander("📈 FOS Vaqt Bashorati (Trend)"):
 
 with st.expander("🌍 3D Litologik Kesim"):
     fig_3d = go.Figure()
-    y_3d = np.linspace(-total_depth*0.5, total_depth*0.5, 30)
+    y_3d = np.linspace(-total_depth * 0.5, total_depth * 0.5, 30)
     for i, layer in enumerate(layers_data):
         z_top = layer['z_start']
-        z_bot = layer['z_start']+layer['t']
+        z_bot = layer['z_start'] + layer['t']
         x_3d = np.linspace(x_axis.min(), x_axis.max(), 30)
         X3, Y3 = np.meshgrid(x_3d, y_3d)
         Z_top = np.full_like(X3, z_top)
         Z_bot = np.full_like(X3, z_bot)
         hex_color = layer['color'].lstrip('#')
-        r,g,b = tuple(int(hex_color[j:j+2],16) for j in (0,2,4))
+        r, g, b = tuple(int(hex_color[j:j+2], 16) for j in (0, 2, 4))
         rgb_str = f"rgb({r},{g},{b})"
-        fig_3d.add_trace(go.Surface(x=X3, y=Y3, z=Z_top, colorscale=[[0,rgb_str],[1,rgb_str]], showscale=False, opacity=0.7, name=layer['name'], hovertemplate=f"{layer['name']}<br>UCS: {layer['ucs']} MPa<br>GSI: {layer['gsi']}<extra></extra>"))
-    for src_x in [-total_depth/3, 0, total_depth/3]:
-        theta = np.linspace(0,2*np.pi,30)
-        phi = np.linspace(0,np.pi,20)
-        THETA, PHI = np.meshgrid(theta, phi)
-        R = H_seam*0.4
-        cx = src_x + R*np.sin(PHI)*np.cos(THETA)
-        cy = R*np.sin(PHI)*np.sin(THETA)
-        cz = source_z + R*np.cos(PHI)
-        fig_3d.add_trace(go.Surface(x=cx, y=cy, z=cz, colorscale=[[0,'orange'],[1,'red']], showscale=False, opacity=0.85, name='Yonish kamerasi'))
-    fig_3d.update_layout(scene=dict(xaxis_title='X (m)', yaxis_title='Y (m)', zaxis_title='Chuqurlik (m)', zaxis=dict(autorange='reversed'), camera=dict(eye=dict(x=1.5,y=1.5,z=1.0))), template='plotly_dark', height=600, title="3D Litologik Model + Yonish Kameralari", showlegend=True)
+        fig_3d.add_trace(go.Surface(x=X3, y=Y3, z=Z_top, colorscale=[[0, rgb_str], [1, rgb_str]], showscale=False, opacity=0.7, name=layer['name']))
+        fig_3d.add_trace(go.Surface(x=X3, y=Y3, z=Z_bot, colorscale=[[0, rgb_str], [1, rgb_str]], showscale=False, opacity=0.7, name=f"{layer['name']}_bottom"))
+    stage_3d = st.session_state.get('ucg_stage', 3)
+    active_wells_3d = states_132[stage_3d]
+    for idx, px in enumerate(well_x):
+        if idx in active_wells_3d:
+            theta = np.linspace(0, 2 * np.pi, 30)
+            phi = np.linspace(0, np.pi, 20)
+            THETA, PHI = np.meshgrid(theta, phi)
+            R_use = np.mean(engine.damage) * 10 + 5
+            cx = px + R_use * np.sin(PHI) * np.cos(THETA)
+            cy = R_use * np.sin(PHI) * np.sin(THETA)
+            cz = source_z + R_use * np.cos(PHI)
+            fig_3d.add_trace(go.Surface(x=cx, y=cy, z=cz, colorscale=[[0, 'orange'], [1, 'red']], showscale=False, opacity=0.85, name=f'Yonish kamerasi {idx+1}'))
+    fig_3d.update_layout(scene=dict(xaxis_title='X (m)', yaxis_title='Y (m)', zaxis_title='Chuqurlik (m)', zaxis=dict(autorange='reversed'), camera=dict(eye=dict(x=1.5, y=1.5, z=1.0))), template='plotly_dark', height=600, title="3D Litologik Model + Yonish Kameralari", showlegend=True)
     st.plotly_chart(fig_3d, use_container_width=True)
-    st.caption("Sariq/qizil sferalar — yonish kameralari joylashuvi")
-
-@st.cache_data(show_spinner=False)
-def monte_carlo_fos(ucs_mean: float, ucs_std: float, gsi_mean: float, gsi_std: float,
-                    d_mean: float, temp_mean: float, H_seam: float,
-                    depth_seam: float, rho_mean: float, n_sim: int = 2000) -> tuple:
-    np.random.seed(42)
-    ucs_s = np.random.normal(ucs_mean, ucs_std, n_sim).clip(1,300)
-    gsi_s = np.random.normal(gsi_mean, gsi_std, n_sim).clip(10,100)
-    T_s = np.random.normal(temp_mean, temp_mean*0.1, n_sim).clip(20,1200)
-    rho_s = np.random.normal(rho_mean, 50, n_sim).clip(2000, 3000)
-    depth_s = np.random.normal(depth_seam, depth_seam*0.05, n_sim).clip(10, 500)
-    D_T = np.clip(1 - np.exp(-beta_thermal * np.maximum(T_s - 20, 0)), 0, 0.95)
-    sci_T = ucs_s * (1 - D_T)
-    p_str = sci_T * (20 / (H_seam + EPS))**0.5
-    sv_s = vertical_stress(depth_s, rho_s)
-    fos_s = np.clip(p_str / (sv_s + EPS), 0, 5)
-    pf = float(np.mean(fos_s < 1.0))
-    return fos_s, pf
+    st.caption("Sariq/qizil sferalar — yonish kameralari (faqat tanlangan bosqichdagi faol quduqlar uchun)")
 
 with st.expander("🎲 Monte Carlo Noaniqlik Tahlili"):
     mc_col1, mc_col2 = st.columns([1,2])
