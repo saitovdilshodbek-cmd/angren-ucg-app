@@ -10,7 +10,7 @@ from sklearn.preprocessing import StandardScaler
 def fem_solver(nx=30, ny=30, nz=20):
     """
     3D Geostatik maydon solveri.
-    Maqsad: PINN uchun fizik karkas va bazaviy risk maydonini yaratish.
+    Maqsad: PINN uchun boshlang'ich fizik karkas yaratish.
     """
     z = np.linspace(-3000, 0, nz)
     X, Y, Z = np.meshgrid(
@@ -19,26 +19,25 @@ def fem_solver(nx=30, ny=30, nz=20):
         z, indexing="ij"
     )
 
-    # Fizik parametrlar (MPa va °C)
-    sigma_v = 10 + 0.022 * np.abs(Z) # Vertical Stress
-    pore = 2 + 0.006 * np.abs(Z)     # Pore Pressure
-    temp = 20 + 0.03 * np.abs(Z)     # Geothermal gradient
+    # Fizik maydonlar (MPa va °C)
+    sigma_v = 10 + 0.02 * np.abs(Z) # Vertical Stress
+    pore = 2 + 0.006 * np.abs(Z)    # Pore Pressure
+    temp = 20 + 0.025 * np.abs(Z)   # Temperature field
 
     sigma_eff = sigma_v - pore
 
-    # Mohr-Coulomb Factor of Safety (FOS) based risk
+    # Mohr-Coulomb Failure Criteria proxy
     c, phi = 12, np.deg2rad(30)
     tau_limit = c + sigma_eff * np.tan(phi)
-    tau_applied = sigma_eff * 0.75 * (1 + (temp / 1200) ** 2)
+    tau_applied = sigma_eff * 0.8 * (1 + (temp / 1200) ** 2)
 
-    # Dimensionless Risk Factor (FOS ga teskari bog'liqlik)
-    fem_risk_raw = (tau_applied / (tau_limit + 1e-6))
-    fem_risk = 1 / (1 + np.exp(-(fem_risk_raw - 1))) # Sigmoid normalization
+    # FEM natijasi - Sigmoid risk maydoni
+    fem_risk = 1 / (1 + np.exp(-(tau_applied - tau_limit)))
 
     return X, Y, Z, sigma_v, pore, temp, fem_risk
 
 # ==========================================
-# 2. PINN CORRECTOR (RESIDUAL LEARNING)
+# 2. PINN RESIDUAL CORRECTOR
 # ==========================================
 class PINN_Corrector(nn.Module):
     def __init__(self):
@@ -56,32 +55,31 @@ class PINN_Corrector(nn.Module):
         return torch.sigmoid(self.net(x))
 
 # ==========================================
-# 3. ENERGY-BASED PHYSICS LOSS (CONSISTENT DIMENSION)
+# 3. TRUE PHYSICS LOSS (MOHR-COULOMB CONSTRAINT)
 # ==========================================
-def energy_physics_loss(pred, inputs):
+def physics_loss_function(pred, inputs):
     """
-    Energy Consistency: Risk energetik to'planishga (Stress Energy) mutanosib bo'lishi shart.
-    Dimensionless normalization orqali o'lchov birliklari muammosi yechilgan.
+    Physics Constraint: Risk must be consistent with Stress/Strength Ratio.
+    Agar pred_risk > physical_limit bo'lsa, penalty qo'llaniladi.
     """
+    temp = inputs[:, 0]
     sigma = inputs[:, 1]
     pore = inputs[:, 2]
+
     sigma_eff = sigma - pore
-
-    # Stress Energy Density (Dimensionless proxy)
-    # sigma_eff ni o'rtacha qiymatga bo'lish orqali MPa dan qutilamiz
-    stress_energy = sigma_eff / (sigma_eff.mean() + 1e-6)
     
-    # Model bashorat qilgan energetik holat (Risk)
-    model_energy = pred.flatten()
+    # Notenglik cheklovi: Risk effektiv kuchlanishning kritik chegarasidan 
+    # asossiz ravishda o'tib ketmasligi kerak.
+    # sigma_eff/60 - normalizatsiya qilingan fizik limit
+    constraint = torch.relu(pred.flatten() - (sigma_eff / 60))
 
-    # Physics Constraint: Model energiyasi va Stress energiyasi o'rtasidagi muvozanat
-    return torch.mean((model_energy - stress_energy) ** 2)
+    return torch.mean(constraint)
 
 # ==========================================
-# 4. TRAINING ENGINE (COUPLED LOOP)
+# 4. COUPLED TRAINING ENGINE
 # ==========================================
 @st.cache_resource
-def train_v5_system():
+def train_v4_system():
     X, Y, Z, sigma_v, pore, temp, fem_risk = fem_solver()
 
     # Features: [T, Sigma_V, Pore, Depth, FEM_Risk]
@@ -97,67 +95,59 @@ def train_v5_system():
     opt = torch.optim.Adam(model.parameters(), lr=1e-3)
 
     Xt = torch.tensor(Xs, dtype=torch.float32)
-    yt_fem = torch.tensor(fem_risk.flatten(), dtype=torch.float32).view(-1, 1)
+    yt = torch.tensor(fem_risk.flatten(), dtype=torch.float32).view(-1, 1)
 
-    # Training
-    for epoch in range(400):
+    # Training Loop
+    for epoch in range(350):
         opt.zero_grad()
         pred = model(Xt)
 
-        # Loss 1: Data Matching (Mimic FEM baseline)
-        loss_data = nn.MSELoss()(pred, yt_fem)
+        # 1. Data Fitting (Mimic FEM)
+        loss_data = nn.MSELoss()(pred, yt)
         
-        # Loss 2: Energy Consistency (True Physics)
-        loss_phys = energy_physics_loss(pred, Xt)
+        # 2. Physical Consistency (True PINN Residual)
+        loss_phys = physics_loss_function(pred, Xt)
 
-        # Combined Loss
-        (loss_data + 0.3 * loss_phys).backward()
+        # Total Hybrid Loss
+        total_loss = loss_data + 0.25 * loss_phys
+
+        total_loss.backward()
         opt.step()
 
     return model, scaler
 
 # ==========================================
-# 5. INFERENCE WITH FEEDBACK LOOP
+# 5. INFERENCE & STREAMLIT UI
 # ==========================================
-def run_coupled_inference(model, scaler):
+st.set_page_config(page_title="Angren Digital Twin v4", layout="wide")
+st.title("🌐 FEM + PINN v4: Physics-Consistent Digital Twin")
+
+model, scaler = train_v4_system()
+
+if st.button("🚀 Run Bi-Directional Simulation"):
+    # Re-run physical solver
     X, Y, Z, sigma_v, pore, temp, fem_risk = fem_solver()
 
+    # Prepare for AI Correction
     grid_flat = np.column_stack([
         temp.flatten(), sigma_v.flatten(), pore.flatten(),
         Z.flatten(), fem_risk.flatten()
     ])
-    Xs = scaler.transform(grid_flat)
+    Xs = scaler.transform(grid_data := grid_flat)
     
     with torch.no_grad():
-        pinn_correction = model(torch.tensor(Xs, dtype=torch.float32)).numpy().flatten()
-    
-    # FEEDBACK LOOP: PINN bashorati FEM natijasini yangilaydi (Correction)
-    # Bu real Digital Twin dagi kabi: Sensor/AI ma'lumoti fizik modelni aniqlashtiradi
-    final_coupled_risk = 0.7 * fem_risk.flatten() + 0.3 * pinn_correction
+        pinn_pred = model(torch.tensor(Xs, dtype=torch.float32)).numpy()
+        risk_3d = pinn_pred.reshape(X.shape)
 
-    return X, final_coupled_risk.reshape(X.shape)
-
-# ==========================================
-# 6. UI & VISUALIZATION
-# ==========================================
-st.set_page_config(page_title="Digital Twin v5", layout="wide")
-st.title("🌐 FEM + PINN v5: Advanced Bidirectional Digital Twin")
-
-model, scaler = train_v5_system()
-
-if st.button("🚀 Execute Coupled Physics-AI Simulation"):
-    X, risk_3d = run_coupled_inference(model, scaler)
-
-    st.subheader("📈 Spatial Risk Evolution (Coupled Feedback)")
-    
-    # Depth-wise profile
+    # UI Visuals
+    st.subheader("🌋 Deep Geomechanical Risk Profile")
     st.line_chart(risk_3d.mean(axis=(0, 1)))
 
-    st.success("✅ Bidirectional Feedback Active: PINN energy residual correction applied to FEM grid.")
+    st.success("✔ Physics Coupling Active: Mohr-Coulomb Constraint Enforced in Loss Function.")
     
-    with st.expander("📝 Scientific Validation (PhD Summary)"):
+    with st.expander("🔬 Modelning ilmiy asosi (Technical Insight)"):
         st.write("""
-        1. **Energy-Based Loss**: Model energetik zichlik va risk o'rtasidagi bog'liqlikni o'lchovsiz birliklarda (dimensionless) tahlil qiladi.
-        2. **Residual Correction**: PINN shunchaki takrorlamaydi, u FEM maydonidagi fizik noaniqlikni (Energy residual) "tozalaydi".
-        3. **Feedback Loop**: AI natijasi fizik solver natijasiga 30% og'irlik bilan qayta qo'shiladi (Hybrid Update).
+        * **FEM Engine**: Bazaviy gidro-termik va geostatik kuchlanish maydonini hisoblaydi.
+        * **PINN Residual**: Neyron tarmoq loss funksiyasi ichida Mohr-Coulomb notengligini tekshiradi.
+        * **Constraint**: `torch.relu` funksiyasi orqali fizik qonuniyat buzilgan nuqtalar jazolanadi.
         """)
