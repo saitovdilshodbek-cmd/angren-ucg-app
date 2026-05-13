@@ -1636,7 +1636,7 @@ with st.expander("🌍 3D Litologik Kesim"):
             theta = np.linspace(0, 2 * np.pi, 30)
             phi = np.linspace(0, np.pi, 20)
             THETA, PHI = np.meshgrid(theta, phi)
-          
+            R_use = np.mean(engine.damage) * 10 + 5
             cx = px + R_use * np.sin(PHI) * np.cos(THETA)
             cy = R_use * np.sin(PHI) * np.sin(THETA)
             cz = source_z + R_use * np.cos(PHI)
