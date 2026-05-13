@@ -203,10 +203,10 @@ TRANSLATIONS = {
         'fos_eq': r"FOS = \frac{{\sigma_p}}{{\sigma_v}} = {fos:.2f}",
         'pillar_wilson': "**Wilson (1972) Yield Pillar nazariyasiga binoan:** Selek o'lchami $w={w}$ m bo'lganda, uning markaziy yadrosi {sv:.2f} MPa lik geostatik yukni ko'tarishga qodir. Plastik zona: $y = {y:.1f}$ m.",
         'references': "#### 📚 Asosiy Ilmiy Manbalar:",
-        'ref1': "**Hoek, E., & Brown, E. T. (2018).** The Hoek-Brown failure criterion and GSI – 2018 edition. *JRMGE*.",
-        'ref2': "**Yang, D. (2010).** *Stability of Underground Coal Gasification*. PhD Thesis, TU Delft.",
-        'ref3': "**Shao, S., et al. (2015).** A thermal damage constitutive model for rock. *IJRMMS*.",
-        'ref4': "**Wilson, A. H. (1972).** Research into the determination of pillar size. *Mining Engineer*.",
+        'ref1': "**Hoek, E., & Brown, E. T. (2018).** *The Hoek-Brown failure criterion and GSI – 2018 edition*. Journal of Rock Mechanics and Geotechnical Engineering, 11(6), 1115-1131. https://doi.org/10.1016/j.jrmge.2018.02.006",
+        'ref2': "**Yang, D. (2010).** *Stability of underground coal gasification* [PhD dissertation, Delft University of Technology]. TU Delft Repository.",
+        'ref3': "**Shao, S., Shao, J., & Wasantha, P. L. P. (2015).** A thermal damage constitutive model for rock. *International Journal of Rock Mechanics and Mining Sciences*, 80, 392-400.",
+        'ref4': "**Wilson, A. H. (1972).** Research into the determination of pillar size. *Mining Engineer*, 131, 409-425.",
         'conclusion_danger': "🔴 **Ilmiy Xulosa:** FOS={fos:.2f}. Termal degradatsiya yuqori. Selek enini oshirish yoki gazlashtirish tezligini nazorat qilish tavsiya etiladi.",
         'conclusion_safe': "🟢 **Ilmiy Xulosa:** FOS={fos:.2f}. Tanlangan parametrlar massiv barqarorligini ta'minlaydi.",
         'methodology_expander': "📚 Ilmiy Metodologiya va Manbalar (PhD Research References)",
@@ -320,10 +320,10 @@ TRANSLATIONS = {
         'fos_eq': r"FOS = \frac{{\sigma_p}}{{\sigma_v}} = {fos:.2f}",
         'pillar_wilson': "**According to Wilson (1972) Yield Pillar theory:** With pillar width $w={w}$ m, the central core can sustain a geostatic load of {sv:.2f} MPa. Plastic zone: $y = {y:.1f}$ m.",
         'references': "#### 📚 Main Scientific References:",
-        'ref1': "**Hoek, E., & Brown, E. T. (2018).** The Hoek-Brown failure criterion and GSI – 2018 edition. *JRMGE*.",
-        'ref2': "**Yang, D. (2010).** *Stability of Underground Coal Gasification*. PhD Thesis, TU Delft.",
-        'ref3': "**Shao, S., et al. (2015).** A thermal damage constitutive model for rock. *IJRMMS*.",
-        'ref4': "**Wilson, A. H. (1972).** Research into the determination of pillar size. *Mining Engineer*.",
+        'ref1': "**Hoek, E., & Brown, E. T. (2018).** *The Hoek-Brown failure criterion and GSI – 2018 edition*. Journal of Rock Mechanics and Geotechnical Engineering, 11(6), 1115-1131. https://doi.org/10.1016/j.jrmge.2018.02.006",
+        'ref2': "**Yang, D. (2010).** *Stability of underground coal gasification* [PhD dissertation, Delft University of Technology]. TU Delft Repository.",
+        'ref3': "**Shao, S., Shao, J., & Wasantha, P. L. P. (2015).** A thermal damage constitutive model for rock. *International Journal of Rock Mechanics and Mining Sciences*, 80, 392-400.",
+        'ref4': "**Wilson, A. H. (1972).** Research into the determination of pillar size. *Mining Engineer*, 131, 409-425.",
         'conclusion_danger': "🔴 **Scientific Conclusion:** FOS={fos:.2f}. High thermal degradation. Increase pillar width or control gasification rate.",
         'conclusion_safe': "🟢 **Scientific Conclusion:** FOS={fos:.2f}. The selected parameters ensure mass stability.",
         'methodology_expander': "📚 Scientific Methodology and References (PhD Research)",
@@ -437,10 +437,10 @@ TRANSLATIONS = {
         'fos_eq': r"FOS = \frac{{\sigma_p}}{{\sigma_v}} = {fos:.2f}",
         'pillar_wilson': "**Согласно теории текучести целика Wilson (1972):** При ширине целика $w={w}$ м его центральное ядро выдерживает геостатическую нагрузку {sv:.2f} МПа. Пластическая зона: $y = {y:.1f}$ м.",
         'references': "#### 📚 Основные научные источники:",
-        'ref1': "**Hoek, E., & Brown, E. T. (2018).** The Hoek-Brown failure criterion and GSI – 2018 edition. *JRMGE*.",
-        'ref2': "**Yang, D. (2010).** *Stability of Underground Coal Gasification*. PhD Thesis, TU Delft.",
-        'ref3': "**Shao, S., et al. (2015).** A thermal damage constitutive model for rock. *IJRMMS*.",
-        'ref4': "**Wilson, A. H. (1972).** Research into the determination of pillar size. *Mining Engineer*.",
+        'ref1': "**Hoek, E., & Brown, E. T. (2018).** *The Hoek-Brown failure criterion and GSI – 2018 edition*. Journal of Rock Mechanics and Geotechnical Engineering, 11(6), 1115-1131. https://doi.org/10.1016/j.jrmge.2018.02.006",
+        'ref2': "**Yang, D. (2010).** *Stability of underground coal gasification* [PhD dissertation, Delft University of Technology]. TU Delft Repository.",
+        'ref3': "**Shao, S., Shao, J., & Wasantha, P. L. P. (2015).** A thermal damage constitutive model for rock. *International Journal of Rock Mechanics and Mining Sciences*, 80, 392-400.",
+        'ref4': "**Wilson, A. H. (1972).** Research into the determination of pillar size. *Mining Engineer*, 131, 409-425.",
         'conclusion_danger': "🔴 **Научное заключение:** FOS={fos:.2f}. Высокая термическая деградация. Рекомендуется увеличить ширину целика или контролировать скорость газификации.",
         'conclusion_safe': "🟢 **Научное заключение:** FOS={fos:.2f}. Выбранные параметры обеспечивают устойчивость массива.",
         'methodology_expander': "📚 Научная методология и источники (PhD Research)",
@@ -924,9 +924,15 @@ m5.metric(t('ai_recommendation'), f"{optimal_width_ai:.1f} m", delta=f"Klassik: 
 st.markdown("---")
 col_g1, col_g2, col_g3 = st.columns([1.5,1.5,2])
 with col_g1:
-    st.plotly_chart(go.Figure(go.Scatter(x=x_axis, y=sub_p*100, fill='tozeroy', line=dict(color='magenta',width=3))).update_layout(title=t('subsidence_title'), template="plotly_dark", height=300), use_container_width=True)
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=x_axis, y=sub_p*100, fill='tozeroy', line=dict(color='magenta',width=3)))
+    fig.update_layout(title=t('subsidence_title'), template="plotly_dark", height=300)
+    st.plotly_chart(fig, use_container_width=True)
 with col_g2:
-    st.plotly_chart(go.Figure(go.Scatter(x=x_axis, y=horizontal_disp_cm, fill='tozeroy', line=dict(color='cyan',width=3))).update_layout(title=t('thermal_deform_title'), template="plotly_dark", height=300), use_container_width=True)
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=x_axis, y=horizontal_disp_cm, fill='tozeroy', line=dict(color='cyan',width=3)))
+    fig.update_layout(title=t('thermal_deform_title'), template="plotly_dark", height=300)
+    st.plotly_chart(fig, use_container_width=True)
 with col_g3:
     sigma3_ax = np.linspace(0, ucs_seam*0.5, 100)
     mb_s, s_s, a_s = grid_mb.max(), grid_s_hb.max(), grid_a_hb.max()
@@ -938,7 +944,8 @@ with col_g3:
     fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_20, name='20°C', line=dict(color='red',width=2)))
     fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_sov, name=t('tensile_hb'), line=dict(color='cyan',width=2,dash='dash')))
     fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_burning, name=t('combustion'), line=dict(color='orange',width=4)))
-    st.plotly_chart(fig_hb.update_layout(title=t('hb_envelopes_title'), template="plotly_dark", height=300, legend=dict(orientation="h", y=-0.3, x=0.5, xanchor="center")), use_container_width=True)
+    fig_hb.update_layout(title=t('hb_envelopes_title'), template="plotly_dark", height=300, legend=dict(orientation="h", y=-0.3, x=0.5, xanchor="center"))
+    st.plotly_chart(fig_hb, use_container_width=True)
 
 st.markdown("---")
 c1, c2 = st.columns([1, 2.5])
@@ -948,7 +955,8 @@ with c1:
     fig_layers = go.Figure()
     for lyr in layers_data:
         fig_layers.add_trace(go.Bar(x=['Kesim'], y=[lyr['t']], name=lyr['name'], marker_color=lyr['color'], width=0.4))
-    st.plotly_chart(fig_layers.update_layout(barmode='stack', template="plotly_dark", yaxis=dict(autorange='reversed'), height=450, showlegend=False), use_container_width=True)
+    fig_layers.update_layout(barmode='stack', template="plotly_dark", yaxis=dict(autorange='reversed'), height=450, showlegend=False)
+    st.plotly_chart(fig_layers, use_container_width=True)
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("Quduqlar konfiguratsiyasi")
@@ -1157,7 +1165,7 @@ def generate_physics_dataset(temp_field: np.ndarray, sigma1: np.ndarray,
 
 class HybridPINN(nn.Module):
     def __init__(self, input_dim=10):
-        super().__init__()
+        super(HybridPINN, self).__init__()
         self.net = nn.Sequential(
             nn.Linear(input_dim, 128),
             nn.BatchNorm1d(128),
@@ -1398,7 +1406,7 @@ if st.button("Harorat dinamik animatsiyasini ishga tushirish"):
 
 class SimpleRiskNN(nn.Module):
     def __init__(self, input_dim: int = 3):
-        super().__init__()
+        super(SimpleRiskNN, self).__init__()
         self.net = nn.Sequential(
             nn.Linear(input_dim, 16), nn.ReLU(),
             nn.Linear(16, 8), nn.ReLU(),
@@ -1963,7 +1971,7 @@ with tab_ai_orig:
     if PT_AVAILABLE:
         class SimpleNN(nn.Module):
             def __init__(self):
-                super().__init__()
+                super(SimpleNN, self).__init__()
                 self.fc1 = nn.Linear(2,16)
                 self.fc2 = nn.Linear(16,16)
                 self.fc3 = nn.Linear(16,1)
