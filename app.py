@@ -552,6 +552,10 @@ st.sidebar.subheader(t('combustion'))
 burn_duration = st.sidebar.number_input(t('burn_duration'), value=40)
 T_source_max = st.sidebar.slider(t('max_temp'), 600, 1200, 1075)
 
+st.sidebar.markdown("---")
+st.sidebar.subheader("Quduqlar konfiguratsiyasi")
+well_distance = st.sidebar.slider("Quduqlar orasidagi masofa (m):", 50.0, 500.0, 200.0, 10.0, key="well_dist_slider")
+
 with st.sidebar.expander(t('timeline')):
     st.markdown(t('timeline_table'))
 
@@ -731,9 +735,12 @@ class DigitalTwin:
     def predict_collapse(self, features: torch.Tensor) -> torch.Tensor:
         return self.model(features)
 
+well_x = np.array([-well_distance, 0, well_distance])
+
 @st.cache_data(show_spinner=False, max_entries=50)
 def compute_temperature_field_moving(time_h: float, T_source_max: float, burn_duration: float,
-                                     total_depth: float, source_z: float, grid_shape: tuple) -> tuple:
+                                     total_depth: float, source_z: float, grid_shape: tuple,
+                                     well_x: np.ndarray) -> tuple:
     THERMAL_DIFFUSIVITY = 8.5e-7
     x_axis = np.linspace(-total_depth * 1.5, total_depth * 1.5, grid_shape[1])
     z_axis = np.linspace(0, total_depth + 50, grid_shape[0])
@@ -743,9 +750,9 @@ def compute_temperature_field_moving(time_h: float, T_source_max: float, burn_du
     temp_2d = np.full_like(grid_x, 25.0)
     v_burn = 0.02
     sources = [
-        {'x0': -total_depth/3, 'start': 0, 'moving': False},
-        {'x0': 0, 'start': 40, 'moving': True, 'v': v_burn},
-        {'x0': total_depth/3, 'start': 80, 'moving': False}
+        {'x0': well_x[0], 'start': 0, 'moving': False},
+        {'x0': well_x[1], 'start': 40, 'moving': True, 'v': v_burn},
+        {'x0': well_x[2], 'start': 80, 'moving': False}
     ]
     for src in sources:
         if time_h <= src['start']:
@@ -784,7 +791,7 @@ grid_shape = (80, 100)
 source_z = total_depth - (layers_data[-1]['t'] / 2)
 H_seam = layers_data[-1]['t']
 temp_2d, x_axis, z_axis, grid_x, grid_z = compute_temperature_field_moving(
-    time_h, T_source_max, burn_duration, total_depth, source_z, grid_shape)
+    time_h, T_source_max, burn_duration, total_depth, source_z, grid_shape, well_x)
 
 E_field = young_modulus_temperature(temp_2d)
 alpha_field = thermal_expansion_temperature(temp_2d)
@@ -1016,12 +1023,7 @@ with c1:
         fig_layers.add_trace(go.Bar(x=['Kesim'], y=[lyr['t']], name=lyr['name'], marker_color=lyr['color'], width=0.4))
     st.plotly_chart(fig_layers.update_layout(barmode='stack', template="plotly_dark", yaxis=dict(autorange='reversed'), height=450, showlegend=False), use_container_width=True)
 
-st.sidebar.markdown("---")
-st.sidebar.subheader("Quduqlar konfiguratsiyasi")
-well_distance = st.sidebar.slider("Quduqlar orasidagi masofa (m):", 50.0, 500.0, 200.0, 10.0, key="well_dist_slider")
-
-CONFINEMENT = 0.65
-RELAX = 0.15
+states_132 = {1: [0], 2: [0, 2], 3: [0, 1, 2]}
 
 with c2:
     st.subheader("UCG Yonish Bosqichlari (1 → 3 → 2 sxemasi) – Yangi Ilmiy Model")
@@ -1029,7 +1031,6 @@ with c2:
     h_seam = coal_layer['t']
     ucs_coal_pa = coal_layer['ucs'] * 1e6
     rho_coal = coal_layer['rho']
-    well_x = [-well_distance, 0, well_distance]
     cavity_width = well_distance - rec_width
     cavity_width = max(cavity_width, 10)
     E_MOD = 25e9
@@ -1044,8 +1045,8 @@ with c2:
     sigma_v_coal = sigma_v_coal / 1e6
     Hc = h_seam * np.sqrt(sigma_v_coal / (coal_layer['ucs'] + EPS))
     Hc = np.clip(Hc, h_seam, h_seam * 4)
-    states_132 = {1: [0], 2: [0, 2], 3: [0, 1, 2]}
     stage = st.select_slider("Bosqichni tanlang:", options=[1, 2, 3], value=1, key="ucg_stage_132")
+    st.session_state['ucg_stage'] = stage
     active_wells = states_132[stage]
 
     def compute_advanced_fos(grid_x, grid_z, active_wells, well_x, source_z, h_seam, cavity_width,
@@ -1079,7 +1080,7 @@ with c2:
                         np.gradient(T, axis=1, edge_order=2)[mask]**2 +
                         np.gradient(T, axis=0, edge_order=2)[mask]**2
                     )
-                    th_vals = (CONFINEMENT * E * alpha * delta_T_m[local_thermal]) / (1 - nu) - RELAX * grad_T_local[local_thermal]
+                    th_vals = (0.65 * E * alpha * delta_T_m[local_thermal]) / (1 - nu) - 0.15 * grad_T_local[local_thermal]
                     sigma_th[local_thermal] = np.clip(th_vals, 0, sigma_ci_T[local_thermal] * 0.35)
                 sigma_1 = sigma_v + sigma_th
                 sigma_limit = hoek_brown(sigma_3, sigma_ci_T, mb, s_hb, a_hb)
@@ -1114,9 +1115,9 @@ with c2:
                 fos[pillar_mask] = 2.5
         if stage == 2:
             selek_eni = well_distance - cavity_width
-            pillar_strength = ucs_coal_pa * (selek_eni / (h_seam + EPS)) ** 0.5
+            pillar_strength_stage = ucs_coal_pa * (selek_eni / (h_seam + EPS)) ** 0.5
             sigma_v_coal_pa = sigma_v_coal_MPa * 1e6
-            fos_pillar = pillar_strength / (sigma_v_coal_pa + EPS)
+            fos_pillar = pillar_strength_stage / (sigma_v_coal_pa + EPS)
             pillar_zone = (np.abs(grid_x - well_x[1]) < selek_eni/2) & (np.abs(grid_z - source_z) < h_seam)
             fos[pillar_zone] = np.maximum(fos[pillar_zone], fos_pillar)
         return np.nan_to_num(fos, nan=3.0, posinf=3.0, neginf=0.0)
@@ -1625,18 +1626,22 @@ with st.expander("🌍 3D Litologik Kesim"):
         r,g,b = tuple(int(hex_color[j:j+2],16) for j in (0,2,4))
         rgb_str = f"rgb({r},{g},{b})"
         fig_3d.add_trace(go.Surface(x=X3, y=Y3, z=Z_top, colorscale=[[0,rgb_str],[1,rgb_str]], showscale=False, opacity=0.7, name=layer['name'], hovertemplate=f"{layer['name']}<br>UCS: {layer['ucs']} MPa<br>GSI: {layer['gsi']}<extra></extra>"))
-    for src_x in [-total_depth/3, 0, total_depth/3]:
-        theta = np.linspace(0,2*np.pi,30)
-        phi = np.linspace(0,np.pi,20)
-        THETA, PHI = np.meshgrid(theta, phi)
-        R = H_seam*0.4
-        cx = src_x + R*np.sin(PHI)*np.cos(THETA)
-        cy = R*np.sin(PHI)*np.sin(THETA)
-        cz = source_z + R*np.cos(PHI)
-        fig_3d.add_trace(go.Surface(x=cx, y=cy, z=cz, colorscale=[[0,'orange'],[1,'red']], showscale=False, opacity=0.85, name='Yonish kamerasi'))
+        fig_3d.add_trace(go.Surface(x=X3, y=Y3, z=Z_bot, colorscale=[[0,rgb_str],[1,rgb_str]], showscale=False, opacity=0.7, name=f"{layer['name']}_bottom"))
+    stage_3d = st.session_state.get('ucg_stage', 3)
+    active_wells_3d = states_132[stage_3d]
+    for idx, px in enumerate(well_x):
+        if idx in active_wells_3d:
+            theta = np.linspace(0,2*np.pi,30)
+            phi = np.linspace(0,np.pi,20)
+            THETA, PHI = np.meshgrid(theta, phi)
+            R_use = cavity_radius
+            cx = px + R_use*np.sin(PHI)*np.cos(THETA)
+            cy = R_use*np.sin(PHI)*np.sin(THETA)
+            cz = source_z + R_use*np.cos(PHI)
+            fig_3d.add_trace(go.Surface(x=cx, y=cy, z=cz, colorscale=[[0,'orange'],[1,'red']], showscale=False, opacity=0.85, name=f'Yonish kamerasi {idx+1}'))
     fig_3d.update_layout(scene=dict(xaxis_title='X (m)', yaxis_title='Y (m)', zaxis_title='Chuqurlik (m)', zaxis=dict(autorange='reversed'), camera=dict(eye=dict(x=1.5,y=1.5,z=1.0))), template='plotly_dark', height=600, title="3D Litologik Model + Yonish Kameralari", showlegend=True)
     st.plotly_chart(fig_3d, use_container_width=True)
-    st.caption("Sariq/qizil sferalar — yonish kameralari joylashuvi")
+    st.caption("Sariq/qizil sferalar — yonish kameralari (faqat tanlangan bosqichdagi faol quduqlar uchun)")
 
 @st.cache_data(show_spinner=False)
 def monte_carlo_fos(ucs_mean: float, ucs_std: float, gsi_mean: float, gsi_std: float,
