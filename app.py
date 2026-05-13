@@ -726,7 +726,9 @@ engine = UltimateGeoEngine(
 )
 
 total_steps = int(time_h / engine.dt)
+# Xatolik tuzatildi: source_z_index ni engine.nz ichida chegaralaymiz
 source_z_index = int((total_depth - layers_data[-1]['t']/2) / engine.dz)
+source_z_index = np.clip(source_z_index, 0, engine.nz-1)
 
 def compute_heat_source(step, total_steps, burn_duration_steps, T_source_max):
     Q = np.zeros((engine.nz, engine.nx))
