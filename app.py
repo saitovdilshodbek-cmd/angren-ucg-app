@@ -1167,9 +1167,6 @@ with c2:
                          line=dict(color="cyan", width=4, dash="dash"), fillcolor='rgba(0,255,255,0.1)', row=2, col=1)
         fig_tm.add_annotation(x=well_x[1], y=source_z_adv+100, text="HIMOYA SELEGI (PILLAR)",
                               showarrow=True, arrowhead=2, font=dict(color="cyan", size=12), row=2, col=1)
-    fig_tm.add_trace(go.Heatmap(z=fracture_mask, x=x_axis, y=z_axis,
-                                colorscale=[[0,'rgba(0,0,0,0)'],[1,'rgba(255,0,0,0.5)']],
-                                showscale=False, opacity=0.6, hoverinfo='skip'), row=2, col=1)
     fig_tm.update_layout(template="plotly_dark", height=900, margin=dict(r=150,t=80,b=100),
                          showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=-0.12, xanchor="center", x=0.5))
     fig_tm.update_yaxes(autorange='reversed', row=1, col=1)
@@ -2240,6 +2237,7 @@ with tab_advanced:
 
 st.header("🕹️ Ultimate Interactive Dashboard (Real-time Animation)")
 st.markdown("Bu panelda FOS, siljish maydoni va vaqt bo‘yicha sirt siljishlarini interaktiv kuzatishingiz mumkin.")
+st.caption(f"Joriy qatlam: {layers_data[-1]['name']}, qalinligi={H_seam:.1f} m, chuqurlik={total_depth:.1f} m, manba chuqurligi={source_z:.1f} m")
 
 if 'displacement_2d' not in locals():
     sub_2d = np.tile(sub_p.reshape(1,-1)*100, (len(z_axis), 1))
@@ -2251,7 +2249,8 @@ surface_x = x_axis
 surface_h_disp = []
 surface_v_disp = []
 for time_step in time_steps_dash:
-    v_disp = -Smax * np.exp(-(surface_x**2)/(2*i_inflection**2)) * (min(time_step, burn_duration)/(burn_duration + EPS)) * (1 - np.exp(-c_subs * time_step)) * 100
+    subs_t_step = Smax * (1 - np.exp(-c_subs * time_step))
+    v_disp = -subs_t_step * np.exp(-(surface_x**2) / (2 * i_inflection**2)) * 100
     h_disp = -(surface_x / (i_inflection + EPS)) * v_disp
     surface_v_disp.append(v_disp)
     surface_h_disp.append(h_disp)
@@ -2264,7 +2263,9 @@ with col1_dash:
 with col2_dash:
     disp_cscale = st.selectbox("Displacement Color Scale", ['Turbo','Viridis','Cividis'], index=0, key="disp_cscale")
 
-def draw_interactive_ucg_dashboard(x_axis, z_axis, fos_2d, displacement_2d, surface_x, surface_h_disp, surface_v_disp, time_steps=None, fos_threshold=1.0, disp_colorscale='Turbo'):
+def draw_interactive_ucg_dashboard(x_axis, z_axis, fos_2d, displacement_2d, surface_x, surface_h_disp, surface_v_disp,
+                                   time_steps=None, fos_threshold=1.0, disp_colorscale='Turbo',
+                                   source_z=None, h_seam=None):
     if time_steps is None:
         time_steps = np.arange(surface_h_disp.shape[0])
     pillar_locations = np.linspace(x_axis.min() + 50, x_axis.max() - 50, 3)
@@ -2294,10 +2295,15 @@ def draw_interactive_ucg_dashboard(x_axis, z_axis, fos_2d, displacement_2d, surf
         fig.add_trace(go.Heatmap(z=surface_v_disp[i:i+1,:], x=surface_x, y=[t],
                                  colorscale='Viridis', zmin=np.min(surface_v_disp), zmax=np.max(surface_v_disp),
                                  showscale=False, visible=(i==0), name="V Disp"), row=2, col=2)
+    if source_z is not None and h_seam is not None:
+        y_rect_bottom = source_z - h_seam/2
+        y_rect_top = source_z + h_seam/2
+    else:
+        y_rect_bottom, y_rect_top = 550, 600
     for pos in pillar_locations:
-        fig.add_shape(type="rect", x0=pos-25, x1=pos+25, y0=550, y1=600,
+        fig.add_shape(type="rect", x0=pos-25, x1=pos+25, y0=y_rect_bottom, y1=y_rect_top,
                       line=dict(color="Lime", width=3), row=1, col=1)
-        fig.add_shape(type="rect", x0=pos-25, x1=pos+25, y0=550, y1=600,
+        fig.add_shape(type="rect", x0=pos-25, x1=pos+25, y0=y_rect_bottom, y1=y_rect_top,
                       line=dict(color="Lime", width=3), row=1, col=2)
     fig.layout.xaxis.title.text = "X (m)"
     fig.layout.xaxis.gridcolor = 'rgba(255,255,255,0.1)'
@@ -2335,7 +2341,8 @@ dash_fig = draw_interactive_ucg_dashboard(
     x_axis=x_axis, z_axis=z_axis, fos_2d=fos_2d,
     displacement_2d=displacement_2d, surface_x=surface_x,
     surface_h_disp=surface_h_disp, surface_v_disp=surface_v_disp,
-    time_steps=time_steps_dash, fos_threshold=fos_thresh_dash, disp_colorscale=disp_cscale
+    time_steps=time_steps_dash, fos_threshold=fos_thresh_dash, disp_colorscale=disp_cscale,
+    source_z=source_z, h_seam=H_seam
 )
 st.plotly_chart(dash_fig, use_container_width=True)
 
