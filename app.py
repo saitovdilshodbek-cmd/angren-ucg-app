@@ -7,7 +7,7 @@ from scipy.ndimage import gaussian_filter
 from scipy.optimize import minimize
 from scipy.stats import linregress, norm as gaussian_dist
 import time
-from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor, IsolationForest
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 import io
 from docx import Document
 from docx.shared import Pt, Cm, RGBColor, Inches
@@ -654,155 +654,12 @@ def solve_heat_equation_dynamic(T, Q, rho_field, cp_field, k_field, dx, dz, dt, 
         T = 0.95 * T_old + 0.05 * T
     return T
 
-class ThermalModel:
-    def __init__(self, alpha: float = 1e-6):
-        self.alpha = alpha
-    def temperature_field(self, grid_x: np.ndarray, grid_z: np.ndarray, source: tuple, time: float) -> np.ndarray:
-        x0, z0, T_max = source
-        r2 = (grid_x - x0)**2 + (grid_z - z0)**2
-        return 25 + (T_max - 25) * np.exp(-r2 / (4 * self.alpha * time + 1e-6))
-
-class HoekBrown:
-    def __init__(self, mi: float, gsi: float, D: float):
-        self.mi = mi
-        self.gsi = gsi
-        self.D = D
-    def parameters(self) -> tuple:
-        mb = self.mi * np.exp((self.gsi - 100)/(28 - 14*self.D))
-        s  = np.exp((self.gsi - 100)/(9 - 3*self.D))
-        a  = 0.5 + (1/6)*(np.exp(-self.gsi/15) - np.exp(-20/3))
-        return mb, s, a
-
-class ThermalDamage:
-    def __init__(self, beta: float = 0.003):
-        self.beta = beta
-    def compute(self, T: np.ndarray) -> np.ndarray:
-        return 1 - np.exp(-self.beta * np.maximum(T - 20, 0))
-
-class ThermoMechanicalModel:
-    def __init__(self, params):
-        self.params = params
-    def compute_stress(self, T):
-        sigma_v = self.params['density'] * 9.81 * self.params['depth'] / 1e6
-        sigma1 = sigma_v * (1 + 0.002*(T-20))
-        sigma3 = 0.3 * sigma1
-        return sigma1, sigma3
-    def compute_damage(self, T):
-        damage = 1 - np.exp(-beta_thermal*(T-20))
-        return np.clip(damage, 0, 1)
-    def compute_fos(self, sigma1, sigma_ci):
-        return sigma_ci / (sigma1 + EPS)
-    def run(self, T, sigma_ci):
-        sigma1, sigma3 = self.compute_stress(T)
-        damage = self.compute_damage(T)
-        fos = self.compute_fos(sigma1, sigma_ci)
-        return {"sigma1": sigma1, "sigma3": sigma3, "damage": damage, "fos": fos}
-
-class HybridPINN(nn.Module):
-    def __init__(self, input_dim=10):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(input_dim, 128),
-            nn.BatchNorm1d(128),
-            nn.Tanh(),
-            nn.Linear(128, 64),
-            nn.BatchNorm1d(64),
-            nn.Tanh(),
-            nn.Linear(64, 1),
-            nn.Sigmoid()
-        )
-    def forward(self, x):
-        return self.net(x)
-
-class DigitalTwin:
-    def __init__(self, thermal, mechanics, damage, model):
-        self.thermal = thermal
-        self.mechanics = mechanics
-        self.damage = damage
-        self.model = model
-    def update(self, sensor_data: dict):
-        self.sensor = sensor_data
-    def simulate(self, grid_x: np.ndarray, grid_z: np.ndarray, time: float) -> tuple:
-        T = self.thermal.temperature_field(grid_x, grid_z, self.sensor['source'], time)
-        D = self.damage.compute(T)
-        sigma_ci = self.sensor['ucs'] * (1 - D)
-        sigma1 = self.mechanics.sigma1(self.sensor['sigma3'], sigma_ci)
-        return T, sigma1
-    def predict_collapse(self, features: torch.Tensor) -> torch.Tensor:
-        return self.model(features)
-
-@st.cache_data(show_spinner=False, max_entries=50)
-def compute_temperature_field_moving(time_h: float, T_source_max: float, burn_duration: float,
-                                     total_depth: float, source_z: float, grid_shape: tuple) -> tuple:
-    THERMAL_DIFFUSIVITY = 8.5e-7
-    x_axis = np.linspace(-total_depth * 1.5, total_depth * 1.5, grid_shape[1])
-    z_axis = np.linspace(0, total_depth + 50, grid_shape[0])
-    dx = x_axis[1] - x_axis[0]
-    dz = z_axis[1] - z_axis[0]
-    grid_x, grid_z = np.meshgrid(x_axis, z_axis)
-    temp_2d = np.full_like(grid_x, 25.0)
-    v_burn = 0.02
-    sources = [
-        {'x0': -total_depth/3, 'start': 0, 'moving': False},
-        {'x0': 0, 'start': 40, 'moving': True, 'v': v_burn},
-        {'x0': total_depth/3, 'start': 80, 'moving': False}
-    ]
-    for src in sources:
-        if time_h <= src['start']:
-            continue
-        dt_sec = (time_h - src['start']) * 3600
-        if src['moving']:
-            x_center = src['x0'] + src['v'] * dt_sec
-        else:
-            x_center = src['x0']
-        elapsed = time_h - src['start']
-        if elapsed <= burn_duration:
-            curr_T = T_source_max
-        else:
-            curr_T = 25 + (T_source_max - 25) * np.exp(-0.03 * (elapsed - burn_duration))
-        pen_depth = np.sqrt(4 * THERMAL_DIFFUSIVITY * dt_sec)
-        dist_sq = (grid_x - x_center)**2 + (grid_z - source_z)**2
-        temp_2d += (curr_T - 25) * np.exp(-dist_sq / (pen_depth**2 + 15**2))
-
-    rho_field = np.full_like(temp_2d, 1400.0)
-    cp_field = specific_heat(temp_2d)
-    k_field = thermal_conductivity(temp_2d)
-    total_time = max(burn_duration, time_h) * 3600
-    alpha_use = k_field / (rho_field * cp_field)
-    dt_max = dx**2 / (4 * np.max(alpha_use))
-    dt = 0.8 * dt_max
-    n_steps = max(int(total_time / dt), 20)
-    dt = total_time / n_steps
-    Q_source = np.zeros_like(temp_2d)
-    temp_2d = solve_heat_equation_dynamic(
-        T=temp_2d, Q=Q_source, rho_field=rho_field, cp_field=cp_field,
-        k_field=k_field, dx=dx, dz=dz, dt=dt, h=10.0, T_air=25.0, n_steps=n_steps
-    )
-    return temp_2d, x_axis, z_axis, grid_x, grid_z
-
-grid_shape = (80, 100)
-source_z = total_depth - (layers_data[-1]['t'] / 2)
-H_seam = layers_data[-1]['t']
-temp_2d, x_axis, z_axis, grid_x, grid_z = compute_temperature_field_moving(
-    time_h, T_source_max, burn_duration, total_depth, source_z, grid_shape)
-
-E_field = young_modulus_temperature(temp_2d)
-alpha_field = thermal_expansion_temperature(temp_2d)
-grid_rho = np.zeros_like(temp_2d)
-layer_bounds = [(l['z_start'], l['z_start'] + l['t']) for l in layers_data]
-for i, (z0, z1) in enumerate(layer_bounds):
-    mask = (grid_z >= z0) & (grid_z < z1 if i < len(layer_bounds)-1 else True)
-    layer = layers_data[i]
-    grid_rho[mask] = density_temperature(layer['rho'], temp_2d[mask])
-
-grid_sigma_v = np.zeros_like(grid_z)
-for i in range(len(z_axis)):
-    if i == 0:
-        grid_sigma_v[0,:] = 0
-    else:
-        dz = z_axis[i] - z_axis[i-1]
-        grid_sigma_v[i,:] = grid_sigma_v[i-1,:] + grid_rho[i,:] * 9.81 * dz / 1e6
-grid_sigma_h = k_ratio * grid_sigma_v
+def principal_stresses(sx, sy, txy):
+    avg = (sx + sy) / 2
+    radius = np.sqrt(((sx - sy) / 2) ** 2 + txy ** 2)
+    s1 = avg + radius
+    s2 = avg - radius
+    return s1, s2
 
 def evolving_cavity_radius(time_h, T_field):
     thermal_dam = 1 - np.exp(-0.002 * np.maximum(T_field - 20, 0))
@@ -832,14 +689,6 @@ def pore_pressure_field(T, depth, permeability):
     pore_p = hydrostatic + thermal_press + gas_press
     return pore_p / 1e6
 
-def creep_strain_rate(sigma, T_kelvin):
-    A = 1e-18
-    n = 3.2
-    Q = 180e3
-    R = 8.314
-    rate = A * (sigma**n) * np.exp(-Q / (R * T_kelvin))
-    return rate
-
 def compute_damage(sigma_eq, sigma_strength, temperature, creep_dam, beta):
     thermal_d = 1 - np.exp(-beta * np.maximum(temperature - 20, 0))
     mechanical_d = np.clip(sigma_eq / (sigma_strength + 1e-9), 0, 2)
@@ -848,12 +697,6 @@ def compute_damage(sigma_eq, sigma_strength, temperature, creep_dam, beta):
 
 def von_mises_stress(sigma_x, sigma_y, tau_xy):
     return np.sqrt(np.maximum(sigma_x**2 - sigma_x*sigma_y + sigma_y**2 + 3*tau_xy**2, 0.0))
-
-def mohr_coulomb_FOS(sigma1, sigma3, cohesion, friction_angle_deg):
-    phi = np.radians(friction_angle_deg)
-    strength = 2 * cohesion * np.cos(phi) + (sigma1 + sigma3) * np.sin(phi)
-    driving  = (sigma1 - sigma3) + 1e-9
-    return np.clip(strength / driving, 0, 5)
 
 def validation_metrics(numerical, reference):
     rmse = np.sqrt(np.mean((numerical - reference)**2))
@@ -865,16 +708,107 @@ def probability_of_failure(FOS):
     beta = (FOS - 1) / 0.15
     return gaussian_dist.cdf(-beta)
 
-cavity_radius = evolving_cavity_radius(time_h, temp_2d)
+def monte_carlo_fos(ucs_mean, ucs_std, gsi_mean, gsi_std, D, T_avg, H_seam, depth, density, rec_width, beta_th, n_sim=1000):
+    ucs_samples = np.random.normal(ucs_mean, ucs_std, n_sim)
+    gsi_samples = np.clip(np.random.normal(gsi_mean, gsi_std, n_sim), 10, 100)
+    fos = []
+    for ucs, gsi in zip(ucs_samples, gsi_samples):
+        mb = 10 * np.exp((gsi - 100) / (28 - 14 * D))
+        s  = np.exp((gsi - 100) / (9 - 3 * D))
+        a  = 0.5 + (1/6) * (np.exp(-gsi/15) - np.exp(-20/3))
+        D_T = 1 - np.exp(-beta_th * max(T_avg - 20, 0))
+        sigma_ci = ucs * (1 - D_T)
+        sigma_cm = sigma_ci * (s ** a)
+        pillar_strength = sigma_cm * (rec_width / (H_seam + EPS)) ** 0.5
+        sv = density * 9.81 * depth / 1e6
+        fos.append(pillar_strength / (sv + EPS))
+    fos = np.array(fos)
+    pf = np.mean(fos < 1.0)
+    return fos, pf
 
+grid_shape = (80, 100)
+source_z = total_depth - (layers_data[-1]['t'] / 2)
+H_seam = layers_data[-1]['t']
+
+@st.cache_data(show_spinner=False, max_entries=50)
+def compute_temperature_field_moving(time_h: float, T_source_max: float, burn_duration: float,
+                                     total_depth: float, source_z: float, grid_shape: tuple) -> tuple:
+    THERMAL_DIFFUSIVITY = 8.5e-7
+    x_axis = np.linspace(-total_depth * 1.5, total_depth * 1.5, grid_shape[1])
+    z_axis = np.linspace(0, total_depth + 50, grid_shape[0])
+    dx = x_axis[1] - x_axis[0]
+    dz = z_axis[1] - z_axis[0]
+    grid_x, grid_z = np.meshgrid(x_axis, z_axis)
+    temp_2d = np.full_like(grid_x, 25.0)
+    rho_field = np.full_like(temp_2d, 1400.0)
+    cp_field = specific_heat(temp_2d)
+    k_field = thermal_conductivity(temp_2d)
+    total_time = max(burn_duration, time_h) * 3600
+    alpha_use = k_field / (rho_field * cp_field)
+    dt_max = dx**2 / (4 * np.max(alpha_use))
+    dt = 0.8 * dt_max
+    n_steps = max(int(total_time / dt), 20)
+    dt = total_time / n_steps
+    v_burn = 0.02
+    sources = [
+        {'x0': -total_depth/3, 'start': 0, 'moving': False},
+        {'x0': 0, 'start': 40, 'moving': True, 'v': v_burn},
+        {'x0': total_depth/3, 'start': 80, 'moving': False}
+    ]
+    for step in range(n_steps):
+        current_time_h = (step + 1) * dt / 3600
+        Q_source = np.zeros_like(temp_2d)
+        for src in sources:
+            if current_time_h <= src['start']:
+                continue
+            dt_sec = (current_time_h - src['start']) * 3600
+            if src['moving']:
+                x_center = src['x0'] + src['v'] * dt_sec
+            else:
+                x_center = src['x0']
+            elapsed = current_time_h - src['start']
+            if elapsed <= burn_duration:
+                curr_T = T_source_max
+            else:
+                curr_T = 25 + (T_source_max - 25) * np.exp(-0.03 * (elapsed - burn_duration))
+            pen_depth = np.sqrt(4 * THERMAL_DIFFUSIVITY * dt_sec) + 15
+            dist_sq = (grid_x - x_center)**2 + (grid_z - source_z)**2
+            Q_source += (curr_T - 25) * np.exp(-dist_sq / (pen_depth**2))
+        temp_2d = solve_heat_equation_dynamic(
+            T=temp_2d, Q=Q_source, rho_field=rho_field, cp_field=cp_field,
+            k_field=k_field, dx=dx, dz=dz, dt=dt, h=10.0, T_air=25.0, n_steps=1
+        )
+    return temp_2d, x_axis, z_axis, grid_x, grid_z
+
+temp_2d, x_axis, z_axis, grid_x, grid_z = compute_temperature_field_moving(
+    time_h, T_source_max, burn_duration, total_depth, source_z, grid_shape)
+
+E_field = young_modulus_temperature(temp_2d)
+alpha_field = thermal_expansion_temperature(temp_2d)
+grid_rho = np.zeros_like(temp_2d)
+layer_bounds = [(l['z_start'], l['z_start'] + l['t']) for l in layers_data]
+for i, (z0, z1) in enumerate(layer_bounds):
+    mask = (grid_z >= z0) & (grid_z < z1 if i < len(layer_bounds)-1 else True)
+    layer = layers_data[i]
+    grid_rho[mask] = density_temperature(layer['rho'], temp_2d[mask])
+
+grid_sigma_v = np.zeros_like(grid_z)
+for i in range(len(z_axis)):
+    if i == 0:
+        grid_sigma_v[0,:] = 0
+    else:
+        dz = z_axis[i] - z_axis[i-1]
+        grid_sigma_v[i,:] = grid_sigma_v[i-1,:] + grid_rho[i,:] * 9.81 * dz / 1e6
+grid_sigma_h = k_ratio * grid_sigma_v
+
+cavity_radius = evolving_cavity_radius(time_h, temp_2d)
 perm_tmp = 1e-15 * np.exp(8 * thermal_damage(temp_2d, beta_thermal))
 pore_pressure = pore_pressure_field(temp_2d, grid_z, perm_tmp)
 
 sigma_rr, sigma_tt, tau_rt = kirsch_stress_field(grid_x, grid_z - source_z,
                                                  grid_sigma_h, grid_sigma_v,
                                                  cavity_radius, pore_pressure)
-sigma1_act = np.maximum(sigma_rr, sigma_tt)
-sigma3_act = np.minimum(sigma_rr, sigma_tt)
+sigma1_act, sigma3_act = principal_stresses(sigma_rr, sigma_tt, tau_rt)
 
 delta_T = np.maximum(temp_2d - 20, 0)
 sigma_thermal = (E_field * alpha_field * delta_T) / (1.0 - nu_poisson + EPS)
@@ -899,8 +833,6 @@ for i, (z0, z1) in enumerate(layer_bounds):
     grid_s_hb[mask] = np.exp(exp_gsi / (9 - 3*D_factor))
     grid_a_hb[mask] = 0.5 + (1/6)*(np.exp(-layer['gsi']/15) - np.exp(-20/3))
 
-damage = compute_damage(von_mises_stress(sigma1_act, sigma3_act, tau_rt),
-                        grid_ucs, temp_2d, 0.0, beta_thermal)
 sigma_ci = grid_ucs * (1 - thermal_damage(temp_2d, beta_thermal))
 sigma_thermal = np.clip(sigma_thermal / 1e6, 0, 0.35 * sigma_ci)
 
@@ -967,10 +899,12 @@ y_zone = max(y_zone_calc, 1.5)
 
 def optimize_pillar_ai(w_arr: np.ndarray) -> float:
     w = w_arr[0]
-    void_frac_base = float(np.mean(void_mask_permanent))
-    p_str = (ucs_seam * strength_red) * (w/(H_seam+EPS))**0.5
+    p_str = (ucs_seam * strength_red) * (w / (H_seam + EPS))**0.5
     fos_w = p_str / (sv_seam + EPS)
-    return -(fos_w - 10.0 * void_frac_base)
+    if fos_w >= 1.5:
+        return (w - 20) ** 2 * 0.001
+    else:
+        return (1.5 - fos_w) * 100 + (w - 20) ** 2 * 0.001
 
 try:
     opt_result = minimize(optimize_pillar_ai, x0=[rec_width], bounds=[(5.0,100.0)], method='SLSQP')
@@ -1045,7 +979,8 @@ with c2:
     Hc = h_seam * np.sqrt(sigma_v_coal / (coal_layer['ucs'] + EPS))
     Hc = np.clip(Hc, h_seam, h_seam * 4)
     states_132 = {1: [0], 2: [0, 2], 3: [0, 1, 2]}
-    stage = st.select_slider("Bosqichni tanlang:", options=[1, 2, 3], value=1, key="ucg_stage_132")
+    stage = st.select_slider("Bosqichni tanlang:", options=[1, 2, 3], value=1, key="ucg_stage")
+    st.session_state.ucg_stage = stage
     active_wells = states_132[stage]
 
     def compute_advanced_fos(grid_x, grid_z, active_wells, well_x, source_z, h_seam, cavity_width,
@@ -1197,8 +1132,8 @@ with c2:
     selek_eni = well_distance - cavity_width
     msgs = {
         1: f"**1-Bosqich:** Chap quduq yoqilgan. Qalinlik = {h_seam:.1f} m, Quduqlar masofasi = {well_distance:.0f} m, Selek eni = {selek_eni:.1f} m.",
-        2: f"**2-Bosqich (Muhim):** O‘ng quduq yoqilgan. O‘rtadagi selek tomni ushlab turadi. Selek eni = {selek_eni:.1f} m.",
-        3: f"**3-Bosqich:** Markaziy selek gazlashtirilmoqda. Barqaror cho‘kish."
+        2: f"**2-Bosqich (Muhim):** O'ng quduq yoqilgan. O'rtadagi selek tomni ushlab turadi. Selek eni = {selek_eni:.1f} m.",
+        3: f"**3-Bosqich:** Markaziy selek gazlashtirilmoqda. Barqaror cho'kish."
     }
     st.info(msgs[stage])
     if selek_eni < 18.5:
@@ -1220,6 +1155,22 @@ def generate_physics_dataset(temp_field: np.ndarray, sigma1: np.ndarray,
     energy = feat[:,6]
     collapse = ((fos < 1.0) | (temp_field.flatten() > 800) | (energy > 4000)).astype(int)
     return feat, collapse
+
+class HybridPINN(nn.Module):
+    def __init__(self, input_dim=10):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, 128),
+            nn.BatchNorm1d(128),
+            nn.Tanh(),
+            nn.Linear(128, 64),
+            nn.BatchNorm1d(64),
+            nn.Tanh(),
+            nn.Linear(64, 1),
+            nn.Sigmoid()
+        )
+    def forward(self, x):
+        return self.net(x)
 
 def physics_informed_loss(pred, sigma1, sigma_ci, temp, damage):
     fos = sigma_ci / (sigma1 + EPS)
@@ -1254,7 +1205,7 @@ def train_random_forest(X_scaled: np.ndarray, y: np.ndarray) -> RandomForestClas
     rf.fit(X_scaled, y)
     return rf
 
-@st.cache_resource
+@st.cache_data
 def get_ensemble_model(X: np.ndarray, y: np.ndarray,
                        sigma1: np.ndarray, sigma_ci: np.ndarray,
                        temp: np.ndarray, damage: np.ndarray) -> tuple:
@@ -1298,6 +1249,17 @@ except Exception as e:
     st.error(f"Collapse prediction error: {str(e)}")
     collapse_pred = np.zeros_like(temp_2d)
 
+weights = np.array([0.4, 0.3, 0.2, 0.1])
+risk_index_var = (
+    weights[0]*collapse_pred +
+    weights[1]*(1-fos_2d) +
+    weights[2]*perm/np.max(perm) +
+    weights[3]*(temp_2d/np.max(temp_2d))
+)
+p = risk_index_var / np.sum(risk_index_var + EPS)
+entropy = -np.sum(p * np.log(p + EPS))
+st.metric("Tizim entropiyasi (noaniqlik)", f"{entropy:.3f}")
+
 with st.expander("🪨 Phase-Field Fracture Damage Evolution (Patent Model)"):
     def phase_field_update(damage, strain_energy, dx, dt, Gc=0.01, l_char=1.0):
         dt_max = dx**2 / (4 * Gc * l_char)
@@ -1340,7 +1302,7 @@ with st.expander("🧠 Real PINN: Heat Equation Residual Loss"):
     if PT_AVAILABLE:
         st.success("PyTorch mavjud, PINN funksiyasi ishga tayyor.")
     else:
-        st.warning("PyTorch yo‘q, PINN ishlamaydi.")
+        st.warning("PyTorch yo'q, PINN ishlamaydi.")
 
 with st.expander("📊 Uncertainty Quantification (UQ) for FOS"):
     N = 500
@@ -1358,12 +1320,6 @@ with st.expander("📊 Uncertainty Quantification (UQ) for FOS"):
     fig_uq.update_layout(title='FOS Uncertainty Distribution', template='plotly_dark')
     st.plotly_chart(fig_uq, use_container_width=True)
     st.write(f"90% CI: [{np.percentile(fos_samples,5):.3f}, {np.percentile(fos_samples,95):.3f}]")
-
-with st.expander("🔄 Visco-Plastic Creep (Power Law)"):
-    st.markdown(r"""
-    **Creep strain rate:**  
-    $$\dot{\epsilon} = A \sigma^n e^{-Q/(RT)}$$
-    """)
 
 if SHAP_AVAILABLE and rf_model is not None:
     with st.expander("🧠 SHAP Model Interpretatsiyasi"):
@@ -1432,48 +1388,14 @@ else:
         fig_vol.update_layout(title="Harorat hajmi (proxy)", height=500)
         st.plotly_chart(fig_vol, use_container_width=True)
 
-weights = np.array([0.4, 0.3, 0.2, 0.1])
-risk_index_var = (
-    weights[0]*collapse_pred +
-    weights[1]*(1-fos_2d) +
-    weights[2]*perm/np.max(perm) +
-    weights[3]*(temp_2d/np.max(temp_2d))
-)
-p = risk_index_var / np.sum(risk_index_var + EPS)
-entropy = -np.sum(p * np.log(p + EPS))
-st.metric("Tizim entropiyasi (noaniqlik)", f"{entropy:.3f}")
-
 placeholder = st.empty()
 if st.button("Harorat dinamik animatsiyasini ishga tushirish"):
-    for t_anim in range(100):
+    for t_anim in range(30):
         temp_dynamic = temp_2d + np.sin(t_anim/5)*50
         fig_anim = go.Figure(data=go.Heatmap(z=temp_dynamic, x=x_axis, y=z_axis, colorscale='Hot'))
         fig_anim.update_layout(title=f"Vaqt qadami {t_anim}", template='plotly_dark')
         placeholder.plotly_chart(fig_anim, use_container_width=True)
         time.sleep(0.1)
-
-st.markdown("---")
-st.subheader("📡 Tashqi sensor API ulanishi")
-try:
-    response = requests.get("http://sensor-api/data", timeout=5)
-    if response.status_code == 200:
-        data = response.json()
-        st.success("Sensor ma'lumotlari olindi!")
-        st.json(data)
-        final_risk = (
-            collapse_pred * 0.35 +
-            (1/fos_2d) * 0.25 +
-            (perm/np.max(perm)) * 0.2 +
-            (temp_2d/np.max(temp_2d)) * 0.2
-        )
-        uncertainty = np.std(final_risk)
-        sensitivity = Si['ST'] if SALIB_AVAILABLE else "SALib mavjud emas"
-        st.write(f"Yakuniy risk noaniqligi: {uncertainty:.4f}")
-        st.write("Sezgirlik:", sensitivity)
-    else:
-        st.warning("Sensor API javob bermadi.")
-except requests.exceptions.RequestException as e:
-    st.info(f"Sensor API hozirda ulanmagan: {e}")
 
 class SimpleRiskNN(nn.Module):
     def __init__(self, input_dim: int = 3):
@@ -1499,7 +1421,7 @@ def train_simple_risk_nn(model: nn.Module, X: np.ndarray, y: np.ndarray, epochs:
         opt.step()
     return model
 
-@st.cache_resource
+@st.cache_data
 def get_risk_model() -> nn.Module:
     if not PT_AVAILABLE:
         return None
@@ -1535,7 +1457,7 @@ with st.expander("🤖 AI Risk Prediction (Sensor CSV)", expanded=False):
             required_cols = ['temp', 'stress', 'ucs_lab']
             missing = [c for c in required_cols if c not in df_sensor.columns]
             if missing:
-                st.error(f"Faylda quyidagi ustunlar yo‘q: {missing}.")
+                st.error(f"Faylda quyidagi ustunlar yo'q: {missing}.")
             else:
                 risk_vals = predict_risk_from_sensor(risk_model, df_sensor['temp'].values, df_sensor['stress'].values, df_sensor['ucs_lab'].values)
                 df_sensor['risk'] = risk_vals
@@ -1550,9 +1472,9 @@ with st.expander("🤖 AI Risk Prediction (Sensor CSV)", expanded=False):
                 avg_risk = np.mean(risk_vals)
                 st.metric("O'rtacha risk", f"{avg_risk:.3f}", delta="Yuqori" if avg_risk>0.7 else ("O'rta" if avg_risk>0.5 else "Past"))
                 if avg_risk > 0.7:
-                    st.error("⚠️ Yuqori xavf! Tez choralar ko‘rish kerak.")
+                    st.error("⚠️ Yuqori xavf! Tez choralar ko'rish kerak.")
                 elif avg_risk > 0.5:
-                    st.warning("⚠️ O‘rtacha xavf. Monitoringni kuchaytirish tavsiya etiladi.")
+                    st.warning("⚠️ O'rtacha xavf. Monitoringni kuchaytirish tavsiya etiladi.")
                 else:
                     st.success("✅ Xavf past. Hozircha xavfsiz.")
         except Exception as e:
@@ -1613,48 +1535,44 @@ with st.expander("📈 FOS Vaqt Bashorati (Trend)"):
 
 with st.expander("🌍 3D Litologik Kesim"):
     fig_3d = go.Figure()
-    y_3d = np.linspace(-total_depth*0.5, total_depth*0.5, 30)
+    y_3d = np.linspace(-total_depth * 0.5, total_depth * 0.5, 30)
     for i, layer in enumerate(layers_data):
         z_top = layer['z_start']
-        z_bot = layer['z_start']+layer['t']
+        z_bot = layer['z_start'] + layer['t']
         x_3d = np.linspace(x_axis.min(), x_axis.max(), 30)
         X3, Y3 = np.meshgrid(x_3d, y_3d)
         Z_top = np.full_like(X3, z_top)
         Z_bot = np.full_like(X3, z_bot)
         hex_color = layer['color'].lstrip('#')
-        r,g,b = tuple(int(hex_color[j:j+2],16) for j in (0,2,4))
+        r, g, b = tuple(int(hex_color[j:j+2], 16) for j in (0, 2, 4))
         rgb_str = f"rgb({r},{g},{b})"
-        fig_3d.add_trace(go.Surface(x=X3, y=Y3, z=Z_top, colorscale=[[0,rgb_str],[1,rgb_str]], showscale=False, opacity=0.7, name=layer['name'], hovertemplate=f"{layer['name']}<br>UCS: {layer['ucs']} MPa<br>GSI: {layer['gsi']}<extra></extra>"))
-    for src_x in [-total_depth/3, 0, total_depth/3]:
-        theta = np.linspace(0,2*np.pi,30)
-        phi = np.linspace(0,np.pi,20)
-        THETA, PHI = np.meshgrid(theta, phi)
-        R = H_seam*0.4
-        cx = src_x + R*np.sin(PHI)*np.cos(THETA)
-        cy = R*np.sin(PHI)*np.sin(THETA)
-        cz = source_z + R*np.cos(PHI)
-        fig_3d.add_trace(go.Surface(x=cx, y=cy, z=cz, colorscale=[[0,'orange'],[1,'red']], showscale=False, opacity=0.85, name='Yonish kamerasi'))
-    fig_3d.update_layout(scene=dict(xaxis_title='X (m)', yaxis_title='Y (m)', zaxis_title='Chuqurlik (m)', zaxis=dict(autorange='reversed'), camera=dict(eye=dict(x=1.5,y=1.5,z=1.0))), template='plotly_dark', height=600, title="3D Litologik Model + Yonish Kameralari", showlegend=True)
+        fig_3d.add_trace(go.Surface(x=X3, y=Y3, z=Z_top, colorscale=[[0, rgb_str], [1, rgb_str]],
+                                    showscale=False, opacity=0.7, name=layer['name']))
+        fig_3d.add_trace(go.Surface(x=X3, y=Y3, z=Z_bot, colorscale=[[0, rgb_str], [1, rgb_str]],
+                                    showscale=False, opacity=0.7, name=f"{layer['name']}_bottom"))
+    stage_3d = st.session_state.get('ucg_stage', 3)
+    active_wells_3d = states_132[stage_3d]
+    for idx, px in enumerate(well_x):
+        if idx in active_wells_3d:
+            theta = np.linspace(0, 2 * np.pi, 30)
+            phi = np.linspace(0, np.pi, 20)
+            THETA, PHI = np.meshgrid(theta, phi)
+            R_use = cavity_radius
+            cx = px + R_use * np.sin(PHI) * np.cos(THETA)
+            cy = R_use * np.sin(PHI) * np.sin(THETA)
+            cz = source_z + R_use * np.cos(PHI)
+            fig_3d.add_trace(go.Surface(x=cx, y=cy, z=cz,
+                                        colorscale=[[0, 'orange'], [1, 'red']],
+                                        showscale=False, opacity=0.85,
+                                        name=f'Yonish kamerasi {idx+1}'))
+    fig_3d.update_layout(scene=dict(xaxis_title='X (m)', yaxis_title='Y (m)',
+                                    zaxis_title='Chuqurlik (m)',
+                                    zaxis=dict(autorange='reversed'),
+                                    camera=dict(eye=dict(x=1.5, y=1.5, z=1.0))),
+                         template='plotly_dark', height=600,
+                         title="3D Litologik Model + Yonish Kameralari",
+                         showlegend=True)
     st.plotly_chart(fig_3d, use_container_width=True)
-    st.caption("Sariq/qizil sferalar — yonish kameralari joylashuvi")
-
-@st.cache_data(show_spinner=False)
-def monte_carlo_fos(ucs_mean: float, ucs_std: float, gsi_mean: float, gsi_std: float,
-                    d_mean: float, temp_mean: float, H_seam: float,
-                    depth_seam: float, rho_mean: float, n_sim: int = 2000) -> tuple:
-    np.random.seed(42)
-    ucs_s = np.random.normal(ucs_mean, ucs_std, n_sim).clip(1,300)
-    gsi_s = np.random.normal(gsi_mean, gsi_std, n_sim).clip(10,100)
-    T_s = np.random.normal(temp_mean, temp_mean*0.1, n_sim).clip(20,1200)
-    rho_s = np.random.normal(rho_mean, 50, n_sim).clip(2000, 3000)
-    depth_s = np.random.normal(depth_seam, depth_seam*0.05, n_sim).clip(10, 500)
-    D_T = np.clip(1 - np.exp(-beta_thermal * np.maximum(T_s - 20, 0)), 0, 0.95)
-    sci_T = ucs_s * (1 - D_T)
-    p_str = sci_T * (20 / (H_seam + EPS))**0.5
-    sv_s = vertical_stress(depth_s, rho_s)
-    fos_s = np.clip(p_str / (sv_s + EPS), 0, 5)
-    pf = float(np.mean(fos_s < 1.0))
-    return fos_s, pf
 
 with st.expander("🎲 Monte Carlo Noaniqlik Tahlili"):
     mc_col1, mc_col2 = st.columns([1,2])
@@ -1666,7 +1584,7 @@ with st.expander("🎲 Monte Carlo Noaniqlik Tahlili"):
         fos_mc, pf = monte_carlo_fos(layers_data[-1]['ucs'], ucs_std_val,
                                      layers_data[-1]['gsi'], gsi_std_val,
                                      D_factor, avg_t_p, H_seam,
-                                     depth_seam, avg_rho, n_sim=n_mc)
+                                     depth_seam, avg_rho, rec_width, beta_thermal, n_sim=n_mc)
         fig_mc = go.Figure()
         fig_mc.add_histogram(x=fos_mc, nbinsx=40,
                              marker_color=np.where(fos_mc<1.0,'#E74C3C','#27AE60'),
@@ -1760,6 +1678,7 @@ def generate_full_iso_report(obj_name: str, lang: str, layers_data: list,
                              T_source_max: float, burn_duration: float,
                              pillar_strength: float, optimal_width_ai: float,
                              fos_2d: np.ndarray, risk_map: np.ndarray,
+                             void_volume: float,
                              prepared_by: str, approved_by: str,
                              doc_number: str, revision: str,
                              fig_bytes: bytes = None) -> bytes:
@@ -1921,6 +1840,7 @@ with st.expander("📄 ISO 9001:2015 Standart Hujjat (.docx)"):
                     T_source_max=T_source_max, burn_duration=burn_duration,
                     pillar_strength=pillar_strength, optimal_width_ai=optimal_width_ai,
                     fos_2d=fos_2d, risk_map=risk_index_var,
+                    void_volume=void_volume,
                     prepared_by=prepared_inp, approved_by=approved_inp,
                     doc_number=doc_num_input, revision=revision_inp,
                     fig_bytes=buf_img.getvalue()
@@ -2236,13 +2156,11 @@ with tab_advanced:
             st.write(r)
 
 st.header("🕹️ Ultimate Interactive Dashboard (Real-time Animation)")
-st.markdown("Bu panelda FOS, siljish maydoni va vaqt bo‘yicha sirt siljishlarini interaktiv kuzatishingiz mumkin.")
-st.caption(f"Joriy qatlam: {layers_data[-1]['name']}, qalinligi={H_seam:.1f} m, chuqurlik={total_depth:.1f} m, manba chuqurligi={source_z:.1f} m")
+st.markdown("Bu panelda FOS, siljish maydoni va vaqt bo'yicha sirt siljishlarini interaktiv kuzatishingiz mumkin.")
 
-if 'displacement_2d' not in locals():
-    sub_2d = np.tile(sub_p.reshape(1,-1)*100, (len(z_axis), 1))
-    uplift_2d = np.tile(horizontal_disp_cm.reshape(1,-1), (len(z_axis), 1))
-    displacement_2d = np.sqrt(sub_2d**2 + uplift_2d**2) * (1 + 0.3 * np.random.rand(*sub_2d.shape))
+sub_2d = np.tile(sub_p.reshape(1,-1)*100, (len(z_axis), 1))
+uplift_2d = np.tile(horizontal_disp_cm.reshape(1,-1), (len(z_axis), 1))
+displacement_2d = np.sqrt(sub_2d**2 + uplift_2d**2)
 
 time_steps_dash = np.arange(0, time_h+1, max(1, time_h//20))
 surface_x = x_axis
@@ -2250,7 +2168,7 @@ surface_h_disp = []
 surface_v_disp = []
 for time_step in time_steps_dash:
     subs_t_step = Smax * (1 - np.exp(-c_subs * time_step))
-    v_disp = -subs_t_step * np.exp(-(surface_x**2) / (2 * i_inflection**2)) * 100
+    v_disp = -subs_t_step * np.exp(-(surface_x**2)/(2*i_inflection**2)) * 100
     h_disp = -(surface_x / (i_inflection + EPS)) * v_disp
     surface_v_disp.append(v_disp)
     surface_h_disp.append(h_disp)
@@ -2263,9 +2181,7 @@ with col1_dash:
 with col2_dash:
     disp_cscale = st.selectbox("Displacement Color Scale", ['Turbo','Viridis','Cividis'], index=0, key="disp_cscale")
 
-def draw_interactive_ucg_dashboard(x_axis, z_axis, fos_2d, displacement_2d, surface_x, surface_h_disp, surface_v_disp,
-                                   time_steps=None, fos_threshold=1.0, disp_colorscale='Turbo',
-                                   source_z=None, h_seam=None):
+def draw_interactive_ucg_dashboard(x_axis, z_axis, fos_2d, displacement_2d, surface_x, surface_h_disp, surface_v_disp, time_steps=None, fos_threshold=1.0, disp_colorscale='Turbo'):
     if time_steps is None:
         time_steps = np.arange(surface_h_disp.shape[0])
     pillar_locations = np.linspace(x_axis.min() + 50, x_axis.max() - 50, 3)
@@ -2288,22 +2204,37 @@ def draw_interactive_ucg_dashboard(x_axis, z_axis, fos_2d, displacement_2d, surf
                              colorscale=disp_colorscale,
                              colorbar=dict(title="Disp (cm)", x=1.0, y=0.78, thickness=12, len=0.42),
                              name="2D Disp"), row=1, col=2)
+    frames = []
     for i, t in enumerate(time_steps):
-        fig.add_trace(go.Heatmap(z=surface_h_disp[i:i+1,:], x=surface_x, y=[t],
-                                 colorscale='Turbo', zmin=np.min(surface_h_disp), zmax=np.max(surface_h_disp),
-                                 showscale=False, visible=(i==0), name="H Disp"), row=2, col=1)
-        fig.add_trace(go.Heatmap(z=surface_v_disp[i:i+1,:], x=surface_x, y=[t],
-                                 colorscale='Viridis', zmin=np.min(surface_v_disp), zmax=np.max(surface_v_disp),
-                                 showscale=False, visible=(i==0), name="V Disp"), row=2, col=2)
-    if source_z is not None and h_seam is not None:
-        y_rect_bottom = source_z - h_seam/2
-        y_rect_top = source_z + h_seam/2
-    else:
-        y_rect_bottom, y_rect_top = 550, 600
+        frame_data = []
+        frame_data.append(go.Heatmap(z=fos_2d, x=x_axis, y=z_axis,
+                                     colorscale=[[0, 'rgb(255,0,0)'], [0.33, 'rgb(255,165,0)'], [0.5, 'rgb(173,255,47)'], [1, 'rgb(0,128,0)']],
+                                     zmin=0, zmax=3, showscale=False))
+        frame_data.append(go.Heatmap(z=mask_fos, x=x_axis, y=z_axis,
+                                     colorscale=[[0,'rgba(255,0,0,0.5)'],[1,'rgba(255,0,0,0.5)']],
+                                     showscale=False))
+        frame_data.append(go.Heatmap(z=displacement_2d, x=x_axis, y=z_axis,
+                                     colorscale=disp_colorscale, showscale=False))
+        frame_data.append(go.Heatmap(z=surface_h_disp[i:i+1,:], x=surface_x, y=[t],
+                                     colorscale='Turbo', zmin=np.min(surface_h_disp), zmax=np.max(surface_h_disp),
+                                     showscale=False))
+        frame_data.append(go.Heatmap(z=surface_v_disp[i:i+1,:], x=surface_x, y=[t],
+                                     colorscale='Viridis', zmin=np.min(surface_v_disp), zmax=np.max(surface_v_disp),
+                                     showscale=False))
+        frames.append(go.Frame(data=frame_data, name=f"t{i}"))
+    fig.frames = frames
+    for i, t in enumerate(time_steps):
+        if i == 0:
+            fig.add_trace(go.Heatmap(z=surface_h_disp[i:i+1,:], x=surface_x, y=[t],
+                                     colorscale='Turbo', zmin=np.min(surface_h_disp), zmax=np.max(surface_h_disp),
+                                     showscale=False, visible=True, name="H Disp"), row=2, col=1)
+            fig.add_trace(go.Heatmap(z=surface_v_disp[i:i+1,:], x=surface_x, y=[t],
+                                     colorscale='Viridis', zmin=np.min(surface_v_disp), zmax=np.max(surface_v_disp),
+                                     showscale=False, visible=True, name="V Disp"), row=2, col=2)
     for pos in pillar_locations:
-        fig.add_shape(type="rect", x0=pos-25, x1=pos+25, y0=y_rect_bottom, y1=y_rect_top,
+        fig.add_shape(type="rect", x0=pos-25, x1=pos+25, y0=550, y1=600,
                       line=dict(color="Lime", width=3), row=1, col=1)
-        fig.add_shape(type="rect", x0=pos-25, x1=pos+25, y0=y_rect_bottom, y1=y_rect_top,
+        fig.add_shape(type="rect", x0=pos-25, x1=pos+25, y0=550, y1=600,
                       line=dict(color="Lime", width=3), row=1, col=2)
     fig.layout.xaxis.title.text = "X (m)"
     fig.layout.xaxis.gridcolor = 'rgba(255,255,255,0.1)'
@@ -2333,7 +2264,9 @@ def draw_interactive_ucg_dashboard(x_axis, z_axis, fos_2d, displacement_2d, surf
                           buttons=[dict(label="Play", method="animate",
                                         args=[None, {"frame": {"duration":500, "redraw":True}, "fromcurrent":True, "transition": {"duration":0}}]),
                                    dict(label="Pause", method="animate",
-                                        args=[[None], {"frame": {"duration":0, "redraw":False}, "mode":"immediate", "transition": {"duration":0}}])])]
+                                        args=[[None], {"frame": {"duration":0, "redraw":False}, "mode":"immediate", "transition": {"duration":0}}])])],
+        sliders=[dict(steps=[dict(method='animate', args=[[f"t{k}"], {"mode":"immediate", "frame":{"duration":300, "redraw":True}, "transition":{"duration":0}}], label=f'{v:.0f}h') for k,v in enumerate(time_steps) if k%3==0],
+                      active=0, y=0.0, x=0.1, len=0.9)]
     )
     return fig
 
@@ -2341,8 +2274,7 @@ dash_fig = draw_interactive_ucg_dashboard(
     x_axis=x_axis, z_axis=z_axis, fos_2d=fos_2d,
     displacement_2d=displacement_2d, surface_x=surface_x,
     surface_h_disp=surface_h_disp, surface_v_disp=surface_v_disp,
-    time_steps=time_steps_dash, fos_threshold=fos_thresh_dash, disp_colorscale=disp_cscale,
-    source_z=source_z, h_seam=H_seam
+    time_steps=time_steps_dash, fos_threshold=fos_thresh_dash, disp_colorscale=disp_cscale
 )
 st.plotly_chart(dash_fig, use_container_width=True)
 
