@@ -1627,24 +1627,34 @@ with st.expander("🌍 3D Litologik Kesim"):
         hex_color = layer['color'].lstrip('#')
         r, g, b = tuple(int(hex_color[j:j+2], 16) for j in (0, 2, 4))
         rgb_str = f"rgb({r},{g},{b})"
-        fig_3d.add_trace(go.Surface(x=X3, y=Y3, z=Z_top, colorscale=[[0, rgb_str], [1, rgb_str]], showscale=False, opacity=0.7, name=layer['name']))
-        fig_3d.add_trace(go.Surface(x=X3, y=Y3, z=Z_bot, colorscale=[[0, rgb_str], [1, rgb_str]], showscale=False, opacity=0.7, name=f"{layer['name']}_bottom"))
+        fig_3d.add_trace(go.Surface(x=X3, y=Y3, z=Z_top, colorscale=[[0, rgb_str], [1, rgb_str]],
+                                    showscale=False, opacity=0.7, name=layer['name']))
+        fig_3d.add_trace(go.Surface(x=X3, y=Y3, z=Z_bot, colorscale=[[0, rgb_str], [1, rgb_str]],
+                                    showscale=False, opacity=0.7, name=f"{layer['name']}_bottom"))
     stage_3d = st.session_state.get('ucg_stage', 3)
-       for idx, px in enumerate(well_x):
+    active_wells_3d = states_132[stage_3d]
+    for idx, px in enumerate(well_x):
         if idx in active_wells_3d:
             theta = np.linspace(0, 2 * np.pi, 30)
             phi = np.linspace(0, np.pi, 20)
             THETA, PHI = np.meshgrid(theta, phi)
-            # engine.damage o‘rniga damage ishlatildi
-            R_use = np.mean(damage) * 10 + 5
+            R_use = np.mean(damage) * 10 + 5          # ← engine.damage → damage
             cx = px + R_use * np.sin(PHI) * np.cos(THETA)
             cy = R_use * np.sin(PHI) * np.sin(THETA)
             cz = source_z + R_use * np.cos(PHI)
-            fig_3d.add_trace(go.Surface(x=cx, y=cy, z=cz, colorscale=[[0, 'orange'], [1, 'red']], showscale=False, opacity=0.85, name=f'Yonish kamerasi {idx+1}'))
-    fig_3d.update_layout(scene=dict(xaxis_title='X (m)', yaxis_title='Y (m)', zaxis_title='Chuqurlik (m)', zaxis=dict(autorange='reversed'), camera=dict(eye=dict(x=1.5, y=1.5, z=1.0))), template='plotly_dark', height=600, title="3D Litologik Model + Yonish Kameralari", showlegend=True)
+            fig_3d.add_trace(go.Surface(x=cx, y=cy, z=cz,
+                                        colorscale=[[0, 'orange'], [1, 'red']],
+                                        showscale=False, opacity=0.85,
+                                        name=f'Yonish kamerasi {idx+1}'))
+    fig_3d.update_layout(scene=dict(xaxis_title='X (m)', yaxis_title='Y (m)',
+                                    zaxis_title='Chuqurlik (m)',
+                                    zaxis=dict(autorange='reversed'),
+                                    camera=dict(eye=dict(x=1.5, y=1.5, z=1.0))),
+                         template='plotly_dark', height=600,
+                         title="3D Litologik Model + Yonish Kameralari",
+                         showlegend=True)
     st.plotly_chart(fig_3d, use_container_width=True)
-    st.caption("Sariq/qizil sferalar — yonish kameralari (faqat tanlangan bosqichdagi faol quduqlar uchun)")
-
+    
 with st.expander("🎲 Monte Carlo Noaniqlik Tahlili"):
     mc_col1, mc_col2 = st.columns([1,2])
     with mc_col1:
