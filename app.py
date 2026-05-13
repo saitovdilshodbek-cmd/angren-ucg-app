@@ -980,7 +980,6 @@ with c2:
     Hc = np.clip(Hc, h_seam, h_seam * 4)
     states_132 = {1: [0], 2: [0, 2], 3: [0, 1, 2]}
     stage = st.select_slider("Bosqichni tanlang:", options=[1, 2, 3], value=1, key="ucg_stage")
-    st.session_state.ucg_stage = stage
     active_wells = states_132[stage]
 
     def compute_advanced_fos(grid_x, grid_z, active_wells, well_x, source_z, h_seam, cavity_width,
@@ -1550,8 +1549,8 @@ with st.expander("🌍 3D Litologik Kesim"):
                                     showscale=False, opacity=0.7, name=layer['name']))
         fig_3d.add_trace(go.Surface(x=X3, y=Y3, z=Z_bot, colorscale=[[0, rgb_str], [1, rgb_str]],
                                     showscale=False, opacity=0.7, name=f"{layer['name']}_bottom"))
-    stage_3d = st.session_state.get('ucg_stage', 3)
-    active_wells_3d = states_132[stage_3d]
+    # Use stage directly (defined earlier)
+    active_wells_3d = states_132[stage]
     for idx, px in enumerate(well_x):
         if idx in active_wells_3d:
             theta = np.linspace(0, 2 * np.pi, 30)
