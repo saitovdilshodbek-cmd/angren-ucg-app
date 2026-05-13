@@ -1630,13 +1630,13 @@ with st.expander("🌍 3D Litologik Kesim"):
         fig_3d.add_trace(go.Surface(x=X3, y=Y3, z=Z_top, colorscale=[[0, rgb_str], [1, rgb_str]], showscale=False, opacity=0.7, name=layer['name']))
         fig_3d.add_trace(go.Surface(x=X3, y=Y3, z=Z_bot, colorscale=[[0, rgb_str], [1, rgb_str]], showscale=False, opacity=0.7, name=f"{layer['name']}_bottom"))
     stage_3d = st.session_state.get('ucg_stage', 3)
-    active_wells_3d = states_132[stage_3d]
-    for idx, px in enumerate(well_x):
+       for idx, px in enumerate(well_x):
         if idx in active_wells_3d:
             theta = np.linspace(0, 2 * np.pi, 30)
             phi = np.linspace(0, np.pi, 20)
             THETA, PHI = np.meshgrid(theta, phi)
-            R_use = np.mean(engine.damage) * 10 + 5
+            # engine.damage o‘rniga damage ishlatildi
+            R_use = np.mean(damage) * 10 + 5
             cx = px + R_use * np.sin(PHI) * np.cos(THETA)
             cy = R_use * np.sin(PHI) * np.sin(THETA)
             cz = source_z + R_use * np.cos(PHI)
