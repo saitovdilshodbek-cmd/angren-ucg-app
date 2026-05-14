@@ -950,6 +950,7 @@ with c1:
 st.sidebar.markdown("---")
 st.sidebar.subheader("Quduqlar konfiguratsiyasi")
 well_distance = st.sidebar.slider("Quduqlar orasidagi masofa (m):", 50.0, 500.0, 200.0, 10.0, key="well_dist_slider")
+dip_angle = st.sidebar.slider("Qatlam qiyaligi (°)", 0, 45, 15, key="dip_angle")
 
 CONFINEMENT = 0.65
 RELAX = 0.15
@@ -1681,45 +1682,182 @@ with st.expander("📈 FOS Vaqt Bashorati (Trend)"):
     tc3.metric("Hozirgi FOS", f"{fos_timeline[-1]:.3f}")
     st.info(critical_info)
 
-with st.expander("🌍 3D Litologik Kesim"):
-    fig_3d = go.Figure()
-    y_3d = np.linspace(-total_depth * 0.5, total_depth * 0.5, 30)
-    for i, layer in enumerate(layers_data):
-        z_top = layer['z_start']
-        z_bot = layer['z_start'] + layer['t']
-        x_3d = np.linspace(x_axis.min(), x_axis.max(), 30)
-        X3, Y3 = np.meshgrid(x_3d, y_3d)
-        Z_top = np.full_like(X3, z_top)
-        Z_bot = np.full_like(X3, z_bot)
-        hex_color = layer['color'].lstrip('#')
-        r, g, b = tuple(int(hex_color[j:j+2], 16) for j in (0, 2, 4))
-        rgb_str = f"rgb({r},{g},{b})"
-        fig_3d.add_trace(go.Surface(x=X3, y=Y3, z=Z_top, colorscale=[[0, rgb_str], [1, rgb_str]],
-                                    showscale=False, opacity=0.7, name=layer['name']))
-        fig_3d.add_trace(go.Surface(x=X3, y=Y3, z=Z_bot, colorscale=[[0, rgb_str], [1, rgb_str]],
-                                    showscale=False, opacity=0.7, name=f"{layer['name']}_bottom"))
-    active_wells_3d = states_132[stage]
-    for idx, px in enumerate(well_x):
-        if idx in active_wells_3d:
-            theta = np.linspace(0, 2 * np.pi, 30)
-            phi = np.linspace(0, np.pi, 20)
-            THETA, PHI = np.meshgrid(theta, phi)
-            R_use = cavity_radius
-            cx = px + R_use * np.sin(PHI) * np.cos(THETA)
-            cy = R_use * np.sin(PHI) * np.sin(THETA)
-            cz = source_z + R_use * np.cos(PHI)
-            fig_3d.add_trace(go.Surface(x=cx, y=cy, z=cz,
-                                        colorscale=[[0, 'orange'], [1, 'red']],
-                                        showscale=False, opacity=0.85,
-                                        name=f'Yonish kamerasi {idx+1}'))
-    fig_3d.update_layout(scene=dict(xaxis_title='X (m)', yaxis_title='Y (m)',
-                                    zaxis_title='Chuqurlik (m)',
-                                    zaxis=dict(autorange='reversed'),
-                                    camera=dict(eye=dict(x=1.5, y=1.5, z=1.0))),
-                         template='plotly_dark', height=600,
-                         title="3D Litologik Model + Yonish Kameralari",
-                         showlegend=True)
-    st.plotly_chart(fig_3d, use_container_width=True)
+def generate_crip_3d_html(dip_angle, well_spacing, temperature, total_depth, seam_thickness, cavity_radius):
+    return f"""
+    <!DOCTYPE html>
+    <html lang="uz">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>CRIP-UCG Model</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+        <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;500;700&display=swap" rel="stylesheet">
+        <style>
+            body {{ font-family: 'Space Grotesk', sans-serif; background: #08090d; color: #f3f4f6; margin: 0; overflow: hidden; }}
+            .ui-panel {{ position: absolute; top: 20px; left: 20px; z-index: 100; width: 440px; pointer-events: none; }}
+            .glass {{ pointer-events: auto; background: rgba(13, 17, 23, 0.9); backdrop-filter: blur(25px); border: 1px solid rgba(255,255,255,0.08); border-radius: 28px; padding: 25px; box-shadow: 0 40px 100px rgba(0,0,0,0.8); }}
+            .slider-group {{ margin-bottom: 15px; background: rgba(255,255,255,0.03); padding: 12px; border-radius: 18px; border: 1px solid rgba(255,255,255,0.05); }}
+            .label-row {{ display: flex; justify-content: space-between; font-size: 11px; color: #9ca3af; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 1px; }}
+            .val-text {{ color: #818cf8; font-family: monospace; font-weight: bold; font-size: 13px; }}
+            .status-card {{ margin-top: 15px; padding: 15px; border-radius: 20px; font-size: 11px; line-height: 1.6; border-left: 4px solid #f59e0b; background: rgba(245, 158, 11, 0.05); }}
+            .legend {{ position: absolute; bottom: 25px; right: 25px; background: rgba(0,0,0,0.8); padding: 20px; border-radius: 20px; font-size: 10px; border: 1px solid rgba(255,255,255,0.1); }}
+            .color-dot {{ width: 12px; height: 12px; border-radius: 3px; display: inline-block; margin-right: 10px; }}
+        </style>
+    </head>
+    <body>
+    <div class="ui-panel">
+        <div class="glass">
+            <div class="mb-6 flex justify-between items-center">
+                <div>
+                    <h1 class="text-xl font-bold text-white tracking-tight">CRIP-UCG Modeli</h1>
+                    <p class="text-[9px] text-indigo-400 font-bold uppercase tracking-[2px]">Parallel Gazlashtirish & Qiyalik</p>
+                </div>
+                <div class="h-10 w-10 bg-indigo-500/20 rounded-full flex items-center justify-center border border-indigo-500/30">
+                    <div class="w-3 h-3 bg-indigo-500 rounded-full animate-ping"></div>
+                </div>
+            </div>
+            <div class="space-y-2">
+                <div class="slider-group">
+                    <div class="label-row"><span>Qatlam Qiyaligi (Dip Angle - °)</span><span id="dip-val" class="val-text">{dip_angle}°</span></div>
+                </div>
+                <div class="slider-group">
+                    <div class="label-row"><span>Skvajnalar Masofasi (m)</span><span id="spacing-val" class="val-text">{well_spacing} m</span></div>
+                </div>
+                <div class="slider-group">
+                    <div class="label-row"><span>Gazifikatsiya Harorati (°C)</span><span id="temp-val" class="val-text">{temperature}°C</span></div>
+                </div>
+                <div class="slider-group">
+                    <div class="label-row"><span>Chuqurlik (H - m)</span><span id="depth-val" class="val-text">{total_depth} m</span></div>
+                </div>
+            </div>
+            <div class="status-card">
+                <div class="text-amber-400 font-bold mb-1 uppercase text-[10px]">Geomexanik Tahlil:</div>
+                <div id="analysis-text" class="text-gray-300">Qatlam qiyaligi cho'kish markazini "quyi" tomonga (down-dip) siljitmoqda. CRIP usuli bo'yicha inyeksion nuqta orqaga tortilishi nazorat qilinmoqda.</div>
+            </div>
+            <div class="grid grid-cols-2 gap-3 mt-4 text-center">
+                <div class="bg-indigo-500/10 p-3 rounded-2xl border border-indigo-500/20">
+                    <div class="text-[8px] text-indigo-300 uppercase mb-1 tracking-widest">Siljish (Shift)</div>
+                    <div id="shift-val" class="text-lg font-bold text-indigo-400">-</div>
+                </div>
+                <div class="bg-rose-500/10 p-3 rounded-2xl border border-rose-500/20">
+                    <div class="text-[8px] text-rose-300 uppercase mb-1 tracking-widest">Maks. Cho'kish</div>
+                    <div id="subs-val" class="text-lg font-bold text-rose-400">-</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="legend text-gray-400 shadow-2xl">
+        <div class="flex items-center mb-3"><span class="color-dot bg-blue-500"></span> Inyeksion skvajna (Havo/O₂)</div>
+        <div class="flex items-center mb-3"><span class="color-dot bg-yellow-500"></span> Ishlab chiqarish skvajnasi (Sintez-gaz)</div>
+        <div class="flex items-center mb-3"><span class="color-dot bg-orange-600"></span> Yonish kanali (Kaverna)</div>
+        <div class="flex items-center"><span class="color-dot bg-indigo-600 opacity-40"></span> Ko'mir qatlami (Tilted)</div>
+    </div>
+    <div id="container" class="w-full h-screen"></div>
+    <script>
+    let state = {{
+        dip: {dip_angle},
+        spacing: {well_spacing},
+        T: {temperature},
+        depth: {total_depth},
+        R: {cavity_radius},
+        GSI: {layers_data[-1]['gsi']}
+    }};
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x040508);
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 10000);
+    const renderer = new THREE.WebGLRenderer({{ antialias: true }});
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.getElementById('container').appendChild(renderer.domElement);
+    const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    camera.position.set(250, 150, 400);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.2));
+    const pointLight = new THREE.PointLight(0xffaa00, 1.5, 1000);
+    scene.add(pointLight);
+    const surfSize = 1200;
+    const surfRes = 100;
+    const surfGeom = new THREE.PlaneGeometry(surfSize, surfSize, surfRes, surfRes);
+    surfGeom.rotateX(-Math.PI / 2);
+    const surfMat = new THREE.MeshStandardMaterial({{ color: 0x1e293b, wireframe: true, transparent: true, opacity: 0.3, emissive: 0x4f46e5, emissiveIntensity: 0.05 }});
+    const surface = new THREE.Mesh(surfGeom, surfMat);
+    scene.add(surface);
+    const seamGeom = new THREE.BoxGeometry(surfSize, 5, 200);
+    const seamMat = new THREE.MeshStandardMaterial({{ color: 0x111111, transparent: true, opacity: 0.6 }});
+    const coalSeam = new THREE.Mesh(seamGeom, seamMat);
+    scene.add(coalSeam);
+    const cavityGroup = new THREE.Group();
+    scene.add(cavityGroup);
+    const cavityGeom = new THREE.SphereGeometry(1, 32, 32);
+    const cavityMat = new THREE.MeshStandardMaterial({{ color: 0xff4400, emissive: 0xff2200, emissiveIntensity: 2 }});
+    const cavity = new THREE.Mesh(cavityGeom, cavityMat);
+    cavityGroup.add(cavity);
+    function createBorehole(color) {{
+        const geom = new THREE.CylinderGeometry(0.8, 0.8, 500, 16);
+        const mat = new THREE.MeshStandardMaterial({{ color: color, emissive: color, emissiveIntensity: 0.5 }});
+        return new THREE.Mesh(geom, mat);
+    }}
+    const injWell = createBorehole(0x3b82f6);
+    const prodWell = createBorehole(0xfab005);
+    scene.add(injWell);
+    scene.add(prodWell);
+    function calculateGeomechanics() {{
+        const angleRad = state.dip * Math.PI / 180;
+        const shift = state.depth * Math.tan(angleRad) * 0.45;
+        const rockStrengthDegradation = Math.max(0.2, 1 - (state.T / 1500));
+        const volumeLoss = (Math.PI * Math.pow(state.R, 2) * state.spacing) * 0.15;
+        const influenceRadius = state.depth * Math.tan((45 - state.GSI/10) * Math.PI / 180);
+        const Smax = (volumeLoss * (1 - rockStrengthDegradation)) / (influenceRadius * 1.5 + 1);
+        return {{ shift, Smax, influenceRadius, angleRad }};
+    }}
+    function update() {{
+        const calc = calculateGeomechanics();
+        document.getElementById('shift-val').innerText = calc.shift.toFixed(1) + " m";
+        document.getElementById('subs-val').innerText = (calc.Smax * 100).toFixed(1) + " cm";
+        const visualDepth = state.depth / 4;
+        const yCenter = -visualDepth;
+        coalSeam.position.y = yCenter;
+        coalSeam.rotation.z = -calc.angleRad;
+        cavityGroup.position.set(0, yCenter, 0);
+        cavityGroup.rotation.z = -calc.angleRad;
+        cavity.scale.set(state.spacing / 1.5, state.R, state.R);
+        injWell.position.set(-state.spacing/2, -visualDepth + 250, 0);
+        prodWell.position.set(state.spacing/2, -visualDepth + 250, 0);
+        const vertices = surface.geometry.attributes.position.array;
+        for (let i = 0; i < vertices.length; i += 3) {{
+            const x = vertices[i];
+            const z = vertices[i + 2];
+            const distToShiftedCenter = Math.sqrt(Math.pow(x - calc.shift, 2) + Math.pow(z, 2));
+            const s_local = calc.Smax * 60 * Math.exp(-(Math.PI * distToShiftedCenter * distToShiftedCenter) / Math.pow(calc.influenceRadius, 2));
+            vertices[i + 1] = -s_local;
+        }}
+        surface.geometry.attributes.position.needsUpdate = true;
+        pointLight.position.set(0, yCenter + 20, 0);
+    }}
+    window.addEventListener('resize', () => {{
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    }});
+    function animate() {{
+        requestAnimationFrame(animate);
+        controls.update();
+        const time = Date.now() * 0.002;
+        cavityMat.emissiveIntensity = 1.5 + Math.sin(time) * 0.5;
+        renderer.render(scene, camera);
+    }}
+    update();
+    animate();
+    </script>
+    </body>
+    </html>
+    """
+
+with st.expander("🌍 3D Litologik Kesim (CRIP-UCG Model)"):
+    st.components.v1.html(
+        generate_crip_3d_html(dip_angle, well_distance, T_source_max, total_depth, H_seam, cavity_radius),
+        height=650
+    )
 
 with st.expander("🎲 Monte Carlo Noaniqlik Tahlili"):
     mc_col1, mc_col2 = st.columns([1,2])
