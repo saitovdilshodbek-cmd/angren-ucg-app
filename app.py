@@ -473,14 +473,12 @@ def t(key, **kwargs):
 
 EPS = 1e-6
 
-# BUG FIX 1: session_state.language OLDIN o'rnatilishi kerak, aks holda t()
-# funksiyasi set_page_config ga uzatilganda hali 'uz' tanlangan bo'lmaydi.
-if 'language' not in st.session_state:
-    st.session_state.language = 'uz'
-
 st.set_page_config(page_title=t('app_title'), layout="wide")
 st.title(t('app_title'))
 st.markdown(f"### {t('app_subtitle')}")
+
+if 'language' not in st.session_state:
+    st.session_state.language = 'uz'
 
 LANGUAGES = {'uz': "🇺🇿 O'zbek", 'en': '🇬🇧 English', 'ru': '🇷🇺 Русский'}
 lang = st.sidebar.selectbox("Til / Language / Язык", options=list(LANGUAGES.keys()),
@@ -591,14 +589,13 @@ avg_rho = np.mean([l['rho'] for l in layers_data])
 
 def thermoelastic_stress_2d(exx, ezz, exz, T, T0, E, nu, alpha):
     dT = T - T0
-    C = E / ((1 + nu) * (1 - 2 * nu))
-    # BUG FIX 8: plane strain thermal stress to'g'ri formulasi
-    # sigma_th = E*alpha*dT / (1-2*nu) — plane strain uchun isotropik
-    thermal_term = E * alpha * dT / (1 - 2 * nu + EPS)
-    sxx = C * ((1 - nu) * exx + nu * ezz) - thermal_term
-    szz = C * (nu * exx + (1 - nu) * ezz) - thermal_term
-    sxz = E / (2 * (1 + nu) + EPS) * exz  # BUG FIX 8b: shear modulus G = E/(2(1+nu))
-    return sxx, szz, sxz
+    lam = E * nu / ((1 + nu) * (1 - 2 * nu))
+    mu = E / (2 * (1 + nu))
+    eps_th = alpha * dT
+    sxx = 2 * mu * (exx - eps_th) + lam * ((exx + ezz) - 2 * eps_th)
+    szz = 2 * mu * (ezz - eps_th) + lam * ((exx + ezz) - 2 * eps_th)
+    sxz = 2 * mu * exz
+    return sxx / 1e6, szz / 1e6, sxz / 1e6
 
 def hoek_brown(sigma3, sigma_ci, mb, s, a):
     sigma_t = -s * sigma_ci / (mb + EPS)
@@ -607,6 +604,12 @@ def hoek_brown(sigma3, sigma_ci, mb, s, a):
     term = np.maximum(term, 0.0)
     sigma1 = sigma3 + sigma_ci * term**a
     return sigma1
+
+def hoek_brown_damage(sigma1, sigma3, sigma_ci, mb, s, a):
+    sigma1_failure = hoek_brown(sigma3, sigma_ci, mb, s, a)
+    ratio = sigma1 / (sigma1_failure + EPS)
+    damage = np.clip(ratio, 0, 1)
+    return damage
 
 def thermal_damage(T: np.ndarray, beta: float = 0.002) -> np.ndarray:
     return 1 - np.exp(-beta * np.maximum(T - 20, 0))
@@ -639,30 +642,20 @@ def vertical_stress(depth, density):
     return density * 9.81 * depth / 1e6
 
 def solve_heat_equation_dynamic(T, Q, rho_field, cp_field, k_field, dx, dz, dt, h, T_air, n_steps):
-    # BUG FIX 2a: dt_max formulasida dx va dz minimumdan foydalanish kerak
-    alpha_max = np.max(k_field / (rho_field * cp_field + 1e-30))
-    dt_max = min(dx, dz)**2 / (4 * alpha_max)
-    if dt > dt_max:
-        dt = 0.8 * dt_max
-    alpha_field = k_field / (rho_field * cp_field + 1e-30)
+    alpha_field = k_field / (rho_field * cp_field)
+    alpha_max = np.max(alpha_field)
+    dt_max = 1.0 / (2 * alpha_max * (1/dx**2 + 1/dz**2))
+    dt = min(dt, 0.8 * dt_max)
     for _ in range(n_steps):
         T_old = T.copy()
         Txx = (T_old[1:-1, 2:] - 2 * T_old[1:-1, 1:-1] + T_old[1:-1, :-2]) / dx**2
         Tzz = (T_old[2:, 1:-1] - 2 * T_old[1:-1, 1:-1] + T_old[:-2, 1:-1]) / dz**2
-        # BUG FIX 2b: yangi T ni alohida massivga hisoblash (in-place mutatsiyadan qochish)
-        T_new = T_old.copy()
-        T_new[1:-1, 1:-1] = T_old[1:-1, 1:-1] + dt * (
-            alpha_field[1:-1, 1:-1] * (Txx + Tzz) +
-            Q[1:-1, 1:-1] / (rho_field[1:-1, 1:-1] * cp_field[1:-1, 1:-1] + 1e-30)
-        )
-        # Chegaraviy shartlar
-        T_new[0, :] = T_old[1, :] + dz * h / (k_field[0, :] + 1e-30) * (T_air - T_old[0, :])
-        T_new[:, 0] = T_new[:, 1]
-        T_new[:, -1] = T_new[:, -2]
-        T_new[-1, :] = T_new[-2, :]
-        # BUG FIX 2c: 0.95*T_old + 0.05*T sifiy smoothing olib tashlandi —
-        # bu fizik asossiz va harorat hisoblashni to'xtatadi.
-        T = np.clip(T_new, 20.0, 1600.0)
+        T[1:-1, 1:-1] += dt * (alpha_field[1:-1, 1:-1] * (Txx + Tzz) + Q[1:-1, 1:-1] / (rho_field[1:-1, 1:-1] * cp_field[1:-1, 1:-1]))
+        T[0, :] = T[1, :] + dz * h / k_field[0, :] * (T_air - T[0, :])
+        T[:, 0] = T[:, 1]
+        T[:, -1] = T[:, -2]
+        T[-1, :] = T[-2, :]
+        T = 0.95 * T_old + 0.05 * T
     return T
 
 def principal_stresses(sx, sy, txy):
@@ -694,25 +687,11 @@ def kirsch_stress_field(x, z, sigma_H, sigma_h, cavity_radius, pore_pressure=0.0
     return sigma_rr, sigma_tt, tau_rt
 
 def pore_pressure_field(T, depth, permeability):
-    # BUG FIX 3: gas_press birliklarini to'g'rilash.
-    # permeability (m²), lekin uni Pa ga o'tkazish uchun to'g'ri koeffitsient ishlatish kerak.
-    # Oddiy gidrostatik + termal qo'shma formula:
-    hydrostatic = 1000 * 9.81 * depth          # Pa
-    thermal_press = 2e5 * np.exp((T - 100) / 300)  # Pa
-    # Permeabilityni normalashtirish: reference permeability 1e-15 m²
-    k_ratio_gas = np.clip(permeability / 1e-15, 1.0, 1e5)
-    gas_press = 5e5 * np.log1p(k_ratio_gas)    # Pa, logaritmik o'sish
-    pore_p = hydrostatic + thermal_press + gas_press
-    return pore_p / 1e6  # MPa
-
-def compute_damage(sigma_eq, sigma_strength, temperature, creep_dam, beta):
-    thermal_d = 1 - np.exp(-beta * np.maximum(temperature - 20, 0))
-    mechanical_d = np.clip(sigma_eq / (sigma_strength + 1e-9), 0, 2)
-    total = 0.4*thermal_d + 0.4*mechanical_d + 0.2*creep_dam
-    return np.clip(total, 0, 1)
-
-def von_mises_stress(sigma_x, sigma_y, tau_xy):
-    return np.sqrt(np.maximum(sigma_x**2 - sigma_x*sigma_y + sigma_y**2 + 3*tau_xy**2, 0.0))
+    hydrostatic = 1000 * 9.81 * depth
+    gas_expansion = 101325 * (T + 273.15) / 293.15
+    permeability_term = np.log10(permeability / 1e-15 + 1) * 2e5
+    pore_p = hydrostatic + gas_expansion + permeability_term
+    return pore_p / 1e6
 
 def validation_metrics(numerical, reference):
     rmse = np.sqrt(np.mean((numerical - reference)**2))
@@ -734,16 +713,11 @@ def monte_carlo_fos(ucs_mean, ucs_std, gsi_mean, gsi_std, mi_val, D, T_avg, H_se
         a  = 0.5 + (1/6) * (np.exp(-gsi/15) - np.exp(-20/3))
         D_T = 1 - np.exp(-beta_th * max(T_avg - 20, 0))
         sigma_ci = ucs * (1 - D_T)
-        # BUG FIX 6: to'g'ri pillar strength — Wilson (1972):
-        # sigma_p = sigma_ci_eff * (w/H)^0.5 * eta_faktor
-        # sigma_ci_eff uchun Hoek-Brown rock mass strength (s3=0 holat):
-        sigma_cm = sigma_ci * (s ** a)   # biaxial tensile — bu to'g'ri s3=0 da
+        sigma_cm = sigma_ci * (s ** a)
         pillar_strength = sigma_cm * (rec_width / (H_seam + EPS)) ** 0.5
         sv = density * 9.81 * depth / 1e6
         fos.append(pillar_strength / (sv + EPS))
     fos = np.array(fos)
-    # BUG FIX 6b: fos manfiy bo'lishi mumkin (sigma_ci < 0), clip qilish
-    fos = np.clip(fos, 0, 10)
     pf = np.mean(fos < 1.0)
     return fos, pf
 
@@ -766,7 +740,8 @@ def compute_temperature_field_moving(time_h: float, T_source_max: float, burn_du
     k_field = thermal_conductivity(temp_2d)
     total_time = max(burn_duration, time_h) * 3600
     alpha_use = k_field / (rho_field * cp_field)
-    dt_max = dx**2 / (4 * np.max(alpha_use))
+    alpha_max = np.max(alpha_use)
+    dt_max = 1.0 / (2 * alpha_max * (1/dx**2 + 1/dz**2))
     dt = 0.8 * dt_max
     n_steps = max(int(total_time / dt), 20)
     dt = total_time / n_steps
@@ -829,20 +804,21 @@ pore_pressure = pore_pressure_field(temp_2d, grid_z, perm_tmp)
 sigma_rr, sigma_tt, tau_rt = kirsch_stress_field(grid_x, grid_z - source_z,
                                                  grid_sigma_h, grid_sigma_v,
                                                  cavity_radius, pore_pressure)
-sigma1_act, sigma3_act = principal_stresses(sigma_rr, sigma_tt, tau_rt)
 
 delta_T = np.maximum(temp_2d - 20, 0)
-# BUG FIX 9: Plane strain thermal stress — to'g'ri formula (1 - 2*nu)
-# E_field Pa da, natija Pa, keyin MPa ga o'tkazish
-sigma_thermal = (E_field * alpha_field * delta_T) / (1.0 - 2.0 * nu_poisson + EPS)  # Pa
+sigma_thermal = (E_field * alpha_field * delta_T) / (1.0 - nu_poisson + EPS)
 relax_factor = np.exp(-2.5 * thermal_damage(temp_2d, beta_thermal))
 sigma_thermal *= relax_factor
-sigma_thermal_MPa = sigma_thermal / 1e6  # MPa
+
+sigma_x_total = sigma_rr + sigma_thermal
+sigma_z_total = sigma_tt + sigma_thermal
 
 dT_dx, dT_dz = np.gradient(temp_2d, axis=1), np.gradient(temp_2d, axis=0)
 G = E_field / (2 * (1 + nu_poisson))
 tau_thermal = G * alpha_field * dT_dx * dT_dz / 1e6
 tau_rt += tau_thermal
+
+sigma1_act, sigma3_act = principal_stresses(sigma_x_total, sigma_z_total, tau_rt)
 
 grid_ucs = np.zeros_like(grid_z)
 grid_mb = np.zeros_like(grid_z)
@@ -858,20 +834,9 @@ for i, (z0, z1) in enumerate(layer_bounds):
     grid_a_hb[mask] = 0.5 + (1/6)*(np.exp(-layer['gsi']/15) - np.exp(-20/3))
 
 sigma_ci = grid_ucs * (1 - thermal_damage(temp_2d, beta_thermal))
-# BUG FIX 9c: sigma_thermal_MPa dan foydalanish (Pa emas)
-sigma_thermal_clipped = np.clip(sigma_thermal_MPa, 0, 0.35 * sigma_ci)
-
-sigma1_act += sigma_thermal_clipped
-sigma3_act += sigma_thermal_clipped
-
-damage = compute_damage(von_mises_stress(sigma1_act, sigma3_act, tau_rt),
-                        sigma_ci, temp_2d, 0.0, beta_thermal)
+damage = hoek_brown_damage(sigma1_act, sigma3_act, sigma_ci, grid_mb, grid_s_hb, grid_a_hb)
 
 sigma1_limit = hoek_brown(sigma3_act, sigma_ci, grid_mb, grid_s_hb, grid_a_hb)
-
-damage_x = damage * (1 + 0.3 * np.abs(dT_dx) / np.max(abs(dT_dx) + EPS))
-damage_z = damage * (1 + 0.3 * np.abs(dT_dz) / np.max(abs(dT_dz) + EPS))
-damage_shear = 0.5 * (damage_x + damage_z)
 
 fos_2d = np.clip(sigma1_limit / (sigma1_act + EPS), 0, 3.0)
 
@@ -896,10 +861,11 @@ gas_velocity = np.sqrt(vx**2 + vz**2)
 c_subs = 0.15
 Smax = H_seam * 0.04
 subsidence_t = Smax * (1 - np.exp(-c_subs * time_h))
-i_inflection = 0.45 * total_depth
-subsidence_raw = -subsidence_t * np.exp(-(x_axis**2) / (2 * i_inflection**2))
+angle_draw = np.radians(35)
+influence_radius = total_depth * np.tan(angle_draw)
+subsidence_raw = -subsidence_t * np.exp(-(x_axis**2) / (2 * influence_radius**2))
 sub_p = subsidence_raw * (1 + 0.35 * float(np.mean(void_mask_permanent))) + 0.08 * np.gradient(subsidence_raw)
-horizontal_disp_cm = -(x_axis / (i_inflection + EPS)) * subsidence_raw * 100
+horizontal_disp_cm = -(x_axis / (influence_radius + EPS)) * subsidence_raw * 100
 
 avg_t_p = np.mean(temp_2d[np.abs(z_axis-source_z).argmin(), :])
 strength_red = np.exp(-beta_thermal*(avg_t_p - 20))
@@ -937,6 +903,12 @@ try:
 except Exception as e:
     st.error(f"Optimizatsiya xatosi: {e}")
     optimal_width_ai = rec_width
+
+st.info("""
+**Ilmiy ogohlantirish:** Kirsch stress yechimi kvazistatik bo'shliq faraziga asoslanadi.
+Katta deformatsiyalar va geometriya o'zgarishi uchun FEM remeshing talab etiladi.
+Shuningdek, to'liq THM bog'lanish (T↔σ↔k↔p) hozircha qayta aloqa siklida to'liq amalga oshirilmagan.
+""")
 
 st.subheader(t('monitoring_header', obj_name=obj_name))
 m1, m2, m3, m4, m5 = st.columns(5)
@@ -978,6 +950,7 @@ with c1:
 st.sidebar.markdown("---")
 st.sidebar.subheader("Quduqlar konfiguratsiyasi")
 well_distance = st.sidebar.slider("Quduqlar orasidagi masofa (m):", 50.0, 500.0, 200.0, 10.0, key="well_dist_slider")
+dip_angle = st.sidebar.slider("Qatlam qiyaligi (°)", 0, 45, 15, key="dip_angle")
 
 CONFINEMENT = 0.65
 RELAX = 0.15
@@ -1215,18 +1188,17 @@ def train_hybrid_model(X: np.ndarray, y: np.ndarray,
     damage_t = torch.tensor(damage, dtype=torch.float32).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=0.0003)
     for epoch in range(80):
-        # BUG FIX 5: zero_grad() OLDIN, loss.backward() KEYIN bo'lishi kerak
-        opt.zero_grad()
         pred = model(X_t)
         bce = nn.BCELoss()(pred, y_t)
         phys = physics_informed_loss(pred, sigma1_t, sigma_ci_t, temp_t, damage_t)
         loss = bce + 0.4 * phys
+        opt.zero_grad()
         loss.backward()
         opt.step()
     return model
 
 def train_random_forest(X_scaled: np.ndarray, y: np.ndarray) -> RandomForestClassifier:
-    rf = RandomForestClassifier(n_estimators=50, max_depth=12, random_state=42, n_jobs=-1)
+    rf = RandomForestClassifier(n_estimators=300, max_depth=12, random_state=42, n_jobs=-1)
     rf.fit(X_scaled, y)
     return rf
 
@@ -1236,13 +1208,20 @@ def get_ensemble_model(X: np.ndarray, y: np.ndarray,
                        temp: np.ndarray, damage: np.ndarray) -> tuple:
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
+    X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
     if PT_AVAILABLE:
-        model = train_hybrid_model(X_scaled, y, sigma1, sigma_ci, temp, damage)
-        rf = train_random_forest(X_scaled, y)
-        return model, rf, scaler
+        model = train_hybrid_model(X_train, y_train, sigma1[:len(X_train)], sigma_ci[:len(X_train)],
+                                   temp[:len(X_train)], damage[:len(X_train)])
+        rf = train_random_forest(X_train, y_train)
     else:
-        rf = train_random_forest(X_scaled, y)
-        return None, rf, scaler
+        model = None
+        rf = train_random_forest(X_train, y_train)
+    if rf is not None:
+        pred_test = rf.predict(X_test)
+        acc = accuracy_score(y_test, pred_test)
+        auc = roc_auc_score(y_test, pred_test)
+        st.write(f"AI Model Validatsiyasi: Accuracy = {acc:.3f}, AUC = {auc:.3f}")
+    return model, rf, scaler
 
 X_ai, y_ai = generate_physics_dataset(temp_2d, sigma1_act, sigma3_act, grid_z)
 temp_flat = temp_2d.flatten()
@@ -1287,18 +1266,10 @@ st.metric("Tizim entropiyasi (noaniqlik)", f"{entropy:.3f}")
 
 with st.expander("🪨 Phase-Field Fracture Damage Evolution (Patent Model)"):
     def phase_field_update(damage, strain_energy, dx, dt, Gc=0.01, l_char=1.0):
-        dt_max = dx**2 / (4 * Gc * l_char + 1e-30)
-        dt = min(dt, 0.9 * dt_max)
-        # BUG FIX 7: np.roll o'rniga to'g'ri Laplacian (Neumann BC, periodic emas)
-        d = damage
-        lap = np.zeros_like(d)
-        lap[1:-1, 1:-1] = (d[:-2, 1:-1] + d[2:, 1:-1] +
-                           d[1:-1, :-2] + d[1:-1, 2:] - 4 * d[1:-1, 1:-1]) / (dx**2)
-        # Neumann (zero-flux) chegaraviy shartlar
-        lap[0, :] = lap[1, :]
-        lap[-1, :] = lap[-2, :]
-        lap[:, 0] = lap[:, 1]
-        lap[:, -1] = lap[:, -2]
+        dt_max = dx**2 / (4 * Gc * l_char)
+        dt = min(dt, 0.9*dt_max)
+        lap = (np.roll(damage,1,0) + np.roll(damage,-1,0) +
+               np.roll(damage,1,1) + np.roll(damage,-1,1) - 4*damage) / (dx**2)
         d_new = damage + dt * (Gc * l_char * lap - (Gc / l_char) * damage + (1 - damage) * strain_energy)
         return np.clip(d_new, 0, 1)
     st.markdown(r"""
@@ -1313,25 +1284,25 @@ with st.expander("🪨 Phase-Field Fracture Damage Evolution (Patent Model)"):
         fig_phase.update_layout(title="Phase-field damage after 1 step", template='plotly_dark')
         st.plotly_chart(fig_phase, use_container_width=True)
 
+def von_mises_stress(sigma_x, sigma_y, tau_xy):
+    return np.sqrt(np.maximum(sigma_x**2 - sigma_x*sigma_y + sigma_y**2 + 3*tau_xy**2, 0.0))
+
 with st.expander("🧠 Real PINN: Heat Equation Residual Loss"):
     st.markdown("""
     **Physics-Informed Neural Network (PINN) for Temperature**
     $$\frac{\partial T}{\partial t} = \alpha \nabla^2 T + Q$$
     """)
-    def pinn_heat_loss(model, x, z, t_coord, alpha, T_bc_mask, T_bc_val):
-        # BUG FIX 4: model(coords) bilan chaqirish — 3 alohida argument emas
-        coords = torch.cat([x, z, t_coord], dim=1)
+    def pinn_heat_loss(model, x, z, t, alpha, T_bc_mask, T_bc_val):
+        coords = torch.cat([x,z,t], dim=1)
         coords.requires_grad_(True)
         T = model(coords)
         grad = torch.autograd.grad(T, coords, grad_outputs=torch.ones_like(T), create_graph=True)[0]
-        Tx, Tz, Tt = grad[:,0:1], grad[:,1:2], grad[:,2:3]
-        Txx = torch.autograd.grad(Tx, coords, grad_outputs=torch.ones_like(Tx), create_graph=True)[0][:,0:1]
-        Tzz = torch.autograd.grad(Tz, coords, grad_outputs=torch.ones_like(Tz), create_graph=True)[0][:,1:2]
-        residual = Tt - alpha * (Txx + Tzz)
+        Tx, Tz, Tt = grad[:,0], grad[:,1], grad[:,2]
+        Txx = torch.autograd.grad(Tx, coords, grad_outputs=torch.ones_like(Tx), create_graph=True)[0][:,0]
+        Tzz = torch.autograd.grad(Tz, coords, grad_outputs=torch.ones_like(Tz), create_graph=True)[0][:,1]
+        residual = Tt - alpha*(Txx + Tzz)
         loss_pde = torch.mean(residual**2)
-        # BUG FIX 4b: BC maskasi to'g'ri qo'llanishi
-        bc_coords = coords[T_bc_mask]
-        T_pred_bc = model(bc_coords.detach().requires_grad_(False))
+        T_pred_bc = model(x[T_bc_mask], z[T_bc_mask], t[T_bc_mask])
         loss_bc = torch.mean((T_pred_bc - T_bc_val)**2)
         return loss_pde + 0.1 * loss_bc
     st.code("def pinn_heat_loss(model, x, z, t, alpha, T_bc_mask, T_bc_val): ...", language='python')
@@ -1721,45 +1692,182 @@ with st.expander("📈 FOS Vaqt Bashorati (Trend)"):
     tc3.metric("Hozirgi FOS", f"{fos_timeline[-1]:.3f}")
     st.info(critical_info)
 
-with st.expander("🌍 3D Litologik Kesim"):
-    fig_3d = go.Figure()
-    y_3d = np.linspace(-total_depth * 0.5, total_depth * 0.5, 30)
-    for i, layer in enumerate(layers_data):
-        z_top = layer['z_start']
-        z_bot = layer['z_start'] + layer['t']
-        x_3d = np.linspace(x_axis.min(), x_axis.max(), 30)
-        X3, Y3 = np.meshgrid(x_3d, y_3d)
-        Z_top = np.full_like(X3, z_top)
-        Z_bot = np.full_like(X3, z_bot)
-        hex_color = layer['color'].lstrip('#')
-        r, g, b = tuple(int(hex_color[j:j+2], 16) for j in (0, 2, 4))
-        rgb_str = f"rgb({r},{g},{b})"
-        fig_3d.add_trace(go.Surface(x=X3, y=Y3, z=Z_top, colorscale=[[0, rgb_str], [1, rgb_str]],
-                                    showscale=False, opacity=0.7, name=layer['name']))
-        fig_3d.add_trace(go.Surface(x=X3, y=Y3, z=Z_bot, colorscale=[[0, rgb_str], [1, rgb_str]],
-                                    showscale=False, opacity=0.7, name=f"{layer['name']}_bottom"))
-    active_wells_3d = states_132[stage]
-    for idx, px in enumerate(well_x):
-        if idx in active_wells_3d:
-            theta = np.linspace(0, 2 * np.pi, 30)
-            phi = np.linspace(0, np.pi, 20)
-            THETA, PHI = np.meshgrid(theta, phi)
-            R_use = cavity_radius
-            cx = px + R_use * np.sin(PHI) * np.cos(THETA)
-            cy = R_use * np.sin(PHI) * np.sin(THETA)
-            cz = source_z + R_use * np.cos(PHI)
-            fig_3d.add_trace(go.Surface(x=cx, y=cy, z=cz,
-                                        colorscale=[[0, 'orange'], [1, 'red']],
-                                        showscale=False, opacity=0.85,
-                                        name=f'Yonish kamerasi {idx+1}'))
-    fig_3d.update_layout(scene=dict(xaxis_title='X (m)', yaxis_title='Y (m)',
-                                    zaxis_title='Chuqurlik (m)',
-                                    zaxis=dict(autorange='reversed'),
-                                    camera=dict(eye=dict(x=1.5, y=1.5, z=1.0))),
-                         template='plotly_dark', height=600,
-                         title="3D Litologik Model + Yonish Kameralari",
-                         showlegend=True)
-    st.plotly_chart(fig_3d, use_container_width=True)
+def generate_crip_3d_html(dip_angle, well_spacing, temperature, total_depth, seam_thickness, cavity_radius):
+    return f"""
+    <!DOCTYPE html>
+    <html lang="uz">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>CRIP-UCG Model</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+        <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;500;700&display=swap" rel="stylesheet">
+        <style>
+            body {{ font-family: 'Space Grotesk', sans-serif; background: #08090d; color: #f3f4f6; margin: 0; overflow: hidden; }}
+            .ui-panel {{ position: absolute; top: 20px; left: 20px; z-index: 100; width: 440px; pointer-events: none; }}
+            .glass {{ pointer-events: auto; background: rgba(13, 17, 23, 0.9); backdrop-filter: blur(25px); border: 1px solid rgba(255,255,255,0.08); border-radius: 28px; padding: 25px; box-shadow: 0 40px 100px rgba(0,0,0,0.8); }}
+            .slider-group {{ margin-bottom: 15px; background: rgba(255,255,255,0.03); padding: 12px; border-radius: 18px; border: 1px solid rgba(255,255,255,0.05); }}
+            .label-row {{ display: flex; justify-content: space-between; font-size: 11px; color: #9ca3af; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 1px; }}
+            .val-text {{ color: #818cf8; font-family: monospace; font-weight: bold; font-size: 13px; }}
+            .status-card {{ margin-top: 15px; padding: 15px; border-radius: 20px; font-size: 11px; line-height: 1.6; border-left: 4px solid #f59e0b; background: rgba(245, 158, 11, 0.05); }}
+            .legend {{ position: absolute; bottom: 25px; right: 25px; background: rgba(0,0,0,0.8); padding: 20px; border-radius: 20px; font-size: 10px; border: 1px solid rgba(255,255,255,0.1); }}
+            .color-dot {{ width: 12px; height: 12px; border-radius: 3px; display: inline-block; margin-right: 10px; }}
+        </style>
+    </head>
+    <body>
+    <div class="ui-panel">
+        <div class="glass">
+            <div class="mb-6 flex justify-between items-center">
+                <div>
+                    <h1 class="text-xl font-bold text-white tracking-tight">CRIP-UCG Modeli</h1>
+                    <p class="text-[9px] text-indigo-400 font-bold uppercase tracking-[2px]">Parallel Gazlashtirish & Qiyalik</p>
+                </div>
+                <div class="h-10 w-10 bg-indigo-500/20 rounded-full flex items-center justify-center border border-indigo-500/30">
+                    <div class="w-3 h-3 bg-indigo-500 rounded-full animate-ping"></div>
+                </div>
+            </div>
+            <div class="space-y-2">
+                <div class="slider-group">
+                    <div class="label-row"><span>Qatlam Qiyaligi (Dip Angle - °)</span><span id="dip-val" class="val-text">{dip_angle}°</span></div>
+                </div>
+                <div class="slider-group">
+                    <div class="label-row"><span>Skvajnalar Masofasi (m)</span><span id="spacing-val" class="val-text">{well_spacing} m</span></div>
+                </div>
+                <div class="slider-group">
+                    <div class="label-row"><span>Gazifikatsiya Harorati (°C)</span><span id="temp-val" class="val-text">{temperature}°C</span></div>
+                </div>
+                <div class="slider-group">
+                    <div class="label-row"><span>Chuqurlik (H - m)</span><span id="depth-val" class="val-text">{total_depth} m</span></div>
+                </div>
+            </div>
+            <div class="status-card">
+                <div class="text-amber-400 font-bold mb-1 uppercase text-[10px]">Geomexanik Tahlil:</div>
+                <div id="analysis-text" class="text-gray-300">Qatlam qiyaligi cho'kish markazini "quyi" tomonga (down-dip) siljitmoqda. CRIP usuli bo'yicha inyeksion nuqta orqaga tortilishi nazorat qilinmoqda.</div>
+            </div>
+            <div class="grid grid-cols-2 gap-3 mt-4 text-center">
+                <div class="bg-indigo-500/10 p-3 rounded-2xl border border-indigo-500/20">
+                    <div class="text-[8px] text-indigo-300 uppercase mb-1 tracking-widest">Siljish (Shift)</div>
+                    <div id="shift-val" class="text-lg font-bold text-indigo-400">-</div>
+                </div>
+                <div class="bg-rose-500/10 p-3 rounded-2xl border border-rose-500/20">
+                    <div class="text-[8px] text-rose-300 uppercase mb-1 tracking-widest">Maks. Cho'kish</div>
+                    <div id="subs-val" class="text-lg font-bold text-rose-400">-</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="legend text-gray-400 shadow-2xl">
+        <div class="flex items-center mb-3"><span class="color-dot bg-blue-500"></span> Inyeksion skvajna (Havo/O₂)</div>
+        <div class="flex items-center mb-3"><span class="color-dot bg-yellow-500"></span> Ishlab chiqarish skvajnasi (Sintez-gaz)</div>
+        <div class="flex items-center mb-3"><span class="color-dot bg-orange-600"></span> Yonish kanali (Kaverna)</div>
+        <div class="flex items-center"><span class="color-dot bg-indigo-600 opacity-40"></span> Ko'mir qatlami (Tilted)</div>
+    </div>
+    <div id="container" class="w-full h-screen"></div>
+    <script>
+    let state = {{
+        dip: {dip_angle},
+        spacing: {well_spacing},
+        T: {temperature},
+        depth: {total_depth},
+        R: {cavity_radius},
+        GSI: {layers_data[-1]['gsi']}
+    }};
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x040508);
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 10000);
+    const renderer = new THREE.WebGLRenderer({{ antialias: true }});
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.getElementById('container').appendChild(renderer.domElement);
+    const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    camera.position.set(250, 150, 400);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.2));
+    const pointLight = new THREE.PointLight(0xffaa00, 1.5, 1000);
+    scene.add(pointLight);
+    const surfSize = 1200;
+    const surfRes = 100;
+    const surfGeom = new THREE.PlaneGeometry(surfSize, surfSize, surfRes, surfRes);
+    surfGeom.rotateX(-Math.PI / 2);
+    const surfMat = new THREE.MeshStandardMaterial({{ color: 0x1e293b, wireframe: true, transparent: true, opacity: 0.3, emissive: 0x4f46e5, emissiveIntensity: 0.05 }});
+    const surface = new THREE.Mesh(surfGeom, surfMat);
+    scene.add(surface);
+    const seamGeom = new THREE.BoxGeometry(surfSize, 5, 200);
+    const seamMat = new THREE.MeshStandardMaterial({{ color: 0x111111, transparent: true, opacity: 0.6 }});
+    const coalSeam = new THREE.Mesh(seamGeom, seamMat);
+    scene.add(coalSeam);
+    const cavityGroup = new THREE.Group();
+    scene.add(cavityGroup);
+    const cavityGeom = new THREE.SphereGeometry(1, 32, 32);
+    const cavityMat = new THREE.MeshStandardMaterial({{ color: 0xff4400, emissive: 0xff2200, emissiveIntensity: 2 }});
+    const cavity = new THREE.Mesh(cavityGeom, cavityMat);
+    cavityGroup.add(cavity);
+    function createBorehole(color) {{
+        const geom = new THREE.CylinderGeometry(0.8, 0.8, 500, 16);
+        const mat = new THREE.MeshStandardMaterial({{ color: color, emissive: color, emissiveIntensity: 0.5 }});
+        return new THREE.Mesh(geom, mat);
+    }}
+    const injWell = createBorehole(0x3b82f6);
+    const prodWell = createBorehole(0xfab005);
+    scene.add(injWell);
+    scene.add(prodWell);
+    function calculateGeomechanics() {{
+        const angleRad = state.dip * Math.PI / 180;
+        const shift = state.depth * Math.tan(angleRad) * 0.45;
+        const rockStrengthDegradation = Math.max(0.2, 1 - (state.T / 1500));
+        const volumeLoss = (Math.PI * Math.pow(state.R, 2) * state.spacing) * 0.15;
+        const influenceRadius = state.depth * Math.tan((45 - state.GSI/10) * Math.PI / 180);
+        const Smax = (volumeLoss * (1 - rockStrengthDegradation)) / (influenceRadius * 1.5 + 1);
+        return {{ shift, Smax, influenceRadius, angleRad }};
+    }}
+    function update() {{
+        const calc = calculateGeomechanics();
+        document.getElementById('shift-val').innerText = calc.shift.toFixed(1) + " m";
+        document.getElementById('subs-val').innerText = (calc.Smax * 100).toFixed(1) + " cm";
+        const visualDepth = state.depth / 4;
+        const yCenter = -visualDepth;
+        coalSeam.position.y = yCenter;
+        coalSeam.rotation.z = -calc.angleRad;
+        cavityGroup.position.set(0, yCenter, 0);
+        cavityGroup.rotation.z = -calc.angleRad;
+        cavity.scale.set(state.spacing / 1.5, state.R, state.R);
+        injWell.position.set(-state.spacing/2, -visualDepth + 250, 0);
+        prodWell.position.set(state.spacing/2, -visualDepth + 250, 0);
+        const vertices = surface.geometry.attributes.position.array;
+        for (let i = 0; i < vertices.length; i += 3) {{
+            const x = vertices[i];
+            const z = vertices[i + 2];
+            const distToShiftedCenter = Math.sqrt(Math.pow(x - calc.shift, 2) + Math.pow(z, 2));
+            const s_local = calc.Smax * 60 * Math.exp(-(Math.PI * distToShiftedCenter * distToShiftedCenter) / Math.pow(calc.influenceRadius, 2));
+            vertices[i + 1] = -s_local;
+        }}
+        surface.geometry.attributes.position.needsUpdate = true;
+        pointLight.position.set(0, yCenter + 20, 0);
+    }}
+    window.addEventListener('resize', () => {{
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    }});
+    function animate() {{
+        requestAnimationFrame(animate);
+        controls.update();
+        const time = Date.now() * 0.002;
+        cavityMat.emissiveIntensity = 1.5 + Math.sin(time) * 0.5;
+        renderer.render(scene, camera);
+    }}
+    update();
+    animate();
+    </script>
+    </body>
+    </html>
+    """
+
+with st.expander("🌍 3D Litologik Kesim (CRIP-UCG Model)"):
+    st.components.v1.html(
+        generate_crip_3d_html(dip_angle, well_distance, T_source_max, total_depth, H_seam, cavity_radius),
+        height=650
+    )
 
 with st.expander("🎲 Monte Carlo Noaniqlik Tahlili"):
     mc_col1, mc_col2 = st.columns([1,2])
@@ -2356,8 +2464,8 @@ surface_h_disp = []
 surface_v_disp = []
 for time_step in time_steps_dash:
     subs_t_step = Smax * (1 - np.exp(-c_subs * time_step))
-    v_disp = -subs_t_step * np.exp(-(surface_x**2)/(2*i_inflection**2)) * 100
-    h_disp = -(surface_x / (i_inflection + EPS)) * v_disp
+    v_disp = -subs_t_step * np.exp(-(surface_x**2)/(2*influence_radius**2)) * 100
+    h_disp = -(surface_x / (influence_radius + EPS)) * v_disp
     surface_v_disp.append(v_disp)
     surface_h_disp.append(h_disp)
 surface_h_disp = np.array(surface_h_disp)
@@ -2473,21 +2581,12 @@ if FASTAPI_AVAILABLE:
     app = FastAPI()
     @app.post("/predict")
     def predict_api(data: dict):
-        try:
-            temp = np.array(data["temp"], dtype=np.float32)
-            s1   = np.array(data["sigma1"], dtype=np.float32)
-            s3   = np.array(data["sigma3"], dtype=np.float32)
-            d    = np.array(data["depth"], dtype=np.float32)
-            features = physics_features(temp, s1, s3, d)
-            # BUG FIX 10: hybrid_model None bo'lsa xavfsiz qaytarish
-            if hybrid_model is not None and PT_AVAILABLE:
-                with torch.no_grad():
-                    pred = hybrid_model(
-                        torch.tensor(features, dtype=torch.float32).to(device)
-                    )
-                result = pred.cpu().numpy().tolist()
-            else:
-                result = np.zeros((features.shape[0], 1)).tolist()
-            return {"collapse": result}
-        except Exception as e:
-            return {"error": str(e), "collapse": []}
+        temp = np.array(data["temp"])
+        s1   = np.array(data["sigma1"])
+        s3   = np.array(data["sigma3"])
+        d    = np.array(data["depth"])
+        features = physics_features(temp, s1, s3, d)
+        pred = hybrid_model(
+            torch.tensor(features, dtype=torch.float32).to(device)
+        ) if hybrid_model is not None else np.zeros((features.shape[0],1))
+        return {"collapse": pred.detach().cpu().numpy().tolist()}
