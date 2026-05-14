@@ -1485,20 +1485,24 @@ with st.expander("🧠 Bayesian PINN Risk Analysis (3D Geo-Model)"):
         **Mohr-Coulomb failure criterion** asosida **Deep Bayesian Inference**.  
         Ushbu panel jins massividagi buzilish ehtimolini va model noaniqligini baholaydi.
         """)
-        # Loyiha parametrlaridan xavfsiz default qiymatlar (float va chegaralarda kafolatlangan)
-        default_temp = float(max(20, min(1100, T_source_max)))
-        default_sv = float(max(5, min(60, sv_seam)))
-        default_c = float(max(5, min(25, ucs_seam * 0.25)))
-        # Ishqalanish burchagi: Hoek-Brown m_b dan taxminiy
+
+        # Xavfsiz default qiymatlar – slider chegaralariga qat’iy mos
+        default_temp = float(np.clip(T_source_max, 20, 1100))
+        safe_sv = float(np.nan_to_num(sv_seam, nan=30.0))
+        default_sv = float(np.clip(safe_sv, 5, 60))
+        default_c = float(np.clip(ucs_seam * 0.25, 5, 25))
+
         try:
-            mb_s_val = float(np.max(grid_mb))
+            mb_s_val = float(np.nan_to_num(np.max(grid_mb), nan=1.0))
             if mb_s_val > 0:
-                default_phi = float(max(15, min(50, np.degrees(np.arctan(mb_s_val)))))
+                default_phi = float(np.clip(np.degrees(np.arctan(mb_s_val)), 15, 50))
             else:
                 default_phi = 32.0
         except Exception:
             default_phi = 32.0
-        default_pp = float(max(0, min(30, np.mean(pore_pressure))))
+
+        safe_pp = float(np.nan_to_num(np.nanmean(pore_pressure), nan=10.0))
+        default_pp = float(np.clip(safe_pp, 0, 30))
 
         col_b1, col_b2 = st.columns(2)
         with col_b1:
