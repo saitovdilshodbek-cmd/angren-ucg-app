@@ -1375,6 +1375,98 @@ if PYVISTA_AVAILABLE:
         except Exception as e:
             st.warning(f"PyVista vizualizatsiyasi amalga oshmadi: {e}")
 
+# ---------- Bayesian PINN qismi (xavfsiz) ----------
+@st.cache_data
+def generate_grounded_data(n_samples=10000):
+    temp = np.random.uniform(20, 1000, n_samples)
+    sigma_v = np.random.uniform(5, 50, n_samples)
+    c = np.random.uniform(5, 15, n_samples)
+    phi = np.deg2rad(np.random.uniform(25, 40, n_samples))
+    pore_p = np.random.uniform(0, 20, n_samples)
+    sigma_n = sigma_v - pore_p
+    tau_limit = c + sigma_n * np.tan(phi)
+    tau_applied = (sigma_n * 0.7) * (1 + (temp/1100)**2)
+    failure = (tau_limit / (tau_applied + 1e-6) < 1.1).astype(np.float32)
+    X = np.column_stack([temp, sigma_v, c, phi, pore_p])
+    return X, failure
+
+class GeoPINN(nn.Module):
+    def __init__(self, input_dim=5):
+        super().__init__()
+        self.encoder = nn.Sequential(
+            nn.Linear(input_dim, 128),
+            nn.LayerNorm(128),
+            nn.ReLU(),
+            nn.Dropout(0.25)
+        )
+        self.risk_head = nn.Linear(128, 1)
+        self.log_var_head = nn.Linear(128, 1)
+
+    def forward(self, x):
+        features = self.encoder(x)
+        risk = torch.sigmoid(self.risk_head(features))
+        log_var = self.log_var_head(features)
+        return risk, log_var
+
+def scientific_pinn_loss(pred_risk, log_var, target, inputs):
+    precision = torch.exp(-log_var)
+    data_loss = torch.mean(precision * (target - pred_risk)**2 + log_var)
+    temp, sigma_v, c, phi, pore_p = inputs[:,0], inputs[:,1], inputs[:,2], inputs[:,3], inputs[:,4]
+    sigma_n = sigma_v - pore_p
+    tau_limit = c + sigma_n * torch.tan(phi)
+    physics_residual = torch.mean(torch.relu(pred_risk.flatten() * (tau_limit / 50) - (1 - target.flatten())))
+    return data_loss + 0.1 * physics_residual
+
+@st.cache_resource
+def train_scientific_system():
+    if not PT_AVAILABLE:
+        return None, None
+    try:
+        X, y = generate_grounded_data()
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.15)
+        scaler = StandardScaler()
+        X_train_s = scaler.fit_transform(X_train)
+        model = GeoPINN().to(device)
+        opt = torch.optim.Adam(model.parameters(), lr=0.001)
+        X_t = torch.tensor(X_train_s, dtype=torch.float32).to(device)
+        y_t = torch.tensor(y_train, dtype=torch.float32).view(-1,1).to(device)
+        model.train()
+        for epoch in range(300):
+            opt.zero_grad()
+            risk, log_var = model(X_t)
+            loss = scientific_pinn_loss(risk, log_var, y_t, X_t)
+            loss.backward()
+            opt.step()
+        model.eval()
+        return model, scaler
+    except Exception as e:
+        st.error(f"Bayesian PINN o‘qitishda xato: {e}")
+        return None, None
+
+def mc_bayesian_inference(model, scaler, raw_data, n_samples=25):
+    if model is None or scaler is None:
+        return {"mean": np.array([[0.5]]), "epistemic": np.array([[0.1]]), "aleatoric": np.array([[0.1]])}
+    model.eval()
+    for m in model.modules():
+        if isinstance(m, nn.Dropout):
+            m.train()
+    scaled = scaler.transform(raw_data)
+    x_t = torch.tensor(scaled, dtype=torch.float32).to(device)
+    risks, aleatorics = [], []
+    with torch.no_grad():
+        for _ in range(n_samples):
+            r, lv = model(x_t)
+            risks.append(r.cpu().numpy())
+            aleatorics.append(torch.exp(lv).cpu().numpy())
+    model.eval()
+    return {
+        "mean": np.mean(risks, axis=0),
+        "epistemic": np.std(risks, axis=0),
+        "aleatoric": np.mean(aleatorics, axis=0)
+    }
+
+pinn_model, global_scaler = train_scientific_system()
+
 with st.expander("🧠 Bayesian PINN Risk Analysis (3D Geo-Model)"):
     if not PT_AVAILABLE:
         st.warning("PyTorch mavjud emas. Bayesian PINN ishlamaydi.")
@@ -1394,31 +1486,34 @@ with st.expander("🧠 Bayesian PINN Risk Analysis (3D Geo-Model)"):
             run_pinn = st.button("🚀 Fizik-Intelektual Analiz", use_container_width=True)
 
         if run_pinn:
-            raw_input = np.array([[t_in, s_v, c_in, np.deg2rad(phi_in), p_in]])
-            with st.spinner("Bayesian Inference hisoblanmoqda..."):
-                res = mc_bayesian_inference(pinn_model, global_scaler, raw_input)
-            m = res['mean'][0][0]
-            e = res['epistemic'][0][0]
-            a = res['aleatoric'][0][0]
-
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Buzilish ehtimoli", f"{m*100:.2f}%")
-            c2.metric("Model ishonchsizligi (Epistemic)", f"±{e*100:.3f}%")
-            c3.metric("Ma'lumot shovqini (Aleatoric)", f"{a:.4f}")
-
-            st.info(f"""
-            **Tahlil natijasi**:
-            - **Xavf**: {m*100:.1f}% – umumiy buzilish ehtimoli.
-            - **Model bilim darajasi**: ±{e*100:.2f}% – ushbu nuqtada model qanchalik ishonchli?
-            - **Sensor aniqligi**: {a:.4f} – kuzatilgan ma'lumotlarning ichki noaniqligi.
-            """)
-
-            if m > 0.75:
-                st.error("🚨 DIQQAT: Geomexanik barqarorlik chegaradan chiqdi!")
-            elif e > 0.15:
-                st.warning("⚠️ OGOHLANTIRISH: Model bu hududda ishonchsiz bashorat bermoqda. Sensorlarni tekshiring.")
+            if pinn_model is None or global_scaler is None:
+                st.error("Model yoki skeyler yuklanmadi. PyTorch va barcha bog‘liqliklarni tekshiring.")
             else:
-                st.success("✅ Barqaror holat.")
+                raw_input = np.array([[t_in, s_v, c_in, np.deg2rad(phi_in), p_in]])
+                with st.spinner("Bayesian Inference hisoblanmoqda..."):
+                    res = mc_bayesian_inference(pinn_model, global_scaler, raw_input)
+                m = res['mean'][0][0]
+                e = res['epistemic'][0][0]
+                a = res['aleatoric'][0][0]
+
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Buzilish ehtimoli", f"{m*100:.2f}%")
+                c2.metric("Model ishonchsizligi (Epistemic)", f"±{e*100:.3f}%")
+                c3.metric("Ma'lumot shovqini (Aleatoric)", f"{a:.4f}")
+
+                st.info(f"""
+                **Tahlil natijasi**:
+                - **Xavf**: {m*100:.1f}% – umumiy buzilish ehtimoli.
+                - **Model bilim darajasi**: ±{e*100:.2f}% – ushbu nuqtada model qanchalik ishonchli?
+                - **Sensor aniqligi**: {a:.4f} – kuzatilgan ma'lumotlarning ichki noaniqligi.
+                """)
+
+                if m > 0.75:
+                    st.error("🚨 DIQQAT: Geomexanik barqarorlik chegaradan chiqdi!")
+                elif e > 0.15:
+                    st.warning("⚠️ OGOHLANTIRISH: Model bu hududda ishonchsiz bashorat bermoqda. Sensorlarni tekshiring.")
+                else:
+                    st.success("✅ Barqaror holat.")
 
 placeholder = st.empty()
 if st.button("Harorat dinamik animatsiyasini ishga tushirish"):
