@@ -1487,7 +1487,7 @@ with st.expander("🧠 Bayesian PINN Risk Analysis (3D Geo-Model)"):
         """)
 
         # Xavfsiz default qiymatlar – slider chegaralariga qat’iy mos
-        default_temp = float(np.clip(T_source_max, 20, 1100))
+        default_temp = int(np.clip(T_source_max, 20, 1100))
         safe_sv = float(np.nan_to_num(sv_seam, nan=30.0))
         default_sv = float(np.clip(safe_sv, 5, 60))
         default_c = float(np.clip(ucs_seam * 0.25, 5, 25))
