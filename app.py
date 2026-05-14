@@ -198,7 +198,7 @@ TRANSLATIONS = {
         'ucs_decay_eq': r"\sigma_{{ci(T)}} = \sigma_{{ci(0)}} \cdot e^{{-\beta(T-T_0)}} = {ucs:.2f} \text{{ MPa}}",
         'ucs_interpret': "**Interpretatsiya:** {temp}°C haroratda jins mustahkamligi {perc:.1f}% ga pasaydi.",
         'thermal_stress': "**B) Termal kuchlanish ($\\sigma_{{th}}$):**",
-        'thermal_stress_eq': r"\sigma_{{th}} \approx \frac{{E \cdot \alpha \cdot \Delta T}}{{1 - \nu}} = {sigma:.2f} \text{{ MPa}}",
+        'thermal_stress_eq': r"\sigma_{{th}} \approx \frac{{E \cdot \alpha \cdot \Delta T}}{{1 - 2\nu}} = {sigma:.2f} \text{{ MPa}}",
         'pillar_stability': "3. Selek Barqarorligi va Bibliografiya",
         'fos_eq': r"FOS = \frac{{\sigma_p}}{{\sigma_v}} = {fos:.2f}",
         'pillar_wilson': "**Wilson (1972) Yield Pillar nazariyasiga binoan:** Selek o'lchami $w={w}$ m bo'lganda, uning markaziy yadrosi {sv:.2f} MPa lik geostatik yukni ko'tarishga qodir. Plastik zona: $y = {y:.1f}$ m.",
@@ -314,7 +314,7 @@ TRANSLATIONS = {
         'ucs_decay_eq': r"\sigma_{{ci(T)}} = \sigma_{{ci(0)}} \cdot e^{{-\beta(T-T_0)}} = {ucs:.2f} \text{{ MPa}}",
         'ucs_interpret': "**Interpretation:** At {temp}°C, rock strength decreased by {perc:.1f}%.",
         'thermal_stress': "**B) Thermal stress ($\\sigma_{{th}}$):**",
-        'thermal_stress_eq': r"\sigma_{{th}} \approx \frac{{E \cdot \alpha \cdot \Delta T}}{{1 - \nu}} = {sigma:.2f} \text{{ MPa}}",
+        'thermal_stress_eq': r"\sigma_{{th}} \approx \frac{{E \cdot \alpha \cdot \Delta T}}{{1 - 2\nu}} = {sigma:.2f} \text{{ MPa}}",
         'pillar_stability': "3. Pillar Stability and Bibliography",
         'fos_eq': r"FOS = \frac{{\sigma_p}}{{\sigma_v}} = {fos:.2f}",
         'pillar_wilson': "**According to Wilson (1972) Yield Pillar theory:** With pillar width $w={w}$ m, the central core can sustain a geostatic load of {sv:.2f} MPa. Plastic zone: $y = {y:.1f}$ m.",
@@ -430,7 +430,7 @@ TRANSLATIONS = {
         'ucs_decay_eq': r"\sigma_{{ci(T)}} = \sigma_{{ci(0)}} \cdot e^{{-\beta(T-T_0)}} = {ucs:.2f} \text{{ МПа}}",
         'ucs_interpret': "**Интерпретация:** При температуре {temp}°C прочность породы снизилась на {perc:.1f}%.",
         'thermal_stress': "**B) Термическое напряжение ($\\sigma_{{th}}$):**",
-        'thermal_stress_eq': r"\sigma_{{th}} \approx \frac{{E \cdot \alpha \cdot \Delta T}}{{1 - \nu}} = {sigma:.2f} \text{{ МПа}}",
+        'thermal_stress_eq': r"\sigma_{{th}} \approx \frac{{E \cdot \alpha \cdot \Delta T}}{{1 - 2\nu}} = {sigma:.2f} \text{{ МПа}}",
         'pillar_stability': "3. Устойчивость целика и библиография",
         'fos_eq': r"FOS = \frac{{\sigma_p}}{{\sigma_v}} = {fos:.2f}",
         'pillar_wilson': "**Согласно теории текучести целика Wilson (1972):** При ширине целика $w={w}$ м его центральное ядро выдерживает геостатическую нагрузку {sv:.2f} МПа. Пластическая зона: $y = {y:.1f}$ м.",
@@ -473,12 +473,12 @@ def t(key, **kwargs):
 
 EPS = 1e-6
 
+if 'language' not in st.session_state:
+    st.session_state.language = 'uz'
+
 st.set_page_config(page_title=t('app_title'), layout="wide")
 st.title(t('app_title'))
 st.markdown(f"### {t('app_subtitle')}")
-
-if 'language' not in st.session_state:
-    st.session_state.language = 'uz'
 
 LANGUAGES = {'uz': "🇺🇿 O'zbek", 'en': '🇬🇧 English', 'ru': '🇷🇺 Русский'}
 lang = st.sidebar.selectbox("Til / Language / Язык", options=list(LANGUAGES.keys()),
@@ -517,13 +517,13 @@ if formula_option != formula_opts[0]:
             st.latex(r"\sigma_{ci(T)} = \sigma_{ci} \cdot (1 - D(T))")
             st.latex(r"k = k_0 \exp(8D(T)) (1 + 25 \epsilon_v)")
         elif formula_option == formula_opts[3]:
-            st.latex(r"\sigma_{th} = \eta_c \frac{E \alpha \Delta T}{1-\nu} - \lambda_r \nabla T")
+            st.latex(r"\sigma_{th} = \frac{E \alpha \Delta T}{1-2\nu}")
             st.latex(r"\sigma_{t0} = \frac{\sigma_{ci}}{2}\left(m_b - \sqrt{m_b^2 + 4s}\right) \quad \text{(Hoek-Brown 2002)}")
             st.latex(r"\sigma_{t(T)} = \sigma_{t0} \cdot \exp\left(-\beta_{th} (T - 20)\right)")
         elif formula_option == formula_opts[4]:
             st.latex(r"\sigma_{p} = (UCS \cdot \eta) \cdot \left( \frac{w}{H} \right)^{0.5}")
             st.latex(r"y = \frac{H}{2} \left( \sqrt{\frac{\sigma_v}{\sigma_p}} - 1 \right)")
-            st.latex(r"S(x) = S_{max} \cdot \exp\left( -\frac{x^2}{2i^2} \right), \quad i = 0.45 H_{tot}")
+            st.latex(r"S(x) = S_{max} \cdot \exp\left( -\frac{x^2}{2i^2} \right), \quad i = \frac{z}{\tan(45^\circ + \phi/2)}")
             st.latex(r"u_h(x) = -\frac{x}{i} \cdot S(x)")
 
 obj_name = st.sidebar.text_input(t('project_name'), value="Angren-UCG-001")
@@ -642,20 +642,21 @@ def vertical_stress(depth, density):
     return density * 9.81 * depth / 1e6
 
 def solve_heat_equation_dynamic(T, Q, rho_field, cp_field, k_field, dx, dz, dt, h, T_air, n_steps):
-    alpha_field = k_field / (rho_field * cp_field)
-    alpha_max = np.max(alpha_field)
+    alpha = k_field / (rho_field * cp_field)
+    alpha_max = np.max(alpha)
     dt_max = 1.0 / (2 * alpha_max * (1/dx**2 + 1/dz**2))
     dt = min(dt, 0.8 * dt_max)
     for _ in range(n_steps):
         T_old = T.copy()
-        Txx = (T_old[1:-1, 2:] - 2 * T_old[1:-1, 1:-1] + T_old[1:-1, :-2]) / dx**2
-        Tzz = (T_old[2:, 1:-1] - 2 * T_old[1:-1, 1:-1] + T_old[:-2, 1:-1]) / dz**2
-        T[1:-1, 1:-1] += dt * (alpha_field[1:-1, 1:-1] * (Txx + Tzz) + Q[1:-1, 1:-1] / (rho_field[1:-1, 1:-1] * cp_field[1:-1, 1:-1]))
-        T[0, :] = T[1, :] + dz * h / k_field[0, :] * (T_air - T[0, :])
-        T[:, 0] = T[:, 1]
-        T[:, -1] = T[:, -2]
-        T[-1, :] = T[-2, :]
-        T = 0.95 * T_old + 0.05 * T
+        T_new = T_old.copy()
+        Txx = (T_old[1:-1,2:] - 2*T_old[1:-1,1:-1] + T_old[1:-1,:-2]) / dx**2
+        Tzz = (T_old[2:,1:-1] - 2*T_old[1:-1,1:-1] + T_old[:-2,1:-1]) / dz**2
+        T_new[1:-1,1:-1] = T_old[1:-1,1:-1] + dt * (alpha[1:-1,1:-1] * (Txx + Tzz) + Q[1:-1,1:-1] / (rho_field[1:-1,1:-1] * cp_field[1:-1,1:-1]))
+        T_new[:,0] = T_new[:,1]
+        T_new[:,-1] = T_new[:,-2]
+        T_new[-1,:] = T_new[-2,:]
+        T_new[0,:] = T_new[1,:] + dz * h / k_field[0,:] * (T_air - T_new[0,:])
+        T = T_new
     return T
 
 def principal_stresses(sx, sy, txy):
@@ -688,9 +689,9 @@ def kirsch_stress_field(x, z, sigma_H, sigma_h, cavity_radius, pore_pressure=0.0
 
 def pore_pressure_field(T, depth, permeability):
     hydrostatic = 1000 * 9.81 * depth
-    gas_expansion = 101325 * (T + 273.15) / 293.15
-    permeability_term = np.log10(permeability / 1e-15 + 1) * 2e5
-    pore_p = hydrostatic + gas_expansion + permeability_term
+    gas_pressure = 101325 * (T + 273.15) / 293.15
+    perm_effect = np.log10(permeability / 1e-15 + 1) * 2e5
+    pore_p = hydrostatic + gas_pressure + perm_effect
     return pore_p / 1e6
 
 def validation_metrics(numerical, reference):
@@ -712,11 +713,12 @@ def monte_carlo_fos(ucs_mean, ucs_std, gsi_mean, gsi_std, mi_val, D, T_avg, H_se
         s  = np.exp((gsi - 100) / (9 - 3 * D))
         a  = 0.5 + (1/6) * (np.exp(-gsi/15) - np.exp(-20/3))
         D_T = 1 - np.exp(-beta_th * max(T_avg - 20, 0))
-        sigma_ci = ucs * (1 - D_T)
+        sigma_ci = np.clip(ucs * (1 - D_T), 0.1, None)
         sigma_cm = sigma_ci * (s ** a)
         pillar_strength = sigma_cm * (rec_width / (H_seam + EPS)) ** 0.5
         sv = density * 9.81 * depth / 1e6
-        fos.append(pillar_strength / (sv + EPS))
+        fos_val = pillar_strength / (sv + EPS)
+        fos.append(np.clip(fos_val, 0, 10))
     fos = np.array(fos)
     pf = np.mean(fos < 1.0)
     return fos, pf
@@ -806,7 +808,9 @@ sigma_rr, sigma_tt, tau_rt = kirsch_stress_field(grid_x, grid_z - source_z,
                                                  cavity_radius, pore_pressure)
 
 delta_T = np.maximum(temp_2d - 20, 0)
-sigma_thermal = (E_field * alpha_field * delta_T) / (1.0 - nu_poisson + EPS)
+# Correct thermal stress: sigma_th = E * alpha * delta_T / (1 - 2*nu)
+sigma_thermal_pa = (E_field * alpha_field * delta_T) / (1.0 - 2.0 * nu_poisson + EPS)
+sigma_thermal = sigma_thermal_pa / 1e6
 relax_factor = np.exp(-2.5 * thermal_damage(temp_2d, beta_thermal))
 sigma_thermal *= relax_factor
 
@@ -858,14 +862,17 @@ vx = -perm_x * dp_dx / mu_gas
 vz = -perm_z * dp_dz / mu_gas
 gas_velocity = np.sqrt(vx**2 + vz**2)
 
+# Mohr-Coulomb influence angle for rock mass subsidence
+phi_deg_subs = 32.0
+phi_rad_subs = np.radians(phi_deg_subs)
+i_inflection = total_depth / np.tan(np.radians(45) + phi_rad_subs / 2)
+
 c_subs = 0.15
 Smax = H_seam * 0.04
 subsidence_t = Smax * (1 - np.exp(-c_subs * time_h))
-angle_draw = np.radians(35)
-influence_radius = total_depth * np.tan(angle_draw)
-subsidence_raw = -subsidence_t * np.exp(-(x_axis**2) / (2 * influence_radius**2))
+subsidence_raw = -subsidence_t * np.exp(-(x_axis**2) / (2 * i_inflection**2))
 sub_p = subsidence_raw * (1 + 0.35 * float(np.mean(void_mask_permanent))) + 0.08 * np.gradient(subsidence_raw)
-horizontal_disp_cm = -(x_axis / (influence_radius + EPS)) * subsidence_raw * 100
+horizontal_disp_cm = -(x_axis / (i_inflection + EPS)) * subsidence_raw * 100
 
 avg_t_p = np.mean(temp_2d[np.abs(z_axis-source_z).argmin(), :])
 strength_red = np.exp(-beta_thermal*(avg_t_p - 20))
@@ -1154,19 +1161,22 @@ def generate_physics_dataset(temp_field: np.ndarray, sigma1: np.ndarray,
     return feat, collapse
 
 class HybridPINN(nn.Module):
-    def __init__(self, input_dim=10):
+    def __init__(self, input_dim):
         super().__init__()
+        self.input_dim = input_dim
         self.net = nn.Sequential(
             nn.Linear(input_dim, 128),
-            nn.BatchNorm1d(128),
+            nn.Tanh(),
+            nn.Linear(128, 128),
             nn.Tanh(),
             nn.Linear(128, 64),
-            nn.BatchNorm1d(64),
             nn.Tanh(),
-            nn.Linear(64, 1),
-            nn.Sigmoid()
+            nn.Linear(64, 1)
         )
+
     def forward(self, x):
+        if x.shape[1] != self.input_dim:
+            raise ValueError(f"Expected {self.input_dim} features but got {x.shape[1]}")
         return self.net(x)
 
 def physics_informed_loss(pred, sigma1, sigma_ci, temp, damage):
@@ -1178,8 +1188,9 @@ def physics_informed_loss(pred, sigma1, sigma_ci, temp, damage):
 
 def train_hybrid_model(X: np.ndarray, y: np.ndarray,
                        sigma1: np.ndarray, sigma_ci: np.ndarray,
-                       temp: np.ndarray, damage: np.ndarray) -> nn.Module:
-    model = HybridPINN(input_dim=X.shape[1]).to(device)
+                       temp: np.ndarray, damage: np.ndarray,
+                       input_dim: int) -> nn.Module:
+    model = HybridPINN(input_dim=input_dim).to(device)
     X_t = torch.tensor(X, dtype=torch.float32).to(device)
     y_t = torch.tensor(y, dtype=torch.float32).view(-1,1).to(device)
     sigma1_t = torch.tensor(sigma1, dtype=torch.float32).to(device)
@@ -1188,12 +1199,13 @@ def train_hybrid_model(X: np.ndarray, y: np.ndarray,
     damage_t = torch.tensor(damage, dtype=torch.float32).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=0.0003)
     for epoch in range(80):
+        opt.zero_grad()
         pred = model(X_t)
         bce = nn.BCELoss()(pred, y_t)
         phys = physics_informed_loss(pred, sigma1_t, sigma_ci_t, temp_t, damage_t)
         loss = bce + 0.4 * phys
-        opt.zero_grad()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         opt.step()
     return model
 
@@ -1202,16 +1214,17 @@ def train_random_forest(X_scaled: np.ndarray, y: np.ndarray) -> RandomForestClas
     rf.fit(X_scaled, y)
     return rf
 
-@st.cache_data
+@st.cache_resource
 def get_ensemble_model(X: np.ndarray, y: np.ndarray,
                        sigma1: np.ndarray, sigma_ci: np.ndarray,
                        temp: np.ndarray, damage: np.ndarray) -> tuple:
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
     X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
+    input_dim = X_train.shape[1]
     if PT_AVAILABLE:
         model = train_hybrid_model(X_train, y_train, sigma1[:len(X_train)], sigma_ci[:len(X_train)],
-                                   temp[:len(X_train)], damage[:len(X_train)])
+                                   temp[:len(X_train)], damage[:len(X_train)], input_dim)
         rf = train_random_forest(X_train, y_train)
     else:
         model = None
@@ -1264,12 +1277,16 @@ p = risk_index_var / np.sum(risk_index_var + EPS)
 entropy = -np.sum(p * np.log(p + EPS))
 st.metric("Tizim entropiyasi (noaniqlik)", f"{entropy:.3f}")
 
+def laplacian_neumann(field, dx, dz):
+    f = np.pad(field, 1, mode='edge')
+    lap = (f[1:-1,2:] - 2*f[1:-1,1:-1] + f[1:-1,:-2]) / dx**2 + (f[2:,1:-1] - 2*f[1:-1,1:-1] + f[:-2,1:-1]) / dz**2
+    return lap
+
 with st.expander("🪨 Phase-Field Fracture Damage Evolution (Patent Model)"):
-    def phase_field_update(damage, strain_energy, dx, dt, Gc=0.01, l_char=1.0):
-        dt_max = dx**2 / (4 * Gc * l_char)
+    def phase_field_update(damage, strain_energy, dx, dz, dt, Gc=0.01, l_char=1.0):
+        dt_max = min(dx, dz)**2 / (4 * Gc * l_char)
         dt = min(dt, 0.9*dt_max)
-        lap = (np.roll(damage,1,0) + np.roll(damage,-1,0) +
-               np.roll(damage,1,1) + np.roll(damage,-1,1) - 4*damage) / (dx**2)
+        lap = laplacian_neumann(damage, dx, dz)
         d_new = damage + dt * (Gc * l_char * lap - (Gc / l_char) * damage + (1 - damage) * strain_energy)
         return np.clip(d_new, 0, 1)
     st.markdown(r"""
@@ -1278,8 +1295,9 @@ with st.expander("🪨 Phase-Field Fracture Damage Evolution (Patent Model)"):
     """)
     if st.button("Run one phase-field step (demo)"):
         dx_val = x_axis[1]-x_axis[0]
+        dz_val = z_axis[1]-z_axis[0]
         dt_val = 0.1
-        d_updated = phase_field_update(damage, von_mises_stress(sigma1_act, sigma3_act, tau_rt), dx_val, dt_val)
+        d_updated = phase_field_update(damage, von_mises_stress(sigma1_act, sigma3_act, tau_rt), dx_val, dz_val, dt_val)
         fig_phase = go.Figure(go.Heatmap(z=d_updated, x=x_axis, y=z_axis, colorscale='Viridis', zmin=0, zmax=1))
         fig_phase.update_layout(title="Phase-field damage after 1 step", template='plotly_dark')
         st.plotly_chart(fig_phase, use_container_width=True)
@@ -1293,7 +1311,7 @@ with st.expander("🧠 Real PINN: Heat Equation Residual Loss"):
     $$\frac{\partial T}{\partial t} = \alpha \nabla^2 T + Q$$
     """)
     def pinn_heat_loss(model, x, z, t, alpha, T_bc_mask, T_bc_val):
-        coords = torch.cat([x,z,t], dim=1)
+        coords = torch.cat([x, z, t], dim=1)
         coords.requires_grad_(True)
         T = model(coords)
         grad = torch.autograd.grad(T, coords, grad_outputs=torch.ones_like(T), create_graph=True)[0]
@@ -1302,7 +1320,8 @@ with st.expander("🧠 Real PINN: Heat Equation Residual Loss"):
         Tzz = torch.autograd.grad(Tz, coords, grad_outputs=torch.ones_like(Tz), create_graph=True)[0][:,1]
         residual = Tt - alpha*(Txx + Tzz)
         loss_pde = torch.mean(residual**2)
-        T_pred_bc = model(x[T_bc_mask], z[T_bc_mask], t[T_bc_mask])
+        bc_coords = torch.cat([x[T_bc_mask], z[T_bc_mask], t[T_bc_mask]], dim=1)
+        T_pred_bc = model(bc_coords)
         loss_bc = torch.mean((T_pred_bc - T_bc_val)**2)
         return loss_pde + 0.1 * loss_bc
     st.code("def pinn_heat_loss(model, x, z, t, alpha, T_bc_mask, T_bc_val): ...", language='python')
@@ -1386,18 +1405,25 @@ if PYVISTA_AVAILABLE:
         except Exception as e:
             st.warning(f"PyVista vizualizatsiyasi amalga oshmadi: {e}")
 
+def thermal_mohr_coulomb(sigma_n, temp, cohesion0=5e6, phi0_deg=32):
+    thermal_damage = 1 - np.exp(-0.002 * np.maximum(temp - 20, 0))
+    cohesion_T = cohesion0 * (1 - thermal_damage)
+    phi_T = np.radians(phi0_deg * (1 - 0.35 * thermal_damage))
+    tau = cohesion_T + sigma_n * np.tan(phi_T)
+    return tau
+
 @st.cache_data
 def generate_grounded_data(n_samples=10000):
     temp = np.random.uniform(20, 1000, n_samples)
     sigma_v = np.random.uniform(5, 50, n_samples)
-    c = np.random.uniform(5, 15, n_samples)
-    phi = np.deg2rad(np.random.uniform(25, 40, n_samples))
-    pore_p = np.random.uniform(0, 20, n_samples)
-    sigma_n = sigma_v - pore_p
-    tau_limit = c + sigma_n * np.tan(phi)
-    tau_applied = (sigma_n * 0.7) * (1 + (temp/1100)**2)
+    c = np.random.uniform(5, 15, n_samples) * 1e6  # in Pa
+    phi0_deg = 32
+    pore_p = np.random.uniform(0, 20, n_samples) * 1e6  # Pa
+    sigma_n = sigma_v * 1e6 - pore_p
+    tau_limit = thermal_mohr_coulomb(sigma_n, temp, cohesion0=5e6, phi0_deg=phi0_deg)
+    tau_applied = sigma_n * 0.7
     failure = (tau_limit / (tau_applied + 1e-6) < 1.1).astype(np.float32)
-    X = np.column_stack([temp, sigma_v, c, phi, pore_p])
+    X = np.column_stack([temp, sigma_v, c/1e6, np.full(n_samples, phi0_deg), pore_p/1e6])  # keep units MPa/deg
     return X, failure
 
 class GeoPINN(nn.Module):
@@ -1446,6 +1472,7 @@ def train_scientific_system():
             risk, log_var = model(X_t)
             loss = scientific_pinn_loss(risk, log_var, y_t, X_t)
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             opt.step()
         model.eval()
         return model, scaler
@@ -1573,14 +1600,15 @@ def train_simple_risk_nn(model: nn.Module, X: np.ndarray, y: np.ndarray, epochs:
     X_t = torch.tensor(X, dtype=torch.float32).to(device)
     y_t = torch.tensor(y, dtype=torch.float32).view(-1,1).to(device)
     for _ in range(epochs):
+        opt.zero_grad()
         pred = model(X_t)
         loss = loss_fn(pred, y_t)
-        opt.zero_grad()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         opt.step()
     return model
 
-@st.cache_data
+@st.cache_resource
 def get_risk_model() -> nn.Module:
     if not PT_AVAILABLE:
         return None
@@ -2091,11 +2119,11 @@ def generate_full_iso_report(obj_name: str, lang: str, layers_data: list,
     doc.add_paragraph("UCS(T) = UCS_0 * exp(-β * (T - T0)),  T0 = 20°C", style='Intense Quote')
     doc.add_paragraph("D(T) = 1 - exp(-β * max(T - 20, 0))", style='Intense Quote')
     doc.add_paragraph("4. Thermal Stress (Thermo-Elastic Theory)")
-    doc.add_paragraph("σth = ηc * E * α * ΔT / (1 - ν) - λr * ∇T", style='Intense Quote')
+    doc.add_paragraph("σth = E * α * ΔT / (1 - 2ν)", style='Intense Quote')
     doc.add_paragraph("5. Wilson (1972) Pillar Strength & Plastic Zone")
     doc.add_paragraph("σp = UCS(T) * (w/H)^0.5;  y = H/2 * (sqrt(σv/σp) - 1) if σv≥σp else 0", style='Intense Quote')
     doc.add_paragraph("6. Peck (1969) Surface Subsidence — Gaussian Model")
-    doc.add_paragraph("S(x) = Smax * exp(-x²/(2i²)),  i = 0.45*Htot", style='Intense Quote')
+    doc.add_paragraph("S(x) = Smax * exp(-x²/(2i²)),  i = z / tan(45° + φ/2)", style='Intense Quote')
     doc.add_paragraph("7. O'Reilly & New (1982) Horizontal Displacement")
     doc.add_paragraph("u_h(x) = - x/i * S(x)", style='Intense Quote')
     doc.add_paragraph("8. Darcy Gas Flow (with viscosity)")
@@ -2464,8 +2492,8 @@ surface_h_disp = []
 surface_v_disp = []
 for time_step in time_steps_dash:
     subs_t_step = Smax * (1 - np.exp(-c_subs * time_step))
-    v_disp = -subs_t_step * np.exp(-(surface_x**2)/(2*influence_radius**2)) * 100
-    h_disp = -(surface_x / (influence_radius + EPS)) * v_disp
+    v_disp = -subs_t_step * np.exp(-(surface_x**2)/(2*i_inflection**2)) * 100
+    h_disp = -(surface_x / (i_inflection + EPS)) * v_disp
     surface_v_disp.append(v_disp)
     surface_h_disp.append(h_disp)
 surface_h_disp = np.array(surface_h_disp)
@@ -2578,15 +2606,20 @@ st.sidebar.markdown("---")
 st.sidebar.write(f"Tuzuvchi: Saitov Dilshodbek | Device: {device}")
 
 if FASTAPI_AVAILABLE:
+    from pydantic import BaseModel
+    class InputData(BaseModel):
+        features: list
+
     app = FastAPI()
     @app.post("/predict")
-    def predict_api(data: dict):
-        temp = np.array(data["temp"])
-        s1   = np.array(data["sigma1"])
-        s3   = np.array(data["sigma3"])
-        d    = np.array(data["depth"])
-        features = physics_features(temp, s1, s3, d)
-        pred = hybrid_model(
-            torch.tensor(features, dtype=torch.float32).to(device)
-        ) if hybrid_model is not None else np.zeros((features.shape[0],1))
-        return {"collapse": pred.detach().cpu().numpy().tolist()}
+    def predict(data: InputData):
+        try:
+            X = torch.tensor(data.features, dtype=torch.float32).to(device)
+            if hybrid_model is None:
+                preds = np.zeros((len(data.features), 1))
+            else:
+                with torch.no_grad():
+                    preds = hybrid_model(X).detach().cpu().numpy()
+            return {"prediction": preds.tolist()}
+        except Exception as e:
+            return {"error": str(e)}
