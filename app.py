@@ -1385,7 +1385,7 @@ if PYVISTA_AVAILABLE:
         except Exception as e:
             st.warning(f"PyVista vizualizatsiyasi amalga oshmadi: {e}")
 
-# ======================== BAYESIAN PINN (LOYIHA PARAMETRLARIGA BOG'LANGAN) ========================
+# ======================== BAYESIAN PINN (XAVFSIZ DEFAULTLAR) ========================
 @st.cache_data
 def generate_grounded_data(n_samples=10000):
     temp = np.random.uniform(20, 1000, n_samples)
@@ -1485,13 +1485,20 @@ with st.expander("🧠 Bayesian PINN Risk Analysis (3D Geo-Model)"):
         **Mohr-Coulomb failure criterion** asosida **Deep Bayesian Inference**.  
         Ushbu panel jins massividagi buzilish ehtimolini va model noaniqligini baholaydi.
         """)
-        # Loyiha parametrlaridan default qiymatlar
-        default_temp = float(np.clip(T_source_max, 20, 1100))
-        default_sv = float(np.clip(sv_seam, 5, 60))
-        default_c = float(np.clip(ucs_seam * 0.25, 5, 25))
-        # Ishqalanish burchagi: Hoek-Brown m_b dan taxminiy konvertatsiya
-        default_phi = float(np.clip(np.degrees(np.arctan(mb_s)), 15, 50)) if mb_s > 0 else 32.0
-        default_pp = float(np.clip(np.mean(pore_pressure), 0, 30))
+        # Loyiha parametrlaridan xavfsiz default qiymatlar (float va chegaralarda kafolatlangan)
+        default_temp = float(max(20, min(1100, T_source_max)))
+        default_sv = float(max(5, min(60, sv_seam)))
+        default_c = float(max(5, min(25, ucs_seam * 0.25)))
+        # Ishqalanish burchagi: Hoek-Brown m_b dan taxminiy
+        try:
+            mb_s_val = float(np.max(grid_mb))
+            if mb_s_val > 0:
+                default_phi = float(max(15, min(50, np.degrees(np.arctan(mb_s_val)))))
+            else:
+                default_phi = 32.0
+        except Exception:
+            default_phi = 32.0
+        default_pp = float(max(0, min(30, np.mean(pore_pressure))))
 
         col_b1, col_b2 = st.columns(2)
         with col_b1:
