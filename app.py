@@ -106,7 +106,6 @@ try:
 except ImportError:
     MPI_AVAILABLE = False
 
-# ======================== TARJIMALAR ========================
 TRANSLATIONS = {
     'uz': {
         'app_title': "Universal Yer yuzasi Deformatsiyasi Monitoringi",
@@ -474,7 +473,6 @@ def t(key, **kwargs):
 
 EPS = 1e-6
 
-# ======================== SAHIFA SOZLAMALARI ========================
 st.set_page_config(page_title=t('app_title'), layout="wide")
 st.title(t('app_title'))
 st.markdown(f"### {t('app_subtitle')}")
@@ -488,7 +486,6 @@ lang = st.sidebar.selectbox("Til / Language / Язык", options=list(LANGUAGES.
                             index=list(LANGUAGES.keys()).index(st.session_state.language))
 st.session_state.language = lang
 
-# ======================== SIDEBAR: QR, PARAMETRLAR ========================
 st.sidebar.markdown("---")
 st.sidebar.subheader("📱 Mobil ilovaga o'tish")
 url = "https://angren-ucg-app-a7rxktm6usxqixabhaq576.streamlit.app/#ucg-termo-mexanik-dinamik-3-d-model"
@@ -555,7 +552,6 @@ T_source_max = st.sidebar.slider(t('max_temp'), 600, 1200, 1075)
 with st.sidebar.expander(t('timeline')):
     st.markdown(t('timeline_table'))
 
-# ======================== QATLAMLAR ========================
 strata_colors = ['#87CEEB', '#F4A460', '#D3D3D3', '#F5DEB3', '#555555']
 layers_data = []
 total_depth = 0.0
@@ -591,7 +587,6 @@ if errors:
 depth_seam = sum(l['t'] for l in layers_data[:-1]) + layers_data[-1]['t'] / 2
 avg_rho = np.mean([l['rho'] for l in layers_data])
 
-# ======================== ILMIY FUNKSIYALAR ========================
 def thermoelastic_stress_2d(exx, ezz, exz, T, T0, E, nu, alpha):
     dT = T - T0
     C = E / ((1 + nu) * (1 - 2 * nu))
@@ -728,7 +723,6 @@ def monte_carlo_fos(ucs_mean, ucs_std, gsi_mean, gsi_std, mi_val, D, T_avg, H_se
     pf = np.mean(fos < 1.0)
     return fos, pf
 
-# ======================== HARORAT MAYDONI ========================
 grid_shape = (80, 100)
 source_z = total_depth - (layers_data[-1]['t'] / 2)
 H_seam = layers_data[-1]['t']
@@ -786,7 +780,6 @@ def compute_temperature_field_moving(time_h: float, T_source_max: float, burn_du
 temp_2d, x_axis, z_axis, grid_x, grid_z = compute_temperature_field_moving(
     time_h, T_source_max, burn_duration, total_depth, source_z, grid_shape)
 
-# ======================== MEXANIK MAYDONLAR ========================
 E_field = young_modulus_temperature(temp_2d)
 alpha_field = thermal_expansion_temperature(temp_2d)
 grid_rho = np.zeros_like(temp_2d)
@@ -917,7 +910,6 @@ except Exception as e:
     st.error(f"Optimizatsiya xatosi: {e}")
     optimal_width_ai = rec_width
 
-# ======================== ASOSIY KO'RSATKICHLAR ========================
 st.subheader(t('monitoring_header', obj_name=obj_name))
 m1, m2, m3, m4, m5 = st.columns(5)
 m1.metric(t('pillar_strength'), f"{pillar_strength:.1f} MPa")
@@ -1145,7 +1137,6 @@ with c2:
     else:
         st.success(f"✅ BARQAROR: Selek o'lchami ({selek_eni:.1f} m) me'yorda.")
 
-# ======================== MASHINALI O'QITISH ========================
 def physics_features(T: np.ndarray, s1: np.ndarray, s3: np.ndarray, depth: np.ndarray) -> np.ndarray:
     dmg = thermal_damage(T)
     strength = 40 * (1 - dmg)
@@ -1265,7 +1256,6 @@ p = risk_index_var / np.sum(risk_index_var + EPS)
 entropy = -np.sum(p * np.log(p + EPS))
 st.metric("Tizim entropiyasi (noaniqlik)", f"{entropy:.3f}")
 
-# ======================== ILMIY EXPANDERLAR ========================
 with st.expander("🪨 Phase-Field Fracture Damage Evolution (Patent Model)"):
     def phase_field_update(damage, strain_energy, dx, dt, Gc=0.01, l_char=1.0):
         dt_max = dx**2 / (4 * Gc * l_char)
@@ -1385,7 +1375,6 @@ if PYVISTA_AVAILABLE:
         except Exception as e:
             st.warning(f"PyVista vizualizatsiyasi amalga oshmadi: {e}")
 
-# ======================== BAYESIAN PINN (XAVFSIZ DEFAULTLAR) ========================
 @st.cache_data
 def generate_grounded_data(n_samples=10000):
     temp = np.random.uniform(20, 1000, n_samples)
@@ -1486,32 +1475,35 @@ with st.expander("🧠 Bayesian PINN Risk Analysis (3D Geo-Model)"):
         Ushbu panel jins massividagi buzilish ehtimolini va model noaniqligini baholaydi.
         """)
 
-        # Xavfsiz default qiymatlar – slider chegaralariga qat’iy mos
         default_temp = int(np.clip(T_source_max, 20, 1100))
         safe_sv = float(np.nan_to_num(sv_seam, nan=30.0))
-        default_sv = float(np.clip(safe_sv, 5, 60))
-        default_c = float(np.clip(ucs_seam * 0.25, 5, 25))
+        default_sv = float(np.clip(safe_sv, 5.0, 60.0))
+        if default_sv < 5.0:
+            default_sv = 5.0
+        elif default_sv > 60.0:
+            default_sv = 60.0
+        default_c = float(np.clip(ucs_seam * 0.25, 5.0, 25.0))
 
         try:
             mb_s_val = float(np.nan_to_num(np.max(grid_mb), nan=1.0))
             if mb_s_val > 0:
-                default_phi = float(np.clip(np.degrees(np.arctan(mb_s_val)), 15, 50))
+                default_phi = float(np.clip(np.degrees(np.arctan(mb_s_val)), 15.0, 50.0))
             else:
                 default_phi = 32.0
         except Exception:
             default_phi = 32.0
 
         safe_pp = float(np.nan_to_num(np.nanmean(pore_pressure), nan=10.0))
-        default_pp = float(np.clip(safe_pp, 0, 30))
+        default_pp = float(np.clip(safe_pp, 0.0, 30.0))
 
         col_b1, col_b2 = st.columns(2)
         with col_b1:
             t_in = st.slider("Harorat (°C)", 20, 1100, default_temp, key="pinn_t")
-            s_v = st.slider("Vertikal kuchlanish (MPa)", 5, 60, default_sv, key="pinn_sv")
-            c_in = st.slider("Jins cohesion (MPa)", 5, 25, default_c, key="pinn_c")
+            s_v = st.slider("Vertikal kuchlanish (MPa)", 5.0, 60.0, default_sv, key="pinn_sv")
+            c_in = st.slider("Jins cohesion (MPa)", 5.0, 25.0, default_c, key="pinn_c")
         with col_b2:
-            phi_in = st.slider("Ishqalanish burchagi (°)", 15, 50, default_phi, key="pinn_phi")
-            p_in = st.slider("G'ovak bosimi (MPa)", 0, 30, default_pp, key="pinn_pp")
+            phi_in = st.slider("Ishqalanish burchagi (°)", 15.0, 50.0, default_phi, key="pinn_phi")
+            p_in = st.slider("G'ovak bosimi (MPa)", 0.0, 30.0, default_pp, key="pinn_pp")
             run_pinn = st.button("🚀 Fizik-Intelektual Analiz", use_container_width=True)
 
         if run_pinn:
@@ -1544,7 +1536,6 @@ with st.expander("🧠 Bayesian PINN Risk Analysis (3D Geo-Model)"):
                 else:
                     st.success("✅ Barqaror holat.")
 
-# ======================== HARORAT ANIMATSIYASI ========================
 placeholder = st.empty()
 if st.button("Harorat dinamik animatsiyasini ishga tushirish"):
     for t_anim in range(30):
@@ -1554,7 +1545,6 @@ if st.button("Harorat dinamik animatsiyasini ishga tushirish"):
         placeholder.plotly_chart(fig_anim, use_container_width=True)
         time.sleep(0.1)
 
-# ======================== AI RISK PREDICTION (SENSOR CSV) ========================
 class SimpleRiskNN(nn.Module):
     def __init__(self, input_dim: int = 3):
         super().__init__()
@@ -1638,7 +1628,6 @@ with st.expander("🤖 AI Risk Prediction (Sensor CSV)", expanded=False):
         except Exception as e:
             st.error(f"Faylni o'qishda xatolik: {e}")
 
-# ======================== MONITORING PANELI ========================
 st.header(t('monitoring_panel', obj_name=obj_name))
 def calculate_live_metrics(h, layers, T_max):
     target = layers[-1]
@@ -1833,7 +1822,6 @@ with st.expander("🌪️ Sezgirlik Tahlili (Tornado Plot)"):
     fig_tornado.update_layout(title=f"FOS sezgirligi (asosiy FOS={fos_base:.2f})", barmode='overlay', template='plotly_dark', height=350, xaxis_title='ΔFOS', bargap=0.3)
     st.plotly_chart(fig_tornado, use_container_width=True)
 
-# ======================== ISO 9001 HISOBOTI ========================
 def generate_full_iso_report(obj_name: str, lang: str, layers_data: list,
                              T_source_max: float, burn_duration: float,
                              pillar_strength: float, optimal_width_ai: float,
@@ -2012,7 +2000,6 @@ with st.expander("📄 ISO 9001:2015 Standart Hujjat (.docx)"):
             except Exception as e:
                 st.error(f"Hisobot yaratishda xatolik: {e}")
 
-# ======================== JONLI MONITORING, AI, ADVANCED ANALYSIS ========================
 st.header("🔄 Live 3D Monitoring (Real-time)")
 tab_live, tab_ai_orig, tab_advanced = st.tabs([t('live_monitoring_tab'), t('ai_monitor_title'), t('advanced_analysis')])
 
@@ -2316,7 +2303,6 @@ with tab_advanced:
         ]:
             st.write(r)
 
-# ======================== INTERAKTIV DASHBOARD ========================
 st.header("🕹️ Ultimate Interactive Dashboard (Real-time Animation)")
 st.markdown("Bu panelda FOS, siljish maydoni va vaqt bo'yicha sirt siljishlarini interaktiv kuzatishingiz mumkin.")
 
