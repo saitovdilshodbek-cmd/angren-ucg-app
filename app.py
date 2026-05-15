@@ -857,8 +857,6 @@ damage = hoek_brown_damage(sigma1_act, sigma3_act, sigma_ci, grid_mb, grid_s_hb,
 
 sigma1_limit = hoek_brown(sigma3_act, sigma_ci, grid_mb, grid_s_hb, grid_a_hb)
 
-fos_2d = np.clip(sigma1_limit / (sigma1_act + EPS), 0, 3.0)
-
 void_fraction = gaussian_filter(damage * (temp_2d > 600), sigma=2)
 void_mask_permanent = void_fraction > 0.5
 void_volume = np.sum(void_mask_permanent) * (x_axis[1]-x_axis[0]) * (z_axis[1]-z_axis[0])
@@ -884,7 +882,10 @@ c_subs = PARAMS["subsidence_rate"]
 Smax = H_seam * 0.04
 subsidence_t = Smax * (1 - np.exp(-c_subs * time_h))
 subsidence_raw = -subsidence_t * np.exp(-(x_axis**2) / (2 * influence_radius**2))
-sub_p = subsidence_raw * (1 + 0.35 * float(np.mean(void_mask_permanent))) + 0.08 * np.gradient(subsidence_raw)
+subs_grad = np.gradient(subsidence_raw)
+void_factor = 1 + 0.35 * float(np.mean(void_mask_permanent))
+sub_p = subsidence_raw * void_factor + 0.08 * subs_grad
+sub_p = np.ravel(sub_p)
 
 cavity_area = np.sum(void_mask_permanent) * (x_axis[1]-x_axis[0]) * (z_axis[1]-z_axis[0])
 subs_area = trapezoid(np.abs(sub_p), x_axis)
@@ -897,13 +898,15 @@ horizontal_disp_cm = -(x_axis / (influence_radius + EPS)) * subsidence_raw * 100
 avg_t_p = np.mean(temp_2d[np.abs(z_axis-source_z).argmin(), :])
 ucs_seam = layers_data[-1]['ucs']
 sv_seam = grid_sigma_v[np.abs(z_axis-source_z).argmin(), :].max()
+
+ucs_seam_pa = ucs_seam * 1e6
+sv_seam_pa = sv_seam * 1e6
 w_sol = 20.0
 E_MIN_CORE = 0.5 * H_seam
 for _ in range(30):
-    dmg_seam = thermal_damage(avg_t_p, beta_thermal)
-    strength_red = 1 - dmg_seam
-    p_strength = apply_thermal_degradation(ucs_seam, avg_t_p, beta_thermal) * (w_sol / (H_seam + EPS))**0.5
-    ratio = sv_seam / (p_strength + EPS)
+    strength_red = 1 - thermal_damage(avg_t_p, beta_thermal)
+    p_strength_pa = apply_thermal_degradation(ucs_seam_pa, avg_t_p, beta_thermal) * (w_sol / (H_seam + EPS))**0.5
+    ratio = sv_seam_pa / (p_strength_pa + EPS)
     if ratio >= 1.0:
         y_zone_calc = (H_seam / 2.0) * (np.sqrt(ratio) - 1.0)
     else:
@@ -913,13 +916,13 @@ for _ in range(30):
         break
     w_sol = 0.6 * new_w + 0.4 * w_sol
 rec_width = np.round(w_sol, 1)
-pillar_strength = p_strength
+pillar_strength = p_strength_pa / 1e6
 y_zone = max(y_zone_calc, 1.5)
 
 def optimize_pillar_ai(w_arr: np.ndarray) -> float:
     w = w_arr[0]
-    p_str = apply_thermal_degradation(ucs_seam, avg_t_p, beta_thermal) * (w / (H_seam + EPS))**0.5
-    fos_w = p_str / (sv_seam + EPS)
+    p_str = apply_thermal_degradation(ucs_seam_pa, avg_t_p, beta_thermal) * (w / (H_seam + EPS))**0.5
+    fos_w = p_str / (sv_seam_pa + EPS)
     if fos_w >= 1.5:
         return (w - 20) ** 2 * 0.001
     else:
@@ -953,16 +956,18 @@ with col_g1:
 with col_g2:
     st.plotly_chart(go.Figure(go.Scatter(x=x_axis, y=horizontal_disp_cm, fill='tozeroy', line=dict(color='cyan',width=3))).update_layout(title=t('thermal_deform_title'), template="plotly_dark", height=300), use_container_width=True)
 with col_g3:
-    sigma3_ax = np.linspace(0, ucs_seam*0.5, 100)
-    mb_s, s_s, a_s = grid_mb.max(), grid_s_hb.max(), grid_a_hb.max()
-    s1_20 = sigma3_ax + ucs_seam*(mb_s*sigma3_ax/(ucs_seam+EPS)+s_s)**a_s
-    ucs_burn = apply_thermal_degradation(ucs_seam, T_source_max, beta_thermal)
-    s1_burning = sigma3_ax + ucs_burn*(mb_s*sigma3_ax/(ucs_burn+EPS)+s_s)**a_s
-    s1_sov = sigma3_ax + apply_thermal_degradation(ucs_seam, avg_t_p, beta_thermal)*(mb_s*sigma3_ax/(apply_thermal_degradation(ucs_seam, avg_t_p, beta_thermal)+EPS)+s_s)**a_s
     fig_hb = go.Figure()
-    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_20, name='20°C', line=dict(color='red',width=2)))
-    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_sov, name=t('tensile_hb'), line=dict(color='cyan',width=2,dash='dash')))
-    fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=s1_burning, name=t('combustion'), line=dict(color='orange',width=4)))
+    for lyr in layers_data:
+        ucs_i = lyr['ucs']
+        gsi_i = lyr['gsi']
+        mi_i = lyr['mi']
+        mb_i = mi_i * np.exp((gsi_i - 100) / (28 - 14*D_factor))
+        s_i = np.exp((gsi_i - 100) / (9 - 3*D_factor))
+        a_i = 0.5 + (1/6)*(np.exp(-gsi_i/15) - np.exp(-20/3))
+        sigma3_ax = np.linspace(0, ucs_i*0.5, 100)
+        ucs_T_i = apply_thermal_degradation(ucs_i, temp_2d.mean(), beta_thermal)
+        sigma1_i = sigma3_ax + ucs_T_i*(mb_i*sigma3_ax/(ucs_T_i+EPS)+s_i)**a_i
+        fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=sigma1_i, name=lyr['name'], line=dict(width=2)))
     st.plotly_chart(fig_hb.update_layout(title=t('hb_envelopes_title'), template="plotly_dark", height=300, legend=dict(orientation="h", y=-0.3, x=0.5, xanchor="center")), use_container_width=True)
 
 st.markdown("---")
@@ -1165,16 +1170,22 @@ with c2:
     else:
         st.success(f"✅ BARQAROR: Selek o'lchami ({selek_eni:.1f} m) me'yorda.")
 
-def physics_features(T: np.ndarray, s1: np.ndarray, s3: np.ndarray, depth: np.ndarray) -> np.ndarray:
+fos_2d = compute_advanced_fos(
+    grid_x, grid_z, [0,1,2], well_x, source_z_adv, h_seam, cavity_width,
+    temp_2d, grid_sigma_v, layers_data, layer_bounds_adv,
+    E_MOD, ALPHA, NU, K0, Hc, sigma_v_coal, ucs_coal_pa
+)
+
+def physics_features(T: np.ndarray, s1: np.ndarray, s3: np.ndarray, depth: np.ndarray, ucs_seam_val: float) -> np.ndarray:
     dmg = thermal_damage(T)
-    strength = 40 * (1 - dmg)
+    strength = ucs_seam_val * (1 - dmg)
     fos = strength / (s1 + EPS)
     energy = T * s1 / (depth + 1)
     return np.column_stack([T, s1, s3, depth, dmg, fos, energy])
 
 def generate_physics_dataset(temp_field: np.ndarray, sigma1: np.ndarray,
-                             sigma3: np.ndarray, depth: np.ndarray) -> tuple:
-    feat = physics_features(temp_field.flatten(), sigma1.flatten(), sigma3.flatten(), depth.flatten())
+                             sigma3: np.ndarray, depth: np.ndarray, ucs_seam_val: float) -> tuple:
+    feat = physics_features(temp_field.flatten(), sigma1.flatten(), sigma3.flatten(), depth.flatten(), ucs_seam_val)
     fos = feat[:,5]
     energy = feat[:,6]
     collapse = ((fos < 1.0) | (temp_field.flatten() > 800) | (energy > 4000)).astype(int)
@@ -1263,7 +1274,7 @@ def get_ensemble_model(X, y, sigma1, sigma_ci, temp, damage):
         rf = train_random_forest(X_train, y_train)
     return model, rf, scaler, X_test, y_test
 
-X_ai, y_ai = generate_physics_dataset(temp_2d, sigma1_act, sigma3_act, grid_z)
+X_ai, y_ai = generate_physics_dataset(temp_2d, sigma1_act, sigma3_act, grid_z, ucs_seam)
 temp_flat = temp_2d.flatten()
 damage_flat = damage.flatten()
 hybrid_model, rf_model, scaler, X_test, y_test = get_ensemble_model(
@@ -1293,7 +1304,7 @@ def predict_collapse(model, rf, scaler, X_raw: np.ndarray) -> np.ndarray:
 collapse_pred = np.zeros_like(temp_2d)
 try:
     feat_pred = physics_features(temp_2d.flatten(), sigma1_act.flatten(),
-                                 sigma3_act.flatten(), grid_z.flatten())
+                                 sigma3_act.flatten(), grid_z.flatten(), ucs_seam)
     collapse_pred = predict_collapse(hybrid_model, rf_model, scaler, feat_pred).reshape(temp_2d.shape)
 except Exception as e:
     st.error(f"Collapse prediction error: {str(e)}")
@@ -1373,8 +1384,8 @@ with st.expander("📊 Uncertainty Quantification (UQ) for FOS"):
     temp_samples = np.random.normal(T_source_max, 50, N)
     fos_samples = []
     for ucs_i, temp_i in zip(ucs_samples, temp_samples):
-        sig_p = apply_thermal_degradation(ucs_i, temp_i, beta_thermal) * (rec_width/(H_seam+EPS))**0.5
-        fos_i = sig_p / (vertical_stress(depth_seam, avg_rho) + EPS)
+        sig_p = apply_thermal_degradation(ucs_i*1e6, temp_i, beta_thermal) * (rec_width/(H_seam+EPS))**0.5
+        fos_i = sig_p / (vertical_stress(depth_seam, avg_rho)*1e6 + EPS)
         fos_samples.append(fos_i)
     fos_samples = np.array(fos_samples)
     fig_uq = go.Figure()
@@ -1387,7 +1398,7 @@ with st.expander("📊 Uncertainty Quantification (UQ) for FOS"):
 if SHAP_AVAILABLE and rf_model is not None:
     with st.expander("🧠 SHAP Model Interpretatsiyasi"):
         try:
-            X_shap, y_shap = generate_physics_dataset(temp_2d, sigma1_act, sigma3_act, grid_z)
+            X_shap, y_shap = generate_physics_dataset(temp_2d, sigma1_act, sigma3_act, grid_z, ucs_seam)
             background = shap.sample(X_shap, 100)
             explainer = shap.Explainer(rf_model, background)
             shap_values = explainer(background)
@@ -1408,7 +1419,13 @@ if SALIB_AVAILABLE:
         param_values = saltelli.sample(problem, 1024)
         def model_eval(params):
             ucs, T, d, gsi = params
-            return ucs * np.exp(-0.002*T) / (d+1)
+            beta = beta_thermal
+            mi_val = layers_data[-1]['mi']
+            d_factor = D_factor
+            thermal_deg = np.exp(-beta * max(T - 20, 0))
+            mb = mi_val * np.exp((gsi - 100) / (28 - 14 * d_factor))
+            strength = ucs * thermal_deg * mb / (1 + d_factor)
+            return strength
         Y = np.array([model_eval(p) for p in param_values])
         Si = sobol.analyze(problem, Y)
         st.write("First-order Sobol:", Si['S1'])
@@ -1418,9 +1435,9 @@ if PYDOE_AVAILABLE:
     with st.expander("🎲 Latin Hypercube Sampling (Collapse ehtimolligi)"):
         N = 5000
         lhs_sample = lhs(3, samples=N)
-        T_lhs = gaussian_dist.ppf(lhs_sample[:,0], loc=800, scale=100)
-        UCS_lhs = gaussian_dist.ppf(lhs_sample[:,1], loc=40, scale=10)
-        Depth_lhs = gaussian_dist.ppf(lhs_sample[:,2], loc=200, scale=50)
+        T_lhs = lhs_sample[:,0] * (T_source_max - 20) + 20
+        UCS_lhs = lhs_sample[:,1] * (ucs_seam * 0.5) + ucs_seam * 0.5
+        Depth_lhs = lhs_sample[:,2] * (depth_seam * 1.5)
         collapse_prob = 1 / (1 + np.exp(-(T_lhs/100 + Depth_lhs/200 - UCS_lhs/50)))
         fig_lhs = go.Figure(go.Histogram(x=collapse_prob, nbinsx=50, marker_color='orange'))
         fig_lhs.update_layout(title="Collapse ehtimolligi taqsimoti", template='plotly_dark')
@@ -1722,11 +1739,11 @@ def calculate_live_metrics(h, layers, T_max):
     target = layers[-1]
     ucs_0, H_l = target['ucs'], target['t']
     curr_T = (25 + (T_max-25)*(min(h,40)/40) if h<=40 else T_max*np.exp(-0.001*(h-40)))
-    ucs_T_live = apply_thermal_degradation(ucs_0, curr_T, beta_thermal)
+    ucs_T_live = apply_thermal_degradation(ucs_0*1e6, curr_T, beta_thermal)
     w_rec = 15.0 + (h/150)*10
     p_str = ucs_T_live * (w_rec/(H_l+EPS))**0.5
     max_sub = (H_l*0.05)*(min(h,120)/120)
-    return p_str, w_rec, curr_T, max_sub
+    return p_str/1e6, w_rec, curr_T, max_sub
 p_str, w_rec_live, t_now, s_max_3d = calculate_live_metrics(time_h, layers_data, T_source_max)
 mk1, mk2, mk3, mk4 = st.columns(4)
 mk1.metric(t('pillar_live'), f"{p_str:.1f} MPa", delta=f"{t_now:.0f} °C", delta_color="inverse")
@@ -1740,9 +1757,9 @@ with st.expander("📈 FOS Vaqt Bashorati (Trend)"):
     fos_timeline = []
     for th in time_points:
         T_at_th = T_source_max * min(th, burn_duration) / (burn_duration + EPS)
-        ucs_T_th = apply_thermal_degradation(ucs_seam, T_at_th, beta_thermal)
+        ucs_T_th = apply_thermal_degradation(ucs_seam*1e6, T_at_th, beta_thermal)
         p_str_t = ucs_T_th * (rec_width/(H_seam+EPS))**0.5
-        sv_t = sv_seam * (1 + 0.001*th)
+        sv_t = sv_seam * 1e6 * (1 + 0.001*th)
         fos_t = np.clip(p_str_t/(sv_t+EPS), 0, 3)
         fos_timeline.append(fos_t)
     slope, intercept, r_value, _, _ = linregress(time_points, fos_timeline)
@@ -1987,8 +2004,8 @@ with st.expander("⚖️ Ssenariy Taqqoslash (A vs B)"):
         b_temp = st.number_input("T_B (°C)", value=float(T_source_max)*1.1, key="b_t")
     def norm(val, mn, mx):
         return (val-mn)/(mx-mn+EPS)
-    fos_a = apply_thermal_degradation(a_ucs, a_temp, beta_thermal) / (layers_data[-1]['rho']*9.81*H_seam/1e6+EPS)
-    fos_b = apply_thermal_degradation(b_ucs, b_temp, beta_thermal) / (layers_data[-1]['rho']*9.81*H_seam/1e6+EPS)
+    fos_a = apply_thermal_degradation(a_ucs*1e6, a_temp, beta_thermal) / (layers_data[-1]['rho']*9.81*H_seam/1e6+EPS) / 1e6
+    fos_b = apply_thermal_degradation(b_ucs*1e6, b_temp, beta_thermal) / (layers_data[-1]['rho']*9.81*H_seam/1e6+EPS) / 1e6
     vals_a = [norm(a_ucs,0,100), norm(a_gsi,10,100), norm(fos_a,0,3), 1-norm(a_temp,20,1200)]
     vals_b = [norm(b_ucs,0,100), norm(b_gsi,10,100), norm(fos_b,0,3), 1-norm(b_temp,20,1200)]
     categories = ['UCS','GSI','FOS (taxmin)','Termal risk']
@@ -2009,10 +2026,10 @@ def sensitivity_analysis(base_ucs, base_gsi, base_d, base_nu, base_t, H_seam, be
         mb = 10*np.exp((gsi-100)/(28-14*d))
         s  = np.exp((gsi-100)/(9-3*d))
         a  = 0.5 + (1/6)*(np.exp(-gsi/15) - np.exp(-20/3))
-        ucs_T = apply_thermal_degradation(ucs, T, beta_th)
+        ucs_T = apply_thermal_degradation(ucs*1e6, T, beta_th)
         sigma_cm = ucs_T * (max(s, 1e-9)**a)
         p_str = sigma_cm * (20/(H_seam+EPS))**0.5
-        sv = vertical_stress(200.0, 2500.0)
+        sv = vertical_stress(200.0, 2500.0) * 1e6
         return np.clip(p_str/(sv+EPS), 0, 5)
     params = {
         'UCS (MPa)': (base_ucs, base_ucs*(1-range_pct), base_ucs*(1+range_pct)),
@@ -2300,7 +2317,7 @@ with tab_live:
         temp_history_live = []
         steps_done = 0
         rf_live = RandomForestRegressor(n_estimators=10, random_state=42)
-        dummy_X = np.random.rand(10,3)
+        dummy_X = np.random.rand(10,4)
         dummy_y = np.random.rand(10)
         rf_live.fit(dummy_X, dummy_y)
         for t_step in range(TIME_STEPS):
@@ -2312,14 +2329,20 @@ with tab_live:
             anomalies = Z_subs - Z_filtered
             anomaly_points = np.where(np.abs(anomalies) > 0.2)
             avg_ucs = np.mean([l['ucs'] for l in layers_data])
-            X_feat = np.array([[burn_duration, T_source_max, avg_ucs]]).reshape(1,-1)
+            X_feat = np.array([[burn_duration, T_source_max, avg_ucs, well_distance]])
             pillar_width_pred = rf_live.predict(X_feat)[0]
-            FOS_live = np.clip(2.5 - t_step*0.03, 0.8, 2.5)
+            T_avg_live = np.mean(Z_temp)
+            sigma_v_live = vertical_stress(depth_seam, avg_rho) * 1e6
+            sigma_thermal_live = (E_field.mean() * alpha_field.mean() * max(T_avg_live-20,0)) / (1 - 2*nu_poisson + EPS)
+            pore_pressure_live = pore_pressure_field(T_avg_live, depth_seam, np.mean(perm)) * 1e6
+            pillar_live_pa = apply_thermal_degradation(ucs_seam*1e6, T_avg_live, beta_thermal) * (rec_width/(H_seam+EPS))**0.5
+            FOS_live = pillar_live_pa / (sigma_v_live + sigma_thermal_live + pore_pressure_live + 1e-8)
+            FOS_live = np.clip(FOS_live, 0, 5)
             mean_subs = np.mean(Z_subs)
             subs_history_live.append(mean_subs)
             fos_history_live.append(FOS_live)
             width_history_live.append(pillar_width_pred)
-            temp_history_live.append(np.mean(Z_temp))
+            temp_history_live.append(T_avg_live)
             MAX_HISTORY = 1000
             new_row = pd.DataFrame({'step':[t_step+1],'mean_subsidence_cm':[mean_subs*100],'max_temp_c':[np.max(Z_temp)],'FOS':[FOS_live],'pillar_width_m':[pillar_width_pred]})
             st.session_state.live_history_df = pd.concat([st.session_state.live_history_df, new_row], ignore_index=True).tail(MAX_HISTORY)
@@ -2517,10 +2540,10 @@ with tab_advanced:
     mb_dyn = mi_val * np.exp((gsi_val-100)/(28-14*D_factor))
     s_dyn = np.exp((gsi_val-100)/(9-3*D_factor))
     a_dyn = 0.5 + (1/6)*(np.exp(-gsi_val/15) - np.exp(-20/3))
-    ucs_t_dyn = apply_thermal_degradation(ucs_0_r, T_source_max, BETA_CONST)
+    ucs_t_dyn = apply_thermal_degradation(ucs_0_r*1e6, T_source_max, BETA_CONST)
     sigma_cm = ucs_t_dyn * (s_dyn ** a_dyn)
     p_str_final = sigma_cm * (rec_width / (H_seam + EPS))**0.5
-    fos_final = p_str_final / (sigma_v_tot + EPS)
+    fos_final = p_str_final / (sigma_v_tot*1e6 + EPS)
     t1,t2,t3 = st.tabs([t('tab_mass'), t('tab_thermal'), t('tab_stability')])
     with t1:
         st.subheader(t('hb_class'))
@@ -2541,8 +2564,8 @@ with tab_advanced:
                                   t('param_table_reason'): [t('modulus_reason'), t('alpha_reason'), t('temp0_reason')]})
         st.table(params_df)
         st.markdown(t('ucs_decay'))
-        st.latex(t('ucs_decay_eq', ucs=ucs_t_dyn))
-        st.write(t('ucs_interpret', temp=T_source_max, perc=((1 - ucs_t_dyn/ucs_0_r)*100)))
+        st.latex(t('ucs_decay_eq', ucs=ucs_t_dyn/1e6))
+        st.write(t('ucs_interpret', temp=T_source_max, perc=((1 - ucs_t_dyn/(ucs_0_r*1e6))*100)))
         st.markdown(t('thermal_stress'))
         st.latex(t('thermal_stress_eq', sigma=float(np.nanmax(sigma_thermal))))
     with t3:
@@ -2705,7 +2728,7 @@ if FASTAPI_AVAILABLE:
             s1   = np.array(data["sigma1"])
             s3   = np.array(data["sigma3"])
             d    = np.array(data["depth"])
-            features = physics_features(temp, s1, s3, d)
+            features = physics_features(temp, s1, s3, d, ucs_seam)
             if hybrid_model is None:
                 preds = np.zeros((features.shape[0], 1))
             else:
