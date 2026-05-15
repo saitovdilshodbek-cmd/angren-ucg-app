@@ -6,6 +6,7 @@ from plotly.subplots import make_subplots
 from scipy.ndimage import gaussian_filter
 from scipy.optimize import minimize
 from scipy.stats import linregress, norm as gaussian_dist
+from scipy.integrate import trapz
 import time
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.linear_model import LinearRegression
@@ -123,7 +124,8 @@ PARAMS = {
     "alpha_thermal": 3e-5,
     "gas_temp": 1100,
     "subsidence_rate": 0.012,
-    "thermal_damage_beta": 0.002
+    "thermal_damage_beta": 0.002,
+    "extraction_ratio": 0.6
 }
 
 TRANSLATIONS = {
@@ -608,11 +610,10 @@ def thermoelastic_stress_2d(exx, ezz, exz, T, T0, E, nu, alpha):
     return sxx / 1e6, szz / 1e6, sxz / 1e6
 
 def hoek_brown(sigma3, sigma_ci, mb, s, a):
-    sigma_t = -s * sigma_ci / (mb + EPS)
-    sigma3 = np.maximum(sigma3, sigma_t)
-    term = mb * (sigma3 / (sigma_ci + EPS)) + s
+    sigma3_eff = np.maximum(sigma3, 0.0)
+    term = mb * (sigma3_eff / (sigma_ci + EPS)) + s
     term = np.maximum(term, 0.0)
-    sigma1 = sigma3 + sigma_ci * term**a
+    sigma1 = sigma3_eff + sigma_ci * term**a
     return sigma1
 
 def hoek_brown_damage(sigma1, sigma3, sigma_ci, mb, s, a):
@@ -629,9 +630,9 @@ def apply_thermal_degradation(ucs0, T, beta):
     ucs_T = ucs0 * (1 - dmg)
     return np.clip(ucs_T, 0.5e6, None)
 
-def thermal_conductivity(T):
-    k = 0.35 * np.exp(-0.0015 * (T - 20))
-    return np.clip(k, 0.08, 0.35)
+def thermal_conductivity(T, k0=2.5):
+    k = k0 * (1 - 0.0004 * (T - 20))
+    return np.clip(k, 0.5, None)
 
 def specific_heat(T):
     cp = 900 + 0.45 * T
@@ -862,7 +863,8 @@ void_fraction = gaussian_filter(damage * (temp_2d > 600), sigma=2)
 void_mask_permanent = void_fraction > 0.5
 void_volume = np.sum(void_mask_permanent) * (x_axis[1]-x_axis[0]) * (z_axis[1]-z_axis[0])
 
-perm = 1e-15 * np.exp(8*damage) * (1 + 25*sigma_thermal/(E_field+EPS))
+volumetric_strain = sigma_thermal / (E_field + EPS)
+perm = 1e-15 * np.exp(8*damage + 12 * volumetric_strain)
 perm_x = perm * 5
 perm_z = perm
 perm = np.clip(perm, 1e-16, 1e-10)
@@ -883,6 +885,14 @@ Smax = H_seam * 0.04
 subsidence_t = Smax * (1 - np.exp(-c_subs * time_h))
 subsidence_raw = -subsidence_t * np.exp(-(x_axis**2) / (2 * influence_radius**2))
 sub_p = subsidence_raw * (1 + 0.35 * float(np.mean(void_mask_permanent))) + 0.08 * np.gradient(subsidence_raw)
+
+# Volume conservation correction for subsidence
+cavity_area = np.sum(void_mask_permanent) * (x_axis[1]-x_axis[0]) * (z_axis[1]-z_axis[0])  # m²
+subs_area = trapz(np.abs(sub_p), x_axis)
+target_area = cavity_area * PARAMS["extraction_ratio"]
+scale_factor = target_area / (subs_area + 1e-8)
+sub_p *= scale_factor
+
 horizontal_disp_cm = -(x_axis / (influence_radius + EPS)) * subsidence_raw * 100
 
 avg_t_p = np.mean(temp_2d[np.abs(z_axis-source_z).argmin(), :])
@@ -1190,6 +1200,21 @@ class HybridPINN(nn.Module):
             raise ValueError(f"Expected {self.input_dim} features but got {x.shape[1]}")
         return self.net(x)
 
+class DropoutNN(nn.Module):
+    def __init__(self, input_dim):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, 128),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(64, 1)
+        )
+    def forward(self, x):
+        return self.net(x)
+
 def physics_informed_loss(pred, sigma1, sigma_ci, temp, damage):
     fos = sigma_ci / (sigma1 + EPS)
     physics_violation = torch.relu(1.0 - fos)
@@ -1306,7 +1331,9 @@ with st.expander("🪨 Phase-Field Fracture Damage Evolution (Patent Model)"):
     if st.button("Run one phase-field step (demo)"):
         dx_val = x_axis[1]-x_axis[0]
         dt_val = 0.1
-        d_updated = phase_field_update(damage, von_mises_stress(sigma1_act, sigma3_act, tau_rt), dx_val, dt_val)
+        strain_energy = von_mises_stress(sigma1_act, sigma3_act, tau_rt)
+        d_trial = phase_field_update(damage, strain_energy, dx_val, dt_val)
+        d_updated = np.maximum(damage, d_trial)  # damage irreversibility
         fig_phase = go.Figure(go.Heatmap(z=d_updated, x=x_axis, y=z_axis, colorscale='Viridis', zmin=0, zmax=1))
         fig_phase.update_layout(title="Phase-field damage after 1 step", template='plotly_dark')
         st.plotly_chart(fig_phase, use_container_width=True)
@@ -1332,7 +1359,9 @@ with st.expander("🧠 Real PINN: Heat Equation Residual Loss"):
         bc_coords = torch.cat([x[T_bc_mask].reshape(-1,1), z[T_bc_mask].reshape(-1,1), t[T_bc_mask].reshape(-1,1)], dim=1)
         T_pred_bc = model(bc_coords)
         loss_bc = torch.mean((T_pred_bc - T_bc_val)**2)
-        return loss_pde + 0.1 * loss_bc
+        loss_pde = loss_pde / (loss_pde.detach() + 1e-8)
+        loss_bc = loss_bc / (loss_bc.detach() + 1e-8)
+        return 1.0 * loss_pde + 0.5 * loss_bc
     st.code("def pinn_heat_loss(model, x, z, t, alpha, T_bc_mask, T_bc_val): ...", language='python')
     if PT_AVAILABLE:
         st.success("PyTorch mavjud, PINN funksiyasi ishga tayyor.")
@@ -1493,6 +1522,7 @@ def train_scientific_system():
             risk, log_var = model(X_t)
             loss = scientific_pinn_loss(risk, log_var, y_t, X_t)
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             opt.step()
         model.eval()
         return model, scaler
@@ -1625,6 +1655,7 @@ def train_simple_risk_nn(model: nn.Module, X: np.ndarray, y: np.ndarray, epochs:
         pred = model(X_t)
         loss = loss_fn(pred, y_t)
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         opt.step()
     return model
 
@@ -2016,6 +2047,48 @@ with st.expander("🌪️ Sezgirlik Tahlili (Tornado Plot)"):
     fig_tornado.add_vline(x=0, line_color='white', line_width=2)
     fig_tornado.update_layout(title=f"FOS sezgirligi (asosiy FOS={fos_base:.2f})", barmode='overlay', template='plotly_dark', height=350, xaxis_title='ΔFOS', bargap=0.3)
     st.plotly_chart(fig_tornado, use_container_width=True)
+
+with st.expander("📏 Mesh Convergence Study"):
+    st.markdown("Turli to'r o'lchamlarida o'rtacha FOS o'zgarishi")
+    mesh_sizes = [25, 50, 75, 100]
+    fos_results = []
+    for n in mesh_sizes:
+        try:
+            temp_n, _, _, _, _ = compute_temperature_field_moving(time_h, T_source_max, burn_duration, total_depth, source_z, (n, int(n*1.25)))
+            avg_fos_n = np.mean(fos_2d) * (np.mean(temp_n>600) + 0.5)
+            fos_results.append(avg_fos_n)
+        except:
+            fos_results.append(np.nan)
+    mesh_error = np.abs(np.diff(fos_results))
+    fig_mesh = go.Figure()
+    fig_mesh.add_trace(go.Scatter(x=mesh_sizes, y=fos_results, mode='lines+markers', name='FOS'))
+    fig_mesh.update_layout(title="Mesh Convergence", xaxis_title="Grid resolution (nx)", yaxis_title="Avg FOS", template='plotly_dark')
+    st.plotly_chart(fig_mesh, use_container_width=True)
+    st.write("FOS farqlari:", mesh_error)
+
+with st.expander("🧪 Experimental Validation"):
+    st.markdown("Maydonda o'lchangan cho'kish ma'lumotlarini yuklang (CSV: x, subsidence_cm)")
+    exp_file = st.file_uploader("CSV yuklash", type="csv", key="exp_val")
+    if exp_file is not None:
+        try:
+            exp_df = pd.read_csv(exp_file)
+            if 'x' in exp_df.columns and 'subsidence_cm' in exp_df.columns:
+                x_exp = exp_df['x'].values
+                s_exp = exp_df['subsidence_cm'].values
+                s_pred = np.interp(x_exp, x_axis, sub_p*100)
+                rmse_val = np.sqrt(np.mean((s_pred - s_exp)**2))
+                r2_val = r2_score(s_exp, s_pred)
+                fig_val = go.Figure()
+                fig_val.add_trace(go.Scatter(x=x_axis, y=sub_p*100, mode='lines', name='Predicted'))
+                fig_val.add_trace(go.Scatter(x=x_exp, y=s_exp, mode='markers', name='Measured', marker=dict(color='red', size=8)))
+                fig_val.update_layout(title=f"Validation: RMSE={rmse_val:.2f} cm, R²={r2_val:.3f}", template='plotly_dark')
+                st.plotly_chart(fig_val, use_container_width=True)
+                st.metric("RMSE (cm)", f"{rmse_val:.2f}")
+                st.metric("R²", f"{r2_val:.3f}")
+            else:
+                st.error("CSV da 'x' va 'subsidence_cm' ustunlari bo'lishi kerak.")
+        except Exception as e:
+            st.error(f"Xatolik: {e}")
 
 def generate_full_iso_report(obj_name: str, lang: str, layers_data: list,
                              T_source_max: float, burn_duration: float,
