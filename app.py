@@ -473,16 +473,13 @@ def t(key, **kwargs):
 
 EPS = 1e-6
 
-# Fix 5: set_page_config must be first Streamlit command
+st.set_page_config(page_title="Universal Yer yuzasi Deformatsiyasi Monitoringi", layout="wide")
+
 if 'language' not in st.session_state:
     st.session_state.language = 'uz'
 
-st.set_page_config(page_title=t('app_title'), layout="wide")
 st.title(t('app_title'))
 st.markdown(f"### {t('app_subtitle')}")
-
-if 'language' not in st.session_state:
-    st.session_state.language = 'uz'
 
 LANGUAGES = {'uz': "🇺🇿 O'zbek", 'en': '🇬🇧 English', 'ru': '🇷🇺 Русский'}
 lang = st.sidebar.selectbox("Til / Language / Язык", options=list(LANGUAGES.keys()),
@@ -541,13 +538,7 @@ nu_poisson = st.sidebar.slider(t('poisson'), 0.1, 0.4, 0.25)
 k_ratio = st.sidebar.slider(t('stress_ratio'), 0.1, 2.0, 0.5)
 
 st.sidebar.subheader(t('tensile_params'))
-beta_thermal = st.sidebar.slider(
-    t('thermal_decay_label'),
-    min_value=0.0005,
-    max_value=0.02,
-    value=0.005,
-    step=0.0005
-)
+beta_thermal = st.sidebar.slider(t('thermal_decay_label'), min_value=0.0005, max_value=0.02, value=0.005, step=0.0005)
 
 st.sidebar.subheader(t('combustion'))
 burn_duration = st.sidebar.number_input(t('burn_duration'), value=40)
@@ -645,7 +636,6 @@ def thermal_expansion_temperature(T):
 def vertical_stress(depth, density):
     return density * 9.81 * depth / 1e6
 
-# Fix 6: Heat equation FTCS solver, removed smoothing
 def solve_heat_equation_dynamic(T, Q, rho_field, cp_field, k_field, dx, dz, dt, h, T_air, n_steps):
     alpha_field = k_field / (rho_field * cp_field)
     alpha_max = np.max(alpha_field)
@@ -659,11 +649,9 @@ def solve_heat_equation_dynamic(T, Q, rho_field, cp_field, k_field, dx, dz, dt, 
         T_new[1:-1, 1:-1] = (T_old[1:-1, 1:-1] +
                               dt * (alpha_field[1:-1, 1:-1] * (Txx + Tzz) +
                                     Q[1:-1, 1:-1] / (rho_field[1:-1, 1:-1] * cp_field[1:-1, 1:-1])))
-        # Neumann BC
         T_new[:, 0] = T_new[:, 1]
         T_new[:, -1] = T_new[:, -2]
         T_new[-1, :] = T_new[-2, :]
-        # Robin BC
         T_new[0, :] = T_new[1, :] + dz * h / k_field[0, :] * (T_air - T_new[0, :])
         T = T_new
     return T
@@ -696,7 +684,6 @@ def kirsch_stress_field(x, z, sigma_H, sigma_h, cavity_radius, pore_pressure=0.0
     sigma_tt -= pore_pressure
     return sigma_rr, sigma_tt, tau_rt
 
-# Fix 7: pore_pressure_field corrected units
 def pore_pressure_field(T, depth, permeability):
     hydrostatic = 1000 * 9.81 * depth
     gas_pressure = 101325 * (T + 273.15) / 293.15
@@ -714,7 +701,6 @@ def probability_of_failure(FOS):
     beta = (FOS - 1) / 0.15
     return gaussian_dist.cdf(-beta)
 
-# Fix 10: Monte-Carlo FOS clipping
 def monte_carlo_fos(ucs_mean, ucs_std, gsi_mean, gsi_std, mi_val, D, T_avg, H_seam, depth, density, rec_width, beta_th, n_sim=1000):
     ucs_samples = np.random.normal(ucs_mean, ucs_std, n_sim)
     gsi_samples = np.clip(np.random.normal(gsi_mean, gsi_std, n_sim), 10, 100)
@@ -819,7 +805,6 @@ sigma_rr, sigma_tt, tau_rt = kirsch_stress_field(grid_x, grid_z - source_z,
                                                  cavity_radius, pore_pressure)
 
 delta_T = np.maximum(temp_2d - 20, 0)
-# Fix 13: correct plane strain thermal stress and convert to MPa
 sigma_thermal = (E_field * alpha_field * delta_T) / (1 - 2*nu_poisson + EPS) / 1e6
 relax_factor = np.exp(-2.5 * thermal_damage(temp_2d, beta_thermal))
 sigma_thermal *= relax_factor
@@ -828,7 +813,7 @@ sigma_x_total = sigma_rr + sigma_thermal
 sigma_z_total = sigma_tt + sigma_thermal
 
 dT_dx, dT_dz = np.gradient(temp_2d, axis=1), np.gradient(temp_2d, axis=0)
-G = E_field / (2 * (1 + nu_poisson))  # Fix 12: shear modulus already correct
+G = E_field / (2 * (1 + nu_poisson))
 tau_thermal = G * alpha_field * dT_dx * dT_dz / 1e6
 tau_rt += tau_thermal
 
@@ -872,7 +857,6 @@ vx = -perm_x * dp_dx / mu_gas
 vz = -perm_z * dp_dz / mu_gas
 gas_velocity = np.sqrt(vx**2 + vz**2)
 
-# Fix 3: Mohr-Coulomb influence radius instead of Peck's 0.45H
 phi_deg = np.degrees(np.arctan(np.nanmax(grid_mb)))
 phi_rad = np.radians(phi_deg)
 i_inflection = total_depth / np.tan(np.radians(45) + phi_rad / 2)
@@ -1170,7 +1154,6 @@ def generate_physics_dataset(temp_field: np.ndarray, sigma1: np.ndarray,
     collapse = ((fos < 1.0) | (temp_field.flatten() > 800) | (energy > 4000)).astype(int)
     return feat, collapse
 
-# Fix 1 & 2: HybridPINN with dynamic input_dim and forward validation
 class HybridPINN(nn.Module):
     def __init__(self, input_dim):
         super().__init__()
@@ -1182,7 +1165,8 @@ class HybridPINN(nn.Module):
             nn.Tanh(),
             nn.Linear(128, 64),
             nn.Tanh(),
-            nn.Linear(64, 1)
+            nn.Linear(64, 1),
+            nn.Sigmoid()
         )
     def forward(self, x):
         if x.shape[1] != self.input_dim:
@@ -1196,7 +1180,6 @@ def physics_informed_loss(pred, sigma1, sigma_ci, temp, damage):
     consistency = torch.abs(pred - thermal_term)
     return torch.mean(physics_violation * (1 - pred)) + 0.3 * torch.mean(consistency)
 
-# Fix 9: add gradient clipping
 def train_hybrid_model(X: np.ndarray, y: np.ndarray,
                        sigma1: np.ndarray, sigma_ci: np.ndarray,
                        temp: np.ndarray, damage: np.ndarray) -> nn.Module:
@@ -1224,11 +1207,8 @@ def train_random_forest(X_scaled: np.ndarray, y: np.ndarray) -> RandomForestClas
     rf.fit(X_scaled, y)
     return rf
 
-# Fix 2: use st.cache_resource for model caching
 @st.cache_resource
-def get_ensemble_model(X: np.ndarray, y: np.ndarray,
-                       sigma1: np.ndarray, sigma_ci: np.ndarray,
-                       temp: np.ndarray, damage: np.ndarray) -> tuple:
+def get_ensemble_model(X, y, sigma1, sigma_ci, temp, damage):
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
     X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
@@ -1239,21 +1219,22 @@ def get_ensemble_model(X: np.ndarray, y: np.ndarray,
     else:
         model = None
         rf = train_random_forest(X_train, y_train)
-    if rf is not None:
-        pred_test = rf.predict(X_test)
-        acc = accuracy_score(y_test, pred_test)
-        auc = roc_auc_score(y_test, pred_test)
-        st.write(f"AI Model Validatsiyasi: Accuracy = {acc:.3f}, AUC = {auc:.3f}")
-    return model, rf, scaler
+    return model, rf, scaler, X_test, y_test
 
 X_ai, y_ai = generate_physics_dataset(temp_2d, sigma1_act, sigma3_act, grid_z)
 temp_flat = temp_2d.flatten()
 damage_flat = damage.flatten()
-hybrid_model, rf_model, scaler = get_ensemble_model(
+hybrid_model, rf_model, scaler, X_test, y_test = get_ensemble_model(
     X_ai, y_ai,
     sigma1_act.flatten(), sigma_ci.flatten(),
     temp_flat, damage_flat
 )
+
+if rf_model is not None:
+    pred_test = rf_model.predict(X_test)
+    acc = accuracy_score(y_test, pred_test)
+    auc = roc_auc_score(y_test, pred_test)
+    st.write(f"AI Model Validatsiyasi: Accuracy = {acc:.3f}, AUC = {auc:.3f}")
 
 def predict_collapse(model, rf, scaler, X_raw: np.ndarray) -> np.ndarray:
     if model is None and rf is None:
@@ -1287,7 +1268,6 @@ p = risk_index_var / np.sum(risk_index_var + EPS)
 entropy = -np.sum(p * np.log(p + EPS))
 st.metric("Tizim entropiyasi (noaniqlik)", f"{entropy:.3f}")
 
-# Fix 11: Phase-field Neumann BC
 def laplacian_neumann(field, dx, dz):
     f = np.pad(field, 1, mode='edge')
     lap = ((f[1:-1, 2:] - 2*f[1:-1, 1:-1] + f[1:-1, :-2]) / dx**2 +
@@ -1298,7 +1278,7 @@ with st.expander("🪨 Phase-Field Fracture Damage Evolution (Patent Model)"):
     def phase_field_update(damage, strain_energy, dx, dt, Gc=0.01, l_char=1.0):
         dt_max = dx**2 / (4 * Gc * l_char)
         dt = min(dt, 0.9*dt_max)
-        lap = laplacian_neumann(damage, dx, dx)  # assuming dx=dz
+        lap = laplacian_neumann(damage, dx, dx)
         d_new = damage + dt * (Gc * l_char * lap - (Gc / l_char) * damage + (1 - damage) * strain_energy)
         return np.clip(d_new, 0, 1)
     st.markdown(r"""
@@ -1321,7 +1301,6 @@ with st.expander("🧠 Real PINN: Heat Equation Residual Loss"):
     **Physics-Informed Neural Network (PINN) for Temperature**
     $$\frac{\partial T}{\partial t} = \alpha \nabla^2 T + Q$$
     """)
-    # Fix 8: PINN model call with torch.cat
     def pinn_heat_loss(model, x, z, t, alpha, T_bc_mask, T_bc_val):
         coords = torch.cat([x, z, t], dim=1)
         coords.requires_grad_(True)
@@ -1417,7 +1396,6 @@ if PYVISTA_AVAILABLE:
         except Exception as e:
             st.warning(f"PyVista vizualizatsiyasi amalga oshmadi: {e}")
 
-# Fix 4: Grounded data with Mohr-Coulomb thermal degradation
 def thermal_mohr_coulomb(sigma_n, temp, cohesion0=5e6, phi0_deg=32):
     thermal_damage = 1 - np.exp(-0.002 * np.maximum(temp - 20, 0))
     cohesion_T = cohesion0 * (1 - thermal_damage)
@@ -1462,7 +1440,7 @@ def scientific_pinn_loss(pred_risk, log_var, target, inputs):
     data_loss = torch.mean(precision * (target - pred_risk)**2 + log_var)
     temp, sigma_v, c, phi, pore_p = inputs[:,0], inputs[:,1], inputs[:,2], inputs[:,3], inputs[:,4]
     sigma_n = sigma_v - pore_p
-    tau_limit = c + sigma_n * torch.tan(phi)  # simplified for loss
+    tau_limit = c + sigma_n * torch.tan(phi)
     physics_residual = torch.mean(torch.relu(pred_risk.flatten() * (tau_limit / 50) - (1 - target.flatten())))
     return data_loss + 0.1 * physics_residual
 
@@ -1687,7 +1665,7 @@ def calculate_live_metrics(h, layers, T_max):
     w_rec = 15.0 + (h/150)*10
     p_str = (ucs_0*str_red)*(w_rec/(H_l+EPS))**0.5
     max_sub = (H_l*0.05)*(min(h,120)/120)
-    return p_str, w_rec_live, curr_T, max_sub
+    return p_str, w_rec, curr_T, max_sub
 p_str, w_rec_live, t_now, s_max_3d = calculate_live_metrics(time_h, layers_data, T_source_max)
 mk1, mk2, mk3, mk4 = st.columns(4)
 mk1.metric(t('pillar_live'), f"{p_str:.1f} MPa", delta=f"{t_now:.0f} °C", delta_color="inverse")
@@ -2616,7 +2594,6 @@ st.plotly_chart(dash_fig, use_container_width=True)
 st.sidebar.markdown("---")
 st.sidebar.write(f"Tuzuvchi: Saitov Dilshodbek | Device: {device}")
 
-# Fix 14: FastAPI endpoint with try/except
 if FASTAPI_AVAILABLE:
     app = FastAPI()
     @app.post("/predict")
