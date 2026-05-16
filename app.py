@@ -684,7 +684,7 @@ def principal_stresses(sx, sy, txy):
     return s1, s2
 
 def evolving_cavity_radius(time_h, T_field):
-    thermal_dam = thermal_damage(T_field, beta_thermal)  # use beta_thermal
+    thermal_dam = thermal_damage(T_field, beta_thermal)
     growth_rate = 0.015 * np.mean(thermal_dam)
     radius = 5.0 + growth_rate * time_h
     return np.clip(radius, 5, 40)
@@ -881,7 +881,7 @@ c_subs = PARAMS["subsidence_rate"]
 Smax = H_seam * 0.04
 subsidence_t = Smax * (1 - np.exp(-c_subs * time_h))
 subsidence_raw = -subsidence_t * np.exp(-(x_axis**2) / (2 * influence_radius**2))
-subsidence_raw = savgol_filter(subsidence_raw, 11, 3)  # use savgol filter
+subsidence_raw = savgol_filter(subsidence_raw, 11, 3)
 subs_grad = np.gradient(subsidence_raw)
 void_factor = 1 + 0.35 * float(np.mean(void_mask_permanent))
 sub_p = subsidence_raw * void_factor + 0.08 * subs_grad
@@ -893,7 +893,7 @@ target_area = cavity_area * PARAMS["extraction_ratio"]
 scale_factor = target_area / (subs_area + 1e-8)
 sub_p *= scale_factor
 
-horizontal_disp_cm = -np.gradient(sub_p) * 100  # fix: use gradient of corrected subsidence
+horizontal_disp_cm = -np.gradient(sub_p) * 100
 
 avg_t_p = np.mean(temp_2d[np.abs(z_axis-source_z).argmin(), :])
 ucs_seam = layers_data[-1]['ucs']
@@ -919,7 +919,6 @@ rec_width = np.round(w_sol, 1)
 pillar_strength = p_strength_pa / 1e6
 y_zone = max(y_zone_calc, 1.5)
 
-# AI-optimized width (analytical formula)
 rock_factor = (layers_data[-1]['gsi']/100) * (layers_data[-1]['mi']/20) * (1 - D_factor)
 thermal_factor = np.exp(-0.002 * avg_t_p)
 optimal_width_ai = 4 + 0.12 * ucs_seam * rock_factor * thermal_factor * (1 + nu_poisson) * np.sqrt(k_ratio)
@@ -1273,9 +1272,7 @@ hybrid_model, rf_model, scaler, X_test, y_test = get_ensemble_model(
     temp_flat, damage_flat
 )
 
-# Save RF model (joblib used)
 joblib.dump(rf_model, "rf_model.pkl")
-# Optionally load it back (demonstrating usage)
 rf_model = joblib.load("rf_model.pkl")
 
 if rf_model is not None:
@@ -1474,8 +1471,22 @@ def thermal_mohr_coulomb(sigma_n, temp, cohesion0=PARAMS["cohesion"], phi0_deg=P
     tau = cohesion_T + sigma_n * np.tan(phi_T)
     return tau
 
+@st.cache_data
+def generate_grounded_data(n_samples=10000):
+    temp = np.random.uniform(20, 1000, n_samples)
+    sigma_v = np.random.uniform(5, 50, n_samples)
+    c = np.random.uniform(5, 15, n_samples)
+    phi = np.deg2rad(np.random.uniform(25, 40, n_samples))
+    pore_p = np.random.uniform(0, 20, n_samples)
+    sigma_n = sigma_v - pore_p
+    tau_limit = thermal_mohr_coulomb(sigma_n * 1e6, temp, cohesion0=c*1e6, phi0_deg=np.degrees(phi))
+    tau_applied = (sigma_n * 0.7) * (1 + (temp/1100)**2) * 1e6
+    failure = (tau_limit / (tau_applied + 1e-6) < 1.1).astype(np.float32)
+    X = np.column_stack([temp, sigma_v, c, phi, pore_p])
+    return X, failure
+
 class GeoPINN(nn.Module):
-    def __init__(self, input_dim=7):
+    def __init__(self, input_dim=5):
         super().__init__()
         self.encoder = nn.Sequential(
             nn.Linear(input_dim, 128),
@@ -1493,14 +1504,16 @@ class GeoPINN(nn.Module):
         return risk, log_var
 
 @st.cache_resource
-def train_scientific_system(X_train, y_train):
+def train_scientific_system():
     if not PT_AVAILABLE:
         return None, None
     try:
+        X, y = generate_grounded_data()
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.15)
         y_train = np.clip(y_train, 0, 1)
         scaler = StandardScaler()
         X_train_s = scaler.fit_transform(X_train)
-        model = GeoPINN(input_dim=X_train_s.shape[1]).to(device)
+        model = GeoPINN(input_dim=5).to(device)
         opt = torch.optim.Adam(model.parameters(), lr=0.001)
         loss_fn = nn.BCELoss()
         X_t = torch.tensor(X_train_s, dtype=torch.float32).to(device)
@@ -1541,7 +1554,7 @@ def mc_bayesian_inference(model, scaler, raw_data, n_samples=25):
         "aleatoric": np.mean(aleatorics, axis=0)
     }
 
-pinn_model, global_scaler = train_scientific_system(X_ai, y_ai)
+pinn_model, global_scaler = train_scientific_system()
 
 with st.expander("🧠 Bayesian PINN Risk Analysis (3D Geo-Model)"):
     if not PT_AVAILABLE:
@@ -1613,20 +1626,17 @@ with st.expander("🧠 Bayesian PINN Risk Analysis (3D Geo-Model)"):
                 else:
                     st.success("✅ Barqaror holat.")
 
-# Fixed thermal animation using actual heat equation solver
 if st.button("Harorat dinamik animatsiyasini ishga tushirish"):
     placeholder = st.empty()
-    # Starting temperature field
     T_anim = np.full_like(temp_2d, 25.0)
     rho_anim = np.full_like(T_anim, 1400.0)
     cp_anim = specific_heat(T_anim)
     k_anim = thermal_conductivity(T_anim)
     dx = x_axis[1] - x_axis[0]
     dz = z_axis[1] - z_axis[0]
-    # Simple heat source at seam location
     Q_anim = np.zeros_like(T_anim)
     seam_mask = (grid_z > source_z - H_seam/2) & (grid_z < source_z + H_seam/2)
-    Q_anim[seam_mask] = T_source_max * 0.1  # arbitrary source
+    Q_anim[seam_mask] = T_source_max * 0.1
     for t_anim in range(30):
         T_anim = solve_heat_equation_dynamic(
             T=T_anim, Q=Q_anim, rho_field=rho_anim, cp_field=cp_anim, k_field=k_anim,
@@ -1744,7 +1754,6 @@ with st.expander("📈 FOS Vaqt Bashorati (Trend)"):
     time_points = np.arange(1, time_h+1, max(1, time_h//20))
     fos_timeline = []
     for current_time in time_points:
-        # Fixed temperature formula
         T0 = 20
         T_at_th = T0 + (T_source_max - T0) * min(current_time, burn_duration) / burn_duration
         ucs_T_th = apply_thermal_degradation(ucs_seam*1e6, T_at_th, beta_thermal)
@@ -2280,7 +2289,6 @@ tab_live, tab_ai_orig, tab_advanced = st.tabs([t('live_monitoring_tab'), t('ai_m
 with tab_live:
     st.markdown("### Real-time subsidence, temperature, anomalies and alerts")
     TIME_STEPS = st.slider("Simulation steps", 10, 200, 50, key="live_steps")
-    # Fixed stop button logic
     if "stop_live" not in st.session_state:
         st.session_state.stop_live = False
     col_live1, col_live2 = st.columns(2)
