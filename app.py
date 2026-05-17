@@ -126,7 +126,6 @@ PARAMS = {
     "extraction_ratio": 0.6
 }
 
-# Russian translation = English copy (fixed)
 TRANSLATIONS = {
     'uz': {
         'app_title': "Universal Yer yuzasi Deformatsiyasi Monitoringi",
@@ -625,9 +624,10 @@ def thermal_damage(T: np.ndarray, beta: float = PARAMS["thermal_damage_beta"]) -
     return 1 - np.exp(-beta * np.maximum(T - 20, 0))
 
 def apply_thermal_degradation(ucs0, T, beta):
+    """ucs0 in MPa, returns MPa"""
     dmg = thermal_damage(T, beta)
     ucs_T = ucs0 * (1 - dmg)
-    return np.clip(ucs_T, 0.5e6, None)
+    return np.clip(ucs_T, 0.5, None)  # residual strength 0.5 MPa
 
 def thermal_conductivity(T, k0=2.5):
     k = k0 * (1 - 0.0004 * (T - 20))
@@ -722,17 +722,17 @@ def probability_of_failure(FOS):
     return gaussian_dist.cdf(-beta)
 
 def monte_carlo_fos(ucs_mean, ucs_std, gsi_mean, gsi_std, mi_val, D, T_avg, H_seam, depth, density, rec_width, beta_th, n_sim=1000):
-    ucs_samples = np.random.normal(ucs_mean, ucs_std, n_sim)
+    ucs_samples = np.random.normal(ucs_mean, ucs_std, n_sim)  # MPa
     gsi_samples = np.clip(np.random.normal(gsi_mean, gsi_std, n_sim), 10, 100)
     fos = []
     for ucs, gsi in zip(ucs_samples, gsi_samples):
         mb = mi_val * np.exp((gsi - 100) / (28 - 14 * D))
         s  = np.exp((gsi - 100) / (9 - 3 * D))
         a  = 0.5 + (1/6) * (np.exp(-gsi/15) - np.exp(-20/3))
-        ucs_T = apply_thermal_degradation(ucs, T_avg, beta_th)
-        sigma_cm = ucs_T * (s ** a)
-        pillar_strength = sigma_cm * (rec_width / (H_seam + EPS)) ** 0.5
-        sv = density * 9.81 * depth / 1e6
+        ucs_T = apply_thermal_degradation(ucs, T_avg, beta_th)  # MPa
+        sigma_cm = ucs_T * (s ** a)  # MPa
+        pillar_strength = sigma_cm * (rec_width / (H_seam + EPS)) ** 0.5  # MPa
+        sv = density * 9.81 * depth / 1e6  # MPa
         fos_val = np.clip(pillar_strength / (sv + EPS), 0, 10)
         fos.append(fos_val)
     fos = np.array(fos)
@@ -851,10 +851,10 @@ for i, (z0, z1) in enumerate(layer_bounds):
     grid_s_hb[mask] = np.exp(exp_gsi / (9 - 3*D_factor))
     grid_a_hb[mask] = 0.5 + (1/6)*(np.exp(-layer['gsi']/15) - np.exp(-20/3))
 
-sigma_ci = apply_thermal_degradation(grid_ucs, temp_2d, beta_thermal)
+sigma_ci = apply_thermal_degradation(grid_ucs, temp_2d, beta_thermal)   # MPa
 damage = hoek_brown_damage(sigma1_act, sigma3_act, sigma_ci, grid_mb, grid_s_hb, grid_a_hb)
 
-sigma1_limit = hoek_brown(sigma3_act, sigma_ci, grid_mb, grid_s_hb, grid_a_hb)
+sigma1_limit = hoek_brown(sigma3_act, sigma_ci, grid_mb, grid_s_hb, grid_a_hb)   # MPa
 
 void_fraction = gaussian_filter(damage * (temp_2d > 600), sigma=2)
 void_mask_permanent = void_fraction > 0.5
@@ -899,14 +899,13 @@ avg_t_p = np.mean(temp_2d[np.abs(z_axis-source_z).argmin(), :])
 ucs_seam = layers_data[-1]['ucs']
 sv_seam = grid_sigma_v[np.abs(z_axis-source_z).argmin(), :].max()
 
-ucs_seam_pa = ucs_seam * 1e6
-sv_seam_pa = sv_seam * 1e6
 w_sol = 20.0
 E_MIN_CORE = 0.5 * H_seam
 for _ in range(30):
+    # everything now in MPa
     strength_red = 1 - thermal_damage(avg_t_p, beta_thermal)
-    p_strength_pa = apply_thermal_degradation(ucs_seam_pa, avg_t_p, beta_thermal) * (w_sol / (H_seam + EPS))**0.5
-    ratio = sv_seam_pa / (p_strength_pa + EPS)
+    p_strength = apply_thermal_degradation(ucs_seam, avg_t_p, beta_thermal) * (w_sol / (H_seam + EPS))**0.5
+    ratio = sv_seam / (p_strength + EPS)
     if ratio >= 1.0:
         y_zone_calc = (H_seam / 2.0) * (np.sqrt(ratio) - 1.0)
     else:
@@ -916,7 +915,7 @@ for _ in range(30):
         break
     w_sol = 0.6 * new_w + 0.4 * w_sol
 rec_width = np.round(w_sol, 1)
-pillar_strength = p_strength_pa / 1e6
+pillar_strength = p_strength   # MPa
 y_zone = max(y_zone_calc, 1.5)
 
 rock_factor = (layers_data[-1]['gsi']/100) * (layers_data[-1]['mi']/20) * (1 - D_factor)
@@ -954,7 +953,7 @@ with col_g3:
         s_i = np.exp((gsi_i - 100) / (9 - 3*D_factor))
         a_i = 0.5 + (1/6)*(np.exp(-gsi_i/15) - np.exp(-20/3))
         sigma3_ax = np.linspace(0, ucs_i*0.5, 100)
-        ucs_T_i = apply_thermal_degradation(ucs_i*1e6, temp_2d.mean(), beta_thermal) / 1e6
+        ucs_T_i = apply_thermal_degradation(ucs_i, temp_2d.mean(), beta_thermal)   # MPa
         sigma1_i = sigma3_ax + ucs_T_i*(mb_i*sigma3_ax/(ucs_T_i+EPS)+s_i)**a_i
         fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=sigma1_i, name=lyr['name'], line=dict(width=2)))
     st.plotly_chart(fig_hb.update_layout(title=t('hb_envelopes_title'), template="plotly_dark", height=300, legend=dict(orientation="h", y=-0.3, x=0.5, xanchor="center")), use_container_width=True)
@@ -981,7 +980,7 @@ with c2:
     st.subheader("UCG Yonish Bosqichlari (1 → 3 → 2 sxemasi) – Yangi Ilmiy Model")
     coal_layer = layers_data[-1]
     h_seam = coal_layer['t']
-    ucs_coal_pa = coal_layer['ucs'] * 1e6
+    ucs_coal = coal_layer['ucs']   # MPa
     rho_coal = coal_layer['rho']
     well_x = [-well_distance, 0, well_distance]
     cavity_width = well_distance - rec_width
@@ -995,7 +994,7 @@ with c2:
     for l in layers_data[:-1]:
         sigma_v_coal += l['rho'] * 9.81 * l['t']
     sigma_v_coal += rho_coal * 9.81 * (h_seam / 2)
-    sigma_v_coal = sigma_v_coal / 1e6
+    sigma_v_coal = sigma_v_coal / 1e6   # MPa
     Hc = h_seam * np.sqrt(sigma_v_coal / (coal_layer['ucs'] + EPS))
     Hc = np.clip(Hc, h_seam, h_seam * 4)
     states_132 = {1: [0], 2: [0, 2], 3: [0, 1, 2]}
@@ -1004,7 +1003,7 @@ with c2:
 
     def compute_advanced_fos(grid_x, grid_z, active_wells, well_x, source_z, h_seam, cavity_width,
                              temp_field, sigma_v_field, layers_data, layer_bounds,
-                             E, alpha, nu, K0, Hc, sigma_v_coal_MPa, ucs_coal_pa):
+                             E, alpha, nu, K0, Hc, sigma_v_coal_MPa, ucs_coal_MPa):
         fos = np.full_like(grid_x, 3.0)
         for px_idx in active_wells:
             px = well_x[px_idx]
@@ -1016,14 +1015,14 @@ with c2:
             for (top, bot, layer) in layer_bounds:
                 mask = (grid_z >= top) & (grid_z < bot)
                 if not np.any(mask): continue
-                ucs_pa = layer['ucs'] * 1e6
+                ucs_l = layer['ucs']  # MPa
                 gsi = layer['gsi']; mi = layer['mi']
                 mb = mi * np.exp((gsi - 100) / (28 - 14 * D_factor))
                 s_hb = np.exp((gsi - 100) / (9 - 3 * D_factor))
                 a_hb = 0.5 + (1/6)*(np.exp(-gsi/15) - np.exp(-20/3))
-                sigma_v = sigma_v_field[mask]
+                sigma_v = sigma_v_field[mask]  # MPa
                 delta_T_m = delta_T[mask]
-                sigma_ci_T = apply_thermal_degradation(ucs_pa, delta_T_m, beta_thermal)
+                sigma_ci_T = apply_thermal_degradation(ucs_l, delta_T_m, beta_thermal)   # MPa
                 sigma_3 = K0 * sigma_v * (0.6 + 0.4 * (1 - thermal_damage(delta_T_m, beta_thermal)))
                 sigma_th = np.zeros_like(sigma_v)
                 local_thermal = thermal_zone[mask]
@@ -1067,9 +1066,8 @@ with c2:
                 fos[pillar_mask] = 2.5
         if stage == 2:
             selek_eni = well_distance - cavity_width
-            pillar_strength = ucs_coal_pa * (selek_eni / (h_seam + EPS)) ** 0.5
-            sigma_v_coal_pa = sigma_v_coal_MPa * 1e6
-            fos_pillar = pillar_strength / (sigma_v_coal_pa + EPS)
+            pillar_strength_pillar = ucs_coal_MPa * (selek_eni / (h_seam + EPS)) ** 0.5  # MPa
+            fos_pillar = pillar_strength_pillar / (sigma_v_coal_MPa + EPS)
             pillar_zone = (np.abs(grid_x - well_x[1]) < selek_eni/2) & (np.abs(grid_z - source_z) < h_seam)
             fos[pillar_zone] = np.maximum(fos[pillar_zone], fos_pillar)
         return np.nan_to_num(fos, nan=3.0, posinf=3.0, neginf=0.0)
@@ -1078,7 +1076,7 @@ with c2:
     fos_stage = compute_advanced_fos(
         grid_x, grid_z, active_wells, well_x, source_z_adv, h_seam, cavity_width,
         temp_2d, grid_sigma_v, layers_data, layer_bounds_adv,
-        E_MOD, ALPHA, NU, K0, Hc, sigma_v_coal, ucs_coal_pa
+        E_MOD, ALPHA, NU, K0, Hc, sigma_v_coal, ucs_coal
     )
 
     fig_tm = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.12,
@@ -1135,7 +1133,7 @@ with c2:
             fos_s = compute_advanced_fos(
                 grid_x, grid_z, wells_s, well_x, source_z_adv, h_seam, cavity_width,
                 temp_2d, grid_sigma_v, layers_data, layer_bounds_adv,
-                E_MOD, ALPHA, NU, K0, Hc, sigma_v_coal, ucs_coal_pa
+                E_MOD, ALPHA, NU, K0, Hc, sigma_v_coal, ucs_coal
             )
             fig_s = go.Figure(go.Contour(z=fos_s, x=x_axis, y=z_axis,
                                          colorscale=[[0,'black'],[0.1,'red'],[0.4,'orange'],[0.7,'yellow'],[0.85,'lime'],[1,'darkgreen']],
@@ -1162,7 +1160,7 @@ with c2:
 fos_2d = compute_advanced_fos(
     grid_x, grid_z, [0,1,2], well_x, source_z_adv, h_seam, cavity_width,
     temp_2d, grid_sigma_v, layers_data, layer_bounds_adv,
-    E_MOD, ALPHA, NU, K0, Hc, sigma_v_coal, ucs_coal_pa
+    E_MOD, ALPHA, NU, K0, Hc, sigma_v_coal, ucs_coal
 )
 
 def physics_features(T: np.ndarray, s1: np.ndarray, s3: np.ndarray, depth: np.ndarray, ucs_seam_val: float) -> np.ndarray:
@@ -1377,8 +1375,8 @@ with st.expander("📊 Uncertainty Quantification (UQ) for FOS"):
     temp_samples = np.random.normal(T_source_max, 50, N)
     fos_samples = []
     for ucs_i, temp_i in zip(ucs_samples, temp_samples):
-        sig_p = apply_thermal_degradation(ucs_i*1e6, temp_i, beta_thermal) * (rec_width/(H_seam+EPS))**0.5
-        fos_i = sig_p / (vertical_stress(depth_seam, avg_rho)*1e6 + EPS)
+        sig_p = apply_thermal_degradation(ucs_i, temp_i, beta_thermal) * (rec_width/(H_seam+EPS))**0.5
+        fos_i = sig_p / (vertical_stress(depth_seam, avg_rho) + EPS)
         fos_samples.append(fos_i)
     fos_samples = np.array(fos_samples)
     fig_uq = go.Figure()
@@ -1737,11 +1735,11 @@ def calculate_live_metrics(h, layers, T_max):
     target = layers[-1]
     ucs_0, H_l = target['ucs'], target['t']
     curr_T = (25 + (T_max-25)*(min(h,40)/40) if h<=40 else T_max*np.exp(-0.001*(h-40)))
-    ucs_T_live = apply_thermal_degradation(ucs_0*1e6, curr_T, beta_thermal)
+    ucs_T_live = apply_thermal_degradation(ucs_0, curr_T, beta_thermal)
     w_rec = 15.0 + (h/150)*10
     p_str = ucs_T_live * (w_rec/(H_l+EPS))**0.5
     max_sub = (H_l*0.05)*(min(h,120)/120)
-    return p_str/1e6, w_rec, curr_T, max_sub
+    return p_str, w_rec, curr_T, max_sub
 p_str, w_rec_live, t_now, s_max_3d = calculate_live_metrics(time_h, layers_data, T_source_max)
 mk1, mk2, mk3, mk4 = st.columns(4)
 mk1.metric(t('pillar_live'), f"{p_str:.1f} MPa", delta=f"{t_now:.0f} °C", delta_color="inverse")
@@ -1752,41 +1750,45 @@ st.markdown("---")
 
 with st.expander("📈 FOS Vaqt Bashorati (Trend)"):
     time_points = np.arange(1, time_h+1, max(1, time_h//20))
-    fos_timeline = []
-    for current_time in time_points:
-        T0 = 20
-        T_at_th = T0 + (T_source_max - T0) * min(current_time, burn_duration) / burn_duration
-        ucs_T_th = apply_thermal_degradation(ucs_seam*1e6, T_at_th, beta_thermal)
-        p_str_t = ucs_T_th * (rec_width/(H_seam+EPS))**0.5
-        sv_t = sv_seam * 1e6 * (1 + 0.001*current_time)
-        fos_t = np.clip(p_str_t/(sv_t+EPS), 0, 3)
-        fos_timeline.append(fos_t)
-    slope, intercept, r_value, _, _ = linregress(time_points, fos_timeline)
-    future_times = np.arange(time_h, min(time_h*2,300), max(1,time_h//10))
-    fos_forecast = intercept + slope*future_times
-    fos_forecast = np.clip(fos_forecast,0,3)
-    if slope<0 and intercept+slope*time_h>1.0:
-        t_critical = (1.0-intercept)/slope
-        critical_info = f"⚠️ FOS=1.0 ga taxminan **{t_critical:.0f}** soatda yetishi mumkin"
+    if len(time_points) < 2:
+        st.info("Trend tahlili uchun kamida 2 vaqt nuqtasi kerak.")
     else:
-        critical_info = "✅ Hozirgi trend bo'yicha FOS=1.0 ga yetish xavfi yo'q"
-    fig_trend = go.Figure()
-    fig_trend.add_trace(go.Scatter(x=time_points, y=fos_timeline, mode='lines+markers', name='Hisoblangan FOS', line=dict(color='cyan',width=2), marker=dict(size=6)))
-    trend_line = intercept+slope*time_points
-    fig_trend.add_trace(go.Scatter(x=time_points, y=trend_line, mode='lines', name=f'Trend (R²={r_value**2:.3f})', line=dict(color='yellow',width=1,dash='dot')))
-    fig_trend.add_trace(go.Scatter(x=future_times, y=fos_forecast, mode='lines', name='Bashorat', line=dict(color='orange',width=2,dash='dash'), fill='tozeroy', fillcolor='rgba(255,165,0,0.1)'))
-    fig_trend.add_hline(y=1.5, line_color='green', line_dash='dash', annotation_text='Barqaror chegarasi (1.5)')
-    fig_trend.add_hline(y=1.0, line_color='red', line_dash='dash', annotation_text='Kritik chegara (1.0)')
-    fig_trend.add_vline(x=time_h, line_color='white', line_dash='dot', annotation_text=f'Hozir ({time_h}h)')
-    fig_trend.update_layout(template='plotly_dark', height=400, title=f"FOS vaqt bashorati | Trend: {slope:+.4f} FOS/soat", xaxis_title='Vaqt (soat)', yaxis_title='FOS', legend=dict(orientation='h', y=-0.2))
-    st.plotly_chart(fig_trend, use_container_width=True)
-    tc1, tc2, tc3 = st.columns(3)
-    tc1.metric("Trend ko'rsatkichi", f"{slope:+.5f} FOS/soat", delta="Kamaymoqda" if slope<0 else "O'smoqda", delta_color="inverse" if slope<0 else "normal")
-    tc2.metric("R² (trend aniqligi)", f"{r_value**2:.4f}")
-    tc3.metric("Hozirgi FOS", f"{fos_timeline[-1]:.3f}")
-    st.info(critical_info)
+        fos_timeline = []
+        for current_time in time_points:
+            T0 = 20
+            T_at_th = T0 + (T_source_max - T0) * min(current_time, burn_duration) / burn_duration
+            ucs_T_th = apply_thermal_degradation(ucs_seam, T_at_th, beta_thermal)
+            p_str_t = ucs_T_th * (rec_width/(H_seam+EPS))**0.5
+            sv_t = sv_seam * (1 + 0.001*current_time)
+            fos_t = np.clip(p_str_t/(sv_t+EPS), 0, 3)
+            fos_timeline.append(fos_t)
+        slope, intercept, r_value, _, _ = linregress(time_points, fos_timeline)
+        future_times = np.arange(time_h, min(time_h*2,300), max(1,time_h//10))
+        fos_forecast = intercept + slope*future_times
+        fos_forecast = np.clip(fos_forecast,0,3)
+        if slope<0 and intercept+slope*time_h>1.0:
+            t_critical = (1.0-intercept)/slope
+            critical_info = f"⚠️ FOS=1.0 ga taxminan **{t_critical:.0f}** soatda yetishi mumkin"
+        else:
+            critical_info = "✅ Hozirgi trend bo'yicha FOS=1.0 ga yetish xavfi yo'q"
+        fig_trend = go.Figure()
+        fig_trend.add_trace(go.Scatter(x=time_points, y=fos_timeline, mode='lines+markers', name='Hisoblangan FOS', line=dict(color='cyan',width=2), marker=dict(size=6)))
+        trend_line = intercept+slope*time_points
+        fig_trend.add_trace(go.Scatter(x=time_points, y=trend_line, mode='lines', name=f'Trend (R²={r_value**2:.3f})', line=dict(color='yellow',width=1,dash='dot')))
+        fig_trend.add_trace(go.Scatter(x=future_times, y=fos_forecast, mode='lines', name='Bashorat', line=dict(color='orange',width=2,dash='dash'), fill='tozeroy', fillcolor='rgba(255,165,0,0.1)'))
+        fig_trend.add_hline(y=1.5, line_color='green', line_dash='dash', annotation_text='Barqaror chegarasi (1.5)')
+        fig_trend.add_hline(y=1.0, line_color='red', line_dash='dash', annotation_text='Kritik chegara (1.0)')
+        fig_trend.add_vline(x=time_h, line_color='white', line_dash='dot', annotation_text=f'Hozir ({time_h}h)')
+        fig_trend.update_layout(template='plotly_dark', height=400, title=f"FOS vaqt bashorati | Trend: {slope:+.4f} FOS/soat", xaxis_title='Vaqt (soat)', yaxis_title='FOS', legend=dict(orientation='h', y=-0.2))
+        st.plotly_chart(fig_trend, use_container_width=True)
+        tc1, tc2, tc3 = st.columns(3)
+        tc1.metric("Trend ko'rsatkichi", f"{slope:+.5f} FOS/soat", delta="Kamaymoqda" if slope<0 else "O'smoqda", delta_color="inverse" if slope<0 else "normal")
+        tc2.metric("R² (trend aniqligi)", f"{r_value**2:.4f}")
+        tc3.metric("Hozirgi FOS", f"{fos_timeline[-1]:.3f}")
+        st.info(critical_info)
 
 def generate_crip_3d_html(dip_angle, well_spacing, temperature, total_depth, seam_thickness, cavity_radius):
+    # Double braces for JavaScript code to avoid f-string interpolation
     return f"""
     <!DOCTYPE html>
     <html lang="uz">
@@ -2003,8 +2005,8 @@ with st.expander("⚖️ Ssenariy Taqqoslash (A vs B)"):
         b_temp = st.number_input("T_B (°C)", value=float(T_source_max)*1.1, key="b_t")
     def norm(val, mn, mx):
         return (val-mn)/(mx-mn+EPS)
-    fos_a = apply_thermal_degradation(a_ucs*1e6, a_temp, beta_thermal) / (layers_data[-1]['rho']*9.81*H_seam + EPS) / 1e6
-    fos_b = apply_thermal_degradation(b_ucs*1e6, b_temp, beta_thermal) / (layers_data[-1]['rho']*9.81*H_seam + EPS) / 1e6
+    fos_a = apply_thermal_degradation(a_ucs, a_temp, beta_thermal) / (layers_data[-1]['rho']*9.81*H_seam/1e6 + EPS)
+    fos_b = apply_thermal_degradation(b_ucs, b_temp, beta_thermal) / (layers_data[-1]['rho']*9.81*H_seam/1e6 + EPS)
     vals_a = [norm(a_ucs,0,100), norm(a_gsi,10,100), norm(fos_a,0,3), 1-norm(a_temp,20,1200)]
     vals_b = [norm(b_ucs,0,100), norm(b_gsi,10,100), norm(fos_b,0,3), 1-norm(b_temp,20,1200)]
     categories = ['UCS','GSI','FOS (taxmin)','Termal risk']
@@ -2025,10 +2027,10 @@ def sensitivity_analysis(base_ucs, base_gsi, base_d, base_nu, base_t, H_seam, be
         mb = 10*np.exp((gsi-100)/(28-14*d))
         s  = np.exp((gsi-100)/(9-3*d))
         a  = 0.5 + (1/6)*(np.exp(-gsi/15) - np.exp(-20/3))
-        ucs_T = apply_thermal_degradation(ucs*1e6, T, beta_th)
+        ucs_T = apply_thermal_degradation(ucs, T, beta_th)   # MPa
         sigma_cm = ucs_T * (max(s, 1e-9)**a)
         p_str = sigma_cm * (20/(H_seam+EPS))**0.5
-        sv = vertical_stress(200.0, 2500.0) * 1e6
+        sv = vertical_stress(200.0, 2500.0)   # MPa
         return np.clip(p_str/(sv+EPS), 0, 5)
     params = {
         'UCS (MPa)': (base_ucs, base_ucs*(1-range_pct), base_ucs*(1+range_pct)),
@@ -2329,11 +2331,11 @@ with tab_live:
             X_feat = np.array([[burn_duration, T_source_max, avg_ucs, well_distance]])
             pillar_width_pred = rf_live.predict(X_feat)[0]
             T_avg_live = np.mean(Z_temp)
-            sigma_v_live = vertical_stress(depth_seam, avg_rho) * 1e6
-            sigma_thermal_live = (E_field.mean() * alpha_field.mean() * max(T_avg_live-20,0)) / (1 - 2*nu_poisson + EPS)
-            pore_pressure_live = pore_pressure_field(T_avg_live, depth_seam, np.mean(perm)) * 1e6
-            pillar_live_pa = apply_thermal_degradation(ucs_seam*1e6, T_avg_live, beta_thermal) * (rec_width/(H_seam+EPS))**0.5
-            FOS_live = pillar_live_pa / (sigma_v_live + sigma_thermal_live + pore_pressure_live + 1e-8)
+            sigma_v_live = vertical_stress(depth_seam, avg_rho)   # MPa
+            sigma_thermal_live = (E_field.mean() * alpha_field.mean() * max(T_avg_live-20,0)) / (1 - 2*nu_poisson + EPS) / 1e6
+            pore_pressure_live = pore_pressure_field(T_avg_live, depth_seam, np.mean(perm))
+            pillar_live = apply_thermal_degradation(ucs_seam, T_avg_live, beta_thermal) * (rec_width/(H_seam+EPS))**0.5
+            FOS_live = pillar_live / (sigma_v_live + sigma_thermal_live + pore_pressure_live + 1e-8)
             FOS_live = np.clip(FOS_live, 0, 5)
             mean_subs = np.mean(Z_subs)
             subs_history_live.append(mean_subs)
@@ -2535,14 +2537,14 @@ with tab_advanced:
     ucs_0_r, gsi_val, mi_val = target_l['ucs'], target_l['gsi'], target_l['mi']
     gamma_kn = target_l['rho'] * 9.81 / 1000
     H_depth_tot = sum(l['t'] for l in layers_data[:-1]) + target_l['t']/2
-    sigma_v_tot = vertical_stress(H_depth_tot, target_l['rho'])
+    sigma_v_tot = vertical_stress(H_depth_tot, target_l['rho'])   # MPa
     mb_dyn = mi_val * np.exp((gsi_val-100)/(28-14*D_factor))
     s_dyn = np.exp((gsi_val-100)/(9-3*D_factor))
     a_dyn = 0.5 + (1/6)*(np.exp(-gsi_val/15) - np.exp(-20/3))
-    ucs_t_dyn = apply_thermal_degradation(ucs_0_r*1e6, T_source_max, BETA_CONST)
-    sigma_cm = ucs_t_dyn * (s_dyn ** a_dyn)
-    p_str_final = sigma_cm * (rec_width / (H_seam + EPS))**0.5
-    fos_final = p_str_final / (sigma_v_tot*1e6 + EPS)
+    ucs_t_dyn = apply_thermal_degradation(ucs_0_r, T_source_max, BETA_CONST)   # MPa
+    sigma_cm = ucs_t_dyn * (s_dyn ** a_dyn)   # MPa
+    p_str_final = sigma_cm * (rec_width / (H_seam + EPS))**0.5   # MPa
+    fos_final = p_str_final / (sigma_v_tot + EPS)
     sigma_thermal_MPa = sigma_thermal
     t1,t2,t3 = st.tabs([t('tab_mass'), t('tab_thermal'), t('tab_stability')])
     with t1:
@@ -2564,8 +2566,8 @@ with tab_advanced:
                                   t('param_table_reason'): [t('modulus_reason'), t('alpha_reason'), t('temp0_reason')]})
         st.table(params_df)
         st.markdown(t('ucs_decay'))
-        st.latex(t('ucs_decay_eq', ucs=ucs_t_dyn/1e6))
-        st.write(t('ucs_interpret', temp=T_source_max, perc=((1 - ucs_t_dyn/(ucs_0_r*1e6))*100)))
+        st.latex(t('ucs_decay_eq', ucs=ucs_t_dyn))
+        st.write(t('ucs_interpret', temp=T_source_max, perc=((1 - ucs_t_dyn/(ucs_0_r))*100)))
         st.markdown(t('thermal_stress'))
         st.latex(t('thermal_stress_eq', sigma=float(np.nanmax(sigma_thermal_MPa))))
     with t3:
@@ -2629,6 +2631,7 @@ def draw_interactive_ucg_dashboard(x_axis, z_axis, fos_2d, displacement_2d, surf
                                         "C) Horizontal Surface Displacement (mm)",
                                         "D) Vertical Surface Displacement (mm)"),
                         horizontal_spacing=0.1, vertical_spacing=0.15)
+    # Add static traces for row 1, col 1
     fig.add_trace(go.Heatmap(
         z=fos_2d, x=x_axis, y=z_axis,
         colorscale=[[0, 'rgb(255, 0, 0)'], [0.33, 'rgb(255, 165, 0)'], [0.5, 'rgb(173, 255, 47)'], [1, 'rgb(0, 128, 0)']],
@@ -2638,37 +2641,43 @@ def draw_interactive_ucg_dashboard(x_axis, z_axis, fos_2d, displacement_2d, surf
     fig.add_trace(go.Heatmap(z=mask_fos, x=x_axis, y=z_axis,
                              colorscale=[[0,'rgba(255,0,0,0.5)'],[1,'rgba(255,0,0,0.5)']],
                              showscale=False, name="Yielded Zone"), row=1, col=1)
+    # Row 1, col 2: displacement
     fig.add_trace(go.Heatmap(z=displacement_2d, x=x_axis, y=z_axis,
                              colorscale=disp_colorscale,
                              colorbar=dict(title="Disp (cm)", x=1.0, y=0.78, thickness=12, len=0.42),
                              name="2D Disp"), row=1, col=2)
+    # Add initial surface heatmaps (row 2)
+    fig.add_trace(go.Heatmap(z=surface_h_disp[0:1,:], x=surface_x, y=[time_steps[0]],
+                             colorscale='Turbo', zmin=np.min(surface_h_disp), zmax=np.max(surface_h_disp),
+                             showscale=False, name="H Disp"), row=2, col=1)
+    fig.add_trace(go.Heatmap(z=surface_v_disp[0:1,:], x=surface_x, y=[time_steps[0]],
+                             colorscale='Viridis', zmin=np.min(surface_v_disp), zmax=np.max(surface_v_disp),
+                             showscale=False, name="V Disp"), row=2, col=2)
+    # Create frames
     frames = []
     for frame_idx, frame_time in enumerate(time_steps):
         frame_data = []
+        # Trace 0: FOS (row=1, col=1)
         frame_data.append(go.Heatmap(z=fos_2d, x=x_axis, y=z_axis,
                                      colorscale=[[0, 'rgb(255,0,0)'], [0.33, 'rgb(255,165,0)'], [0.5, 'rgb(173,255,47)'], [1, 'rgb(0,128,0)']],
                                      zmin=0, zmax=3, showscale=False))
+        # Trace 1: yielded zone (row=1, col=1)
         frame_data.append(go.Heatmap(z=mask_fos, x=x_axis, y=z_axis,
                                      colorscale=[[0,'rgba(255,0,0,0.5)'],[1,'rgba(255,0,0,0.5)']],
                                      showscale=False))
+        # Trace 2: displacement (row=1, col=2)
         frame_data.append(go.Heatmap(z=displacement_2d, x=x_axis, y=z_axis,
                                      colorscale=disp_colorscale, showscale=False))
+        # Trace 3: H disp (row=2, col=1)
         frame_data.append(go.Heatmap(z=surface_h_disp[frame_idx:frame_idx+1,:], x=surface_x, y=[frame_time],
                                      colorscale='Turbo', zmin=np.min(surface_h_disp), zmax=np.max(surface_h_disp),
                                      showscale=False))
+        # Trace 4: V disp (row=2, col=2)
         frame_data.append(go.Heatmap(z=surface_v_disp[frame_idx:frame_idx+1,:], x=surface_x, y=[frame_time],
                                      colorscale='Viridis', zmin=np.min(surface_v_disp), zmax=np.max(surface_v_disp),
                                      showscale=False))
         frames.append(go.Frame(data=frame_data, name=f"frame_{frame_idx}"))
     fig.frames = frames
-    for frame_idx, frame_time in enumerate(time_steps):
-        if frame_idx == 0:
-            fig.add_trace(go.Heatmap(z=surface_h_disp[frame_idx:frame_idx+1,:], x=surface_x, y=[frame_time],
-                                     colorscale='Turbo', zmin=np.min(surface_h_disp), zmax=np.max(surface_h_disp),
-                                     showscale=False, visible=True, name="H Disp"), row=2, col=1)
-            fig.add_trace(go.Heatmap(z=surface_v_disp[frame_idx:frame_idx+1,:], x=surface_x, y=[frame_time],
-                                     colorscale='Viridis', zmin=np.min(surface_v_disp), zmax=np.max(surface_v_disp),
-                                     showscale=False, visible=True, name="V Disp"), row=2, col=2)
     for pos in pillar_locations:
         fig.add_shape(type="rect", x0=pos-25, x1=pos+25, y0=550, y1=600,
                       line=dict(color="Lime", width=3), row=1, col=1)
