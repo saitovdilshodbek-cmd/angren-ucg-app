@@ -1,16 +1,10 @@
 import streamlit as st
-st.set_page_config(
-    page_title="UCG SCI-Grade Platform",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
+st.set_page_config(page_title="UCG SCI-Grade Platform", layout="wide", initial_sidebar_state="expanded")
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from scipy.ndimage import gaussian_filter
-from scipy.optimize import minimize
 from scipy.stats import linregress, norm as gaussian_dist
 from scipy.integrate import trapezoid
 import time
@@ -19,84 +13,69 @@ import io
 from docx import Document
 from docx.shared import Pt, Cm, RGBColor, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 import qrcode
 from io import BytesIO
 import matplotlib.pyplot as plt
 import warnings
-warnings.filterwarnings('ignore')
 import sys
-from sklearn.metrics import accuracy_score, roc_auc_score, roc_curve, r2_score
-from sklearn.model_selection import KFold, train_test_split
-import joblib
+from sklearn.metrics import accuracy_score, roc_auc_score, r2_score
+from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 import logging
 from scipy.signal import savgol_filter
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
 try:
     from fastapi import FastAPI
     FASTAPI_AVAILABLE = True
 except ImportError:
     FASTAPI_AVAILABLE = False
-
 try:
     import torch
     import torch.nn as nn
-    import torch.nn.functional as F
     PT_AVAILABLE = True
     device = "cuda" if torch.cuda.is_available() else "cpu"
 except ImportError:
     PT_AVAILABLE = False
     device = "cpu"
-
 try:
     from SALib.sample import saltelli
     from SALib.analyze import sobol
     SALIB_AVAILABLE = True
 except ImportError:
     SALIB_AVAILABLE = False
-
 try:
     from pyDOE import lhs
     PYDOE_AVAILABLE = True
 except ImportError:
     PYDOE_AVAILABLE = False
-
 try:
     import pyvista as pv
     PYVISTA_AVAILABLE = True
 except ImportError:
     PYVISTA_AVAILABLE = False
-
 try:
     import shap
     SHAP_AVAILABLE = True
 except ImportError:
     SHAP_AVAILABLE = False
-
 try:
     from filterpy.kalman import KalmanFilter
     FILTERPY_AVAILABLE = True
 except ImportError:
     FILTERPY_AVAILABLE = False
-
 try:
     import pymc as pm
     PYMC_AVAILABLE = True
 except ImportError:
     PYMC_AVAILABLE = False
-
 try:
     import torch_geometric.nn as geo_nn
     TORCH_GEO_AVAILABLE = True
 except ImportError:
     TORCH_GEO_AVAILABLE = False
-
 try:
     import cupy as cp
     GPU_AVAILABLE = True
@@ -104,123 +83,68 @@ try:
 except ImportError:
     GPU_AVAILABLE = False
     xp = np
-
 try:
     from mpi4py import MPI
     MPI_AVAILABLE = True
 except ImportError:
     MPI_AVAILABLE = False
-
 if "language" not in st.session_state:
     st.session_state.language = "uz"
 if "theme" not in st.session_state:
     st.session_state.theme = "dark"
-
+if "live_history_df" not in st.session_state:
+    st.session_state.live_history_df = pd.DataFrame(columns=['step', 'mean_subsidence_cm', 'max_temp_c', 'FOS', 'pillar_width_m'])
 PARAMS = {
-    "phi_deg": 35.0,
-    "cohesion": 5e6,
-    "alpha_thermal": 3e-5,
-    "gas_temp": 1100,
-    "subsidence_rate": 0.012,
-    "thermal_damage_beta": 0.002,
-    "extraction_ratio": 0.6
+    "phi_deg": 35.0, "cohesion": 5e6, "alpha_thermal": 3e-5,
+    "gas_temp": 1100, "subsidence_rate": 0.012, "thermal_damage_beta": 0.002,
+    "extraction_ratio": 0.6, "E_mass": 25e9
 }
-
 TRANSLATIONS = {
     'uz': {
         'app_title': "Universal Yer yuzasi Deformatsiyasi Monitoringi",
         'app_subtitle': "Termo-Mexanik (TM) tahlil va Selek O'lchami Optimizatsiyasi",
-        'sidebar_header_params': "⚙️ Umumiy parametrlar",
-        'formula_show': "Formulalarni ko'rish:",
-        'project_name': "Loyiha nomi:",
-        'process_time': "Jarayon vaqti (soat):",
-        'num_layers': "Qatlamlar soni:",
-        'tensile_model': "Tensile modeli:",
-        'rock_props': "💎 Jins Xususiyatlari",
-        'disturbance': "Disturbance Factor (D):",
-        'poisson': "Poisson koeffitsiyenti (ν):",
-        'stress_ratio': "Stress Ratio (k = σh/σv):",
-        'tensile_params': "📐 Cho'zilish va Selek",
-        'thermal_decay_label': "Termal Degradatsiya (β):",
-        'combustion': "🔥 Yonish va Termal",
-        'burn_duration': "Kamera yonish muddati (soat):",
-        'max_temp': "Maksimal harorat (°C)",
-        'timeline': "📅 Loyiha bosqichlari (Timeline)",
-        'layer_params': "{num}-qatlam parametrlari",
-        'layer_name': "Nomi:",
-        'thickness': "Qalinlik (m):",
-        'ucs': "UCS (MPa):",
-        'density': "Zichlik (kg/m³):",
-        'color': "Rangi:",
-        'gsi': "GSI:",
-        'mi': "mi:",
-        'manual_st0': "σt0 (MPa):",
-        'error_thick_positive': "Qalinlik >0 bo'lishi kerak",
-        'error_ucs_positive': "UCS >0 MPa bo'lishi kerak",
-        'error_density_positive': "Zichlik >0 kg/m³ bo'lishi kerak",
-        'error_gsi_range': "GSI 10...100 oralig'ida bo'lishi kerak",
-        'error_mi_positive': "mi >0 bo'lishi kerak",
-        'error_min_layers': "❌ Kamida 1 ta qatlam kiriting!",
+        'sidebar_header_params': "⚙️ Umumiy parametrlar", 'formula_show': "Formulalarni ko'rish:",
+        'project_name': "Loyiha nomi:", 'process_time': "Jarayon vaqti (soat):", 'num_layers': "Qatlamlar soni:",
+        'tensile_model': "Tensile modeli:", 'rock_props': "💎 Jins Xususiyatlari",
+        'disturbance': "Disturbance Factor (D):", 'poisson': "Poisson koeffitsiyenti (ν):",
+        'stress_ratio': "Stress Ratio (k = σh/σv):", 'tensile_params': "📐 Cho'zilish va Selek",
+        'thermal_decay_label': "Termal Degradatsiya (β):", 'combustion': "🔥 Yonish va Termal",
+        'burn_duration': "Kamera yonish muddati (soat):", 'max_temp': "Maksimal harorat (°C)",
+        'timeline': "📅 Loyiha bosqichlari (Timeline)", 'layer_params': "{num}-qatlam parametrlari",
+        'layer_name': "Nomi:", 'thickness': "Qalinlik (m):", 'ucs': "UCS (MPa):", 'density': "Zichlik (kg/m³):",
+        'color': "Rangi:", 'gsi': "GSI:", 'mi': "mi:", 'manual_st0': "σt0 (MPa):",
+        'error_thick_positive': "Qalinlik >0 bo'lishi kerak", 'error_ucs_positive': "UCS >0 MPa bo'lishi kerak",
+        'error_density_positive': "Zichlik >0 kg/m³ bo'lishi kerak", 'error_gsi_range': "GSI 10...100 oralig'ida bo'lishi kerak",
+        'error_mi_positive': "mi >0 bo'lishi kerak", 'error_min_layers': "❌ Kamida 1 ta qatlam kiriting!",
         'warning_pytorch': "⚠️ PyTorch o'rnatilmagan. RandomForestClassifier ishlatiladi.",
-        'pillar_strength': "Pillar Strength (σp)",
-        'plastic_zone': "Plastik zona (y)",
-        'cavity_volume': "Kamera Hajmi",
-        'max_permeability': "Maks. O'tkazuvchanlik",
-        'ai_recommendation': "AI Tavsiya (Selek)",
-        'monitoring_header': "📊 {obj_name}: Monitoring va Ekspert Xulosasi",
-        'subsidence_title': "📉 Yer yuzasi cho'kishi (cm)",
-        'thermal_deform_title': "🔥 Termal deformatsiya (cm)",
-        'hb_envelopes_title': "🛡️ Hoek-Brown Envelopes",
-        'scientific_analysis': "📋 Ilmiy Tahlil",
-        'fos_red': "🔴 FOS < 1.0: Failure",
-        'fos_yellow': "🟡 FOS 1.0–1.5: Unstable",
-        'fos_green': "🟢 FOS > 1.5: Stable",
-        'tm_field_title': "🔥 TM Maydoni va Selek Interferensiyasi",
-        'temp_subplot': "Harorat Maydoni (°C) + Gaz Oqimi",
-        'fos_subplot': "FOS + AI Collapse Prediction (NN) + Yielded Zones",
-        'gas_flow': "Gaz oqimi",
-        'shear': "Shear",
-        'tensile': "Tensile",
-        'ai_collapse': "AI Collapse (NN)",
-        'monitoring_panel': "📊 {obj_name}: Kompleks Monitoring Paneli",
-        'pillar_live': "Pillar Strength",
-        'rec_width_live': "Tavsiya: Selek Eni",
-        'max_subsidence_live': "Maks. Cho'kish",
-        'process_stage': "Jarayon bosqichi",
-        'stage_active': "Faol",
-        'stage_cooling': "Sovish",
-        'ai_monitor_title': "🧠 UCG AI Predictive Monitoring",
-        'ai_monitor_desc': "Real-vaqt sensor ma'lumotlari va anomaliya aniqlash",
-        'ai_steps': "Simulyatsiya qadamlari soni:",
-        'ai_run_btn': "▶️ AI Monitoringni Ishga Tushirish",
-        'ai_stop_btn': "⏹ To'xtatish",
-        'advanced_analysis': "🔍 Chuqurlashtirilgan Dinamik Tahlil va Metodik Asoslash",
-        'tab_mass': "🏗️ Massiv Parametrlari",
-        'tab_thermal': "🔥 Termal Degradatsiya",
-        'tab_stability': "⚖️ Barqarorlik & Manbalar",
-        'hb_class': "1. Hoek-Brown (2018) Klassifikatsiyasi",
-        'hb_mb': "m_b = {mb:.3f}",
-        'hb_s': "s = {s:.4f}",
-        'hb_caption_mb': "Massiv ishqalanish burchagi funksiyasi (m_i={mi})",
-        'hb_caption_s': "Yoriqlilik darajasi (GSI={gsi})",
+        'pillar_strength': "Pillar Strength (σp)", 'plastic_zone': "Plastik zona (y)", 'cavity_volume': "Kamera Hajmi",
+        'max_permeability': "Maks. O'tkazuvchanlik", 'ai_recommendation': "Analitik Tavsiya (Selek)",
+        'monitoring_header': "📊 {obj_name}: Monitoring va Ekspert Xulosasi", 'subsidence_title': "📉 Yer yuzasi cho'kishi (cm)",
+        'thermal_deform_title': "🔥 Gorizontal siljish (cm)", 'hb_envelopes_title': "🛡️ Hoek-Brown Envelopes",
+        'scientific_analysis': "📋 Ilmiy Tahlil", 'fos_red': "🔴 FOS < 1.0: Failure", 'fos_yellow': "🟡 FOS 1.0–1.5: Unstable",
+        'fos_green': "🟢 FOS > 1.5: Stable", 'tm_field_title': "🔥 TM Maydoni va Selek Interferensiyasi",
+        'temp_subplot': "Harorat Maydoni (°C) + Gaz Oqimi", 'fos_subplot': "FOS + AI Collapse Prediction (NN) + Yielded Zones",
+        'gas_flow': "Gaz oqimi", 'shear': "Shear", 'tensile': "Tensile", 'ai_collapse': "AI Collapse (NN)",
+        'monitoring_panel': "📊 {obj_name}: Kompleks Monitoring Paneli", 'pillar_live': "Pillar Strength",
+        'rec_width_live': "Tavsiya: Selek Eni", 'max_subsidence_live': "Maks. Cho'kish", 'process_stage': "Jarayon bosqichi",
+        'stage_active': "Faol", 'stage_cooling': "Sovish", 'ai_monitor_title': "🧠 UCG AI Predictive Monitoring",
+        'ai_monitor_desc': "Real-vaqt sensor ma'lumotlari va anomaliya aniqlash", 'ai_steps': "Simulyatsiya qadamlari soni:",
+        'ai_run_btn': "▶️ AI Monitoringni Ishga Tushirish", 'ai_stop_btn': "⏹ To'xtatish",
+        'advanced_analysis': "🔍 Chuqurlashtirilgan Dinamik Tahlil va Metodik Asoslash", 'tab_mass': "🏗️ Massiv Parametrlari",
+        'tab_thermal': "🔥 Termal Degradatsiya", 'tab_stability': "⚖️ Barqarorlik & Manbalar",
+        'hb_class': "1. Hoek-Brown (2018) Klassifikatsiyasi", 'hb_mb': "m_b = {mb:.3f}", 'hb_s': "s = {s:.4f}",
+        'hb_caption_mb': "Massiv ishqalanish burchagi funksiyasi (m_i={mi})", 'hb_caption_s': "Yoriqlilik darajasi (GSI={gsi})",
         'hb_interpret': "**Ilmiy izoh:** Hoek & Brown (2018) mezoniga ko'ra, GSI={gsi} bo'lishi massiv mustahkamligi laboratoriyaga nisbatan **{perc:.1f}%** ga pastligini anglatadi.",
-        'thermal_params': "2. Termo-Mexanik Koeffitsiyentlar Tahlili",
-        'param_table_param': "Parametr",
-        'param_table_value': "Qiymat",
-        'param_table_reason': "Tanlanish sababi",
-        'modulus': "Elastiklik Moduli (E)",
-        'alpha': "Termal kengayish (α)",
-        'temp0': "Boshlang'ich T₀",
-        'modulus_reason': "Ko'mir uchun xos o'rtacha deformatsiya koeffitsiyenti.",
+        'thermal_params': "2. Termo-Mexanik Koeffitsiyentlar Tahlili", 'param_table_param': "Parametr",
+        'param_table_value': "Qiymat", 'param_table_reason': "Tanlanish sababi", 'modulus': "Elastiklik Moduli (E)",
+        'alpha': "Termal kengayish (α)", 'temp0': "Boshlang'ich T₀", 'modulus_reason': "Ko'mir uchun xos o'rtacha deformatsiya koeffitsiyenti.",
         'alpha_reason': "Ko'mirning issiqlikdan chiziqli kengayish ko'rsatkichi (Yang, 2010).",
-        'temp0_reason': "Kon qatlamining boshlang'ich tabiiy harorati.",
-        'ucs_decay': "**A) Termal UCS pasayishi:**",
+        'temp0_reason': "Kon qatlamining boshlang'ich tabiiy harorati.", 'ucs_decay': "**A) Termal UCS pasayishi:**",
         'ucs_decay_eq': r"\sigma_{{ci(T)}} = \sigma_{{ci(0)}} \cdot e^{{-\beta(T-T_0)}} = {ucs:.2f} \text{{ MPa}}",
         'ucs_interpret': "**Interpretatsiya:** {temp}°C haroratda jins mustahkamligi {perc:.1f}% ga pasaydi.",
         'thermal_stress': "**B) Termal kuchlanish ($\\sigma_{{th}}$):**",
         'thermal_stress_eq': r"\sigma_{{th}} \approx \frac{{E \cdot \alpha \cdot \Delta T}}{{1 - \nu}} = {sigma:.2f} \text{{ MPa}}",
-        'pillar_stability': "3. Selek Barqarorligi va Bibliografiya",
-        'fos_eq': r"FOS = \frac{{\sigma_p}}{{\sigma_v}} = {fos:.2f}",
+        'pillar_stability': "3. Selek Barqarorligi va Bibliografiya", 'fos_eq': r"FOS = \frac{{\sigma_p}}{{\sigma_v}} = {fos:.2f}",
         'pillar_wilson': "**Wilson (1972) Yield Pillar nazariyasiga binoan:** Selek o'lchami $w={w}$ m bo'lganda, uning markaziy yadrosi {sv:.2f} MPa lik geostatik yukni ko'tarishga qodir. Plastik zona: $y = {y:.1f}$ m.",
         'references': "#### 📚 Asosiy Ilmiy Manbalar:",
         'ref1': "**Hoek, E., & Brown, E. T. (2018).** The Hoek-Brown failure criterion and GSI – 2018 edition. *JRMGE*.",
@@ -230,9 +154,7 @@ TRANSLATIONS = {
         'conclusion_danger': "🔴 **Ilmiy Xulosa:** FOS={fos:.2f}. Termal degradatsiya yuqori. Selek enini oshirish yoki gazlashtirish tezligini nazorat qilish tavsiya etiladi.",
         'conclusion_safe': "🟢 **Ilmiy Xulosa:** FOS={fos:.2f}. Tanlangan parametrlar massiv barqarorligini ta'minlaydi.",
         'methodology_expander': "📚 Ilmiy Metodologiya va Manbalar (PhD Research References)",
-        'tensile_empirical': "Empirical (UCS)",
-        'tensile_hb': "HB-based (auto)",
-        'tensile_manual': "Manual",
+        'tensile_empirical': "Empirical (UCS)", 'tensile_hb': "HB-based (auto)", 'tensile_manual': "Manual",
         'timeline_table': """
 | Bosqich | Vaqti | Tavsif |
 |---------|-------|--------|
@@ -240,103 +162,56 @@ TRANSLATIONS = {
 | **Modellarni optimallashtirish** | 2026-05-15 | NN/RF testlash, FDM yaxshilash, keshlashtirish |
 | **Integratsiya va testlash** | 2026-06-30 | Unit testlar, yakuniy vizualizatsiya, deploy |
         """,
-        'live_monitoring_tab': "🔄 Live 3D Monitoring",
-        'download_data': "📥 Monitoring ma'lumotlarini yuklab olish (CSV)"
+        'live_monitoring_tab': "🔄 Live 3D Monitoring", 'download_data': "📥 Monitoring ma'lumotlarini yuklab olish (CSV)",
+        'well_config': "Quduqlar konfiguratsiyasi", 'well_distance': "Quduqlar orasidagi masofa (m):",
+        'warning_cavity_width': "Ogohlantirish: Selek kengligi quduqlar masofasidan katta. cavity_width=1m deb olindi.",
+        'ucg_stages_title': "UCG Yonish Bosqichlari (1-2-3 sxemasi) – Yangi Ilmiy Model", 'select_stage': "Bosqichni tanlang:",
+        'geomech_state': "Geomexanik Holat (Yangi Ilmiy Model)", 'auto_animation': "Avtomatik animatsiya (1→2→3 bosqichlar)",
+        'animation_done': "Animatsiya yakunlandi.", 'pillar_annotation': "HIMOYA SELEGI (PILLAR)",
+        'system_entropy': "Tizim entropiyasi (noaniqlik)",
     },
     'en': {
-        'app_title': "Universal Surface Deformation Monitoring",
-        'app_subtitle': "Thermo-Mechanical (TM) Analysis and Pillar Size Optimization",
-        'sidebar_header_params': "⚙️ General Parameters",
-        'formula_show': "View formulas:",
-        'project_name': "Project name:",
-        'process_time': "Process time (hours):",
-        'num_layers': "Number of layers:",
-        'tensile_model': "Tensile model:",
-        'rock_props': "💎 Rock Properties",
-        'disturbance': "Disturbance Factor (D):",
-        'poisson': "Poisson's ratio (ν):",
-        'stress_ratio': "Stress Ratio (k = σh/σv):",
-        'tensile_params': "📐 Tension and Pillar",
-        'thermal_decay_label': "Thermal Degradation (β):",
-        'combustion': "🔥 Combustion and Thermal",
-        'burn_duration': "Burn duration (hours):",
-        'max_temp': "Maximum temperature (°C)",
-        'timeline': "📅 Project Timeline",
-        'layer_params': "Layer {num} parameters",
-        'layer_name': "Name:",
-        'thickness': "Thickness (m):",
-        'ucs': "UCS (MPa):",
-        'density': "Density (kg/m³):",
-        'color': "Color:",
-        'gsi': "GSI:",
-        'mi': "mi:",
-        'manual_st0': "σt0 (MPa):",
-        'error_thick_positive': "Thickness must be >0",
-        'error_ucs_positive': "UCS must be >0 MPa",
-        'error_density_positive': "Density must be >0 kg/m³",
-        'error_gsi_range': "GSI must be between 10 and 100",
-        'error_mi_positive': "mi must be >0",
-        'error_min_layers': "❌ At least 1 layer required!",
+        'app_title': "Universal Surface Deformation Monitoring", 'app_subtitle': "Thermo-Mechanical (TM) Analysis and Pillar Size Optimization",
+        'sidebar_header_params': "⚙️ General Parameters", 'formula_show': "View formulas:", 'project_name': "Project name:",
+        'process_time': "Process time (hours):", 'num_layers': "Number of layers:", 'tensile_model': "Tensile model:",
+        'rock_props': "💎 Rock Properties", 'disturbance': "Disturbance Factor (D):", 'poisson': "Poisson's ratio (ν):",
+        'stress_ratio': "Stress Ratio (k = σh/σv):", 'tensile_params': "📐 Tension and Pillar",
+        'thermal_decay_label': "Thermal Degradation (β):", 'combustion': "🔥 Combustion and Thermal",
+        'burn_duration': "Burn duration (hours):", 'max_temp': "Maximum temperature (°C)", 'timeline': "📅 Project Timeline",
+        'layer_params': "Layer {num} parameters", 'layer_name': "Name:", 'thickness': "Thickness (m):", 'ucs': "UCS (MPa):",
+        'density': "Density (kg/m³):", 'color': "Color:", 'gsi': "GSI:", 'mi': "mi:", 'manual_st0': "σt0 (MPa):",
+        'error_thick_positive': "Thickness must be >0", 'error_ucs_positive': "UCS must be >0 MPa",
+        'error_density_positive': "Density must be >0 kg/m³", 'error_gsi_range': "GSI must be between 10 and 100",
+        'error_mi_positive': "mi must be >0", 'error_min_layers': "❌ At least 1 layer required!",
         'warning_pytorch': "⚠️ PyTorch not installed. Using RandomForestClassifier.",
-        'pillar_strength': "Pillar Strength (σp)",
-        'plastic_zone': "Plastic zone (y)",
-        'cavity_volume': "Cavity Volume",
-        'max_permeability': "Max Permeability",
-        'ai_recommendation': "AI Recommendation (Pillar)",
-        'monitoring_header': "📊 {obj_name}: Monitoring and Expert Summary",
-        'subsidence_title': "📉 Surface subsidence (cm)",
-        'thermal_deform_title': "🔥 Thermal deformation (cm)",
-        'hb_envelopes_title': "🛡️ Hoek-Brown Envelopes",
-        'scientific_analysis': "📋 Scientific Analysis",
-        'fos_red': "🔴 FOS < 1.0: Failure",
-        'fos_yellow': "🟡 FOS 1.0–1.5: Unstable",
-        'fos_green': "🟢 FOS > 1.5: Stable",
-        'tm_field_title': "🔥 TM Field and Pillar Interference",
-        'temp_subplot': "Temperature Field (°C) + Gas Flow",
-        'fos_subplot': "FOS + AI Collapse Prediction (NN) + Yielded Zones",
-        'gas_flow': "Gas flow",
-        'shear': "Shear",
-        'tensile': "Tensile",
-        'ai_collapse': "AI Collapse (NN)",
-        'monitoring_panel': "📊 {obj_name}: Integrated Monitoring Panel",
-        'pillar_live': "Pillar Strength",
-        'rec_width_live': "Recommended Pillar Width",
-        'max_subsidence_live': "Max Subsidence",
-        'process_stage': "Process stage",
-        'stage_active': "Active",
-        'stage_cooling': "Cooling",
-        'ai_monitor_title': "🧠 UCG AI Predictive Monitoring",
-        'ai_monitor_desc': "Real-time sensor data and anomaly detection",
-        'ai_steps': "Simulation steps:",
-        'ai_run_btn': "▶️ Run AI Monitoring",
-        'ai_stop_btn': "⏹ Stop",
-        'advanced_analysis': "🔍 In-depth Dynamic Analysis and Methodological Justification",
-        'tab_mass': "🏗️ Rock Mass Parameters",
-        'tab_thermal': "🔥 Thermal Degradation",
-        'tab_stability': "⚖️ Stability & References",
-        'hb_class': "1. Hoek-Brown (2018) Classification",
-        'hb_mb': "m_b = {mb:.3f}",
-        'hb_s': "s = {s:.4f}",
-        'hb_caption_mb': "Mass friction angle function (m_i={mi})",
-        'hb_caption_s': "Fracturing degree (GSI={gsi})",
+        'pillar_strength': "Pillar Strength (σp)", 'plastic_zone': "Plastic zone (y)", 'cavity_volume': "Cavity Volume",
+        'max_permeability': "Max Permeability", 'ai_recommendation': "Analytical Recommendation (Pillar)",
+        'monitoring_header': "📊 {obj_name}: Monitoring and Expert Summary", 'subsidence_title': "📉 Surface subsidence (cm)",
+        'thermal_deform_title': "🔥 Horizontal displacement (cm)", 'hb_envelopes_title': "🛡️ Hoek-Brown Envelopes",
+        'scientific_analysis': "📋 Scientific Analysis", 'fos_red': "🔴 FOS < 1.0: Failure", 'fos_yellow': "🟡 FOS 1.0–1.5: Unstable",
+        'fos_green': "🟢 FOS > 1.5: Stable", 'tm_field_title': "🔥 TM Field and Pillar Interference",
+        'temp_subplot': "Temperature Field (°C) + Gas Flow", 'fos_subplot': "FOS + AI Collapse Prediction (NN) + Yielded Zones",
+        'gas_flow': "Gas flow", 'shear': "Shear", 'tensile': "Tensile", 'ai_collapse': "AI Collapse (NN)",
+        'monitoring_panel': "📊 {obj_name}: Integrated Monitoring Panel", 'pillar_live': "Pillar Strength",
+        'rec_width_live': "Recommended Pillar Width", 'max_subsidence_live': "Max Subsidence", 'process_stage': "Process stage",
+        'stage_active': "Active", 'stage_cooling': "Cooling", 'ai_monitor_title': "🧠 UCG AI Predictive Monitoring",
+        'ai_monitor_desc': "Real-time sensor data and anomaly detection", 'ai_steps': "Simulation steps:",
+        'ai_run_btn': "▶️ Run AI Monitoring", 'ai_stop_btn': "⏹ Stop",
+        'advanced_analysis': "🔍 In-depth Dynamic Analysis and Methodological Justification", 'tab_mass': "🏗️ Rock Mass Parameters",
+        'tab_thermal': "🔥 Thermal Degradation", 'tab_stability': "⚖️ Stability & References",
+        'hb_class': "1. Hoek-Brown (2018) Classification", 'hb_mb': "m_b = {mb:.3f}", 'hb_s': "s = {s:.4f}",
+        'hb_caption_mb': "Mass friction angle function (m_i={mi})", 'hb_caption_s': "Fracturing degree (GSI={gsi})",
         'hb_interpret': "**Scientific comment:** According to Hoek & Brown (2018), GSI={gsi} means rock mass strength is **{perc:.1f}%** lower than laboratory values.",
-        'thermal_params': "2. Thermo-Mechanical Coefficient Analysis",
-        'param_table_param': "Parameter",
-        'param_table_value': "Value",
-        'param_table_reason': "Justification",
-        'modulus': "Elastic Modulus (E)",
-        'alpha': "Thermal expansion (α)",
-        'temp0': "Initial T₀",
-        'modulus_reason': "Typical average deformation coefficient for coal.",
+        'thermal_params': "2. Thermo-Mechanical Coefficient Analysis", 'param_table_param': "Parameter",
+        'param_table_value': "Value", 'param_table_reason': "Justification", 'modulus': "Elastic Modulus (E)",
+        'alpha': "Thermal expansion (α)", 'temp0': "Initial T₀", 'modulus_reason': "Typical average deformation coefficient for coal.",
         'alpha_reason': "Linear thermal expansion coefficient of coal (Yang, 2010).",
-        'temp0_reason': "Initial natural temperature of the coal seam.",
-        'ucs_decay': "**A) Thermal UCS reduction:**",
+        'temp0_reason': "Initial natural temperature of the coal seam.", 'ucs_decay': "**A) Thermal UCS reduction:**",
         'ucs_decay_eq': r"\sigma_{{ci(T)}} = \sigma_{{ci(0)}} \cdot e^{{-\beta(T-T_0)}} = {ucs:.2f} \text{{ MPa}}",
         'ucs_interpret': "**Interpretation:** At {temp}°C, rock strength decreased by {perc:.1f}%.",
         'thermal_stress': "**B) Thermal stress ($\\sigma_{{th}}$):**",
         'thermal_stress_eq': r"\sigma_{{th}} \approx \frac{{E \cdot \alpha \cdot \Delta T}}{{1 - \nu}} = {sigma:.2f} \text{{ MPa}}",
-        'pillar_stability': "3. Pillar Stability and Bibliography",
-        'fos_eq': r"FOS = \frac{{\sigma_p}}{{\sigma_v}} = {fos:.2f}",
+        'pillar_stability': "3. Pillar Stability and Bibliography", 'fos_eq': r"FOS = \frac{{\sigma_p}}{{\sigma_v}} = {fos:.2f}",
         'pillar_wilson': "**According to Wilson (1972) Yield Pillar theory:** With pillar width $w={w}$ m, the central core can sustain a geostatic load of {sv:.2f} MPa. Plastic zone: $y = {y:.1f}$ m.",
         'references': "#### 📚 Main Scientific References:",
         'ref1': "**Hoek, E., & Brown, E. T. (2018).** The Hoek-Brown failure criterion and GSI – 2018 edition. *JRMGE*.",
@@ -346,9 +221,7 @@ TRANSLATIONS = {
         'conclusion_danger': "🔴 **Scientific Conclusion:** FOS={fos:.2f}. High thermal degradation. Increase pillar width or control gasification rate.",
         'conclusion_safe': "🟢 **Scientific Conclusion:** FOS={fos:.2f}. The selected parameters ensure mass stability.",
         'methodology_expander': "📚 Scientific Methodology and References (PhD Research)",
-        'tensile_empirical': "Empirical (UCS)",
-        'tensile_hb': "HB-based (auto)",
-        'tensile_manual': "Manual",
+        'tensile_empirical': "Empirical (UCS)", 'tensile_hb': "HB-based (auto)", 'tensile_manual': "Manual",
         'timeline_table': """
 | Stage | Time | Description |
 |-------|------|-------------|
@@ -356,156 +229,108 @@ TRANSLATIONS = {
 | **Model optimization** | 2026-05-15 | NN/RF testing, FDM improvement, caching |
 | **Integration & testing** | 2026-06-30 | Unit tests, final visualization, deploy |
         """,
-        'live_monitoring_tab': "🔄 Live 3D Monitoring",
-        'download_data': "📥 Download monitoring data (CSV)"
+        'live_monitoring_tab': "🔄 Live 3D Monitoring", 'download_data': "📥 Download monitoring data (CSV)",
+        'well_config': "Well Configuration", 'well_distance': "Distance between wells (m):",
+        'warning_cavity_width': "Warning: Pillar width exceeds well distance. cavity_width set to 1m.",
+        'ucg_stages_title': "UCG Burning Stages (1-2-3 scheme) – New Scientific Model", 'select_stage': "Select stage:",
+        'geomech_state': "Geomechanical State (New Scientific Model)", 'auto_animation': "Auto animation (1→2→3 stages)",
+        'animation_done': "Animation finished.", 'pillar_annotation': "PROTECTIVE PILLAR",
+        'system_entropy': "System entropy (uncertainty)",
     },
     'ru': {
-        'app_title': "Universal Surface Deformation Monitoring",
-        'app_subtitle': "Thermo-Mechanical (TM) Analysis and Pillar Size Optimization",
-        'sidebar_header_params': "⚙️ General Parameters",
-        'formula_show': "View formulas:",
-        'project_name': "Project name:",
-        'process_time': "Process time (hours):",
-        'num_layers': "Number of layers:",
-        'tensile_model': "Tensile model:",
-        'rock_props': "💎 Rock Properties",
-        'disturbance': "Disturbance Factor (D):",
-        'poisson': "Poisson's ratio (ν):",
-        'stress_ratio': "Stress Ratio (k = σh/σv):",
-        'tensile_params': "📐 Tension and Pillar",
-        'thermal_decay_label': "Thermal Degradation (β):",
-        'combustion': "🔥 Combustion and Thermal",
-        'burn_duration': "Burn duration (hours):",
-        'max_temp': "Maximum temperature (°C)",
-        'timeline': "📅 Project Timeline",
-        'layer_params': "Layer {num} parameters",
-        'layer_name': "Name:",
-        'thickness': "Thickness (m):",
-        'ucs': "UCS (MPa):",
-        'density': "Density (kg/m³):",
-        'color': "Color:",
-        'gsi': "GSI:",
-        'mi': "mi:",
-        'manual_st0': "σt0 (MPa):",
-        'error_thick_positive': "Thickness must be >0",
-        'error_ucs_positive': "UCS must be >0 MPa",
-        'error_density_positive': "Density must be >0 kg/m³",
-        'error_gsi_range': "GSI must be between 10 and 100",
-        'error_mi_positive': "mi must be >0",
-        'error_min_layers': "❌ At least 1 layer required!",
-        'warning_pytorch': "⚠️ PyTorch not installed. Using RandomForestClassifier.",
-        'pillar_strength': "Pillar Strength (σp)",
-        'plastic_zone': "Plastic zone (y)",
-        'cavity_volume': "Cavity Volume",
-        'max_permeability': "Max Permeability",
-        'ai_recommendation': "AI Recommendation (Pillar)",
-        'monitoring_header': "📊 {obj_name}: Monitoring and Expert Summary",
-        'subsidence_title': "📉 Surface subsidence (cm)",
-        'thermal_deform_title': "🔥 Thermal deformation (cm)",
-        'hb_envelopes_title': "🛡️ Hoek-Brown Envelopes",
-        'scientific_analysis': "📋 Scientific Analysis",
-        'fos_red': "🔴 FOS < 1.0: Failure",
-        'fos_yellow': "🟡 FOS 1.0–1.5: Unstable",
-        'fos_green': "🟢 FOS > 1.5: Stable",
-        'tm_field_title': "🔥 TM Field and Pillar Interference",
-        'temp_subplot': "Temperature Field (°C) + Gas Flow",
-        'fos_subplot': "FOS + AI Collapse Prediction (NN) + Yielded Zones",
-        'gas_flow': "Gas flow",
-        'shear': "Shear",
-        'tensile': "Tensile",
-        'ai_collapse': "AI Collapse (NN)",
-        'monitoring_panel': "📊 {obj_name}: Integrated Monitoring Panel",
-        'pillar_live': "Pillar Strength",
-        'rec_width_live': "Recommended Pillar Width",
-        'max_subsidence_live': "Max Subsidence",
-        'process_stage': "Process stage",
-        'stage_active': "Active",
-        'stage_cooling': "Cooling",
-        'ai_monitor_title': "🧠 UCG AI Predictive Monitoring",
-        'ai_monitor_desc': "Real-time sensor data and anomaly detection",
-        'ai_steps': "Simulation steps:",
-        'ai_run_btn': "▶️ Run AI Monitoring",
-        'ai_stop_btn': "⏹ Stop",
-        'advanced_analysis': "🔍 In-depth Dynamic Analysis and Methodological Justification",
-        'tab_mass': "🏗️ Rock Mass Parameters",
-        'tab_thermal': "🔥 Thermal Degradation",
-        'tab_stability': "⚖️ Stability & References",
-        'hb_class': "1. Hoek-Brown (2018) Classification",
-        'hb_mb': "m_b = {mb:.3f}",
-        'hb_s': "s = {s:.4f}",
-        'hb_caption_mb': "Mass friction angle function (m_i={mi})",
-        'hb_caption_s': "Fracturing degree (GSI={gsi})",
-        'hb_interpret': "**Scientific comment:** According to Hoek & Brown (2018), GSI={gsi} means rock mass strength is **{perc:.1f}%** lower than laboratory values.",
-        'thermal_params': "2. Thermo-Mechanical Coefficient Analysis",
-        'param_table_param': "Parameter",
-        'param_table_value': "Value",
-        'param_table_reason': "Justification",
-        'modulus': "Elastic Modulus (E)",
-        'alpha': "Thermal expansion (α)",
-        'temp0': "Initial T₀",
-        'modulus_reason': "Typical average deformation coefficient for coal.",
-        'alpha_reason': "Linear thermal expansion coefficient of coal (Yang, 2010).",
-        'temp0_reason': "Initial natural temperature of the coal seam.",
-        'ucs_decay': "**A) Thermal UCS reduction:**",
-        'ucs_decay_eq': r"\sigma_{{ci(T)}} = \sigma_{{ci(0)}} \cdot e^{{-\beta(T-T_0)}} = {ucs:.2f} \text{{ MPa}}",
-        'ucs_interpret': "**Interpretation:** At {temp}°C, rock strength decreased by {perc:.1f}%.",
-        'thermal_stress': "**B) Thermal stress ($\\sigma_{{th}}$):**",
-        'thermal_stress_eq': r"\sigma_{{th}} \approx \frac{{E \cdot \alpha \cdot \Delta T}}{{1 - \nu}} = {sigma:.2f} \text{{ MPa}}",
-        'pillar_stability': "3. Pillar Stability and Bibliography",
-        'fos_eq': r"FOS = \frac{{\sigma_p}}{{\sigma_v}} = {fos:.2f}",
-        'pillar_wilson': "**According to Wilson (1972) Yield Pillar theory:** With pillar width $w={w}$ m, the central core can sustain a geostatic load of {sv:.2f} MPa. Plastic zone: $y = {y:.1f}$ m.",
-        'references': "#### 📚 Main Scientific References:",
+        'app_title': "Универсальный мониторинг деформаций поверхности",
+        'app_subtitle': "Термомеханический (TM) анализ и оптимизация размеров целиков",
+        'sidebar_header_params': "⚙️ Общие параметры", 'formula_show': "Показать формулы:", 'project_name': "Название проекта:",
+        'process_time': "Время процесса (часы):", 'num_layers': "Количество слоёв:", 'tensile_model': "Модель растяжения:",
+        'rock_props': "💎 Свойства породы", 'disturbance': "Фактор нарушенности (D):",
+        'poisson': "Коэффициент Пуассона (ν):", 'stress_ratio': "Соотношение напряжений (k = σh/σv):",
+        'tensile_params': "📐 Растяжение и целик", 'thermal_decay_label': "Термическая деградация (β):",
+        'combustion': "🔥 Горение и термическое воздействие", 'burn_duration': "Продолжительность горения (часы):",
+        'max_temp': "Максимальная температура (°C)", 'timeline': "📅 Хронология проекта",
+        'layer_params': "Параметры слоя {num}", 'layer_name': "Название:", 'thickness': "Толщина (м):", 'ucs': "UCS (МПа):",
+        'density': "Плотность (кг/м³):", 'color': "Цвет:", 'gsi': "GSI:", 'mi': "mi:", 'manual_st0': "σt0 (МПа):",
+        'error_thick_positive': "Толщина должна быть >0", 'error_ucs_positive': "UCS должен быть >0 МПа",
+        'error_density_positive': "Плотность должна быть >0 кг/м³", 'error_gsi_range': "GSI должен быть в пределах 10...100",
+        'error_mi_positive': "mi должен быть >0", 'error_min_layers': "❌ Требуется хотя бы 1 слой!",
+        'warning_pytorch': "⚠️ PyTorch не установлен. Используется RandomForestClassifier.",
+        'pillar_strength': "Прочность целика (σp)", 'plastic_zone': "Пластическая зона (y)", 'cavity_volume': "Объём полости",
+        'max_permeability': "Макс. проницаемость", 'ai_recommendation': "Аналитическая рекомендация (Целик)",
+        'monitoring_header': "📊 {obj_name}: Мониторинг и экспертное заключение", 'subsidence_title': "📉 Оседание поверхности (см)",
+        'thermal_deform_title': "🔥 Горизонтальное смещение (см)", 'hb_envelopes_title': "🛡️ Огибающие Хука-Брауна",
+        'scientific_analysis': "📋 Научный анализ", 'fos_red': "🔴 FOS < 1.0: Разрушение", 'fos_yellow': "🟡 FOS 1.0–1.5: Неустойчивость",
+        'fos_green': "🟢 FOS > 1.5: Стабильность", 'tm_field_title': "🔥 ТМ поле и интерференция целиков",
+        'temp_subplot': "Температурное поле (°C) + Газовый поток", 'fos_subplot': "FOS + Прогноз обрушения ИИ (NN) + Зоны пластичности",
+        'gas_flow': "Газовый поток", 'shear': "Сдвиг", 'tensile': "Растяжение", 'ai_collapse': "ИИ обрушение (NN)",
+        'monitoring_panel': "📊 {obj_name}: Комплексная панель мониторинга", 'pillar_live': "Прочность целика",
+        'rec_width_live': "Рек. ширина целика", 'max_subsidence_live': "Макс. оседание", 'process_stage': "Стадия процесса",
+        'stage_active': "Активная", 'stage_cooling': "Остывание", 'ai_monitor_title': "🧠 UCG AI Predictive Monitoring",
+        'ai_monitor_desc': "Данные датчиков в реальном времени и обнаружение аномалий", 'ai_steps': "Количество шагов симуляции:",
+        'ai_run_btn': "▶️ Запустить AI мониторинг", 'ai_stop_btn': "⏹ Стоп",
+        'advanced_analysis': "🔍 Углубленный динамический анализ и методологическое обоснование", 'tab_mass': "🏗️ Параметры массива",
+        'tab_thermal': "🔥 Термическая деградация", 'tab_stability': "⚖️ Устойчивость и источники",
+        'hb_class': "1. Классификация Хука-Брауна (2018)", 'hb_mb': "m_b = {mb:.3f}", 'hb_s': "s = {s:.4f}",
+        'hb_caption_mb': "Функция угла трения массива (m_i={mi})", 'hb_caption_s': "Степень трещиноватости (GSI={gsi})",
+        'hb_interpret': "**Научный комментарий:** Согласно Хуку и Брауну (2018), GSI={gsi} означает, что прочность массива на **{perc:.1f}%** ниже лабораторных значений.",
+        'thermal_params': "2. Анализ термомеханических коэффициентов", 'param_table_param': "Параметр",
+        'param_table_value': "Значение", 'param_table_reason': "Обоснование", 'modulus': "Модуль упругости (E)",
+        'alpha': "Тепловое расширение (α)", 'temp0': "Начальная T₀",
+        'modulus_reason': "Типичный средний коэффициент деформации угля.",
+        'alpha_reason': "Коэффициент линейного теплового расширения угля (Yang, 2010).",
+        'temp0_reason': "Начальная естественная температура угольного пласта.", 'ucs_decay': "**A) Снижение UCS от температуры:**",
+        'ucs_decay_eq': r"\sigma_{{ci(T)}} = \sigma_{{ci(0)}} \cdot e^{{-\beta(T-T_0)}} = {ucs:.2f} \text{{ МПа}}",
+        'ucs_interpret': "**Интерпретация:** При {temp}°C прочность породы снизилась на {perc:.1f}%.",
+        'thermal_stress': "**B) Термическое напряжение ($\\sigma_{{th}}$):**",
+        'thermal_stress_eq': r"\sigma_{{th}} \approx \frac{{E \cdot \alpha \cdot \Delta T}}{{1 - \nu}} = {sigma:.2f} \text{{ МПа}}",
+        'pillar_stability': "3. Устойчивость целика и библиография", 'fos_eq': r"FOS = \frac{{\sigma_p}}{{\sigma_v}} = {fos:.2f}",
+        'pillar_wilson': "**Согласно теории Wilson (1972):** При ширине целика $w={w}$ м, центральное ядро выдерживает геостатическую нагрузку {sv:.2f} МПа. Пластическая зона: $y = {y:.1f}$ м.",
+        'references': "#### 📚 Основные научные источники:",
         'ref1': "**Hoek, E., & Brown, E. T. (2018).** The Hoek-Brown failure criterion and GSI – 2018 edition. *JRMGE*.",
         'ref2': "**Yang, D. (2010).** *Stability of Underground Coal Gasification*. PhD Thesis, TU Delft.",
         'ref3': "**Shao, S., et al. (2015).** A thermal damage constitutive model for rock. *IJRMMS*.",
         'ref4': "**Wilson, A. H. (1972).** Research into the determination of pillar size. *Mining Engineer*.",
-        'conclusion_danger': "🔴 **Scientific Conclusion:** FOS={fos:.2f}. High thermal degradation. Increase pillar width or control gasification rate.",
-        'conclusion_safe': "🟢 **Scientific Conclusion:** FOS={fos:.2f}. The selected parameters ensure mass stability.",
-        'methodology_expander': "📚 Scientific Methodology and References (PhD Research)",
-        'tensile_empirical': "Empirical (UCS)",
-        'tensile_hb': "HB-based (auto)",
-        'tensile_manual': "Manual",
+        'conclusion_danger': "🔴 **Научное заключение:** FOS={fos:.2f}. Высокая термическая деградация. Рекомендуется увеличить ширину целика или контролировать скорость газификации.",
+        'conclusion_safe': "🟢 **Научное заключение:** FOS={fos:.2f}. Выбранные параметры обеспечивают устойчивость массива.",
+        'methodology_expander': "📚 Научная методология и ссылки (PhD Research)",
+        'tensile_empirical': "Эмпирический (UCS)", 'tensile_hb': "На основе HB (авто)", 'tensile_manual': "Ручной ввод",
         'timeline_table': """
-| Stage | Time | Description |
+| Этап | Время | Описание |
 |-------|------|-------------|
-| **Planning** | 2026-04-01 | Validation, develop safety functions |
-| **Model optimization** | 2026-05-15 | NN/RF testing, FDM improvement, caching |
-| **Integration & testing** | 2026-06-30 | Unit tests, final visualization, deploy |
+| **Планирование** | 2026-04-01 | Валидация, разработка функций безопасности |
+| **Оптимизация моделей** | 2026-05-15 | Тестирование NN/RF, улучшение FDM, кэширование |
+| **Интеграция и тестирование** | 2026-06-30 | Юнит-тесты, финальная визуализация, развертывание |
         """,
-        'live_monitoring_tab': "🔄 Live 3D Monitoring",
-        'download_data': "📥 Download monitoring data (CSV)"
+        'live_monitoring_tab': "🔄 Живой 3D мониторинг", 'download_data': "📥 Скачать данные мониторинга (CSV)",
+        'well_config': "Конфигурация скважин", 'well_distance': "Расстояние между скважинами (м):",
+        'warning_cavity_width': "Предупреждение: ширина целика превышает расстояние между скважинами. cavity_width=1м.",
+        'ucg_stages_title': "Стадии горения UCG (схема 1-2-3) – Новая научная модель", 'select_stage': "Выберите стадию:",
+        'geomech_state': "Геомеханическое состояние (Новая научная модель)", 'auto_animation': "Авто анимация (1→2→3 стадии)",
+        'animation_done': "Анимация завершена.", 'pillar_annotation': "ЗАЩИТНЫЙ ЦЕЛИК",
+        'system_entropy': "Системная энтропия (неопределённость)",
     }
 }
-
 FORMULA_OPTIONS = {
     'uz': ["Yopish", "1. Hoek-Brown Failure (2018)", "2. Thermal Damage & Permeability",
            "3. Thermal Stress & Tension", "4. Pillar & Subsidence"],
     'en': ["Close", "1. Hoek-Brown Failure (2018)", "2. Thermal Damage & Permeability",
            "3. Thermal Stress & Tension", "4. Pillar & Subsidence"],
-    'ru': ["Close", "1. Hoek-Brown Failure (2018)", "2. Thermal Damage & Permeability",
-           "3. Thermal Stress & Tension", "4. Pillar & Subsidence"]
+    'ru': ["Закрыть", "1. Разрушение Хука-Брауна (2018)", "2. Термическое повреждение и проницаемость",
+           "3. Термическое напряжение и растяжение", "4. Целик и оседание"]
 }
-
 def t(key, **kwargs):
     lang = st.session_state.get('language', 'uz')
     text = TRANSLATIONS.get(lang, TRANSLATIONS['uz']).get(key, key)
     return text.format(**kwargs) if kwargs else text
-
 EPS = 1e-6
-
 st.title(t('app_title'))
 st.markdown(f"### {t('app_subtitle')}")
-
 LANGUAGES = {'uz': "🇺🇿 O'zbek", 'en': '🇬🇧 English', 'ru': '🇷🇺 Русский'}
 lang = st.sidebar.selectbox("Til / Language / Язык", options=list(LANGUAGES.keys()),
                             format_func=lambda x: LANGUAGES[x],
                             index=list(LANGUAGES.keys()).index(st.session_state.language))
 st.session_state.language = lang
-
 st.sidebar.markdown("---")
 st.sidebar.subheader("📱 Mobil ilovaga o'tish")
 url = "https://angren-ucg-app-a7rxktm6usxqixabhaq576.streamlit.app/#ucg-termo-mexanik-dinamik-3-d-model"
-
 @st.cache_data
 def generate_qr(link: str) -> bytes:
     qr = qrcode.QRCode(version=1, error_correction=qrcode.constants.ERROR_CORRECT_L, box_size=10, border=4)
@@ -515,10 +340,8 @@ def generate_qr(link: str) -> bytes:
     buf = BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
-
 qr_img_bytes = generate_qr(url)
 st.sidebar.image(qr_img_bytes, caption="Scan QR: Angren UCG API", use_container_width=True)
-
 st.sidebar.header(t('sidebar_header_params'))
 formula_opts = FORMULA_OPTIONS[st.session_state.language]
 formula_option = st.sidebar.selectbox(t('formula_show'), formula_opts)
@@ -541,27 +364,21 @@ if formula_option != formula_opts[0]:
             st.latex(r"y = \frac{H}{2} \left( \sqrt{\frac{\sigma_v}{\sigma_p}} - 1 \right)")
             st.latex(r"S(x) = S_{max} \cdot \exp\left( -\frac{x^2}{2i^2} \right), \quad i = 0.45 H_{tot}")
             st.latex(r"u_h(x) = -\frac{x}{i} \cdot S(x)")
-
 obj_name = st.sidebar.text_input(t('project_name'), value="Angren-UCG-001")
 time_h = st.sidebar.slider(t('process_time'), 1, 150, 24)
 num_layers = st.sidebar.number_input(t('num_layers'), min_value=1, max_value=5, value=3)
 tensile_mode = st.sidebar.selectbox(t('tensile_model'), [t('tensile_empirical'), t('tensile_hb'), t('tensile_manual')])
-
 st.sidebar.subheader(t('rock_props'))
 D_factor = st.sidebar.slider(t('disturbance'), 0.0, 1.0, 0.7)
 nu_poisson = st.sidebar.slider(t('poisson'), 0.1, 0.4, 0.25)
 k_ratio = st.sidebar.slider(t('stress_ratio'), 0.1, 2.0, 0.5)
-
 st.sidebar.subheader(t('tensile_params'))
 beta_thermal = st.sidebar.slider(t('thermal_decay_label'), min_value=0.0005, max_value=0.02, value=PARAMS["thermal_damage_beta"], step=0.0005)
-
 st.sidebar.subheader(t('combustion'))
-burn_duration = st.sidebar.number_input(t('burn_duration'), value=40)
+burn_duration = st.sidebar.number_input(t('burn_duration'), value=40, min_value=1)
 T_source_max = st.sidebar.slider(t('max_temp'), 600, 1200, PARAMS["gas_temp"])
-
 with st.sidebar.expander(t('timeline')):
     st.markdown(t('timeline_table'))
-
 strata_colors = ['#87CEEB', '#F4A460', '#D3D3D3', '#F5DEB3', '#555555']
 layers_data = []
 total_depth = 0.0
@@ -581,7 +398,6 @@ for i in range(int(num_layers)):
         'sigma_t0_manual': s_t0_val
     })
     total_depth += thick
-
 errors = []
 for lyr in layers_data:
     if lyr['thickness'] <= 0: errors.append(t('error_thick_positive'))
@@ -593,60 +409,47 @@ if not layers_data: errors.append(t('error_min_layers'))
 if errors:
     for e in errors: st.error(e)
     st.stop()
-
 depth_seam = sum(l['thickness'] for l in layers_data[:-1]) + layers_data[-1]['thickness'] / 2
 avg_rho = np.mean([l['rho'] for l in layers_data])
-
 def von_mises_stress(sigma_x, sigma_y, tau_xy):
     return np.sqrt(np.maximum(sigma_x**2 - sigma_x*sigma_y + sigma_y**2 + 3*tau_xy**2, 0.0))
-
 def hoek_brown(sigma3, sigma_ci, mb, s, a):
     sigma3_eff = np.maximum(sigma3, 0.0)
     term = mb * (sigma3_eff / (sigma_ci + EPS)) + s
     term = np.maximum(term, 0.0)
     sigma1 = sigma3_eff + sigma_ci * term**a
     return sigma1
-
 def hoek_brown_damage(sigma1, sigma3, sigma_ci, mb, s, a):
     sigma1_failure = hoek_brown(sigma3, sigma_ci, mb, s, a)
     ratio = sigma1 / (sigma1_failure + EPS)
     damage = np.clip(ratio, 0, 1)
     return damage
-
 def thermal_damage(T: np.ndarray, beta: float = PARAMS["thermal_damage_beta"]) -> np.ndarray:
     return 1 - np.exp(-beta * np.maximum(T - 20, 0))
-
 def apply_thermal_degradation(ucs0, T, beta):
     dmg = thermal_damage(T, beta)
     ucs_T = ucs0 * (1 - dmg)
     return np.clip(ucs_T, 0.5, None)
-
 def thermal_conductivity(T, k0=2.5):
     k = k0 * (1 - 0.0004 * (T - 20))
     return np.clip(k, 0.5, None)
-
 def specific_heat(T):
     cp = 960 + 0.14 * T
     return np.clip(cp, 900, 2200)
-
 def density_temperature(rho0, T):
     T = np.clip(T, 20, 1200)
     lambda_mass = 0.00012 * (T - 20)
     rho_T = rho0 * (1 - lambda_mass)
     return np.clip(rho_T, 0.55 * rho0, rho0)
-
 def young_modulus_temperature(T):
     E_T = 5e9 * np.exp(-0.0018 * (T - 20))
     return np.clip(E_T, 0.15 * 5e9, 5e9)
-
 def thermal_expansion_temperature(T):
     T = np.clip(T, 20, 1200)
     alpha_T = PARAMS["alpha_thermal"] * (1 + 0.002 * (T - 20) + 1e-6 * (T - 20)**2)
     return alpha_T
-
 def vertical_stress(depth, density):
     return density * 9.81 * depth / 1e6
-
 def solve_heat_equation_dynamic(T, Q, rho_field, cp_field, k_field, dx, dz, dt, h, T_air, n_steps):
     alpha_field = k_field / (rho_field * cp_field)
     alpha_max = np.max(alpha_field)
@@ -666,20 +469,17 @@ def solve_heat_equation_dynamic(T, Q, rho_field, cp_field, k_field, dx, dz, dt, 
         T_new[0, :] = T_new[1, :] + dz * h / k_field[0, :] * (T_air - T_new[0, :])
         T = T_new.copy()
     return T
-
 def principal_stresses(sx, sy, txy):
     avg = (sx + sy) / 2
     radius = np.sqrt(((sx - sy) / 2) ** 2 + txy ** 2)
     s1 = avg + radius
     s2 = avg - radius
     return s1, s2
-
 def evolving_cavity_radius(time_h, T_field):
     thermal_dam = thermal_damage(T_field, beta_thermal)
     growth_rate = 0.015 * np.mean(thermal_dam)
     radius = 5.0 + growth_rate * time_h
     return np.clip(radius, 5, 40)
-
 def kirsch_stress_field(x, z, sigma_H, sigma_h, cavity_radius, pore_pressure=0.0):
     r = np.sqrt(x**2 + z**2)
     r = np.maximum(r, cavity_radius + 1e-3)
@@ -694,18 +494,15 @@ def kirsch_stress_field(x, z, sigma_H, sigma_h, cavity_radius, pore_pressure=0.0
     sigma_rr -= pore_pressure
     sigma_tt -= pore_pressure
     return sigma_rr, sigma_tt, tau_rt
-
 def pore_pressure_field(T, depth, permeability, water_table=20):
     hydro = np.maximum(0, depth - water_table) * 1000 * 9.81
     gas_p = 1e5 + 0.5 * (T - 25) * 1e3
     perm_effect = 1e5 * np.log10(permeability / 1e-15 + 1)
     pore_p = hydro + gas_p + perm_effect
     return pore_p / 1e6
-
 def probability_of_failure(FOS):
     beta = (FOS - 1) / 0.15
     return gaussian_dist.cdf(-beta)
-
 def monte_carlo_fos(ucs_mean, ucs_std, gsi_mean, gsi_std, mi_val, D, T_avg, H_seam, depth, density, rec_width, beta_th, n_sim=1000):
     mean_vec = [ucs_mean, gsi_mean]
     cov = [[ucs_std**2, 0.5*ucs_std*gsi_std],
@@ -727,14 +524,11 @@ def monte_carlo_fos(ucs_mean, ucs_std, gsi_mean, gsi_std, mi_val, D, T_avg, H_se
     fos = np.array(fos)
     pf = np.mean(fos < 1.0)
     return fos, pf
-
 grid_shape = (80, 100)
 source_z = total_depth - (layers_data[-1]['thickness'] / 2)
 H_seam = layers_data[-1]['thickness']
-
 @st.cache_data(show_spinner=False, max_entries=50)
-def compute_temperature_field_moving(time_h: float, T_source_max: float, burn_duration: float,
-                                     total_depth: float, source_z: float, grid_shape: tuple) -> tuple:
+def compute_temperature_field_moving(time_h, T_source_max, burn_duration, total_depth, source_z, grid_shape):
     THERMAL_DIFFUSIVITY = 8.5e-7
     x_axis = np.linspace(-total_depth * 1.5, total_depth * 1.5, grid_shape[1])
     z_axis = np.linspace(0, total_depth + 50, grid_shape[0])
@@ -783,10 +577,10 @@ def compute_temperature_field_moving(time_h: float, T_source_max: float, burn_du
             k_field=k_field, dx=dx, dz=dz, dt=dt, h=10.0, T_air=25.0, n_steps=1
         )
     return temp_2d, x_axis, z_axis, grid_x, grid_z
-
 temp_2d, x_axis, z_axis, grid_x, grid_z = compute_temperature_field_moving(
     time_h, T_source_max, burn_duration, total_depth, source_z, grid_shape)
-
+dx_val = x_axis[1] - x_axis[0]
+dz_val = z_axis[1] - z_axis[0]
 E_field = young_modulus_temperature(temp_2d)
 alpha_field = thermal_expansion_temperature(temp_2d)
 grid_rho = np.zeros_like(temp_2d)
@@ -795,38 +589,31 @@ for i, (z0, z1) in enumerate(layer_bounds):
     mask = (grid_z >= z0) & (grid_z < z1 if i < len(layer_bounds)-1 else True)
     layer = layers_data[i]
     grid_rho[mask] = density_temperature(layer['rho'], temp_2d[mask])
-
 grid_sigma_v = np.zeros((len(z_axis), len(x_axis)))
 for i in range(len(z_axis)):
     if i == 0:
         grid_sigma_v[0,:] = 0
     else:
-        dz_val = z_axis[i] - z_axis[i-1]
-        grid_sigma_v[i,:] = grid_sigma_v[i-1,:] + grid_rho[i,:] * 9.81 * dz_val / 1e6
+        dz_i = z_axis[i] - z_axis[i-1]
+        grid_sigma_v[i,:] = grid_sigma_v[i-1,:] + grid_rho[i,:] * 9.81 * dz_i / 1e6
 grid_sigma_h = k_ratio * grid_sigma_v
-
 cavity_radius = evolving_cavity_radius(time_h, temp_2d)
 perm_tmp = 1e-15 * np.exp(8 * thermal_damage(temp_2d, beta_thermal))
 pore_pressure = pore_pressure_field(temp_2d, grid_z, perm_tmp)
-
 sigma_rr, sigma_tt, tau_rt = kirsch_stress_field(grid_x, grid_z - source_z,
                                                  grid_sigma_h, grid_sigma_v,
                                                  cavity_radius, pore_pressure)
-
 delta_T = np.maximum(temp_2d - 20, 0)
 sigma_thermal = (E_field * alpha_field * delta_T) / (1 - 2*nu_poisson + EPS) / 1e6
 relax_factor = np.exp(-2.5 * thermal_damage(temp_2d, beta_thermal))
 sigma_thermal *= relax_factor
 sigma_x_total = sigma_rr - sigma_thermal
 sigma_z_total = sigma_tt - sigma_thermal
-
-dT_dx, dT_dz = np.gradient(temp_2d, x_axis[1]-x_axis[0], z_axis[1]-z_axis[0])
+dT_dx, dT_dz = np.gradient(temp_2d, dx_val, dz_val)
 G = E_field / (2 * (1 + nu_poisson))
 tau_thermal = G * alpha_field * dT_dx * dT_dz / 1e6
 tau_rt += tau_thermal
-
 sigma1_act, sigma3_act = principal_stresses(sigma_x_total, sigma_z_total, tau_rt)
-
 grid_ucs = np.zeros_like(grid_z)
 grid_mb = np.zeros_like(grid_z)
 grid_s_hb = np.zeros_like(grid_z)
@@ -839,33 +626,27 @@ for i, (z0, z1) in enumerate(layer_bounds):
     grid_mb[mask] = layer['mi'] * np.exp(exp_gsi / (28 - 14*D_factor))
     grid_s_hb[mask] = np.exp(exp_gsi / (9 - 3*D_factor))
     grid_a_hb[mask] = 0.5 + (1/6)*(np.exp(-layer['gsi']/15) - np.exp(-20/3))
-
 sigma_ci = apply_thermal_degradation(grid_ucs, temp_2d, beta_thermal)
 damage = hoek_brown_damage(sigma1_act, sigma3_act, sigma_ci, grid_mb, grid_s_hb, grid_a_hb)
 sigma1_limit = hoek_brown(sigma3_act, sigma_ci, grid_mb, grid_s_hb, grid_a_hb)
-
 void_fraction = gaussian_filter(damage * (temp_2d > 600), sigma=2)
 void_mask_permanent = void_fraction > 0.5
-void_volume = np.sum(void_mask_permanent) * (x_axis[1]-x_axis[0]) * (z_axis[1]-z_axis[0])
-
-volumetric_strain = sigma_thermal / (E_field + EPS)
+void_volume = np.sum(void_mask_permanent) * dx_val * dz_val
+volumetric_strain = (sigma_thermal * 1e6) / (E_field + EPS)
 perm = 1e-15 * np.exp(8*damage + 12 * volumetric_strain)
 perm_x = perm * 5
 perm_z = perm
 perm = np.clip(perm, 1e-16, 1e-10)
-
 T_kelvin = temp_2d + 273.15
 M_gas = 0.028
 R_universal = 8.314
 pressure_field = 1e5 + 50 * (T_kelvin - 293.15)
 gas_density = (pressure_field * M_gas) / (R_universal * T_kelvin)
-
-dp_dx, dp_dz = np.gradient(pressure_field, x_axis[1]-x_axis[0], z_axis[1]-z_axis[0])
+dp_dx, dp_dz = np.gradient(pressure_field, dx_val, dz_val)
 mu_gas = 3e-5
 vx = -perm_x * dp_dx / mu_gas
 vz = -perm_z * dp_dz / mu_gas
 gas_velocity = np.sqrt(vx**2 + vz**2)
-
 phi_rad = np.radians(PARAMS["phi_deg"])
 influence_radius = total_depth * np.tan(np.radians(45) - phi_rad / 2)
 c_subs = PARAMS["subsidence_rate"]
@@ -873,22 +654,20 @@ Smax = H_seam * 0.04
 subsidence_t = Smax * (1 - np.exp(-c_subs * time_h))
 subsidence_raw = -subsidence_t * np.exp(-(x_axis**2) / (2 * influence_radius**2))
 subsidence_raw = savgol_filter(subsidence_raw, window_length=min(11, len(x_axis)-1), polyorder=3)
-subs_grad = np.gradient(subsidence_raw, x_axis[1]-x_axis[0])
+subs_grad = np.gradient(subsidence_raw, dx_val)
 void_factor = 1 + 0.35 * float(np.mean(void_mask_permanent))
 sub_p = subsidence_raw * void_factor + 0.08 * subs_grad
-horizontal_disp_cm = -np.gradient(sub_p, x_axis[1]-x_axis[0]) * 100
-
-avg_t_p = np.mean(temp_2d[np.abs(z_axis-source_z).argmin(), :])
+horizontal_disp_cm = -np.gradient(sub_p, dx_val) * 100
+idx_closest = np.abs(z_axis - source_z).argmin()
+avg_t_p = np.mean(temp_2d[idx_closest, :])
 ucs_seam = layers_data[-1]['ucs']
-sv_seam = grid_sigma_v[np.abs(z_axis-source_z).argmin(), :].max()
-
+sv_seam = grid_sigma_v[idx_closest, :].max()
 target_layer = layers_data[-1]
 mb_dyn = target_layer['mi'] * np.exp((target_layer['gsi'] - 100) / (28 - 14*D_factor))
 s_dyn = np.exp((target_layer['gsi'] - 100) / (9 - 3*D_factor))
 a_dyn = 0.5 + (1/6)*(np.exp(-target_layer['gsi']/15) - np.exp(-20/3))
 ucs_t_dyn = apply_thermal_degradation(ucs_seam, avg_t_p, beta_thermal)
 sigma_cm = ucs_t_dyn * (s_dyn ** a_dyn)
-
 w_sol = 20.0
 E_MIN_CORE = 0.5 * H_seam
 for _ in range(30):
@@ -905,26 +684,22 @@ for _ in range(30):
 rec_width = np.round(w_sol, 1)
 pillar_strength = p_strength
 y_zone = max(y_zone_calc, 1.5)
-
 rock_factor = (target_layer['gsi']/100) * (target_layer['mi']/20) * (1 - D_factor)
 thermal_factor = np.exp(-0.002 * avg_t_p)
-optimal_width_ai = 4 + 0.12 * ucs_seam * rock_factor * thermal_factor * (1 + nu_poisson) * np.sqrt(k_ratio)
-optimal_width_ai = np.clip(optimal_width_ai, 5, 100)
-
+analytical_width = 4 + 0.12 * ucs_seam * rock_factor * thermal_factor * (1 + nu_poisson) * np.sqrt(k_ratio)
+analytical_width = np.clip(analytical_width, 5, 100)
 st.info("""
 **Ilmiy ogohlantirish:** Kirsch stress yechimi kvazistatik bo'shliq faraziga asoslanadi.
 Katta deformatsiyalar va geometriya o'zgarishi uchun FEM remeshing talab etiladi.
 Shuningdek, to'liq THM bog'lanish (T↔σ↔k↔p) hozircha qayta aloqa siklida to'liq amalga oshirilmagan.
 """)
-
 st.subheader(t('monitoring_header', obj_name=obj_name))
 m1, m2, m3, m4, m5 = st.columns(5)
 m1.metric(t('pillar_strength'), f"{pillar_strength:.1f} MPa")
 m2.metric(t('plastic_zone'), f"{y_zone:.1f} m")
 m3.metric(t('cavity_volume'), f"{void_volume:.1f} m²")
 m4.metric(t('max_permeability'), f"{np.max(perm):.1e} m²")
-m5.metric(t('ai_recommendation'), f"{optimal_width_ai:.1f} m", delta=f"Klassik: {rec_width} m", delta_color="off")
-
+m5.metric(t('ai_recommendation'), f"{analytical_width:.1f} m", delta=f"Klassik: {rec_width} m", delta_color="off")
 st.markdown("---")
 col_g1, col_g2, col_g3 = st.columns([1.5,1.5,2])
 with col_g1:
@@ -941,11 +716,12 @@ with col_g3:
         s_i = np.exp((gsi_i - 100) / (9 - 3*D_factor))
         a_i = 0.5 + (1/6)*(np.exp(-gsi_i/15) - np.exp(-20/3))
         sigma3_ax = np.linspace(0, ucs_i*0.5, 100)
-        ucs_T_i = apply_thermal_degradation(ucs_i, temp_2d.mean(), beta_thermal)
+        layer_mask = (grid_z >= lyr['z_start']) & (grid_z < lyr['z_start'] + lyr['thickness'])
+        local_T = temp_2d[layer_mask].mean() if np.any(layer_mask) else 25.0
+        ucs_T_i = apply_thermal_degradation(ucs_i, local_T, beta_thermal)
         sigma1_i = sigma3_ax + ucs_T_i*(mb_i*sigma3_ax/(ucs_T_i+EPS)+s_i)**a_i
         fig_hb.add_trace(go.Scatter(x=sigma3_ax, y=sigma1_i, name=lyr['name'], line=dict(width=2)))
     st.plotly_chart(fig_hb.update_layout(title=t('hb_envelopes_title'), template="plotly_dark", height=300, legend=dict(orientation="h", y=-0.3, x=0.5, xanchor="center")), use_container_width=True)
-
 st.markdown("---")
 c1, c2 = st.columns([1, 2.5])
 with c1:
@@ -955,19 +731,15 @@ with c1:
     for lyr in layers_data:
         fig_layers.add_trace(go.Bar(x=['Kesim'], y=[lyr['thickness']], name=lyr['name'], marker_color=lyr['color'], width=0.4))
     st.plotly_chart(fig_layers.update_layout(barmode='stack', template="plotly_dark", yaxis=dict(autorange='reversed'), height=450, showlegend=False), use_container_width=True)
-
 st.sidebar.markdown("---")
-st.sidebar.subheader("Quduqlar konfiguratsiyasi")
-well_distance = st.sidebar.slider("Quduqlar orasidagi masofa (m):", 50.0, 500.0, 200.0, 10.0, key="well_dist_slider")
-
+st.sidebar.subheader(t('well_config'))
+well_distance = st.sidebar.slider(t('well_distance'), 50.0, 500.0, 200.0, 10.0, key="well_dist_slider")
 cavity_width_global = well_distance - rec_width
 if cavity_width_global < 1.0:
-    st.warning("Ogohlantirish: Selek kengligi quduqlar masofasidan katta. cavity_width=1m deb olindi.")
+    st.warning(t('warning_cavity_width'))
     cavity_width_global = 1.0
-
 CONFINEMENT = 0.65
 RELAX = 0.15
-
 layer_bounds_adv = [(l['z_start'], l['z_start'] + l['thickness'], l) for l in layers_data]
 sigma_v_coal = 0.0
 for l in layers_data[:-1]:
@@ -976,7 +748,6 @@ sigma_v_coal += layers_data[-1]['rho'] * 9.81 * (H_seam / 2)
 sigma_v_coal = sigma_v_coal / 1e6
 Hc = H_seam * np.sqrt(sigma_v_coal / (layers_data[-1]['ucs'] + EPS))
 Hc = np.clip(Hc, H_seam, H_seam * 4)
-
 def compute_advanced_fos(grid_x, grid_z, active_wells, well_x, source_z, h_seam, cavity_width,
                          temp_field, sigma_v_field, layers_data, layer_bounds,
                          E, alpha, nu, K0, Hc, sigma_v_coal_MPa, ucs_coal_MPa):
@@ -1048,31 +819,27 @@ def compute_advanced_fos(grid_x, grid_z, active_wells, well_x, source_z, h_seam,
         pillar_zone = (np.abs(grid_x - well_x[1]) < selek_eni/2) & (np.abs(grid_z - source_z) < h_seam)
         fos[pillar_zone] = np.maximum(fos[pillar_zone], fos_pillar)
     return np.nan_to_num(fos, nan=3.0, posinf=3.0, neginf=0.0)
-
 fos_2d = compute_advanced_fos(
     grid_x, grid_z, [0,1,2], [-well_distance, 0, well_distance], source_z, H_seam, cavity_width_global,
     temp_2d, grid_sigma_v, layers_data, layer_bounds_adv,
-    E=25e9, alpha=PARAMS["alpha_thermal"], nu=nu_poisson, K0=nu_poisson/(1-nu_poisson),
+    E=PARAMS["E_mass"], alpha=PARAMS["alpha_thermal"], nu=nu_poisson, K0=nu_poisson/(1-nu_poisson),
     Hc=Hc, sigma_v_coal_MPa=sigma_v_coal, ucs_coal_MPa=layers_data[-1]['ucs']
 )
-
 with c2:
-    st.subheader("UCG Yonish Bosqichlari (1-2-3 sxemasi) – Yangi Ilmiy Model")
+    st.subheader(t('ucg_stages_title'))
     well_x_pos = [-well_distance, 0, well_distance]
     states_132 = {1: [0], 2: [0, 2], 3: [0, 1, 2]}
-    stage = st.select_slider("Bosqichni tanlang:", options=[1, 2, 3], value=1, key="ucg_stage")
+    stage = st.select_slider(t('select_stage'), options=[1, 2, 3], value=1, key="ucg_stage")
     active_wells = states_132[stage]
     cavity_width_stage = cavity_width_global
-
     fos_stage = compute_advanced_fos(
         grid_x, grid_z, active_wells, well_x_pos, source_z, H_seam, cavity_width_stage,
         temp_2d, grid_sigma_v, layers_data, layer_bounds_adv,
-        E=25e9, alpha=PARAMS["alpha_thermal"], nu=nu_poisson, K0=nu_poisson/(1-nu_poisson),
+        E=PARAMS["E_mass"], alpha=PARAMS["alpha_thermal"], nu=nu_poisson, K0=nu_poisson/(1-nu_poisson),
         Hc=Hc, sigma_v_coal_MPa=sigma_v_coal, ucs_coal_MPa=layers_data[-1]['ucs']
     )
-
     fig_tm = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.12,
-                           subplot_titles=(t('temp_subplot'), "Geomexanik Holat (Yangi Ilmiy Model)"))
+                           subplot_titles=(t('temp_subplot'), t('geomech_state')))
     fig_tm.add_trace(go.Heatmap(z=temp_2d, x=x_axis, y=z_axis, colorscale='Hot', zmin=25, zmax=T_source_max,
                                 colorbar=dict(title="T (°C)", x=1.05, y=0.78, len=0.42, thickness=15), name=t('temp_subplot')), row=1, col=1)
     step = 12
@@ -1108,7 +875,7 @@ with c2:
         fig_tm.add_shape(type="rect", x0=well_x_pos[1]-80, x1=well_x_pos[1]+80,
                          y0=source_z-30, y1=source_z+30,
                          line=dict(color="cyan", width=4, dash="dash"), fillcolor='rgba(0,255,255,0.1)', row=2, col=1)
-        fig_tm.add_annotation(x=well_x_pos[1], y=source_z+100, text="HIMOYA SELEGI (PILLAR)",
+        fig_tm.add_annotation(x=well_x_pos[1], y=source_z+100, text=t('pillar_annotation'),
                               showarrow=True, arrowhead=2, font=dict(color="cyan", size=12), row=2, col=1)
     fig_tm.update_layout(template="plotly_dark", height=900, margin=dict(r=150,t=80,b=100),
                          showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=-0.12, xanchor="center", x=0.5))
@@ -1117,15 +884,14 @@ with c2:
     zoom_margin = H_seam * 12
     fig_tm.update_yaxes(range=[source_z + zoom_margin/2, source_z - zoom_margin], row=2, col=1)
     st.plotly_chart(fig_tm, use_container_width=True)
-
-    if st.checkbox("Avtomatik animatsiya (1→2→3 bosqichlar)"):
+    if st.checkbox(t('auto_animation')):
         anim_placeholder = st.empty()
         for s in [1, 2, 3]:
             wells_s = states_132[s]
             fos_s = compute_advanced_fos(
                 grid_x, grid_z, wells_s, well_x_pos, source_z, H_seam, cavity_width_global,
                 temp_2d, grid_sigma_v, layers_data, layer_bounds_adv,
-                E=25e9, alpha=PARAMS["alpha_thermal"], nu=nu_poisson, K0=nu_poisson/(1-nu_poisson),
+                E=PARAMS["E_mass"], alpha=PARAMS["alpha_thermal"], nu=nu_poisson, K0=nu_poisson/(1-nu_poisson),
                 Hc=Hc, sigma_v_coal_MPa=sigma_v_coal, ucs_coal_MPa=layers_data[-1]['ucs']
             )
             fig_s = go.Figure(go.Contour(z=fos_s, x=x_axis, y=z_axis,
@@ -1136,8 +902,7 @@ with c2:
             fig_s.update_layout(template="plotly_dark", height=500, title=f"Bosqich {s} (1-3-2 sxemasi)")
             anim_placeholder.plotly_chart(fig_s, use_container_width=True)
             time.sleep(1.2)
-        st.success("Animatsiya yakunlandi.")
-
+        st.success(t('animation_done'))
     selek_eni = well_distance - cavity_width_global
     msgs = {
         1: f"**1-Bosqich:** Chap quduq yoqilgan. Qalinlik = {H_seam:.1f} m, Quduqlar masofasi = {well_distance:.0f} m, Selek eni = {selek_eni:.1f} m.",
@@ -1149,52 +914,42 @@ with c2:
         st.error(f"⚠️ KRITIK: Selek o'lchami ({selek_eni:.1f} m) xavfsiz chegaradan past!")
     else:
         st.success(f"✅ BARQAROR: Selek o'lchami ({selek_eni:.1f} m) me'yorda.")
-
 def physics_features(T: np.ndarray, s1: np.ndarray, s3: np.ndarray, depth: np.ndarray, ucs_seam_val: float) -> np.ndarray:
     dmg = thermal_damage(T, beta_thermal)
     strength = ucs_seam_val * (1 - dmg)
     fos = strength / (s1 + EPS)
     energy = T * s1 / (depth + 1)
     return np.column_stack([T, s1, s3, depth, dmg, fos, energy])
-
-def generate_physics_dataset(temp_field: np.ndarray, sigma1: np.ndarray,
-                             sigma3: np.ndarray, depth: np.ndarray, ucs_seam_val: float) -> tuple:
+@st.cache_data
+def generate_physics_dataset(temp_field, sigma1, sigma3, depth, ucs_seam_val):
     feat = physics_features(temp_field.flatten(), sigma1.flatten(), sigma3.flatten(), depth.flatten(), ucs_seam_val)
     fos = feat[:,5]
     energy = feat[:,6]
     collapse = ((fos < 1.0) | (temp_field.flatten() > 800) | (energy > 4000)).astype(int)
     return feat, collapse
-
+X_ai, y_ai = generate_physics_dataset(temp_2d, sigma1_act, sigma3_act, grid_z, ucs_seam)
 if PT_AVAILABLE:
     class HybridPINN(nn.Module):
         def __init__(self, input_dim):
             super().__init__()
             self.input_dim = input_dim
             self.net = nn.Sequential(
-                nn.Linear(input_dim, 128),
-                nn.Tanh(),
-                nn.Linear(128, 128),
-                nn.Tanh(),
-                nn.Linear(128, 64),
-                nn.Tanh(),
-                nn.Linear(64, 1),
-                nn.Sigmoid()
+                nn.Linear(input_dim, 128), nn.Tanh(),
+                nn.Linear(128, 128), nn.Tanh(),
+                nn.Linear(128, 64), nn.Tanh(),
+                nn.Linear(64, 1), nn.Sigmoid()
             )
         def forward(self, x):
             if x.shape[1] != self.input_dim:
                 raise ValueError(f"Expected {self.input_dim} features but got {x.shape[1]}")
             return self.net(x)
-
     def physics_informed_loss(pred, sigma1, sigma_ci, temp, damage):
         fos = sigma_ci / (sigma1 + EPS)
         physics_violation = torch.relu(1.0 - fos)
         thermal_term = damage * torch.sigmoid(temp / 1000)
         consistency = torch.abs(pred - thermal_term)
         return torch.mean(physics_violation * (1 - pred)) + 0.3 * torch.mean(consistency)
-
-    def train_hybrid_model(X: np.ndarray, y: np.ndarray,
-                           sigma1: np.ndarray, sigma_ci: np.ndarray,
-                           temp: np.ndarray, damage: np.ndarray) -> nn.Module:
+    def train_hybrid_model(X, y, sigma1, sigma_ci, temp, damage):
         y = np.clip(y, 0, 1)
         model = HybridPINN(input_dim=X.shape[1]).to(device)
         X_t = torch.tensor(X, dtype=torch.float32).to(device)
@@ -1214,12 +969,10 @@ if PT_AVAILABLE:
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             opt.step()
         return model
-
-def train_random_forest(X_scaled: np.ndarray, y: np.ndarray) -> RandomForestClassifier:
+def train_random_forest(X_scaled, y):
     rf = RandomForestClassifier(n_estimators=300, max_depth=12, random_state=42, n_jobs=-1)
     rf.fit(X_scaled, y)
     return rf
-
 @st.cache_resource
 def get_ensemble_model(X, y, sigma1, sigma_ci, temp, damage):
     scaler = StandardScaler()
@@ -1233,23 +986,21 @@ def get_ensemble_model(X, y, sigma1, sigma_ci, temp, damage):
         model = None
         rf = train_random_forest(X_train, y_train)
     return model, rf, scaler, X_test, y_test
-
-X_ai, y_ai = generate_physics_dataset(temp_2d, sigma1_act, sigma3_act, grid_z, ucs_seam)
-temp_flat = temp_2d.flatten()
-damage_flat = damage.flatten()
 hybrid_model, rf_model, scaler, X_test, y_test = get_ensemble_model(
-    X_ai, y_ai,
-    sigma1_act.flatten(), sigma_ci.flatten(),
-    temp_flat, damage_flat
+    X_ai, y_ai, sigma1_act.flatten(), sigma_ci.flatten(),
+    temp_2d.flatten(), damage.flatten()
 )
-
 if rf_model is not None:
     pred_test = rf_model.predict(X_test)
     acc = accuracy_score(y_test, pred_test)
-    auc = roc_auc_score(y_test, pred_test)
-    st.write(f"AI Model Validatsiyasi: Accuracy = {acc:.3f}, AUC = {auc:.3f}")
-
-def predict_collapse(model, rf, scaler, X_raw: np.ndarray) -> np.ndarray:
+    st.write(f"AI Model Validatsiyasi: Accuracy = {acc:.3f}")
+    unique_y = np.unique(y_test)
+    if len(unique_y) > 1:
+        auc = roc_auc_score(y_test, pred_test)
+        st.write(f"AUC = {auc:.3f}")
+    else:
+        st.write("AUC hisoblanmadi (faqat bir sinf mavjud).")
+def predict_collapse(model, rf, scaler, X_raw):
     if model is None and rf is None:
         return np.zeros((X_raw.shape[0], 1))
     X_scaled = scaler.transform(X_raw)
@@ -1258,41 +1009,44 @@ def predict_collapse(model, rf, scaler, X_raw: np.ndarray) -> np.ndarray:
             nn_pred = model(torch.tensor(X_scaled, dtype=torch.float32).to(device)).cpu().numpy()
     else:
         nn_pred = np.zeros((X_raw.shape[0], 1))
-    rf_pred = rf.predict_proba(X_scaled)[:,1].reshape(-1,1)
+    try:
+        rf_pred = rf.predict_proba(X_scaled)[:,1].reshape(-1,1)
+    except IndexError:
+        rf_pred = rf.predict_proba(X_scaled)[:,-1].reshape(-1,1)
     return 0.6*nn_pred + 0.4*rf_pred
-
 collapse_pred = np.zeros_like(temp_2d)
 try:
     feat_pred = physics_features(temp_2d.flatten(), sigma1_act.flatten(),
                                  sigma3_act.flatten(), grid_z.flatten(), ucs_seam)
     collapse_pred = predict_collapse(hybrid_model, rf_model, scaler, feat_pred).reshape(temp_2d.shape)
 except Exception as e:
-    st.error(f"Collapse prediction error: {str(e)}")
+    logger.error(f"Collapse prediction error: {str(e)}")
     collapse_pred = np.zeros_like(temp_2d)
-
 weights = np.array([0.4, 0.3, 0.2, 0.1])
+max_perm = np.max(perm)
+if max_perm == 0:
+    max_perm = 1e-20
 risk_index_var = (
     weights[0]*collapse_pred +
-    weights[1]*(1-fos_2d) +
-    weights[2]*perm/np.max(perm) +
-    weights[3]*(temp_2d/np.max(temp_2d))
+    weights[1]*(1 - fos_2d/3.0) +
+    weights[2]*(perm / max_perm) +
+    weights[3]*(temp_2d / np.max(temp_2d))
 )
+risk_index_var = np.maximum(0, risk_index_var)
 risk_flat = risk_index_var.flatten()
 risk_prob = risk_flat / (np.sum(risk_flat) + 1e-12)
 entropy = -np.sum(risk_prob * np.log(risk_prob + 1e-12))
-st.metric("Tizim entropiyasi (noaniqlik)", f"{entropy:.3f}")
-
+st.metric(t('system_entropy'), f"{entropy:.3f}")
 def laplacian_neumann(field, dx, dz):
     f = np.pad(field, 1, mode='edge')
     lap = ((f[1:-1, 2:] - 2*f[1:-1, 1:-1] + f[1:-1, :-2]) / dx**2 +
            (f[2:, 1:-1] - 2*f[1:-1, 1:-1] + f[:-2, 1:-1]) / dz**2)
     return lap
-
 with st.expander("🪨 Phase-Field Fracture Damage Evolution (Patent Model)"):
-    def phase_field_update(damage, strain_energy, dx, dt, Gc=0.01, l_char=1.0, eta=1e-3):
+    def phase_field_update(damage, strain_energy, dx, dz, dt, Gc=0.01, l_char=1.0, eta=1e-3):
         dt_max = dx**2 / (4 * Gc * l_char)
         dt = min(dt, 0.9*dt_max)
-        lap = laplacian_neumann(damage, dx, dx)
+        lap = laplacian_neumann(damage, dx, dz)
         driving = (Gc * l_char * lap - (Gc / l_char) * damage + (1 - damage) * strain_energy)
         d_new = damage + (dt / eta) * driving
         return np.clip(d_new, 0, 1)
@@ -1301,15 +1055,12 @@ with st.expander("🪨 Phase-Field Fracture Damage Evolution (Patent Model)"):
     $$\eta \frac{\partial d}{\partial t} = G_c l \nabla^2 d - \frac{G_c}{l} d + (1-d)\psi$$
     """)
     if st.button("Run one phase-field step (demo)"):
-        dx_val = x_axis[1]-x_axis[0]
-        dt_val = 0.1
         strain_energy = von_mises_stress(sigma_x_total, sigma_z_total, tau_rt) / (E_field + EPS)
-        d_trial = phase_field_update(damage, strain_energy, dx_val, dt_val)
+        d_trial = phase_field_update(damage, strain_energy, dx_val, dz_val, dt=0.1)
         d_updated = np.maximum(damage, d_trial)
         fig_phase = go.Figure(go.Heatmap(z=d_updated, x=x_axis, y=z_axis, colorscale='Viridis', zmin=0, zmax=1))
         fig_phase.update_layout(title="Phase-field damage after 1 step", template='plotly_dark')
         st.plotly_chart(fig_phase, use_container_width=True)
-
 with st.expander("🧠 Real PINN: Heat Equation Residual Loss"):
     st.markdown("""
     **Physics-Informed Neural Network (PINN) for Temperature**
@@ -1339,7 +1090,6 @@ with st.expander("🧠 Real PINN: Heat Equation Residual Loss"):
             loss.backward()
             opt.step()
         st.success("PINN demo o'qitildi (soddalashtirilgan).")
-
 with st.expander("📊 Uncertainty Quantification (UQ) for FOS"):
     N = 500
     ucs_samples = np.random.normal(ucs_seam, 0.1*ucs_seam, N)
@@ -1356,7 +1106,6 @@ with st.expander("📊 Uncertainty Quantification (UQ) for FOS"):
     fig_uq.update_layout(title='FOS Uncertainty Distribution', template='plotly_dark')
     st.plotly_chart(fig_uq, use_container_width=True)
     st.write(f"90% CI: [{np.percentile(fos_samples,5):.3f}, {np.percentile(fos_samples,95):.3f}]")
-
 if SHAP_AVAILABLE and rf_model is not None:
     with st.expander("🧠 SHAP Model Interpretatsiyasi"):
         try:
@@ -1371,7 +1120,6 @@ if SHAP_AVAILABLE and rf_model is not None:
             st.pyplot(fig_shap)
         except Exception as e:
             st.warning(f"SHAP tahlili bajarilmadi: {e}")
-
 if SALIB_AVAILABLE:
     with st.expander("📊 Global sezgirlik tahlili (Sobol')"):
         problem = {
@@ -1393,7 +1141,6 @@ if SALIB_AVAILABLE:
         Si = sobol.analyze(problem, Y)
         st.write("First-order Sobol:", Si['S1'])
         st.write("Total Sobol:", Si['ST'])
-
 if PYDOE_AVAILABLE:
     with st.expander("🎲 Latin Hypercube Sampling (Collapse ehtimolligi)"):
         N = 5000
@@ -1408,7 +1155,6 @@ if PYDOE_AVAILABLE:
         ci_low = np.percentile(collapse_prob, 5)
         ci_high = np.percentile(collapse_prob, 95)
         st.write(f"90% ishonch intervali: [{ci_low:.3f}, {ci_high:.3f}]")
-
 if PYVISTA_AVAILABLE:
     with st.expander("🌋 3D litologik hajm (PyVista)"):
         try:
@@ -1428,149 +1174,6 @@ if PYVISTA_AVAILABLE:
             st.image(plotter.screenshot(), use_container_width=True)
         except Exception as e:
             st.warning(f"PyVista vizualizatsiyasi amalga oshmadi: {e}")
-
-def thermal_mohr_coulomb(sigma_n, temp, cohesion0=PARAMS["cohesion"], phi0_deg=PARAMS["phi_deg"]):
-    thermal_damage_local = thermal_damage(temp, beta_thermal)
-    cohesion_T = cohesion0 * (1 - thermal_damage_local)
-    phi_T = np.radians(phi0_deg * (1 - 0.35 * thermal_damage_local))
-    tau = cohesion_T + sigma_n * np.tan(phi_T)
-    return tau
-
-@st.cache_data
-def generate_grounded_data(n_samples=10000):
-    temp = np.random.uniform(20, 1000, n_samples)
-    sigma_v = np.random.uniform(5, 50, n_samples)
-    c = np.random.uniform(5, 15, n_samples)
-    phi = np.deg2rad(np.random.uniform(25, 40, n_samples))
-    pore_p = np.random.uniform(0, 20, n_samples)
-    sigma_n = sigma_v - pore_p
-    tau_limit = thermal_mohr_coulomb(sigma_n * 1e6, temp, cohesion0=c*1e6, phi0_deg=np.degrees(phi))
-    tau_applied = (sigma_n * 0.7) * (1 + (temp/1100)**2) * 1e6
-    failure = (tau_limit / (tau_applied + 1e-6) < 1.1).astype(np.float32)
-    X = np.column_stack([temp, sigma_v, c, phi, pore_p])
-    return X, failure
-
-if PT_AVAILABLE:
-    class GeoPINN(nn.Module):
-        def __init__(self, input_dim=5):
-            super().__init__()
-            self.encoder = nn.Sequential(
-                nn.Linear(input_dim, 128),
-                nn.LayerNorm(128),
-                nn.ReLU(),
-                nn.Dropout(0.25)
-            )
-            self.risk_head = nn.Linear(128, 1)
-        def forward(self, x):
-            features = self.encoder(x)
-            risk = torch.sigmoid(self.risk_head(features))
-            return risk
-
-    @st.cache_resource
-    def train_scientific_system():
-        try:
-            X, y = generate_grounded_data()
-            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.15)
-            y_train = np.clip(y_train, 0, 1)
-            scaler = StandardScaler()
-            X_train_s = scaler.fit_transform(X_train)
-            model = GeoPINN(input_dim=5).to(device)
-            opt = torch.optim.Adam(model.parameters(), lr=0.001)
-            loss_fn = nn.BCELoss()
-            X_t = torch.tensor(X_train_s, dtype=torch.float32).to(device)
-            y_t = torch.tensor(y_train, dtype=torch.float32).view(-1,1).to(device)
-            model.train()
-            for epoch in range(300):
-                opt.zero_grad()
-                risk = model(X_t)
-                loss = loss_fn(risk, y_t)
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-                opt.step()
-            model.eval()
-            return model, scaler
-        except Exception as e:
-            st.error(f"Bayesian PINN o'qitishda xato: {e}")
-            return None, None
-
-    def mc_bayesian_inference(model, scaler, raw_data, n_samples=25):
-        if model is None or scaler is None:
-            return {"mean": np.array([[0.5]]), "epistemic": np.array([[0.1]])}
-        model.eval()
-        for m in model.modules():
-            if isinstance(m, nn.Dropout):
-                m.train()
-        scaled = scaler.transform(raw_data)
-        x_t = torch.tensor(scaled, dtype=torch.float32).to(device)
-        risks = []
-        with torch.no_grad():
-            for _ in range(n_samples):
-                r = model(x_t)
-                risks.append(r.cpu().numpy())
-        model.eval()
-        return {
-            "mean": np.mean(risks, axis=0),
-            "epistemic": np.std(risks, axis=0),
-            "aleatoric": np.zeros_like(np.mean(risks, axis=0))
-        }
-
-    pinn_model, global_scaler = train_scientific_system()
-
-    with st.expander("🧠 Bayesian PINN Risk Analysis (3D Geo-Model)"):
-        st.markdown("""
-        **Mohr-Coulomb failure criterion** asosida **Deep Bayesian Inference**.  
-        Ushbu panel jins massividagi buzilish ehtimolini va model noaniqligini baholaydi.
-        """)
-        default_temp = int(np.clip(T_source_max, 20, 1100))
-        safe_sv = float(np.nan_to_num(sv_seam, nan=30.0))
-        default_sv = float(np.clip(safe_sv, 5.0, 60.0))
-        default_c = float(np.clip(ucs_seam * 0.25, 5.0, 25.0))
-        try:
-            mb_s_val = float(np.nan_to_num(np.max(grid_mb), nan=1.0))
-            if mb_s_val > 0:
-                default_phi = float(np.clip(np.degrees(np.arctan(mb_s_val)), 15.0, 50.0))
-            else:
-                default_phi = PARAMS["phi_deg"]
-        except Exception:
-            default_phi = PARAMS["phi_deg"]
-        safe_pp = float(np.nan_to_num(np.nanmean(pore_pressure), nan=10.0))
-        default_pp = float(np.clip(safe_pp, 0.0, 30.0))
-        col_b1, col_b2 = st.columns(2)
-        with col_b1:
-            t_in = st.slider("Harorat (°C)", 20, 1100, default_temp, key="pinn_t")
-            s_v = st.slider("Vertikal kuchlanish (MPa)", 5.0, 60.0, default_sv, key="pinn_sv")
-            c_in = st.slider("Jins cohesion (MPa)", 5.0, 25.0, default_c, key="pinn_c")
-        with col_b2:
-            phi_in = st.slider("Ishqalanish burchagi (°)", 15.0, 50.0, default_phi, key="pinn_phi")
-            p_in = st.slider("G'ovak bosimi (MPa)", 0.0, 30.0, default_pp, key="pinn_pp")
-            run_pinn = st.button("🚀 Fizik-Intelektual Analiz", use_container_width=True)
-        if run_pinn:
-            if pinn_model is None or global_scaler is None:
-                st.error("Model yoki skeyler yuklanmadi.")
-            else:
-                raw_input = np.array([[t_in, s_v, c_in, np.deg2rad(phi_in), p_in]])
-                with st.spinner("Bayesian Inference hisoblanmoqda..."):
-                    res = mc_bayesian_inference(pinn_model, global_scaler, raw_input)
-                m = res['mean'][0][0]
-                e = res['epistemic'][0][0]
-                a = res.get('aleatoric', np.zeros_like(e))[0][0]
-                c1r, c2r, c3r = st.columns(3)
-                c1r.metric("Buzilish ehtimoli", f"{m*100:.2f}%")
-                c2r.metric("Model ishonchsizligi (Epistemic)", f"±{e*100:.3f}%")
-                c3r.metric("Ma'lumot shovqini (Aleatoric)", f"{a:.4f}")
-                st.info(f"""
-                **Tahlil natijasi**:
-                - **Xavf**: {m*100:.1f}% – umumiy buzilish ehtimoli.
-                - **Model bilim darajasi**: ±{e*100:.2f}% – ushbu nuqtada model qanchalik ishonchli?
-                - **Sensor aniqligi**: {a:.4f} – kuzatilgan ma'lumotlarning ichki noaniqligi.
-                """)
-                if m > 0.75:
-                    st.error("🚨 DIQQAT: Geomexanik barqarorlik chegaradan chiqdi!")
-                elif e > 0.15:
-                    st.warning("⚠️ OGOHLANTIRISH: Model bu hududda ishonchsiz bashorat bermoqda. Sensorlarni tekshiring.")
-                else:
-                    st.success("✅ Barqaror holat.")
-
 if st.button("Harorat dinamik animatsiyasini ishga tushirish"):
     placeholder = st.empty()
     T_anim = np.full_like(temp_2d, 25.0)
@@ -1591,7 +1194,6 @@ if st.button("Harorat dinamik animatsiyasini ishga tushirish"):
         fig_anim.update_layout(title=f"Vaqt qadami {t_anim}", template='plotly_dark')
         placeholder.plotly_chart(fig_anim, use_container_width=True)
         time.sleep(0.1)
-
 class SimpleRiskNN(nn.Module):
     def __init__(self, input_dim: int = 3):
         super().__init__()
@@ -1602,7 +1204,6 @@ class SimpleRiskNN(nn.Module):
         )
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.net(x)
-
 def train_simple_risk_nn(model: nn.Module, X: np.ndarray, y: np.ndarray, epochs: int = 100) -> nn.Module:
     y = np.clip(y, 0, 1)
     opt = torch.optim.Adam(model.parameters(), lr=1e-3)
@@ -1617,7 +1218,6 @@ def train_simple_risk_nn(model: nn.Module, X: np.ndarray, y: np.ndarray, epochs:
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         opt.step()
     return model
-
 @st.cache_resource
 def get_risk_model() -> nn.Module:
     if not PT_AVAILABLE:
@@ -1634,9 +1234,7 @@ def get_risk_model() -> nn.Module:
     model = train_simple_risk_nn(model, X_r, y_r, epochs=150)
     model.eval()
     return model
-
 risk_model = get_risk_model()
-
 def predict_risk_from_sensor(model, temp: np.ndarray, stress: np.ndarray, ucs_lab: np.ndarray) -> np.ndarray:
     if model is None:
         return np.full_like(temp, 0.5)
@@ -1645,7 +1243,6 @@ def predict_risk_from_sensor(model, temp: np.ndarray, stress: np.ndarray, ucs_la
     with torch.no_grad():
         pred = model(X_t).cpu().numpy()
     return pred.flatten()
-
 with st.expander("🤖 AI Risk Prediction (Sensor CSV)", expanded=False):
     sensor_file = st.file_uploader("Sensor CSV faylini yuklang (kerakli ustunlar: 'temp', 'stress', 'ucs_lab')", type=['csv'], key="sensor_ai")
     if sensor_file:
@@ -1676,7 +1273,6 @@ with st.expander("🤖 AI Risk Prediction (Sensor CSV)", expanded=False):
                     st.success("✅ Xavf past. Hozircha xavfsiz.")
         except Exception as e:
             st.error(f"Faylni o'qishda xatolik: {e}")
-
 st.header(t('monitoring_panel', obj_name=obj_name))
 def calculate_live_metrics(h, layers, T_max):
     target = layers[-1]
@@ -1694,7 +1290,6 @@ mk2.metric(t('rec_width_live'), f"{w_rec_live:.1f} m")
 mk3.metric(t('max_subsidence_live'), f"{s_max_3d*100:.1f} cm")
 mk4.metric(t('process_stage'), t('stage_active') if time_h<100 else t('stage_cooling'))
 st.markdown("---")
-
 with st.expander("📈 FOS Vaqt Bashorati (Trend)"):
     time_points = np.arange(1, time_h+1, max(1, time_h//20))
     if len(time_points) < 2:
@@ -1703,7 +1298,10 @@ with st.expander("📈 FOS Vaqt Bashorati (Trend)"):
         fos_timeline = []
         for current_time in time_points:
             T0 = 20
-            T_at_th = T0 + (T_source_max - T0) * min(current_time, burn_duration) / burn_duration
+            if burn_duration > 0:
+                T_at_th = T0 + (T_source_max - T0) * min(current_time, burn_duration) / burn_duration
+            else:
+                T_at_th = T0
             ucs_T_th = apply_thermal_degradation(ucs_seam, T_at_th, beta_thermal)
             p_str_t = ucs_T_th * (rec_width/(H_seam+EPS))**0.5
             sv_t = sv_seam * (1 + 0.001*current_time)
@@ -1733,9 +1331,8 @@ with st.expander("📈 FOS Vaqt Bashorati (Trend)"):
         tc2.metric("R² (trend aniqligi)", f"{r_value**2:.4f}")
         tc3.metric("Hozirgi FOS", f"{fos_timeline[-1]:.3f}")
         st.info(critical_info)
-
-def generate_crip_3d_html(dip_angle, well_spacing, temperature, total_depth, seam_thickness, cavity_radius):
-    return f"""
+with st.expander("🌍 3D Litologik Kesim (CRIP-UCG Model)"):
+    st.components.v1.html(f"""
     <!DOCTYPE html>
     <html lang="uz">
     <head>
@@ -1772,13 +1369,13 @@ def generate_crip_3d_html(dip_angle, well_spacing, temperature, total_depth, sea
             </div>
             <div class="space-y-2">
                 <div class="slider-group">
-                    <div class="label-row"><span>Qatlam Qiyaligi (Dip Angle - °)</span><span id="dip-val" class="val-text">{dip_angle}°</span></div>
+                    <div class="label-row"><span>Qatlam Qiyaligi (Dip Angle - °)</span><span id="dip-val" class="val-text">0°</span></div>
                 </div>
                 <div class="slider-group">
-                    <div class="label-row"><span>Skvajnalar Masofasi (m)</span><span id="spacing-val" class="val-text">{well_spacing} m</span></div>
+                    <div class="label-row"><span>Skvajnalar Masofasi (m)</span><span id="spacing-val" class="val-text">{well_distance} m</span></div>
                 </div>
                 <div class="slider-group">
-                    <div class="label-row"><span>Gazifikatsiya Harorati (°C)</span><span id="temp-val" class="val-text">{temperature}°C</span></div>
+                    <div class="label-row"><span>Gazifikatsiya Harorati (°C)</span><span id="temp-val" class="val-text">{T_source_max}°C</span></div>
                 </div>
                 <div class="slider-group">
                     <div class="label-row"><span>Chuqurlik (H - m)</span><span id="depth-val" class="val-text">{total_depth} m</span></div>
@@ -1809,9 +1406,9 @@ def generate_crip_3d_html(dip_angle, well_spacing, temperature, total_depth, sea
     <div id="container" class="w-full h-screen"></div>
     <script>
     let state = {{
-        dip: {dip_angle},
-        spacing: {well_spacing},
-        T: {temperature},
+        dip: 0,
+        spacing: {well_distance},
+        T: {T_source_max},
         depth: {total_depth},
         R: {cavity_radius},
         GSI: {layers_data[-1]['gsi']}
@@ -1903,14 +1500,7 @@ def generate_crip_3d_html(dip_angle, well_spacing, temperature, total_depth, sea
     </script>
     </body>
     </html>
-    """
-
-with st.expander("🌍 3D Litologik Kesim (CRIP-UCG Model)"):
-    st.components.v1.html(
-        generate_crip_3d_html(0, well_distance, T_source_max, total_depth, H_seam, cavity_radius),
-        height=650
-    )
-
+    """, height=650)
 with st.expander("🎲 Monte Carlo Noaniqlik Tahlili"):
     mc_col1, mc_col2 = st.columns([1,2])
     with mc_col1:
@@ -1936,7 +1526,6 @@ with st.expander("🎲 Monte Carlo Noaniqlik Tahlili"):
     mc_stats = pd.DataFrame({'Ko\'rsatkich': ['O\'rtacha FOS', 'Mediana', 'Std og\'ish', '5-percentil', '95-percentil', 'Failure ehtimoli'],
                              'Qiymat': [f"{np.mean(fos_mc):.3f}", f"{np.median(fos_mc):.3f}", f"{np.std(fos_mc):.3f}", f"{np.percentile(fos_mc,5):.3f}", f"{np.percentile(fos_mc,95):.3f}", f"{pf*100:.2f}%"]})
     st.dataframe(mc_stats, hide_index=True, use_container_width=True)
-
 with st.expander("⚖️ Ssenariy Taqqoslash (A vs B)"):
     sc1, sc2 = st.columns(2)
     with sc1:
@@ -1966,7 +1555,6 @@ with st.expander("⚖️ Ssenariy Taqqoslash (A vs B)"):
                             'Ssenariy B': [f"{b_ucs:.1f}", f"{b_gsi}", f"{fos_b:.2f}", f"{b_temp:.0f}"],
                             'Farq': [f"{b_ucs-a_ucs:+.1f}", f"{b_gsi-a_gsi:+d}", f"{fos_b-fos_a:+.2f}", f"{b_temp-a_temp:+.0f}"]})
     st.dataframe(comp_df, use_container_width=True, hide_index=True)
-
 @st.cache_data(show_spinner=False)
 def sensitivity_analysis(base_ucs, base_gsi, base_d, base_nu, base_t, H_seam, beta_th, range_pct=0.2):
     def quick_fos(ucs, gsi, d, nu, T):
@@ -2000,7 +1588,6 @@ def sensitivity_analysis(base_ucs, base_gsi, base_d, base_nu, base_t, H_seam, be
                              high if name=='Harorat (°C)' else base_t)
         results.append({'param':name, 'low':fos_low-base_fos, 'high':fos_high-base_fos})
     return pd.DataFrame(results), base_fos
-
 with st.expander("🌪️ Sezgirlik Tahlili (Tornado Plot)"):
     df_sens, fos_base = sensitivity_analysis(layers_data[-1]['ucs'], layers_data[-1]['gsi'], D_factor, nu_poisson, avg_t_p, H_seam, beta_thermal)
     df_sens = df_sens.sort_values('high', ascending=True)
@@ -2010,7 +1597,6 @@ with st.expander("🌪️ Sezgirlik Tahlili (Tornado Plot)"):
     fig_tornado.add_vline(x=0, line_color='white', line_width=2)
     fig_tornado.update_layout(title=f"FOS sezgirligi (asosiy FOS={fos_base:.2f})", barmode='overlay', template='plotly_dark', height=350, xaxis_title='ΔFOS', bargap=0.3)
     st.plotly_chart(fig_tornado, use_container_width=True)
-
 with st.expander("📏 Mesh Convergence Study"):
     st.markdown("Turli to'r o'lchamlarida o'rtacha FOS o'zgarishi")
     mesh_sizes = [25, 50, 75, 100]
@@ -2020,7 +1606,8 @@ with st.expander("📏 Mesh Convergence Study"):
             temp_n, _, _, _, _ = compute_temperature_field_moving(time_h, T_source_max, burn_duration, total_depth, source_z, (n, int(n*1.25)))
             avg_fos_n = np.mean(fos_2d) * (np.mean(temp_n>600) + 0.5)
             fos_results.append(avg_fos_n)
-        except:
+        except Exception as e:
+            logger.warning(f"Mesh study error for size {n}: {str(e)}")
             fos_results.append(np.nan)
     mesh_error = np.abs(np.diff(fos_results))
     fig_mesh = go.Figure()
@@ -2028,7 +1615,6 @@ with st.expander("📏 Mesh Convergence Study"):
     fig_mesh.update_layout(title="Mesh Convergence", xaxis_title="Grid resolution (nx)", yaxis_title="Avg FOS", template='plotly_dark')
     st.plotly_chart(fig_mesh, use_container_width=True)
     st.write("FOS farqlari:", mesh_error)
-
 with st.expander("🧪 Experimental Validation"):
     st.markdown("Maydonda o'lchangan cho'kish ma'lumotlarini yuklang (CSV: x, subsidence_cm)")
     exp_file = st.file_uploader("CSV yuklash", type="csv", key="exp_val")
@@ -2052,10 +1638,9 @@ with st.expander("🧪 Experimental Validation"):
                 st.error("CSV da 'x' va 'subsidence_cm' ustunlari bo'lishi kerak.")
         except Exception as e:
             st.error(f"Xatolik: {e}")
-
 def generate_full_iso_report(obj_name: str, lang: str, layers_data: list,
                              T_source_max: float, burn_duration: float,
-                             pillar_strength: float, optimal_width_ai: float,
+                             pillar_strength: float, analytical_width: float,
                              fos_2d: np.ndarray, risk_map: np.ndarray,
                              void_volume: float,
                              prepared_by: str, approved_by: str,
@@ -2070,7 +1655,7 @@ def generate_full_iso_report(obj_name: str, lang: str, layers_data: list,
             'sec4': "4. XAVFNI KAMAYTIRISH CHORALARI (MITIGATION)",
             'sec5': "5. MUHANDISLIK XULOSASI VA TAVSIYALAR",
             'fos_label': "Xavfsizlik koeffitsienti (FOS):",
-            'ai_label': "AI tomonidan optimallashtirilgan kenglik:",
+            'ai_label': "Analitik optimallashtirilgan kenglik:",
             'conclusion_title': "Yakuniy qaror:",
             'safe': "✅ TIZIM BARQAROR: Loyiha parametrlari xavfsizlik talablariga javob beradi.",
             'warning': "⚠️ MARGINAL HOLAT: Monitoringni kuchaytirish va qo'shimcha mahkamlash tavsiya etiladi.",
@@ -2086,13 +1671,29 @@ def generate_full_iso_report(obj_name: str, lang: str, layers_data: list,
             'sec4': "4. MITIGATION STRATEGY",
             'sec5': "5. ENGINEERING CONCLUSIONS",
             'fos_label': "Factor of Safety (FOS):",
-            'ai_label': "AI Optimized Width:",
+            'ai_label': "Analytical Optimized Width:",
             'conclusion_title': "Final Decision:",
             'safe': "✅ SYSTEM STABLE: Project parameters meet safety requirements.",
             'warning': "⚠️ MARGINAL STABILITY: Increased monitoring and support recommended.",
             'danger': "🚨 DANGEROUS: High risk of collapse! Increase pillar width or reduce thermal load.",
             'risk_ident': "Identified hazards: thermal degradation, large void volume, FOS < 1.3.",
             'mitigation': "Mitigation: increase pillar width, reduce gas pressure, real-time monitoring."
+        },
+        'ru': {
+            'h1': "ОТЧЕТ О СООТВЕТСТВИИ ISO 9001:2015",
+            'sec1': "1. ОБЗОР ПРОЕКТА",
+            'sec2': "2. ГЕОМЕХАНИЧЕСКИЕ СВОЙСТВА",
+            'sec3': "3. ОЦЕНКА РИСКОВ",
+            'sec4': "4. СТРАТЕГИЯ СНИЖЕНИЯ РИСКОВ",
+            'sec5': "5. ИНЖЕНЕРНЫЕ ВЫВОДЫ",
+            'fos_label': "Коэффициент безопасности (FOS):",
+            'ai_label': "Аналитическая оптимизированная ширина:",
+            'conclusion_title': "Окончательное решение:",
+            'safe': "✅ СИСТЕМА СТАБИЛЬНА: Параметры проекта соответствуют требованиям безопасности.",
+            'warning': "⚠️ ПРЕДЕЛЬНАЯ УСТОЙЧИВОСТЬ: Рекомендуется усилить мониторинг и поддержку.",
+            'danger': "🚨 ОПАСНО: Высокий риск обрушения! Увеличьте ширину целика или уменьшите термическую нагрузку.",
+            'risk_ident': "Выявленные опасности: термическая деградация, большой объем пустот, FOS < 1.3.",
+            'mitigation': "Меры: увеличить ширину целика, снизить давление газа, мониторинг в реальном времени."
         }
     }
     t_texts = texts.get(lang, texts['en'])
@@ -2133,7 +1734,7 @@ def generate_full_iso_report(obj_name: str, lang: str, layers_data: list,
     doc.add_paragraph(f"FOS minimal: {np.min(fos_2d):.2f}, maksimal bo'shliq: {void_volume:.1f} m²")
     doc.add_heading(t_texts['sec4'], level=2)
     doc.add_paragraph(t_texts['mitigation'])
-    doc.add_paragraph(f"Tavsiya qilingan selek eni: {optimal_width_ai:.1f} m")
+    doc.add_paragraph(f"Tavsiya qilingan selek eni: {analytical_width:.1f} m")
     if fig_bytes:
         doc.add_heading("Visual Analysis (Risk Map)", level=2)
         image_stream = io.BytesIO(fig_bytes)
@@ -2159,7 +1760,7 @@ def generate_full_iso_report(obj_name: str, lang: str, layers_data: list,
         conclusion_text = t_texts['safe']
     res_p = doc.add_paragraph()
     res_p.add_run(f"{t_texts['fos_label']} {fos_val:.2f}\n").bold = True
-    res_p.add_run(f"{t_texts['ai_label']} {optimal_width_ai:.1f} m\n\n")
+    res_p.add_run(f"{t_texts['ai_label']} {analytical_width:.1f} m\n\n")
     final_run = res_p.add_run(f"{t_texts['conclusion_title']}\n{conclusion_text}")
     final_run.bold = True
     final_run.font.color.rgb = color
@@ -2192,7 +1793,6 @@ def generate_full_iso_report(obj_name: str, lang: str, layers_data: list,
     doc.save(buffer)
     buffer.seek(0)
     return buffer.getvalue()
-
 with st.expander("📄 ISO 9001:2015 Standart Hujjat (.docx)"):
     d1, d2 = st.columns(2)
     with d1:
@@ -2218,7 +1818,7 @@ with st.expander("📄 ISO 9001:2015 Standart Hujjat (.docx)"):
                 docx_bytes = generate_full_iso_report(
                     obj_name=obj_name, lang=iso_lang, layers_data=layers_data,
                     T_source_max=T_source_max, burn_duration=burn_duration,
-                    pillar_strength=pillar_strength, optimal_width_ai=optimal_width_ai,
+                    pillar_strength=pillar_strength, analytical_width=analytical_width,
                     fos_2d=fos_2d, risk_map=risk_index_var,
                     void_volume=void_volume,
                     prepared_by=prepared_inp, approved_by=approved_inp,
@@ -2231,10 +1831,8 @@ with st.expander("📄 ISO 9001:2015 Standart Hujjat (.docx)"):
                                    use_container_width=True)
             except Exception as e:
                 st.error(f"Hisobot yaratishda xatolik: {e}")
-
 st.header("🔄 Live 3D Monitoring (Real-time)")
 tab_live, tab_ai_orig, tab_advanced = st.tabs([t('live_monitoring_tab'), t('ai_monitor_title'), t('advanced_analysis')])
-
 with tab_live:
     st.markdown("### Real-time subsidence, temperature, anomalies and alerts")
     TIME_STEPS = st.slider("Simulation steps", 10, 200, 50, key="live_steps")
@@ -2314,12 +1912,11 @@ with tab_live:
             st.success(f"✅ Live monitoring completed after {steps_done} steps.")
         elif st.session_state.stop_live:
             st.warning("Monitoring stopped by user.")
-    if not st.session_state.live_history_df.empty:
+    if 'live_history_df' in st.session_state and not st.session_state.live_history_df.empty:
         st.markdown("---")
         st.subheader("📥 Download Monitoring Results (CSV)")
         csv_data = st.session_state.live_history_df.to_csv(index=False).encode('utf-8')
         st.download_button(label=t('download_data'), data=csv_data, file_name="ucg_live_monitoring.csv", mime="text/csv")
-
 with tab_ai_orig:
     st.markdown(f"*{t('ai_monitor_desc')}*")
     def get_sensor_data_sim(step, total_steps, base_temp):
@@ -2470,13 +2067,11 @@ with tab_ai_orig:
                 st.warning(f"🟡 Yakuniy FOS: {final_fos:.2f} — Noaniq holat")
             else:
                 st.success(f"🟢 Yakuniy FOS: {final_fos:.2f} — Barqaror!")
-
 with tab_advanced:
     st.header(t('advanced_analysis'))
     E_MODULUS_R, ALPHA_THERM, BETA_CONST = 5e9, PARAMS["alpha_thermal"], beta_thermal
     target_l = layers_data[-1]
     ucs_0_r, gsi_val, mi_val = target_l['ucs'], target_l['gsi'], target_l['mi']
-    gamma_kn = target_l['rho'] * 9.81 / 1000
     H_depth_tot = sum(l['thickness'] for l in layers_data[:-1]) + target_l['thickness']/2
     sigma_v_tot = vertical_stress(H_depth_tot, target_l['rho'])
     mb_dyn = mi_val * np.exp((gsi_val-100)/(28-14*D_factor))
@@ -2486,7 +2081,6 @@ with tab_advanced:
     sigma_cm = ucs_t_dyn * (s_dyn ** a_dyn)
     p_str_final = sigma_cm * (rec_width / (H_seam + EPS))**0.5
     fos_final = p_str_final / (sigma_v_tot + EPS)
-    sigma_thermal_MPa = sigma_thermal
     t1,t2,t3 = st.tabs([t('tab_mass'), t('tab_thermal'), t('tab_stability')])
     with t1:
         st.subheader(t('hb_class'))
@@ -2510,7 +2104,7 @@ with tab_advanced:
         st.latex(t('ucs_decay_eq', ucs=ucs_t_dyn))
         st.write(t('ucs_interpret', temp=T_source_max, perc=((1 - ucs_t_dyn/(ucs_0_r))*100)))
         st.markdown(t('thermal_stress'))
-        st.latex(t('thermal_stress_eq', sigma=float(np.nanmax(sigma_thermal_MPa))))
+        st.latex(t('thermal_stress_eq', sigma=float(np.nanmax(sigma_thermal))))
     with t3:
         st.subheader(t('pillar_stability'))
         st.latex(t('fos_eq', fos=fos_final))
@@ -2535,14 +2129,11 @@ with tab_advanced:
             "**Terzaghi, K. (1943).** Theoretical Soil Mechanics. Wiley, New York."
         ]:
             st.write(r)
-
 st.header("🕹️ Ultimate Interactive Dashboard (Real-time Animation)")
 st.markdown("Bu panelda FOS, siljish maydoni va vaqt bo'yicha sirt siljishlarini interaktiv kuzatishingiz mumkin.")
-
 sub_2d = np.tile(sub_p.reshape(1,-1)*100, (len(z_axis), 1))
 uplift_2d = np.tile(horizontal_disp_cm.reshape(1,-1), (len(z_axis), 1))
 displacement_2d = np.sqrt(sub_2d**2 + uplift_2d**2)
-
 time_steps_dash = np.arange(0, time_h+1, max(1, time_h//20))
 surface_x = x_axis
 surface_h_disp = []
@@ -2555,28 +2146,23 @@ for current_time_step in time_steps_dash:
     surface_h_disp.append(h_disp)
 surface_h_disp = np.array(surface_h_disp)
 surface_v_disp = np.array(surface_v_disp)
-
 col1_dash, col2_dash = st.columns(2)
 with col1_dash:
     fos_thresh_dash = st.slider("FOS Threshold (Yielded Zone)", 0.1, 2.0, 1.0, 0.05, key="fos_thresh_dash")
 with col2_dash:
     disp_cscale = st.selectbox("Displacement Color Scale", ['Turbo','Viridis','Cividis'], index=0, key="disp_cscale")
-
 def draw_interactive_ucg_dashboard(x_axis, z_axis, fos_2d, displacement_2d, surface_x, surface_h_disp, surface_v_disp, time_steps=None, fos_threshold=1.0, disp_colorscale='Turbo'):
     if time_steps is None:
         time_steps = np.arange(surface_h_disp.shape[0])
-    pillar_locations = np.linspace(x_axis.min() + 50, x_axis.max() - 50, 3)
     fig = make_subplots(rows=2, cols=2,
                         subplot_titles=("A) FOS & Yielded Zones (2D)",
                                         "B) Total Displacement (2D, cm)",
                                         "C) Horizontal Surface Displacement (mm)",
                                         "D) Vertical Surface Displacement (mm)"),
                         horizontal_spacing=0.1, vertical_spacing=0.15)
-    fig.add_trace(go.Heatmap(
-        z=fos_2d, x=x_axis, y=z_axis,
-        colorscale=[[0, 'rgb(255, 0, 0)'], [0.33, 'rgb(255, 165, 0)'], [0.5, 'rgb(173, 255, 47)'], [1, 'rgb(0, 128, 0)']],
-        zmin=0, zmax=3, colorbar=dict(title="FOS", x=0.45, y=0.78, thickness=12, len=0.42), name="FOS"
-    ), row=1, col=1)
+    fig.add_trace(go.Heatmap(z=fos_2d, x=x_axis, y=z_axis,
+                             colorscale=[[0, 'rgb(255,0,0)'], [0.33, 'rgb(255,165,0)'], [0.5, 'rgb(173,255,47)'], [1, 'rgb(0,128,0)']],
+                             zmin=0, zmax=3, colorbar=dict(title="FOS", x=0.45, y=0.78, thickness=12, len=0.42), name="FOS"), row=1, col=1)
     mask_fos = np.where(fos_2d < fos_threshold, 1, np.nan)
     fig.add_trace(go.Heatmap(z=mask_fos, x=x_axis, y=z_axis,
                              colorscale=[[0,'rgba(255,0,0,0.5)'],[1,'rgba(255,0,0,0.5)']],
@@ -2610,31 +2196,6 @@ def draw_interactive_ucg_dashboard(x_axis, z_axis, fos_2d, displacement_2d, surf
                                      showscale=False))
         frames.append(go.Frame(data=frame_data, name=f"frame_{frame_idx}"))
     fig.frames = frames
-    for pos in pillar_locations:
-        fig.add_shape(type="rect", x0=pos-25, x1=pos+25, y0=550, y1=600,
-                      line=dict(color="Lime", width=3), row=1, col=1)
-        fig.add_shape(type="rect", x0=pos-25, x1=pos+25, y0=550, y1=600,
-                      line=dict(color="Lime", width=3), row=1, col=2)
-    fig.layout.xaxis.title.text = "X (m)"
-    fig.layout.xaxis.gridcolor = 'rgba(255,255,255,0.1)'
-    fig.layout.xaxis.range = [x_axis.min(), x_axis.max()]
-    fig.layout.yaxis.title.text = "Depth (m)"
-    fig.layout.yaxis.gridcolor = 'rgba(255,255,255,0.1)'
-    fig.layout.yaxis.autorange = "reversed"
-    fig.layout.xaxis2.title.text = "X (m)"
-    fig.layout.xaxis2.gridcolor = 'rgba(255,255,255,0.1)'
-    fig.layout.xaxis2.range = [x_axis.min(), x_axis.max()]
-    fig.layout.yaxis2.title.text = "Depth (m)"
-    fig.layout.yaxis2.gridcolor = 'rgba(255,255,255,0.1)'
-    fig.layout.yaxis2.autorange = "reversed"
-    fig.layout.xaxis3.title.text = "Masofa (m)"
-    fig.layout.xaxis3.gridcolor = 'rgba(255,255,255,0.1)'
-    fig.layout.yaxis3.title.text = "Vaqt bosqichi"
-    fig.layout.yaxis3.gridcolor = 'rgba(255,255,255,0.1)'
-    fig.layout.xaxis4.title.text = "Masofa (m)"
-    fig.layout.xaxis4.gridcolor = 'rgba(255,255,255,0.1)'
-    fig.layout.yaxis4.title.text = "Vaqt bosqichi"
-    fig.layout.yaxis4.gridcolor = 'rgba(255,255,255,0.1)'
     fig.update_layout(
         title=dict(text="Interactive Ultimate UCG Monitoring Dashboard", x=0.5, font=dict(size=22, color="white")),
         plot_bgcolor='black', paper_bgcolor='black', template='plotly_dark', height=900,
@@ -2648,7 +2209,6 @@ def draw_interactive_ucg_dashboard(x_axis, z_axis, fos_2d, displacement_2d, surf
                       active=0, y=0.0, x=0.1, len=0.9)]
     )
     return fig
-
 dash_fig = draw_interactive_ucg_dashboard(
     x_axis=x_axis, z_axis=z_axis, fos_2d=fos_2d,
     displacement_2d=displacement_2d, surface_x=surface_x,
@@ -2656,6 +2216,5 @@ dash_fig = draw_interactive_ucg_dashboard(
     time_steps=time_steps_dash, fos_threshold=fos_thresh_dash, disp_colorscale=disp_cscale
 )
 st.plotly_chart(dash_fig, use_container_width=True)
-
 st.sidebar.markdown("---")
 st.sidebar.write(f"Tuzuvchi: Saitov Dilshodbek | Device: {device}")
