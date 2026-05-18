@@ -1666,176 +1666,258 @@ with st.expander("📈 FOS Vaqt Bashorati (Trend)"):
         st.info(critical_info)
 
 # 3D CRIP-UCG Model
+
 with st.expander("🌍 3D Litologik Kesim (CRIP-UCG Model)"):
-    st.components.v1.html(f"""
+    # Haqiqiy qiymatlarni olib, HTML ga uzatamiz
+    dip_default = 0
+    well_dist = well_distance
+    T_max = T_source_max
+    total_d = total_depth
+    # cavity_radius dynamic bo'lgani uchun time_h ga bog'liq radius:
+    cav_r = cavity_radius
+    gsi_last = layers_data[-1]['gsi']
+    H_seam_val = H_seam  # qatlam qalinligi
+
+    # HTML/JS bloki
+    html_3d = f"""
     <!DOCTYPE html>
     <html lang="uz">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>CRIP-UCG Model</title>
-        <script src="https://cdn.tailwindcss.com"></script>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
-        <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;500;700&display=swap" rel="stylesheet">
         <style>
-            body {{ font-family: 'Space Grotesk', sans-serif; background: #08090d; color: #f3f4f6; margin: 0; overflow: hidden; }}
-            .ui-panel {{ position: absolute; top: 20px; left: 20px; z-index: 100; width: 440px; pointer-events: none; }}
-            .glass {{ pointer-events: auto; background: rgba(13, 17, 23, 0.9); backdrop-filter: blur(25px); border: 1px solid rgba(255,255,255,0.08); border-radius: 28px; padding: 25px; box-shadow: 0 40px 100px rgba(0,0,0,0.8); }}
-            .slider-group {{ margin-bottom: 15px; background: rgba(255,255,255,0.03); padding: 12px; border-radius: 18px; border: 1px solid rgba(255,255,255,0.05); }}
-            .label-row {{ display: flex; justify-content: space-between; font-size: 11px; color: #9ca3af; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 1px; }}
-            .val-text {{ color: #818cf8; font-family: monospace; font-weight: bold; font-size: 13px; }}
-            .status-card {{ margin-top: 15px; padding: 15px; border-radius: 20px; font-size: 11px; line-height: 1.6; border-left: 4px solid #f59e0b; background: rgba(245, 158, 11, 0.05); }}
-            .legend {{ position: absolute; bottom: 25px; right: 25px; background: rgba(0,0,0,0.8); padding: 20px; border-radius: 20px; font-size: 10px; border: 1px solid rgba(255,255,255,0.1); }}
-            .color-dot {{ width: 12px; height: 12px; border-radius: 3px; display: inline-block; margin-right: 10px; }}
+            body {{ margin:0; overflow:hidden; font-family: sans-serif; }}
+            #container {{ width:100%; height:100%; }}
+            .ui-panel {{
+                position: absolute; top:20px; left:20px; z-index:100; width:380px; pointer-events: none;
+            }}
+            .glass {{
+                pointer-events: auto; background: rgba(13,17,23,0.9); backdrop-filter: blur(25px);
+                border:1px solid rgba(255,255,255,0.1); border-radius:24px; padding:20px;
+                box-shadow: 0 20px 50px rgba(0,0,0,0.8); color:#f3f4f6;
+            }}
+            .slider-group {{ margin-bottom:12px; }}
+            .label-row {{ display:flex; justify-content:space-between; font-size:12px; color:#9ca3af; margin-bottom:4px; }}
+            .val-text {{ color:#818cf8; font-weight:bold; }}
+            input[type=range] {{ width:100%; }}
+            .status-card {{ margin-top:12px; padding:12px; border-radius:16px; font-size:11px; line-height:1.5;
+                border-left:4px solid #f59e0b; background: rgba(245,158,11,0.1); }}
+            .legend {{ position:absolute; bottom:25px; right:25px; background:rgba(0,0,0,0.8);
+                padding:16px; border-radius:16px; font-size:10px; color:#ccc; }}
+            .color-dot {{ width:12px; height:12px; border-radius:3px; display:inline-block; margin-right:10px; }}
         </style>
     </head>
     <body>
     <div class="ui-panel">
         <div class="glass">
-            <div class="mb-6 flex justify-between items-center">
-                <div>
-                    <h1 class="text-xl font-bold text-white tracking-tight">CRIP-UCG Modeli</h1>
-                    <p class="text-[9px] text-indigo-400 font-bold uppercase tracking-[2px]">Parallel Gazlashtirish & Qiyalik</p>
-                </div>
-                <div class="h-10 w-10 bg-indigo-500/20 rounded-full flex items-center justify-center border border-indigo-500/30">
-                    <div class="w-3 h-3 bg-indigo-500 rounded-full animate-ping"></div>
-                </div>
+            <div style="margin-bottom:20px;">
+                <h1 style="font-size:20px; font-weight:bold; margin:0;">CRIP-UCG Modeli</h1>
+                <p style="font-size:10px; color:#818cf8; margin-top:2px;">Parallel Gazlashtirish & Qiyalik</p>
             </div>
-            <div class="space-y-2">
-                <div class="slider-group">
-                    <div class="label-row"><span>Qatlam Qiyaligi (Dip Angle - °)</span><span id="dip-val" class="val-text">0°</span></div>
-                </div>
-                <div class="slider-group">
-                    <div class="label-row"><span>Skvajnalar Masofasi (m)</span><span id="spacing-val" class="val-text">{well_distance} m</span></div>
-                </div>
-                <div class="slider-group">
-                    <div class="label-row"><span>Gazifikatsiya Harorati (°C)</span><span id="temp-val" class="val-text">{T_source_max}°C</span></div>
-                </div>
-                <div class="slider-group">
-                    <div class="label-row"><span>Chuqurlik (H - m)</span><span id="depth-val" class="val-text">{total_depth} m</span></div>
-                </div>
+            <div class="slider-group">
+                <div class="label-row"><span>Qatlam Qiyaligi (°)</span><span id="dip-val" class="val-text">{dip_default}°</span></div>
+                <input type="range" id="dip-slider" min="0" max="60" value="{dip_default}" step="1" oninput="updateDip(this.value)">
+            </div>
+            <div class="slider-group">
+                <div class="label-row"><span>Harorat (°C)</span><span id="temp-val" class="val-text">{T_max}°C</span></div>
+                <input type="range" id="temp-slider" min="300" max="1200" value="{T_max}" step="50" oninput="updateTemp(this.value)">
+            </div>
+            <div class="slider-group">
+                <div class="label-row"><span>Chuqurlik (m)</span><span id="depth-val" class="val-text">{total_d} m</span></div>
+                <input type="range" id="depth-slider" min="50" max="500" value="{total_d}" step="10" oninput="updateDepth(this.value)">
             </div>
             <div class="status-card">
-                <div class="text-amber-400 font-bold mb-1 uppercase text-[10px]">Geomexanik Tahlil:</div>
-                <div id="analysis-text" class="text-gray-300">Qatlam qiyaligi cho'kish markazini "quyi" tomonga (down-dip) siljitmoqda. CRIP usuli bo'yicha inyeksion nuqta orqaga tortilishi nazorat qilinmoqda.</div>
+                <div style="font-weight:bold; color:#f59e0b; margin-bottom:4px;">Geomexanik Tahlil:</div>
+                <div id="analysis-text">Qatlam qiyaligi cho'kish markazini quyi tomonga siljitadi.</div>
             </div>
-            <div class="grid grid-cols-2 gap-3 mt-4 text-center">
-                <div class="bg-indigo-500/10 p-3 rounded-2xl border border-indigo-500/20">
-                    <div class="text-[8px] text-indigo-300 uppercase mb-1 tracking-widest">Siljish (Shift)</div>
-                    <div id="shift-val" class="text-lg font-bold text-indigo-400">-</div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:15px;">
+                <div style="background: rgba(99,102,241,0.1); padding:10px; border-radius:14px; text-align:center;">
+                    <div style="font-size:8px; text-transform:uppercase; letter-spacing:1px; color:#a5b4fc;">Siljish (Shift)</div>
+                    <div id="shift-val" style="font-size:18px; font-weight:bold; color:#818cf8;">-</div>
                 </div>
-                <div class="bg-rose-500/10 p-3 rounded-2xl border border-rose-500/20">
-                    <div class="text-[8px] text-rose-300 uppercase mb-1 tracking-widest">Maks. Cho'kish</div>
-                    <div id="subs-val" class="text-lg font-bold text-rose-400">-</div>
+                <div style="background: rgba(244,63,94,0.1); padding:10px; border-radius:14px; text-align:center;">
+                    <div style="font-size:8px; text-transform:uppercase; letter-spacing:1px; color:#fda4af;">Maks. Cho'kish</div>
+                    <div id="subs-val" style="font-size:18px; font-weight:bold; color:#f43f5e;">-</div>
                 </div>
             </div>
         </div>
     </div>
-    <div class="legend text-gray-400 shadow-2xl">
-        <div class="flex items-center mb-3"><span class="color-dot bg-blue-500"></span> Inyeksion skvajna (Havo/O₂)</div>
-        <div class="flex items-center mb-3"><span class="color-dot bg-yellow-500"></span> Ishlab chiqarish skvajnasi (Sintez-gaz)</div>
-        <div class="flex items-center mb-3"><span class="color-dot bg-orange-600"></span> Yonish kanali (Kaverna)</div>
-        <div class="flex items-center"><span class="color-dot bg-indigo-600 opacity-40"></span> Ko'mir qatlami (Tilted)</div>
+    <div class="legend">
+        <div style="display:flex; align-items:center; margin-bottom:6px;"><span class="color-dot" style="background:#3b82f6;"></span> Inyeksion skvajna</div>
+        <div style="display:flex; align-items:center; margin-bottom:6px;"><span class="color-dot" style="background:#fbbf24;"></span> Ishlab chiqarish skvajnasi</div>
+        <div style="display:flex; align-items:center; margin-bottom:6px;"><span class="color-dot" style="background:#f97316;"></span> Yonish kanali (Kaverna)</div>
+        <div style="display:flex; align-items:center;"><span class="color-dot" style="background:#4f46e5; opacity:0.6;"></span> Ko'mir qatlami</div>
     </div>
-    <div id="container" class="w-full h-screen"></div>
+    <div id="container"></div>
     <script>
+    // ---- global state ----
     let state = {{
-        dip: 0,
-        spacing: {well_distance},
-        T: {T_source_max},
-        depth: {total_depth},
-        R: {cavity_radius},
-        GSI: {layers_data[-1]['gsi']}
+        dip: {dip_default},
+        spacing: {well_dist},
+        T: {T_max},
+        depth: {total_d},
+        R: {cav_r},
+        GSI: {gsi_last},
+        H_seam: {H_seam_val}
     }};
+
+    // ---- scene setup ----
+    const container = document.getElementById('container');
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x040508);
-    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 10000);
+    scene.background = new THREE.Color(0x0a0a14);
+    const camera = new THREE.PerspectiveCamera(45, container.clientWidth/container.clientHeight, 1, 5000);
+    camera.position.set(250, 200, 400);
+    camera.lookAt(0, -state.depth/4, 0);
+
     const renderer = new THREE.WebGLRenderer({{ antialias: true }});
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    document.getElementById('container').appendChild(renderer.domElement);
+    renderer.setSize(container.clientWidth, container.clientHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    container.appendChild(renderer.domElement);
+
     const controls = new THREE.OrbitControls(camera, renderer.domElement);
-    camera.position.set(250, 150, 400);
-    scene.add(new THREE.AmbientLight(0xffffff, 0.2));
-    const pointLight = new THREE.PointLight(0xffaa00, 1.5, 1000);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.1;
+    controls.target.set(0, -state.depth/4, 0);
+    controls.update();
+
+    // lights
+    scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+    const pointLight = new THREE.PointLight(0xffaa00, 1.2, 2000);
+    pointLight.position.set(0, 50, 100); // surface ustida
     scene.add(pointLight);
-    const surfSize = 1200;
-    const surfRes = 100;
+
+    // ground surface (non-wireframe, yarim shaffof)
+    const surfSize = 800;
+    const surfRes = 80;
     const surfGeom = new THREE.PlaneGeometry(surfSize, surfSize, surfRes, surfRes);
-    surfGeom.rotateX(-Math.PI / 2);
-    const surfMat = new THREE.MeshStandardMaterial({{ color: 0x1e293b, wireframe: true, transparent: true, opacity: 0.3, emissive: 0x4f46e5, emissiveIntensity: 0.05 }});
+    surfGeom.rotateX(-Math.PI/2);
+    const surfMat = new THREE.MeshStandardMaterial({{
+        color: 0x2a3b4c,
+        transparent: true,
+        opacity: 0.6,
+        roughness: 0.8,
+        side: THREE.DoubleSide
+    }});
     const surface = new THREE.Mesh(surfGeom, surfMat);
     scene.add(surface);
-    const seamGeom = new THREE.BoxGeometry(surfSize, 5, 200);
-    const seamMat = new THREE.MeshStandardMaterial({{ color: 0x111111, transparent: true, opacity: 0.6 }});
+
+    // coal seam box
+    const seamWidth = surfSize;
+    const seamThick = state.H_seam;
+    const seamGeom = new THREE.BoxGeometry(seamWidth, seamThick, 200);
+    const seamMat = new THREE.MeshStandardMaterial({{ color: 0x333333, roughness: 0.7, emissive: 0x111111, emissiveIntensity: 0.2 }});
     const coalSeam = new THREE.Mesh(seamGeom, seamMat);
     scene.add(coalSeam);
+
+    // cavity group
     const cavityGroup = new THREE.Group();
     scene.add(cavityGroup);
     const cavityGeom = new THREE.SphereGeometry(1, 32, 32);
-    const cavityMat = new THREE.MeshStandardMaterial({{ color: 0xff4400, emissive: 0xff2200, emissiveIntensity: 2 }});
+    const cavityMat = new THREE.MeshStandardMaterial({{ color: 0xff4400, emissive: 0xff2200, emissiveIntensity: 2, roughness: 0.3 }});
     const cavity = new THREE.Mesh(cavityGeom, cavityMat);
     cavityGroup.add(cavity);
+
+    // wells
     function createBorehole(color) {{
-        const geom = new THREE.CylinderGeometry(0.8, 0.8, 500, 16);
-        const mat = new THREE.MeshStandardMaterial({{ color: color, emissive: color, emissiveIntensity: 0.5 }});
+        const geom = new THREE.CylinderGeometry(1.2, 1.2, 400, 8);
+        const mat = new THREE.MeshStandardMaterial({{ color: color, emissive: color, emissiveIntensity: 0.3, roughness: 0.5 }});
         return new THREE.Mesh(geom, mat);
     }}
     const injWell = createBorehole(0x3b82f6);
-    const prodWell = createBorehole(0xfab005);
+    const prodWell = createBorehole(0xfbbf24);
     scene.add(injWell);
     scene.add(prodWell);
+
+    // geomechanics calculation
     function calculateGeomechanics() {{
         const angleRad = state.dip * Math.PI / 180;
-        const shift = state.depth * Math.tan(angleRad) * 0.45;
-        const rockStrengthDegradation = Math.max(0.2, 1 - (state.T / 1500));
-        const volumeLoss = (Math.PI * Math.pow(state.R, 2) * state.spacing) * 0.15;
-        const influenceRadius = state.depth * Math.tan((45 - state.GSI/10) * Math.PI / 180);
-        const Smax = (volumeLoss * (1 - rockStrengthDegradation)) / (influenceRadius * 1.5 + 1);
-        return {{ shift, Smax, influenceRadius, angleRad }};
+        const shift = state.depth * Math.tan(angleRad) * 0.45; // horizontal shift of subsidence center
+        const rockDeg = Math.max(0.05, 1 - (state.T / 1500));
+        const cavityVol = (Math.PI * Math.pow(state.R, 2) * state.spacing) * 0.15;
+        const influenceR = state.depth * Math.tan((45 - state.GSI/10) * Math.PI / 180);
+        const Smax = (cavityVol * rockDeg) / (influenceR * 1.8 + 1); // empirical
+        return {{ shift, Smax, influenceR, angleRad }};
     }}
+
+    // update all positions & subsidence
     function update() {{
         const calc = calculateGeomechanics();
-        document.getElementById('shift-val').innerText = calc.shift.toFixed(1) + " m";
-        document.getElementById('subs-val').innerText = (calc.Smax * 100).toFixed(1) + " cm";
-        const visualDepth = state.depth / 4;
+        document.getElementById('shift-val').innerText = calc.shift.toFixed(1) + ' m';
+        document.getElementById('subs-val').innerText = (calc.Smax * 100).toFixed(1) + ' cm';
+        document.getElementById('dip-val').innerText = state.dip + '°';
+        document.getElementById('temp-val').innerText = state.T + '°C';
+        document.getElementById('depth-val').innerText = state.depth + ' m';
+
+        const visualDepth = state.depth / 3.5;
         const yCenter = -visualDepth;
         coalSeam.position.y = yCenter;
         coalSeam.rotation.z = -calc.angleRad;
+
         cavityGroup.position.set(0, yCenter, 0);
         cavityGroup.rotation.z = -calc.angleRad;
-        cavity.scale.set(state.spacing / 1.5, state.R, state.R);
-        injWell.position.set(-state.spacing/2, -visualDepth + 250, 0);
-        prodWell.position.set(state.spacing/2, -visualDepth + 250, 0);
-        const vertices = surface.geometry.attributes.position.array;
-        for (let i = 0; i < vertices.length; i += 3) {{
-            const x = vertices[i];
-            const z = vertices[i + 2];
-            const distToShiftedCenter = Math.sqrt(Math.pow(x - calc.shift, 2) + Math.pow(z, 2));
-            const s_local = calc.Smax * 60 * Math.exp(-(Math.PI * distToShiftedCenter * distToShiftedCenter) / Math.pow(calc.influenceRadius, 2));
-            vertices[i + 1] = -s_local;
+        cavity.scale.set(state.spacing / 2.5, state.R, state.R); // elliptical cavity
+
+        // wells: from surface (y=0) down to seam
+        const wellLength = visualDepth + 50; // past seam a bit
+        injWell.geometry.dispose(); // recreate with new height
+        prodWell.geometry.dispose();
+        const wellGeom = new THREE.CylinderGeometry(1.2, 1.2, wellLength, 8);
+        injWell.geometry = wellGeom;
+        prodWell.geometry = wellGeom.clone();
+        // position cylinders so bottom is at yCenter - state.H_seam/2
+        injWell.position.set(-state.spacing/2, yCenter - state.H_seam/2 + wellLength/2, 0);
+        prodWell.position.set(state.spacing/2, yCenter - state.H_seam/2 + wellLength/2, 0);
+
+        // update surface vertices
+        const positions = surface.geometry.attributes.position.array;
+        for (let i = 0; i < positions.length; i += 3) {{
+            const x = positions[i];
+            const z = positions[i + 2];
+            const dist = Math.sqrt(Math.pow(x - calc.shift, 2) + Math.pow(z, 2));
+            const s = calc.Smax * 80 * Math.exp(-(dist * dist) / (2 * Math.pow(calc.influenceR, 2)));
+            positions[i + 1] = -s; // move down
         }}
         surface.geometry.attributes.position.needsUpdate = true;
-        pointLight.position.set(0, yCenter + 20, 0);
+        surface.geometry.computeVertexNormals(); // for proper lighting
+
+        // update point light above surface center
+        pointLight.position.set(calc.shift, 80, 0);
     }}
-    window.addEventListener('resize', () => {{
-        camera.aspect = window.innerWidth / window.innerHeight;
-        camera.updateProjectionMatrix();
-        renderer.setSize(window.innerWidth, window.innerHeight);
-    }});
+
+    // slider event handlers
+    function updateDip(val) {{ state.dip = parseInt(val); update(); }}
+    function updateTemp(val) {{ state.T = parseInt(val); update(); }}
+    function updateDepth(val) {{ state.depth = parseInt(val); update(); }}
+
+    // initial update
+    update();
+
+    // animate loop
     function animate() {{
         requestAnimationFrame(animate);
         controls.update();
-        const current_time = Date.now() * 0.002;
-        cavityMat.emissiveIntensity = 1.5 + Math.sin(current_time) * 0.5;
+        // dynamic cavity glow based on temperature
+        const tempNorm = (state.T - 300) / 900; // 0..1
+        cavityMat.emissiveIntensity = 1.2 + tempNorm * 1.5 + Math.sin(Date.now()*0.003) * 0.3;
         renderer.render(scene, camera);
     }}
-    update();
     animate();
+
+    // resize
+    window.addEventListener('resize', () => {{
+        camera.aspect = container.clientWidth / container.clientHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(container.clientWidth, container.clientHeight);
+    }});
     </script>
     </body>
     </html>
-    """, height=650)
+    """
+
+    st.components.v1.html(html_3d, height=700)
 
 # Monte Carlo Noaniqlik tahlili
 with st.expander("🎲 Monte Carlo Noaniqlik Tahlili"):
