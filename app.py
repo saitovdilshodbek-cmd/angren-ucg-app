@@ -860,6 +860,13 @@ H_seam = layers_data[-1]['thickness']
 source_z = total_depth - H_seam / 2
 
 # --------------------------------------------
+# QUDUQ MASOFASI SLIDERI – AVVALROQ
+# --------------------------------------------
+st.sidebar.markdown("---")
+st.sidebar.subheader(t('well_config'))
+well_distance = st.sidebar.slider(t('well_distance'), 50.0, 500.0, 200.0, 10.0, key="well_dist_slider")
+
+# --------------------------------------------
 # ASOSIY FIZIK MAYDONLARNI HISOBLASH
 # --------------------------------------------
 grid_shape = (80, 100)
@@ -968,7 +975,7 @@ sub_p = subsidence_raw * void_factor + 0.08 * subs_grad
 horizontal_disp_cm = -np.gradient(sub_p, dx_val) * 100
 
 # --------------------------------------------
-# USTUN (SELEK) OPTIMIZATSIYASI (tuzatilgan)
+# USTUN (SELEK) OPTIMIZATSIYASI (well_distance ishlatiladi)
 # --------------------------------------------
 idx_closest = np.abs(z_axis - source_z).argmin()
 avg_t_p = np.mean(temp_2d[idx_closest, :])
@@ -1001,6 +1008,11 @@ pillar_strength = p_strength
 y_zone = max(y_zone_calc, 1.5)
 
 analytical_width = rec_width
+# cavity_width_global endi hisoblanadi
+cavity_width_global = well_distance - rec_width
+if cavity_width_global < 1.0:
+    st.warning(t('warning_cavity_width'))
+    cavity_width_global = 1.0
 
 st.info(t('pin_approx'))
 
@@ -1050,14 +1062,6 @@ with c1:
         fig_layers.add_trace(go.Bar(x=['Kesim'], y=[lyr['thickness']], name=lyr['name'], marker_color=lyr['color'], width=0.4))
     st.plotly_chart(fig_layers.update_layout(barmode='stack', template="plotly_dark", yaxis=dict(autorange='reversed'), height=450, showlegend=False), use_container_width=True)
 
-st.sidebar.markdown("---")
-st.sidebar.subheader(t('well_config'))
-well_distance = st.sidebar.slider(t('well_distance'), 50.0, 500.0, 200.0, 10.0, key="well_dist_slider")
-cavity_width_global = well_distance - rec_width
-if cavity_width_global < 1.0:
-    st.warning(t('warning_cavity_width'))
-    cavity_width_global = 1.0
-
 CONFINEMENT = PARAMS["CONFINEMENT"]
 RELAX = PARAMS["RELAX"]
 layer_bounds_adv = [(l['z_start'], l['z_start'] + l['thickness'], l) for l in layers_data]
@@ -1069,7 +1073,6 @@ sigma_v_coal = sigma_v_coal / 1e6
 Hc = H_seam * np.sqrt(sigma_v_coal / (layers_data[-1]['ucs'] + EPS))
 Hc = np.clip(Hc, H_seam, H_seam * 4)
 
-# Tuzatma #18-20: FOS xaritasi
 def compute_advanced_fos(grid_x, grid_z, active_wells, well_x, source_z, h_seam, cavity_width,
                          temp_field, sigma_v_field, layers_data, layer_bounds,
                          E, alpha, nu, K0, Hc, sigma_v_coal_MPa, ucs_coal_MPa):
@@ -1354,7 +1357,7 @@ risk_prob = risk_flat[mask_risk] / (np.sum(risk_flat[mask_risk]) + EPS)
 entropy = -np.sum(risk_prob * np.log(risk_prob + EPS))
 st.metric(t('system_entropy'), f"{entropy:.3f}")
 
-# Phase-field demo (o'zgarishsiz)
+# Phase-field demo
 with st.expander("🪨 Phase-Field Fracture Damage Evolution (Patent Model)"):
     st.markdown(t('phase_field_info'))
     def laplacian_neumann(field, dx, dz):
@@ -1491,7 +1494,7 @@ if PYVISTA_AVAILABLE:
             interp_temp = RegularGridInterpolator((z_axis, x_axis), temp_2d)
             # Tuzatma: tartib (z,x) -> (x,z) mosligi
             pts = np.column_stack([Z.flatten(), X.flatten()])
-            T_vol = interp_temp(pts).reshape(nx, ny, nz, order='F')  # Fortran tartibida
+            T_vol = interp_temp(pts).reshape(nx, ny, nz, order='F')
             grid_pv = pv.StructuredGrid(X, Y, Z)
             grid_pv.point_data["temperature"] = T_vol.flatten(order='F')
             plotter = pv.Plotter()
@@ -1631,7 +1634,7 @@ mk3.metric(t('max_subsidence_live'), f"{s_max_3d*100:.1f} cm")
 mk4.metric(t('process_stage'), t('stage_active') if time_h<100 else t('stage_cooling'))
 st.markdown("---")
 
-# FOS Trend va bashorat (o'zgarishsiz)
+# FOS Trend va bashorat
 with st.expander("📈 FOS Vaqt Bashorati (Trend)"):
     time_points = np.arange(1, time_h+1, max(1, time_h//20))
     if len(time_points) < 2:
@@ -1674,7 +1677,7 @@ with st.expander("📈 FOS Vaqt Bashorati (Trend)"):
         tc3.metric("Hozirgi FOS", f"{fos_timeline[-1]:.3f}")
         st.info(critical_info)
 
-# 3D CRIP-UCG model (o'zgarishsiz)
+# 3D CRIP-UCG model
 with st.expander("🌍 3D Litologik Kesim (CRIP-UCG Model)"):
     st.components.v1.html(f"""
     <!DOCTYPE html>
@@ -1980,7 +1983,7 @@ with st.expander("🧪 Experimental Validation"):
         except Exception as e:
             st.error(f"Xatolik: {e}")
 
-# ISO 9001 Hisobot (qisman qisqartirilgan holda to'liq funksiya)
+# ISO 9001 Hisobot generatori
 def generate_full_iso_report(obj_name: str, lang: str, layers_data: list,
                              T_source_max: float, burn_duration: float,
                              pillar_strength: float, analytical_width: float,
@@ -2107,7 +2110,6 @@ def generate_full_iso_report(obj_name: str, lang: str, layers_data: list,
     final_run = res_p.add_run(f"{t_texts['conclusion_title']}\n{conclusion_text}")
     final_run.bold = True
     final_run.font.color.rgb = color
-    # Ilova (Appendix) o‘zgarishsiz, faqat ishlatilgan formulalar
     doc.add_page_break()
     doc.add_heading("APPENDIX: Mathematical Models Used", level=2)
     formulas = [
@@ -2168,7 +2170,7 @@ with st.expander("📄 ISO 9001:2015 Standart Hujjat (.docx)"):
             except Exception as e:
                 st.error(f"Hisobot yaratishda xatolik: {e}")
 
-# LIVE 3D MONITORING VA AI TABS (to‘liq)
+# LIVE 3D MONITORING VA AI TABS
 st.header("🔄 Live 3D Monitoring (Real-time)")
 tab_live, tab_ai_orig, tab_advanced = st.tabs([t('live_monitoring_tab'), t('ai_monitor_title'), t('advanced_analysis')])
 
