@@ -228,6 +228,7 @@ TRANSLATIONS = {
         'tensile_hb': "HB-based (auto)",
         'tensile_manual': "Manual",
         'timeline_table': """
+        'dip_angle_label': "Qatlam qiyaligi (Dip - °)",
 | Bosqich | Vaqti | Tavsif |
 |---------|-------|--------|
 | **Rejalashtirish** | 2026-04-01 | Validatsiya, xavfsiz bo'lish funksiyalarini ishlab chiqish |
@@ -362,6 +363,7 @@ TRANSLATIONS = {
         'tensile_hb': "HB-based (auto)",
         'tensile_manual': "Manual",
         'timeline_table': """
+        'dip_angle_label': "Dip angle (°)",
 | Stage | Time | Description |
 |-------|------|-------------|
 | **Planning** | 2026-04-01 | Validation, develop safety functions |
@@ -496,6 +498,7 @@ TRANSLATIONS = {
         'tensile_hb': "На основе HB (авто)",
         'tensile_manual': "Ручной ввод",
         'timeline_table': """
+        'dip_angle_label': "Угол падения пласта (°)",
 | Этап | Время | Описание |
 |-------|------|-------------|
 | **Планирование** | 2026-04-01 | Валидация, разработка функций безопасности |
@@ -1036,6 +1039,12 @@ with c1:
 st.sidebar.markdown("---")
 st.sidebar.subheader(t('well_config'))
 well_distance = st.sidebar.slider(t('well_distance'), 50.0, 500.0, 200.0, 10.0, key="well_dist_slider")
+# YANGI: Qatlam qiyaligi
+dip_angle = st.sidebar.slider(
+    t('dip_angle_label'),          # yangi tarjima kaliti
+    0, 90, 0, 5,
+    key="dip_angle_slider"
+)
 cavity_width_global = well_distance - rec_width
 if cavity_width_global < 1.0:
     st.warning(t('warning_cavity_width'))
