@@ -1666,6 +1666,7 @@ with st.expander("📈 FOS Vaqt Bashorati (Trend)"):
         st.info(critical_info)
 
 # 3D CRIP-UCG Model
+
 with st.expander("🌍 3D Litologik Kesim (CRIP-UCG Model)"):
     st.components.v1.html(f"""
     <!DOCTYPE html>
@@ -1740,6 +1741,7 @@ with st.expander("🌍 3D Litologik Kesim (CRIP-UCG Model)"):
     </div>
     <div id="container" class="w-full h-screen"></div>
     <script>
+    // ----------- STREAMLIT PARAMETRLARI -----------
     let state = {{
         dip: 0,
         spacing: {well_distance},
@@ -1748,6 +1750,7 @@ with st.expander("🌍 3D Litologik Kesim (CRIP-UCG Model)"):
         R: {cavity_radius},
         GSI: {layers_data[-1]['gsi']}
     }};
+    // -----------------------------------------------
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x040508);
     const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 10000);
