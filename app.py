@@ -1668,7 +1668,7 @@ with st.expander("📈 FOS Vaqt Bashorati (Trend)"):
 # 3D CRIP-UCG Model
 
 with st.expander("🌍 3D Litologik Kesim (CRIP-UCG Model)", expanded=False):
-    # Python tomonidan kerakli qiymatlarni uzatamiz
+    # Python qiymatlar
     dip_default = 0
     well_dist = well_distance
     T_max = T_source_max
@@ -1676,25 +1676,31 @@ with st.expander("🌍 3D Litologik Kesim (CRIP-UCG Model)", expanded=False):
     cav_r = cavity_radius
     gsi_last = layers_data[-1]['gsi']
     H_seam_val = H_seam
-    # Bosqichga oid ma'lumotlar: har bir bosqichda qaysi well indekslari faol
-    # well_x_pos ro'yxati: [-well_dist, 0, well_dist] (chap, markaz, o'ng)
-    stages_active = {
-        1: [0],         # faqat chap quduq
-        2: [0, 2],      # chap va o'ng
-        3: [0, 1, 2]    # hammasi
-    }
 
     html_3d = f"""
     <!DOCTYPE html>
-    <html lang="uz">
+    <html lang="uz" style="height:100%;">
     <head>
         <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>CRIP-UCG 3D Stage Model</title>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
         <style>
-            body {{ margin:0; overflow:hidden; font-family: sans-serif; }}
-            #container {{ width:100%; height:100%; }}
+            html, body {{
+                margin: 0;
+                padding: 0;
+                width: 100%;
+                height: 100%;
+                overflow: hidden;
+                font-family: sans-serif;
+                background: #080a12;
+            }}
+            #container {{
+                width: 100%;
+                height: 100%;
+                display: block;
+            }}
             .ui-panel {{
                 position: absolute; top:20px; left:20px; z-index:100; width:400px; pointer-events: none;
             }}
@@ -1727,304 +1733,286 @@ with st.expander("🌍 3D Litologik Kesim (CRIP-UCG Model)", expanded=False):
         </style>
     </head>
     <body>
-    <div class="ui-panel">
-        <div class="glass">
-            <div style="margin-bottom:18px;">
-                <h1 style="font-size:22px; font-weight:bold; margin:0;">CRIP-UCG Modeli</h1>
-                <p style="font-size:10px; color:#f59e0b; margin-top:4px;">Bosqichlar & Gaz oqimi 3D</p>
-            </div>
-            <div class="stage-buttons">
-                <button id="stage1-btn" class="stage-btn active" onclick="setStage(1)">Bosqich 1</button>
-                <button id="stage2-btn" class="stage-btn" onclick="setStage(2)">Bosqich 2</button>
-                <button id="stage3-btn" class="stage-btn" onclick="setStage(3)">Bosqich 3</button>
-            </div>
-            <div class="slider-group">
-                <div class="label-row"><span>Qatlam Qiyaligi (°)</span><span id="dip-val" class="val-text">0°</span></div>
-                <input type="range" id="dip-slider" min="0" max="60" value="{dip_default}" step="1" oninput="updateDip(this.value)">
-            </div>
-            <div class="slider-group">
-                <div class="label-row"><span>Harorat (°C)</span><span id="temp-val" class="val-text">{T_max}°C</span></div>
-                <input type="range" id="temp-slider" min="300" max="1300" value="{T_max}" step="50" oninput="updateTemp(this.value)">
-            </div>
-            <div class="status-card">
-                <div style="font-weight:bold; color:#f59e0b; margin-bottom:4px;">Faol quduqlar:</div>
-                <div id="active-wells-text">Chap (inj)</div>
-                <div style="margin-top:6px; font-size:10px; color:#94a3b8;" id="gas-info">Gaz oqimi: 0.5 m/s</div>
-            </div>
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:15px;">
-                <div style="background: rgba(99,102,241,0.1); padding:10px; border-radius:14px; text-align:center;">
-                    <div style="font-size:8px; text-transform:uppercase; letter-spacing:1px; color:#a5b4fc;">Siljish</div>
-                    <div id="shift-val" style="font-size:18px; font-weight:bold; color:#818cf8;">-</div>
+        <div class="ui-panel">
+            <div class="glass">
+                <div style="margin-bottom:18px;">
+                    <h1 style="font-size:22px; font-weight:bold; margin:0;">CRIP-UCG Modeli</h1>
+                    <p style="font-size:10px; color:#f59e0b; margin-top:4px;">Bosqichlar & Gaz oqimi 3D</p>
                 </div>
-                <div style="background: rgba(244,63,94,0.1); padding:10px; border-radius:14px; text-align:center;">
-                    <div style="font-size:8px; text-transform:uppercase; letter-spacing:1px; color:#fda4af;">Maks. Cho'kish</div>
-                    <div id="subs-val" style="font-size:18px; font-weight:bold; color:#f43f5e;">-</div>
+                <div class="stage-buttons">
+                    <button id="stage1-btn" class="stage-btn active" onclick="setStage(1)">Bosqich 1</button>
+                    <button id="stage2-btn" class="stage-btn" onclick="setStage(2)">Bosqich 2</button>
+                    <button id="stage3-btn" class="stage-btn" onclick="setStage(3)">Bosqich 3</button>
+                </div>
+                <div class="slider-group">
+                    <div class="label-row"><span>Qatlam Qiyaligi (°)</span><span id="dip-val" class="val-text">0°</span></div>
+                    <input type="range" id="dip-slider" min="0" max="60" value="{dip_default}" step="1" oninput="updateDip(this.value)">
+                </div>
+                <div class="slider-group">
+                    <div class="label-row"><span>Harorat (°C)</span><span id="temp-val" class="val-text">{T_max}°C</span></div>
+                    <input type="range" id="temp-slider" min="300" max="1300" value="{T_max}" step="50" oninput="updateTemp(this.value)">
+                </div>
+                <div class="status-card">
+                    <div style="font-weight:bold; color:#f59e0b; margin-bottom:4px;">Faol quduqlar:</div>
+                    <div id="active-wells-text">Chap (inj)</div>
+                    <div style="margin-top:6px; font-size:10px; color:#94a3b8;" id="gas-info">Gaz oqimi: 0.5 m/s</div>
+                </div>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:15px;">
+                    <div style="background: rgba(99,102,241,0.1); padding:10px; border-radius:14px; text-align:center;">
+                        <div style="font-size:8px; text-transform:uppercase; letter-spacing:1px; color:#a5b4fc;">Siljish</div>
+                        <div id="shift-val" style="font-size:18px; font-weight:bold; color:#818cf8;">-</div>
+                    </div>
+                    <div style="background: rgba(244,63,94,0.1); padding:10px; border-radius:14px; text-align:center;">
+                        <div style="font-size:8px; text-transform:uppercase; letter-spacing:1px; color:#fda4af;">Maks. Cho'kish</div>
+                        <div id="subs-val" style="font-size:18px; font-weight:bold; color:#f43f5e;">-</div>
+                    </div>
                 </div>
             </div>
         </div>
-    </div>
-    <div class="legend">
-        <div style="display:flex; align-items:center; margin-bottom:6px;"><span class="color-dot" style="background:#3b82f6;"></span> Inyeksion (Havo/O₂)</div>
-        <div style="display:flex; align-items:center; margin-bottom:6px;"><span class="color-dot" style="background:#fbbf24;"></span> Ishlab chiqarish (Gaz)</div>
-        <div style="display:flex; align-items:center; margin-bottom:6px;"><span class="color-dot" style="background:#f97316;"></span> Yonish kanali</div>
-        <div style="display:flex; align-items:center; margin-bottom:6px;"><span class="color-dot" style="background:#10b981;"></span> Gaz oqimi yo'nalishi</div>
-        <div style="display:flex; align-items:center;"><span class="color-dot" style="background:#4f46e5; opacity:0.6;"></span> Ko'mir qatlami</div>
-    </div>
-    <div id="container"></div>
+        <div class="legend">
+            <div style="display:flex; align-items:center; margin-bottom:6px;"><span class="color-dot" style="background:#3b82f6;"></span> Inyeksion (Havo/O₂)</div>
+            <div style="display:flex; align-items:center; margin-bottom:6px;"><span class="color-dot" style="background:#fbbf24;"></span> Ishlab chiqarish (Gaz)</div>
+            <div style="display:flex; align-items:center; margin-bottom:6px;"><span class="color-dot" style="background:#f97316;"></span> Yonish kanali</div>
+            <div style="display:flex; align-items:center; margin-bottom:6px;"><span class="color-dot" style="background:#10b981;"></span> Gaz oqimi yo'nalishi</div>
+            <div style="display:flex; align-items:center;"><span class="color-dot" style="background:#4f46e5; opacity:0.6;"></span> Ko'mir qatlami</div>
+        </div>
+        <div id="container"></div>
 
-    <script>
-    // ----- Scene Initialization -----
-    const container = document.getElementById('container');
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x080a12);
-    const camera = new THREE.PerspectiveCamera(45, container.clientWidth/container.clientHeight, 1, 6000);
-    camera.position.set(300, 220, 450);
-    const renderer = new THREE.WebGLRenderer({{ antialias: true }});
-    renderer.setSize(container.clientWidth, container.clientHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    container.appendChild(renderer.domElement);
-    const controls = new THREE.OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.08;
+        <script>
+            // ----- Scene Initialization -----
+            const container = document.getElementById('container');
+            // Ensure container has dimensions (fallback if still zero)
+            const W = container.clientWidth || 800;
+            const H = container.clientHeight || 600;
 
-    // ----- Lights -----
-    scene.add(new THREE.AmbientLight(0xffffff, 0.45));
-    const dirLight = new THREE.DirectionalLight(0xffeedd, 0.8);
-    dirLight.position.set(200, 300, 200);
-    scene.add(dirLight);
-    const pointLight = new THREE.PointLight(0xff6600, 1.5, 2000);
-    pointLight.position.set(0, 60, 0);
-    scene.add(pointLight);
+            const scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x080a12);
+            const camera = new THREE.PerspectiveCamera(45, W / H, 1, 6000);
+            camera.position.set(300, 220, 450);
+            const renderer = new THREE.WebGLRenderer({{ antialias: true }});
+            renderer.setSize(W, H);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            container.appendChild(renderer.domElement);
 
-    // ----- Global State -----
-    let state = {{
-        stage: 1,
-        activeWells: [0],   // indekslar: 0 - chap, 1 - markaz, 2 - o'ng
-        wellPositions: [-{well_dist}, 0, {well_dist}],
-        dip: {dip_default},
-        T: {T_max},
-        depth: {total_d},
-        R: {cav_r},
-        GSI: {gsi_last},
-        H_seam: {H_seam_val}
-    }};
+            const controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.08;
 
-    // ----- Permanent Objects -----
-    // Surface
-    const surfSize = 800;
-    const surfRes = 80;
-    const surfGeom = new THREE.PlaneGeometry(surfSize, surfSize, surfRes, surfRes);
-    surfGeom.rotateX(-Math.PI/2);
-    const surfMat = new THREE.MeshStandardMaterial({{ color: 0x2a3b4c, transparent:true, opacity:0.55, roughness:0.8, side:THREE.DoubleSide }});
-    const surface = new THREE.Mesh(surfGeom, surfMat);
-    scene.add(surface);
+            // ----- Lights -----
+            scene.add(new THREE.AmbientLight(0xffffff, 0.45));
+            const dirLight = new THREE.DirectionalLight(0xffeedd, 0.8);
+            dirLight.position.set(200, 300, 200);
+            scene.add(dirLight);
+            const pointLight = new THREE.PointLight(0xff6600, 1.5, 2000);
+            pointLight.position.set(0, 60, 0);
+            scene.add(pointLight);
 
-    // Coal seam
-    const seamGeom = new THREE.BoxGeometry(surfSize, state.H_seam, 200);
-    const seamMat = new THREE.MeshStandardMaterial({{ color: 0x333333, roughness:0.7, emissive:0x111111, emissiveIntensity:0.25 }});
-    const coalSeam = new THREE.Mesh(seamGeom, seamMat);
-    scene.add(coalSeam);
+            // ----- Global State -----
+            let state = {{
+                stage: 1,
+                activeWells: [0],
+                wellPositions: [-{well_dist}, 0, {well_dist}],
+                dip: {dip_default},
+                T: {T_max},
+                depth: {total_d},
+                R: {cav_r},
+                GSI: {gsi_last},
+                H_seam: {H_seam_val}
+            }};
 
-    // Wells (persistent, we will toggle emissive)
-    function createBorehole(color) {{
-        const geom = new THREE.CylinderGeometry(1.2, 1.2, 400, 8);
-        const mat = new THREE.MeshStandardMaterial({{ color: color, roughness:0.4, emissive: color, emissiveIntensity:0.15 }});
-        return new THREE.Mesh(geom, mat);
-    }}
-    const wells = [
-        createBorehole(0x3b82f6), // inj chap
-        createBorehole(0x3b82f6), // inj markaz
-        createBorehole(0x3b82f6)  // inj o'ng (ammo faqat ishlab chiqarish rolida)
-    ];
-    // O'ng quduqni ishlab chiqarish rangi bilan belgilaymiz (sariq)
-    wells[2].material.color.set(0xfbbf24);
-    wells[2].material.emissive.set(0xfbbf24);
-    wells.forEach(w => scene.add(w));
+            // ----- Permanent Objects -----
+            const surfSize = 800;
+            const surfRes = 80;
+            const surfGeom = new THREE.PlaneGeometry(surfSize, surfSize, surfRes, surfRes);
+            surfGeom.rotateX(-Math.PI/2);
+            const surfMat = new THREE.MeshStandardMaterial({{ color: 0x2a3b4c, transparent:true, opacity:0.55, roughness:0.8, side:THREE.DoubleSide }});
+            const surface = new THREE.Mesh(surfGeom, surfMat);
+            scene.add(surface);
 
-    // Cavity groups (max 3)
-    const cavityGroups = [new THREE.Group(), new THREE.Group(), new THREE.Group()];
-    cavityGroups.forEach(g => scene.add(g));
-    const cavityGeom = new THREE.SphereGeometry(1, 32, 32);
-    function createCavityMesh() {{
-        const mat = new THREE.MeshStandardMaterial({{ color: 0xff4400, emissive:0xff2200, emissiveIntensity:2.2, roughness:0.25 }});
-        return new THREE.Mesh(cavityGeom, mat);
-    }}
-    const cavityMeshes = [createCavityMesh(), createCavityMesh(), createCavityMesh()];
-    cavityGroups.forEach((g,i) => g.add(cavityMeshes[i]));
+            const seamGeom = new THREE.BoxGeometry(surfSize, state.H_seam, 200);
+            const seamMat = new THREE.MeshStandardMaterial({{ color: 0x333333, roughness:0.7, emissive:0x111111, emissiveIntensity:0.25 }});
+            const coalSeam = new THREE.Mesh(seamGeom, seamMat);
+            scene.add(coalSeam);
 
-    // Group for flow arrows
-    const flowGroup = new THREE.Group();
-    scene.add(flowGroup);
-
-    // ----- Geomechanics Calculation -----
-    function calculateGeomechanics() {{
-        const angleRad = state.dip * Math.PI/180;
-        const shift = state.depth * Math.tan(angleRad) * 0.45;
-        const rockDeg = Math.max(0.05, 1 - (state.T/1500));
-        const cavityVol = (Math.PI * Math.pow(state.R,2) * state.spacing) * 0.15;
-        const influenceR = state.depth * Math.tan((45 - state.GSI/10)*Math.PI/180);
-        const Smax = (cavityVol * rockDeg) / (influenceR*1.8 + 1);
-        return {{ shift, Smax, influenceR, angleRad, rockDeg }};
-    }}
-
-    // ----- Update Scene Based on State -----
-    function updateScene() {{
-        // Update UI
-        document.querySelectorAll('.stage-btn').forEach(b => b.classList.remove('active'));
-        document.getElementById(`stage${{state.stage}}-btn`).classList.add('active');
-        document.getElementById('dip-val').innerText = state.dip + '°';
-        document.getElementById('temp-val').innerText = state.T + '°C';
-
-        // Active wells description
-        const activeNames = state.activeWells.map(i => i===0?'Chap':i===1?'Markaz':'O‘ng');
-        document.getElementById('active-wells-text').innerHTML = '<b>Faol:</b> ' + activeNames.join(', ');
-        document.getElementById('gas-info').innerText = 'Gaz oqimi: ' + (0.3 + state.T/5000).toFixed(1) + ' m/s';
-
-        const calc = calculateGeomechanics();
-        document.getElementById('shift-val').innerText = calc.shift.toFixed(1)+' m';
-        document.getElementById('subs-val').innerText = (calc.Smax*100).toFixed(1)+' cm';
-
-        const visualDepth = state.depth / 3.5;
-        const yCenter = -visualDepth;
-
-        // Coal seam
-        coalSeam.position.y = yCenter;
-        coalSeam.rotation.z = -calc.angleRad;
-
-        // Wells positioning (all wells extend from surface to below seam)
-        const wellLength = visualDepth + 60;
-        state.wellPositions.forEach((xPos, idx) => {{
-            const well = wells[idx];
-            well.geometry.dispose();
-            well.geometry = new THREE.CylinderGeometry(1.2, 1.2, wellLength, 8);
-            well.position.set(xPos, yCenter - state.H_seam/2 + wellLength/2, 0);
-            // Highlight if active
-            if (state.activeWells.includes(idx)) {{
-                well.material.emissiveIntensity = 0.9;
-                well.material.emissive.set(idx===2?0xfbbf24:0x3b82f6); // production wells yellow, inj blue
-            }} else {{
-                well.material.emissiveIntensity = 0.05;
+            function createBorehole(color) {{
+                const geom = new THREE.CylinderGeometry(1.2, 1.2, 400, 8);
+                const mat = new THREE.MeshStandardMaterial({{ color: color, roughness:0.4, emissive: color, emissiveIntensity:0.15 }});
+                return new THREE.Mesh(geom, mat);
             }}
-        }});
+            const wells = [
+                createBorehole(0x3b82f6),
+                createBorehole(0x3b82f6),
+                createBorehole(0x3b82f6)
+            ];
+            wells[2].material.color.set(0xfbbf24);
+            wells[2].material.emissive.set(0xfbbf24);
+            wells.forEach(w => scene.add(w));
 
-        // Cavity groups: show only for active wells
-        cavityGroups.forEach((g, i) => {{
-            g.visible = state.activeWells.includes(i);
-            if (g.visible) {{
-                const xPos = state.wellPositions[i];
-                g.position.set(xPos, yCenter, 0);
-                g.rotation.z = -calc.angleRad;
-                cavityMeshes[i].scale.set(state.R*0.8, state.R, state.R);
+            const cavityGroups = [new THREE.Group(), new THREE.Group(), new THREE.Group()];
+            cavityGroups.forEach(g => scene.add(g));
+            const cavityGeom = new THREE.SphereGeometry(1, 32, 32);
+            function createCavityMesh() {{
+                const mat = new THREE.MeshStandardMaterial({{ color: 0xff4400, emissive:0xff2200, emissiveIntensity:2.2, roughness:0.25 }});
+                return new THREE.Mesh(cavityGeom, mat);
             }}
-        }});
+            const cavityMeshes = [createCavityMesh(), createCavityMesh(), createCavityMesh()];
+            cavityGroups.forEach((g,i) => g.add(cavityMeshes[i]));
 
-        // Gas flow arrows
-        flowGroup.clear();
-        const arrowColor = 0x10b981;
-        const arrowLengthBase = 15;
-        const headLength = 5;
-        const headWidth = 3;
-        // For each active injection well (index 0 or 1 if active), draw arrows to active production wells
-        const activeSet = new Set(state.activeWells);
-        // Injection wells are those with index 0 and 1 (if they are active). Production: index 2 and possibly index 1 when stage 3?
-        // We'll define pairs: 
-        // Stage 1: inj 0 -> prod 2? Actually stage 1 only has left well (0) burning, no production well yet. 
-        // Stage 2: left and right; left injects, right produces.
-        // Stage 3: left and center inject, right produces (or center also produces). 
-        const pairs = [];
-        if (state.stage === 1) {{
-            // only left well active, no gas flow yet? Let's show gas flowing towards unburned right? Realistically no.
-        }} else if (state.stage === 2) {{
-            pairs.push({{ from: 0, to: 2 }});
-        }} else if (state.stage === 3) {{
-            pairs.push({{ from: 0, to: 2 }});
-            pairs.push({{ from: 1, to: 2 }});
-        }}
-        // Add arrows for each pair
-        const arrowGeom = new THREE.CylinderGeometry(0.5, 0.5, 1, 6);
-        pairs.forEach(pair => {{
-            const fromX = state.wellPositions[pair.from];
-            const toX = state.wellPositions[pair.to];
-            const start = new THREE.Vector3(fromX, yCenter, 0);
-            const end = new THREE.Vector3(toX, yCenter, 0);
-            const dir = new THREE.Vector3().subVectors(end, start).normalize();
-            const length = start.distanceTo(end);
-            // Place multiple arrows along path
-            const numArrows = Math.floor(length / 20);
-            for (let i = 0; i < numArrows; i++) {{
-                const t = (i + 0.5) / numArrows;
-                const pos = new THREE.Vector3().lerpVectors(start, end, t);
-                const arrow = new THREE.ArrowHelper(dir, pos, arrowLengthBase, arrowColor, headLength, headWidth);
-                flowGroup.add(arrow);
+            const flowGroup = new THREE.Group();
+            scene.add(flowGroup);
+
+            // ----- Geomechanics Calculation -----
+            function calculateGeomechanics() {{
+                const angleRad = state.dip * Math.PI/180;
+                const shift = state.depth * Math.tan(angleRad) * 0.45;
+                const rockDeg = Math.max(0.05, 1 - (state.T/1500));
+                const cavityVol = (Math.PI * Math.pow(state.R,2) * state.spacing) * 0.15;
+                const influenceR = state.depth * Math.tan((45 - state.GSI/10)*Math.PI/180);
+                const Smax = (cavityVol * rockDeg) / (influenceR*1.8 + 1);
+                return {{ shift, Smax, influenceR, angleRad, rockDeg }};
             }}
-            // Also add streamline curve
-            const curvePoints = [];
-            for (let i = 0; i <= 20; i++) {{
-                const t = i/20;
-                const pt = new THREE.Vector3().lerpVectors(start, end, t);
-                pt.y += Math.sin(t*Math.PI)*2; // slight arc
-                curvePoints.push(pt);
+
+            // ----- Update Scene -----
+            function updateScene() {{
+                // UI
+                document.querySelectorAll('.stage-btn').forEach(b => b.classList.remove('active'));
+                document.getElementById(`stage${{state.stage}}-btn`).classList.add('active');
+                document.getElementById('dip-val').innerText = state.dip + '°';
+                document.getElementById('temp-val').innerText = state.T + '°C';
+
+                const activeNames = state.activeWells.map(i => ['Chap','Markaz','O‘ng'][i]);
+                document.getElementById('active-wells-text').innerHTML = '<b>Faol:</b> ' + activeNames.join(', ');
+                document.getElementById('gas-info').innerText = 'Gaz oqimi: ' + (0.3 + state.T/5000).toFixed(1) + ' m/s';
+
+                const calc = calculateGeomechanics();
+                document.getElementById('shift-val').innerText = calc.shift.toFixed(1)+' m';
+                document.getElementById('subs-val').innerText = (calc.Smax*100).toFixed(1)+' cm';
+
+                const visualDepth = state.depth / 3.5;
+                const yCenter = -visualDepth;
+                coalSeam.position.y = yCenter;
+                coalSeam.rotation.z = -calc.angleRad;
+
+                // Wells
+                const wellLength = visualDepth + 60;
+                state.wellPositions.forEach((xPos, idx) => {{
+                    const well = wells[idx];
+                    well.geometry.dispose();
+                    well.geometry = new THREE.CylinderGeometry(1.2, 1.2, wellLength, 8);
+                    well.position.set(xPos, yCenter - state.H_seam/2 + wellLength/2, 0);
+                    if (state.activeWells.includes(idx)) {{
+                        well.material.emissiveIntensity = 0.9;
+                        well.material.emissive.set(idx===2?0xfbbf24:0x3b82f6);
+                    }} else {{
+                        well.material.emissiveIntensity = 0.05;
+                    }}
+                }});
+
+                // Cavities
+                cavityGroups.forEach((g, i) => {{
+                    g.visible = state.activeWells.includes(i);
+                    if (g.visible) {{
+                        const xPos = state.wellPositions[i];
+                        g.position.set(xPos, yCenter, 0);
+                        g.rotation.z = -calc.angleRad;
+                        cavityMeshes[i].scale.set(state.R*0.8, state.R, state.R);
+                    }}
+                }});
+
+                // Flow arrows
+                flowGroup.clear();
+                const arrowColor = 0x10b981;
+                const arrowLengthBase = 15;
+                const headLength = 5;
+                const headWidth = 3;
+                const pairs = [];
+                if (state.stage === 2) {{
+                    pairs.push({{ from: 0, to: 2 }});
+                }} else if (state.stage === 3) {{
+                    pairs.push({{ from: 0, to: 2 }});
+                    pairs.push({{ from: 1, to: 2 }});
+                }}
+                pairs.forEach(pair => {{
+                    const fromX = state.wellPositions[pair.from];
+                    const toX = state.wellPositions[pair.to];
+                    const start = new THREE.Vector3(fromX, yCenter, 0);
+                    const end = new THREE.Vector3(toX, yCenter, 0);
+                    const dir = new THREE.Vector3().subVectors(end, start).normalize();
+                    const length = start.distanceTo(end);
+                    const numArrows = Math.floor(length / 20);
+                    for (let i = 0; i < numArrows; i++) {{
+                        const t = (i + 0.5) / numArrows;
+                        const pos = new THREE.Vector3().lerpVectors(start, end, t);
+                        const arrow = new THREE.ArrowHelper(dir, pos, arrowLengthBase, arrowColor, headLength, headWidth);
+                        flowGroup.add(arrow);
+                    }}
+                    const curvePoints = [];
+                    for (let i = 0; i <= 20; i++) {{
+                        const t = i/20;
+                        const pt = new THREE.Vector3().lerpVectors(start, end, t);
+                        pt.y += Math.sin(t*Math.PI)*2;
+                        curvePoints.push(pt);
+                    }}
+                    const curveGeom = new THREE.BufferGeometry().setFromPoints(curvePoints);
+                    const curveLine = new THREE.Line(curveGeom, new THREE.LineBasicMaterial({{ color: 0x10b981, opacity:0.5, transparent:true }}));
+                    flowGroup.add(curveLine);
+                }});
+
+                // Surface deformation
+                const positions = surface.geometry.attributes.position.array;
+                for (let i = 0; i < positions.length; i += 3) {{
+                    const x = positions[i];
+                    const z = positions[i + 2];
+                    const dist = Math.sqrt(Math.pow(x - calc.shift, 2) + Math.pow(z, 2));
+                    const s = calc.Smax * 80 * Math.exp(-(dist*dist)/(2*Math.pow(calc.influenceR,2)));
+                    positions[i + 1] = -s;
+                }}
+                surface.geometry.attributes.position.needsUpdate = true;
+                surface.geometry.computeVertexNormals();
+
+                pointLight.position.set(calc.shift, 80, 0);
+                controls.target.set(calc.shift, yCenter, 0);
             }}
-            const curveGeom = new THREE.BufferGeometry().setFromPoints(curvePoints);
-            const curveLine = new THREE.Line(curveGeom, new THREE.LineBasicMaterial({{ color: 0x10b981, opacity:0.5, transparent:true }}));
-            flowGroup.add(curveLine);
-        }});
 
-        // Surface deformation
-        const positions = surface.geometry.attributes.position.array;
-        for (let i = 0; i < positions.length; i += 3) {{
-            const x = positions[i];
-            const z = positions[i + 2];
-            const dist = Math.sqrt(Math.pow(x - calc.shift, 2) + Math.pow(z, 2));
-            const s = calc.Smax * 80 * Math.exp(-(dist*dist)/(2*Math.pow(calc.influenceR,2)));
-            positions[i + 1] = -s;
-        }}
-        surface.geometry.attributes.position.needsUpdate = true;
-        surface.geometry.computeVertexNormals();
-
-        // Point light follows subsidence center
-        pointLight.position.set(calc.shift, 80, 0);
-        controls.target.set(calc.shift, yCenter, 0);
-    }}
-
-    // ----- Stage Setter -----
-    function setStage(s) {{
-        state.stage = s;
-        if (s === 1) state.activeWells = [0];
-        else if (s === 2) state.activeWells = [0, 2];
-        else if (s === 3) state.activeWells = [0, 1, 2];
-        updateScene();
-    }}
-
-    // ----- Slider Updates -----
-    function updateDip(val) {{ state.dip = parseInt(val); updateScene(); }}
-    function updateTemp(val) {{ state.T = parseInt(val); updateScene(); }}
-
-    // ----- Animation Loop -----
-    function animate() {{
-        requestAnimationFrame(animate);
-        controls.update();
-        // Pulsating cavities
-        cavityMeshes.forEach((mesh, idx) => {{
-            if (cavityGroups[idx].visible) {{
-                const intensity = 1.5 + 0.4 * Math.sin(Date.now()*0.005 + idx);
-                mesh.material.emissiveIntensity = intensity;
+            function setStage(s) {{
+                state.stage = s;
+                if (s === 1) state.activeWells = [0];
+                else if (s === 2) state.activeWells = [0, 2];
+                else if (s === 3) state.activeWells = [0, 1, 2];
+                updateScene();
             }}
-        }});
-        renderer.render(scene, camera);
-    }}
+            function updateDip(val) {{ state.dip = parseInt(val); updateScene(); }}
+            function updateTemp(val) {{ state.T = parseInt(val); updateScene(); }}
 
-    // Initial
-    updateScene();
-    animate();
+            // Resize handler
+            window.addEventListener('resize', () => {{
+                const w = container.clientWidth;
+                const h = container.clientHeight;
+                if (w === 0 || h === 0) return;
+                camera.aspect = w / h;
+                camera.updateProjectionMatrix();
+                renderer.setSize(w, h);
+            }});
 
-    // Resize
-    window.addEventListener('resize', () => {{
-        camera.aspect = container.clientWidth / container.clientHeight;
-        camera.updateProjectionMatrix();
-        renderer.setSize(container.clientWidth, container.clientHeight);
-    }});
-    </script>
+            // Animation
+            function animate() {{
+                requestAnimationFrame(animate);
+                controls.update();
+                cavityMeshes.forEach((mesh, idx) => {{
+                    if (cavityGroups[idx].visible) {{
+                        mesh.material.emissiveIntensity = 1.5 + 0.4 * Math.sin(Date.now()*0.005 + idx);
+                    }}
+                }});
+                renderer.render(scene, camera);
+            }}
+
+            // Initial
+            updateScene();
+            animate();
+
+            // Trigger resize to ensure correct size after iframe load
+            setTimeout(() => window.dispatchEvent(new Event('resize')), 100);
+        </script>
     </body>
     </html>
     """
