@@ -1743,7 +1743,7 @@ with st.expander("🌍 3D Litologik Kesim (CRIP-UCG Model)"):
     <script>
     // ----------- STREAMLIT PARAMETRLARI -----------
     let state = {{
-        dip: 0,
+        dip: {dip_angle},
         spacing: {well_distance},
         T: {T_source_max},
         depth: {total_depth},
