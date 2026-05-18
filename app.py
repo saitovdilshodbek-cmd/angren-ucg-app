@@ -1666,176 +1666,370 @@ with st.expander("📈 FOS Vaqt Bashorati (Trend)"):
         st.info(critical_info)
 
 # 3D CRIP-UCG Model
-with st.expander("🌍 3D Litologik Kesim (CRIP-UCG Model)"):
-    st.components.v1.html(f"""
+
+with st.expander("🌍 3D Litologik Kesim (CRIP-UCG Model)", expanded=False):
+    # Python tomonidan kerakli qiymatlarni uzatamiz
+    dip_default = 0
+    well_dist = well_distance
+    T_max = T_source_max
+    total_d = total_depth
+    cav_r = cavity_radius
+    gsi_last = layers_data[-1]['gsi']
+    H_seam_val = H_seam
+    # Bosqichga oid ma'lumotlar: har bir bosqichda qaysi well indekslari faol
+    # well_x_pos ro'yxati: [-well_dist, 0, well_dist] (chap, markaz, o'ng)
+    stages_active = {
+        1: [0],         # faqat chap quduq
+        2: [0, 2],      # chap va o'ng
+        3: [0, 1, 2]    # hammasi
+    }
+
+    html_3d = f"""
     <!DOCTYPE html>
     <html lang="uz">
     <head>
         <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>CRIP-UCG Model</title>
-        <script src="https://cdn.tailwindcss.com"></script>
+        <title>CRIP-UCG 3D Stage Model</title>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
-        <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;500;700&display=swap" rel="stylesheet">
         <style>
-            body {{ font-family: 'Space Grotesk', sans-serif; background: #08090d; color: #f3f4f6; margin: 0; overflow: hidden; }}
-            .ui-panel {{ position: absolute; top: 20px; left: 20px; z-index: 100; width: 440px; pointer-events: none; }}
-            .glass {{ pointer-events: auto; background: rgba(13, 17, 23, 0.9); backdrop-filter: blur(25px); border: 1px solid rgba(255,255,255,0.08); border-radius: 28px; padding: 25px; box-shadow: 0 40px 100px rgba(0,0,0,0.8); }}
-            .slider-group {{ margin-bottom: 15px; background: rgba(255,255,255,0.03); padding: 12px; border-radius: 18px; border: 1px solid rgba(255,255,255,0.05); }}
-            .label-row {{ display: flex; justify-content: space-between; font-size: 11px; color: #9ca3af; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 1px; }}
-            .val-text {{ color: #818cf8; font-family: monospace; font-weight: bold; font-size: 13px; }}
-            .status-card {{ margin-top: 15px; padding: 15px; border-radius: 20px; font-size: 11px; line-height: 1.6; border-left: 4px solid #f59e0b; background: rgba(245, 158, 11, 0.05); }}
-            .legend {{ position: absolute; bottom: 25px; right: 25px; background: rgba(0,0,0,0.8); padding: 20px; border-radius: 20px; font-size: 10px; border: 1px solid rgba(255,255,255,0.1); }}
-            .color-dot {{ width: 12px; height: 12px; border-radius: 3px; display: inline-block; margin-right: 10px; }}
+            body {{ margin:0; overflow:hidden; font-family: sans-serif; }}
+            #container {{ width:100%; height:100%; }}
+            .ui-panel {{
+                position: absolute; top:20px; left:20px; z-index:100; width:400px; pointer-events: none;
+            }}
+            .glass {{
+                pointer-events: auto; background: rgba(10,12,20,0.92); backdrop-filter: blur(20px);
+                border:1px solid rgba(255,255,255,0.12); border-radius:24px; padding:22px;
+                box-shadow: 0 25px 60px rgba(0,0,0,0.7); color:#e5e7eb;
+            }}
+            .stage-buttons {{
+                display: flex; gap:8px; margin: 12px 0;
+            }}
+            .stage-btn {{
+                flex:1; padding:8px 0; background: rgba(255,255,255,0.05);
+                border:1px solid rgba(255,255,255,0.15); border-radius:12px;
+                color:#cbd5e1; font-weight:600; cursor:pointer;
+                transition: all 0.2s; text-align:center; font-size:13px;
+            }}
+            .stage-btn.active {{
+                background: #f97316; border-color:#f97316; color:white;
+                box-shadow: 0 0 18px #f97316aa;
+            }}
+            .slider-group {{ margin-bottom:12px; }}
+            .label-row {{ display:flex; justify-content:space-between; font-size:12px; color:#9ca3af; margin-bottom:4px; }}
+            .val-text {{ color:#f59e0b; font-weight:bold; }}
+            .status-card {{ margin-top:12px; padding:12px; border-radius:16px; font-size:11px; line-height:1.5;
+                border-left:4px solid #f59e0b; background: rgba(245,158,11,0.1); }}
+            .legend {{ position:absolute; bottom:25px; right:25px; background:rgba(0,0,0,0.8);
+                padding:16px; border-radius:16px; font-size:10px; color:#ccc; }}
+            .color-dot {{ width:12px; height:12px; border-radius:3px; display:inline-block; margin-right:10px; }}
         </style>
     </head>
     <body>
     <div class="ui-panel">
         <div class="glass">
-            <div class="mb-6 flex justify-between items-center">
-                <div>
-                    <h1 class="text-xl font-bold text-white tracking-tight">CRIP-UCG Modeli</h1>
-                    <p class="text-[9px] text-indigo-400 font-bold uppercase tracking-[2px]">Parallel Gazlashtirish & Qiyalik</p>
-                </div>
-                <div class="h-10 w-10 bg-indigo-500/20 rounded-full flex items-center justify-center border border-indigo-500/30">
-                    <div class="w-3 h-3 bg-indigo-500 rounded-full animate-ping"></div>
-                </div>
+            <div style="margin-bottom:18px;">
+                <h1 style="font-size:22px; font-weight:bold; margin:0;">CRIP-UCG Modeli</h1>
+                <p style="font-size:10px; color:#f59e0b; margin-top:4px;">Bosqichlar & Gaz oqimi 3D</p>
             </div>
-            <div class="space-y-2">
-                <div class="slider-group">
-                    <div class="label-row"><span>Qatlam Qiyaligi (Dip Angle - °)</span><span id="dip-val" class="val-text">0°</span></div>
-                </div>
-                <div class="slider-group">
-                    <div class="label-row"><span>Skvajnalar Masofasi (m)</span><span id="spacing-val" class="val-text">{well_distance} m</span></div>
-                </div>
-                <div class="slider-group">
-                    <div class="label-row"><span>Gazifikatsiya Harorati (°C)</span><span id="temp-val" class="val-text">{T_source_max}°C</span></div>
-                </div>
-                <div class="slider-group">
-                    <div class="label-row"><span>Chuqurlik (H - m)</span><span id="depth-val" class="val-text">{total_depth} m</span></div>
-                </div>
+            <div class="stage-buttons">
+                <button id="stage1-btn" class="stage-btn active" onclick="setStage(1)">Bosqich 1</button>
+                <button id="stage2-btn" class="stage-btn" onclick="setStage(2)">Bosqich 2</button>
+                <button id="stage3-btn" class="stage-btn" onclick="setStage(3)">Bosqich 3</button>
+            </div>
+            <div class="slider-group">
+                <div class="label-row"><span>Qatlam Qiyaligi (°)</span><span id="dip-val" class="val-text">0°</span></div>
+                <input type="range" id="dip-slider" min="0" max="60" value="{dip_default}" step="1" oninput="updateDip(this.value)">
+            </div>
+            <div class="slider-group">
+                <div class="label-row"><span>Harorat (°C)</span><span id="temp-val" class="val-text">{T_max}°C</span></div>
+                <input type="range" id="temp-slider" min="300" max="1300" value="{T_max}" step="50" oninput="updateTemp(this.value)">
             </div>
             <div class="status-card">
-                <div class="text-amber-400 font-bold mb-1 uppercase text-[10px]">Geomexanik Tahlil:</div>
-                <div id="analysis-text" class="text-gray-300">Qatlam qiyaligi cho'kish markazini "quyi" tomonga (down-dip) siljitmoqda. CRIP usuli bo'yicha inyeksion nuqta orqaga tortilishi nazorat qilinmoqda.</div>
+                <div style="font-weight:bold; color:#f59e0b; margin-bottom:4px;">Faol quduqlar:</div>
+                <div id="active-wells-text">Chap (inj)</div>
+                <div style="margin-top:6px; font-size:10px; color:#94a3b8;" id="gas-info">Gaz oqimi: 0.5 m/s</div>
             </div>
-            <div class="grid grid-cols-2 gap-3 mt-4 text-center">
-                <div class="bg-indigo-500/10 p-3 rounded-2xl border border-indigo-500/20">
-                    <div class="text-[8px] text-indigo-300 uppercase mb-1 tracking-widest">Siljish (Shift)</div>
-                    <div id="shift-val" class="text-lg font-bold text-indigo-400">-</div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:15px;">
+                <div style="background: rgba(99,102,241,0.1); padding:10px; border-radius:14px; text-align:center;">
+                    <div style="font-size:8px; text-transform:uppercase; letter-spacing:1px; color:#a5b4fc;">Siljish</div>
+                    <div id="shift-val" style="font-size:18px; font-weight:bold; color:#818cf8;">-</div>
                 </div>
-                <div class="bg-rose-500/10 p-3 rounded-2xl border border-rose-500/20">
-                    <div class="text-[8px] text-rose-300 uppercase mb-1 tracking-widest">Maks. Cho'kish</div>
-                    <div id="subs-val" class="text-lg font-bold text-rose-400">-</div>
+                <div style="background: rgba(244,63,94,0.1); padding:10px; border-radius:14px; text-align:center;">
+                    <div style="font-size:8px; text-transform:uppercase; letter-spacing:1px; color:#fda4af;">Maks. Cho'kish</div>
+                    <div id="subs-val" style="font-size:18px; font-weight:bold; color:#f43f5e;">-</div>
                 </div>
             </div>
         </div>
     </div>
-    <div class="legend text-gray-400 shadow-2xl">
-        <div class="flex items-center mb-3"><span class="color-dot bg-blue-500"></span> Inyeksion skvajna (Havo/O₂)</div>
-        <div class="flex items-center mb-3"><span class="color-dot bg-yellow-500"></span> Ishlab chiqarish skvajnasi (Sintez-gaz)</div>
-        <div class="flex items-center mb-3"><span class="color-dot bg-orange-600"></span> Yonish kanali (Kaverna)</div>
-        <div class="flex items-center"><span class="color-dot bg-indigo-600 opacity-40"></span> Ko'mir qatlami (Tilted)</div>
+    <div class="legend">
+        <div style="display:flex; align-items:center; margin-bottom:6px;"><span class="color-dot" style="background:#3b82f6;"></span> Inyeksion (Havo/O₂)</div>
+        <div style="display:flex; align-items:center; margin-bottom:6px;"><span class="color-dot" style="background:#fbbf24;"></span> Ishlab chiqarish (Gaz)</div>
+        <div style="display:flex; align-items:center; margin-bottom:6px;"><span class="color-dot" style="background:#f97316;"></span> Yonish kanali</div>
+        <div style="display:flex; align-items:center; margin-bottom:6px;"><span class="color-dot" style="background:#10b981;"></span> Gaz oqimi yo'nalishi</div>
+        <div style="display:flex; align-items:center;"><span class="color-dot" style="background:#4f46e5; opacity:0.6;"></span> Ko'mir qatlami</div>
     </div>
-    <div id="container" class="w-full h-screen"></div>
+    <div id="container"></div>
+
     <script>
-    let state = {{
-        dip: 0,
-        spacing: {well_distance},
-        T: {T_source_max},
-        depth: {total_depth},
-        R: {cavity_radius},
-        GSI: {layers_data[-1]['gsi']}
-    }};
+    // ----- Scene Initialization -----
+    const container = document.getElementById('container');
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x040508);
-    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 10000);
+    scene.background = new THREE.Color(0x080a12);
+    const camera = new THREE.PerspectiveCamera(45, container.clientWidth/container.clientHeight, 1, 6000);
+    camera.position.set(300, 220, 450);
     const renderer = new THREE.WebGLRenderer({{ antialias: true }});
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    document.getElementById('container').appendChild(renderer.domElement);
+    renderer.setSize(container.clientWidth, container.clientHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    container.appendChild(renderer.domElement);
     const controls = new THREE.OrbitControls(camera, renderer.domElement);
-    camera.position.set(250, 150, 400);
-    scene.add(new THREE.AmbientLight(0xffffff, 0.2));
-    const pointLight = new THREE.PointLight(0xffaa00, 1.5, 1000);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+
+    // ----- Lights -----
+    scene.add(new THREE.AmbientLight(0xffffff, 0.45));
+    const dirLight = new THREE.DirectionalLight(0xffeedd, 0.8);
+    dirLight.position.set(200, 300, 200);
+    scene.add(dirLight);
+    const pointLight = new THREE.PointLight(0xff6600, 1.5, 2000);
+    pointLight.position.set(0, 60, 0);
     scene.add(pointLight);
-    const surfSize = 1200;
-    const surfRes = 100;
+
+    // ----- Global State -----
+    let state = {{
+        stage: 1,
+        activeWells: [0],   // indekslar: 0 - chap, 1 - markaz, 2 - o'ng
+        wellPositions: [-{well_dist}, 0, {well_dist}],
+        dip: {dip_default},
+        T: {T_max},
+        depth: {total_d},
+        R: {cav_r},
+        GSI: {gsi_last},
+        H_seam: {H_seam_val}
+    }};
+
+    // ----- Permanent Objects -----
+    // Surface
+    const surfSize = 800;
+    const surfRes = 80;
     const surfGeom = new THREE.PlaneGeometry(surfSize, surfSize, surfRes, surfRes);
-    surfGeom.rotateX(-Math.PI / 2);
-    const surfMat = new THREE.MeshStandardMaterial({{ color: 0x1e293b, wireframe: true, transparent: true, opacity: 0.3, emissive: 0x4f46e5, emissiveIntensity: 0.05 }});
+    surfGeom.rotateX(-Math.PI/2);
+    const surfMat = new THREE.MeshStandardMaterial({{ color: 0x2a3b4c, transparent:true, opacity:0.55, roughness:0.8, side:THREE.DoubleSide }});
     const surface = new THREE.Mesh(surfGeom, surfMat);
     scene.add(surface);
-    const seamGeom = new THREE.BoxGeometry(surfSize, 5, 200);
-    const seamMat = new THREE.MeshStandardMaterial({{ color: 0x111111, transparent: true, opacity: 0.6 }});
+
+    // Coal seam
+    const seamGeom = new THREE.BoxGeometry(surfSize, state.H_seam, 200);
+    const seamMat = new THREE.MeshStandardMaterial({{ color: 0x333333, roughness:0.7, emissive:0x111111, emissiveIntensity:0.25 }});
     const coalSeam = new THREE.Mesh(seamGeom, seamMat);
     scene.add(coalSeam);
-    const cavityGroup = new THREE.Group();
-    scene.add(cavityGroup);
-    const cavityGeom = new THREE.SphereGeometry(1, 32, 32);
-    const cavityMat = new THREE.MeshStandardMaterial({{ color: 0xff4400, emissive: 0xff2200, emissiveIntensity: 2 }});
-    const cavity = new THREE.Mesh(cavityGeom, cavityMat);
-    cavityGroup.add(cavity);
+
+    // Wells (persistent, we will toggle emissive)
     function createBorehole(color) {{
-        const geom = new THREE.CylinderGeometry(0.8, 0.8, 500, 16);
-        const mat = new THREE.MeshStandardMaterial({{ color: color, emissive: color, emissiveIntensity: 0.5 }});
+        const geom = new THREE.CylinderGeometry(1.2, 1.2, 400, 8);
+        const mat = new THREE.MeshStandardMaterial({{ color: color, roughness:0.4, emissive: color, emissiveIntensity:0.15 }});
         return new THREE.Mesh(geom, mat);
     }}
-    const injWell = createBorehole(0x3b82f6);
-    const prodWell = createBorehole(0xfab005);
-    scene.add(injWell);
-    scene.add(prodWell);
-    function calculateGeomechanics() {{
-        const angleRad = state.dip * Math.PI / 180;
-        const shift = state.depth * Math.tan(angleRad) * 0.45;
-        const rockStrengthDegradation = Math.max(0.2, 1 - (state.T / 1500));
-        const volumeLoss = (Math.PI * Math.pow(state.R, 2) * state.spacing) * 0.15;
-        const influenceRadius = state.depth * Math.tan((45 - state.GSI/10) * Math.PI / 180);
-        const Smax = (volumeLoss * (1 - rockStrengthDegradation)) / (influenceRadius * 1.5 + 1);
-        return {{ shift, Smax, influenceRadius, angleRad }};
+    const wells = [
+        createBorehole(0x3b82f6), // inj chap
+        createBorehole(0x3b82f6), // inj markaz
+        createBorehole(0x3b82f6)  // inj o'ng (ammo faqat ishlab chiqarish rolida)
+    ];
+    // O'ng quduqni ishlab chiqarish rangi bilan belgilaymiz (sariq)
+    wells[2].material.color.set(0xfbbf24);
+    wells[2].material.emissive.set(0xfbbf24);
+    wells.forEach(w => scene.add(w));
+
+    // Cavity groups (max 3)
+    const cavityGroups = [new THREE.Group(), new THREE.Group(), new THREE.Group()];
+    cavityGroups.forEach(g => scene.add(g));
+    const cavityGeom = new THREE.SphereGeometry(1, 32, 32);
+    function createCavityMesh() {{
+        const mat = new THREE.MeshStandardMaterial({{ color: 0xff4400, emissive:0xff2200, emissiveIntensity:2.2, roughness:0.25 }});
+        return new THREE.Mesh(cavityGeom, mat);
     }}
-    function update() {{
+    const cavityMeshes = [createCavityMesh(), createCavityMesh(), createCavityMesh()];
+    cavityGroups.forEach((g,i) => g.add(cavityMeshes[i]));
+
+    // Group for flow arrows
+    const flowGroup = new THREE.Group();
+    scene.add(flowGroup);
+
+    // ----- Geomechanics Calculation -----
+    function calculateGeomechanics() {{
+        const angleRad = state.dip * Math.PI/180;
+        const shift = state.depth * Math.tan(angleRad) * 0.45;
+        const rockDeg = Math.max(0.05, 1 - (state.T/1500));
+        const cavityVol = (Math.PI * Math.pow(state.R,2) * state.spacing) * 0.15;
+        const influenceR = state.depth * Math.tan((45 - state.GSI/10)*Math.PI/180);
+        const Smax = (cavityVol * rockDeg) / (influenceR*1.8 + 1);
+        return {{ shift, Smax, influenceR, angleRad, rockDeg }};
+    }}
+
+    // ----- Update Scene Based on State -----
+    function updateScene() {{
+        // Update UI
+        document.querySelectorAll('.stage-btn').forEach(b => b.classList.remove('active'));
+        document.getElementById(`stage${{state.stage}}-btn`).classList.add('active');
+        document.getElementById('dip-val').innerText = state.dip + '°';
+        document.getElementById('temp-val').innerText = state.T + '°C';
+
+        // Active wells description
+        const activeNames = state.activeWells.map(i => i===0?'Chap':i===1?'Markaz':'O‘ng');
+        document.getElementById('active-wells-text').innerHTML = '<b>Faol:</b> ' + activeNames.join(', ');
+        document.getElementById('gas-info').innerText = 'Gaz oqimi: ' + (0.3 + state.T/5000).toFixed(1) + ' m/s';
+
         const calc = calculateGeomechanics();
-        document.getElementById('shift-val').innerText = calc.shift.toFixed(1) + " m";
-        document.getElementById('subs-val').innerText = (calc.Smax * 100).toFixed(1) + " cm";
-        const visualDepth = state.depth / 4;
+        document.getElementById('shift-val').innerText = calc.shift.toFixed(1)+' m';
+        document.getElementById('subs-val').innerText = (calc.Smax*100).toFixed(1)+' cm';
+
+        const visualDepth = state.depth / 3.5;
         const yCenter = -visualDepth;
+
+        // Coal seam
         coalSeam.position.y = yCenter;
         coalSeam.rotation.z = -calc.angleRad;
-        cavityGroup.position.set(0, yCenter, 0);
-        cavityGroup.rotation.z = -calc.angleRad;
-        cavity.scale.set(state.spacing / 1.5, state.R, state.R);
-        injWell.position.set(-state.spacing/2, -visualDepth + 250, 0);
-        prodWell.position.set(state.spacing/2, -visualDepth + 250, 0);
-        const vertices = surface.geometry.attributes.position.array;
-        for (let i = 0; i < vertices.length; i += 3) {{
-            const x = vertices[i];
-            const z = vertices[i + 2];
-            const distToShiftedCenter = Math.sqrt(Math.pow(x - calc.shift, 2) + Math.pow(z, 2));
-            const s_local = calc.Smax * 60 * Math.exp(-(Math.PI * distToShiftedCenter * distToShiftedCenter) / Math.pow(calc.influenceRadius, 2));
-            vertices[i + 1] = -s_local;
+
+        // Wells positioning (all wells extend from surface to below seam)
+        const wellLength = visualDepth + 60;
+        state.wellPositions.forEach((xPos, idx) => {{
+            const well = wells[idx];
+            well.geometry.dispose();
+            well.geometry = new THREE.CylinderGeometry(1.2, 1.2, wellLength, 8);
+            well.position.set(xPos, yCenter - state.H_seam/2 + wellLength/2, 0);
+            // Highlight if active
+            if (state.activeWells.includes(idx)) {{
+                well.material.emissiveIntensity = 0.9;
+                well.material.emissive.set(idx===2?0xfbbf24:0x3b82f6); // production wells yellow, inj blue
+            }} else {{
+                well.material.emissiveIntensity = 0.05;
+            }}
+        }});
+
+        // Cavity groups: show only for active wells
+        cavityGroups.forEach((g, i) => {{
+            g.visible = state.activeWells.includes(i);
+            if (g.visible) {{
+                const xPos = state.wellPositions[i];
+                g.position.set(xPos, yCenter, 0);
+                g.rotation.z = -calc.angleRad;
+                cavityMeshes[i].scale.set(state.R*0.8, state.R, state.R);
+            }}
+        }});
+
+        // Gas flow arrows
+        flowGroup.clear();
+        const arrowColor = 0x10b981;
+        const arrowLengthBase = 15;
+        const headLength = 5;
+        const headWidth = 3;
+        // For each active injection well (index 0 or 1 if active), draw arrows to active production wells
+        const activeSet = new Set(state.activeWells);
+        // Injection wells are those with index 0 and 1 (if they are active). Production: index 2 and possibly index 1 when stage 3?
+        // We'll define pairs: 
+        // Stage 1: inj 0 -> prod 2? Actually stage 1 only has left well (0) burning, no production well yet. 
+        // Stage 2: left and right; left injects, right produces.
+        // Stage 3: left and center inject, right produces (or center also produces). 
+        const pairs = [];
+        if (state.stage === 1) {{
+            // only left well active, no gas flow yet? Let's show gas flowing towards unburned right? Realistically no.
+        }} else if (state.stage === 2) {{
+            pairs.push({{ from: 0, to: 2 }});
+        }} else if (state.stage === 3) {{
+            pairs.push({{ from: 0, to: 2 }});
+            pairs.push({{ from: 1, to: 2 }});
+        }}
+        // Add arrows for each pair
+        const arrowGeom = new THREE.CylinderGeometry(0.5, 0.5, 1, 6);
+        pairs.forEach(pair => {{
+            const fromX = state.wellPositions[pair.from];
+            const toX = state.wellPositions[pair.to];
+            const start = new THREE.Vector3(fromX, yCenter, 0);
+            const end = new THREE.Vector3(toX, yCenter, 0);
+            const dir = new THREE.Vector3().subVectors(end, start).normalize();
+            const length = start.distanceTo(end);
+            // Place multiple arrows along path
+            const numArrows = Math.floor(length / 20);
+            for (let i = 0; i < numArrows; i++) {{
+                const t = (i + 0.5) / numArrows;
+                const pos = new THREE.Vector3().lerpVectors(start, end, t);
+                const arrow = new THREE.ArrowHelper(dir, pos, arrowLengthBase, arrowColor, headLength, headWidth);
+                flowGroup.add(arrow);
+            }}
+            // Also add streamline curve
+            const curvePoints = [];
+            for (let i = 0; i <= 20; i++) {{
+                const t = i/20;
+                const pt = new THREE.Vector3().lerpVectors(start, end, t);
+                pt.y += Math.sin(t*Math.PI)*2; // slight arc
+                curvePoints.push(pt);
+            }}
+            const curveGeom = new THREE.BufferGeometry().setFromPoints(curvePoints);
+            const curveLine = new THREE.Line(curveGeom, new THREE.LineBasicMaterial({{ color: 0x10b981, opacity:0.5, transparent:true }}));
+            flowGroup.add(curveLine);
+        }});
+
+        // Surface deformation
+        const positions = surface.geometry.attributes.position.array;
+        for (let i = 0; i < positions.length; i += 3) {{
+            const x = positions[i];
+            const z = positions[i + 2];
+            const dist = Math.sqrt(Math.pow(x - calc.shift, 2) + Math.pow(z, 2));
+            const s = calc.Smax * 80 * Math.exp(-(dist*dist)/(2*Math.pow(calc.influenceR,2)));
+            positions[i + 1] = -s;
         }}
         surface.geometry.attributes.position.needsUpdate = true;
-        pointLight.position.set(0, yCenter + 20, 0);
+        surface.geometry.computeVertexNormals();
+
+        // Point light follows subsidence center
+        pointLight.position.set(calc.shift, 80, 0);
+        controls.target.set(calc.shift, yCenter, 0);
     }}
-    window.addEventListener('resize', () => {{
-        camera.aspect = window.innerWidth / window.innerHeight;
-        camera.updateProjectionMatrix();
-        renderer.setSize(window.innerWidth, window.innerHeight);
-    }});
+
+    // ----- Stage Setter -----
+    function setStage(s) {{
+        state.stage = s;
+        if (s === 1) state.activeWells = [0];
+        else if (s === 2) state.activeWells = [0, 2];
+        else if (s === 3) state.activeWells = [0, 1, 2];
+        updateScene();
+    }}
+
+    // ----- Slider Updates -----
+    function updateDip(val) {{ state.dip = parseInt(val); updateScene(); }}
+    function updateTemp(val) {{ state.T = parseInt(val); updateScene(); }}
+
+    // ----- Animation Loop -----
     function animate() {{
         requestAnimationFrame(animate);
         controls.update();
-        const current_time = Date.now() * 0.002;
-        cavityMat.emissiveIntensity = 1.5 + Math.sin(current_time) * 0.5;
+        // Pulsating cavities
+        cavityMeshes.forEach((mesh, idx) => {{
+            if (cavityGroups[idx].visible) {{
+                const intensity = 1.5 + 0.4 * Math.sin(Date.now()*0.005 + idx);
+                mesh.material.emissiveIntensity = intensity;
+            }}
+        }});
         renderer.render(scene, camera);
     }}
-    update();
+
+    // Initial
+    updateScene();
     animate();
+
+    // Resize
+    window.addEventListener('resize', () => {{
+        camera.aspect = container.clientWidth / container.clientHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(container.clientWidth, container.clientHeight);
+    }});
     </script>
     </body>
     </html>
-    """, height=650)
+    """
+
+    st.components.v1.html(html_3d, height=750)
 
 # Monte Carlo Noaniqlik tahlili
 with st.expander("🎲 Monte Carlo Noaniqlik Tahlili"):
