@@ -118,7 +118,7 @@ PARAMS = {
 }
 
 # --------------------------------------------
-# Tarjimalar (to'liq uch til)
+# Tarjimalar (to'liq uch til) – TUZATILGAN
 # --------------------------------------------
 TRANSLATIONS = {
     'uz': {
@@ -227,8 +227,8 @@ TRANSLATIONS = {
         'tensile_empirical': "Empirical (UCS)",
         'tensile_hb': "HB-based (auto)",
         'tensile_manual': "Manual",
-        'timeline_table': """
         'dip_angle_label': "Qatlam qiyaligi (Dip - °)",
+        'timeline_table': """
 | Bosqich | Vaqti | Tavsif |
 |---------|-------|--------|
 | **Rejalashtirish** | 2026-04-01 | Validatsiya, xavfsiz bo'lish funksiyalarini ishlab chiqish |
@@ -362,8 +362,8 @@ TRANSLATIONS = {
         'tensile_empirical': "Empirical (UCS)",
         'tensile_hb': "HB-based (auto)",
         'tensile_manual': "Manual",
-        'timeline_table': """
         'dip_angle_label': "Dip angle (°)",
+        'timeline_table': """
 | Stage | Time | Description |
 |-------|------|-------------|
 | **Planning** | 2026-04-01 | Validation, develop safety functions |
@@ -497,8 +497,8 @@ TRANSLATIONS = {
         'tensile_empirical': "Эмпирический (UCS)",
         'tensile_hb': "На основе HB (авто)",
         'tensile_manual': "Ручной ввод",
-        'timeline_table': """
         'dip_angle_label': "Угол падения пласта (°)",
+        'timeline_table': """
 | Этап | Время | Описание |
 |-------|------|-------------|
 | **Планирование** | 2026-04-01 | Валидация, разработка функций безопасности |
@@ -548,9 +548,13 @@ EPS = 1e-6
 # --------------------------------------------
 # ILMIY HISOBLASH FUNKSIYALARI
 # --------------------------------------------
-def von_mises_stress(sigma_x, sigma_y, tau_xy):
-    """Von Mises ekvivalent kuchlanishi (Pa)."""
-    return np.sqrt(np.maximum(sigma_x**2 - sigma_x*sigma_y + sigma_y**2 + 3*tau_xy**2, 0.0))
+def von_mises_stress(sigma_x, sigma_z, tau_xz, nu=None):
+    """Von Mises ekvivalent kuchlanishi (Pa). Plane‑strain: sigma_y = nu*(sigma_x+sigma_z)."""
+    if nu is not None:
+        sigma_y = nu * (sigma_x + sigma_z)
+    else:
+        sigma_y = np.zeros_like(sigma_x)
+    return np.sqrt(np.maximum(sigma_x**2 - sigma_x*sigma_y + sigma_y**2 + 3*tau_xz**2, 0.0))
 
 def hoek_brown(sigma3, sigma_ci, mb, s, a):
     """Hoek-Brown buzilish mezoni (2018)."""
@@ -1041,7 +1045,7 @@ st.sidebar.subheader(t('well_config'))
 well_distance = st.sidebar.slider(t('well_distance'), 50.0, 500.0, 200.0, 10.0, key="well_dist_slider")
 # YANGI: Qatlam qiyaligi
 dip_angle = st.sidebar.slider(
-    t('dip_angle_label'),          # yangi tarjima kaliti
+    t('dip_angle_label'),
     0, 90, 0, 5,
     key="dip_angle_slider"
 )
@@ -1380,7 +1384,7 @@ with st.expander("🪨 Phase-Field Fracture Damage Evolution (Patent Model)"):
         d_new = damage + (dt / eta) * driving
         return np.clip(d_new, 0, 1)
     if st.button("Run one phase-field step (demo)"):
-        strain_energy = (von_mises_stress(sigma_x_total, sigma_z_total, tau_rt)**2) / (2 * E_field + EPS)
+        strain_energy = (von_mises_stress(sigma_x_total, sigma_z_total, tau_rt, nu=nu_poisson)**2) / (2 * E_field + EPS)
         d_trial = phase_field_update(overstress, strain_energy, dx_val, dz_val, dt=0.1)
         d_updated = np.maximum(overstress, d_trial)
         fig_phase = go.Figure(go.Heatmap(z=d_updated, x=x_axis, y=z_axis, colorscale='Viridis', zmin=0, zmax=1))
@@ -1675,7 +1679,6 @@ with st.expander("📈 FOS Vaqt Bashorati (Trend)"):
         st.info(critical_info)
 
 # 3D CRIP-UCG Model
-
 with st.expander("🌍 3D Litologik Kesim (CRIP-UCG Model)"):
     st.components.v1.html(f"""
     <!DOCTYPE html>
