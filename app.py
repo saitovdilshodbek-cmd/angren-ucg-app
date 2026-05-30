@@ -24,7 +24,6 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Optional imports with fallback
 try:
     import torch
     import torch.nn as nn
@@ -92,7 +91,7 @@ if PT_AVAILABLE:
     torch.manual_seed(RANDOM_SEED)
 
 # --------------------------------------------
-# Multilingual translations (full dictionaries)
+# Full translations (all three languages, no omissions)
 # --------------------------------------------
 TRANSLATIONS = {
     'uz': {
@@ -865,7 +864,6 @@ sigma_thermal *= relax_factor
 sigma_x_total = sigma_rr - sigma_thermal
 sigma_z_total = sigma_tt - sigma_thermal
 
-# Corrected: no artificial thermal shear stress
 sigma1_act, sigma3_act = principal_stresses(sigma_x_total, sigma_z_total, tau_rt)
 
 grid_ucs = np.zeros_like(grid_z)
@@ -1199,7 +1197,7 @@ with c2:
         st.success(f"✅ BARQAROR: Selek o'lchami ({selek_eni:.1f} m) me'yorda.")
 
 # --------------------------------------------
-# AI/ML MODULE (with improved training)
+# AI/ML MODULE
 # --------------------------------------------
 def physics_features(T, s1, s3, depth, ucs_seam_val):
     dmg = thermal_damage(T, beta_thermal)
