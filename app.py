@@ -6,28 +6,25 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from scipy.ndimage import gaussian_filter
 from scipy.stats import linregress, norm as gaussian_dist
-from scipy.integrate import trapezoid
 import time
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import accuracy_score, roc_auc_score, r2_score
 import io
 from docx import Document
 from docx.shared import Pt, Cm, RGBColor, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.oxml.ns import qn
-from docx.oxml import OxmlElement
 import qrcode
 from io import BytesIO
 import matplotlib.pyplot as plt
-import warnings
-import sys
-from sklearn.metrics import accuracy_score, roc_auc_score, r2_score
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
-import logging
 from scipy.signal import savgol_filter
+import logging
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Optional imports with fallback
 try:
     import torch
     import torch.nn as nn
@@ -63,7 +60,7 @@ except ImportError:
     SHAP_AVAILABLE = False
 
 # --------------------------------------------
-# Til va mavzu sozlamalari
+# Global Settings & State
 # --------------------------------------------
 if "language" not in st.session_state:
     st.session_state.language = "uz"
@@ -89,6 +86,14 @@ PARAMS = {
     "R_UNIVERSAL": 8.314
 }
 
+RANDOM_SEED = 42
+np.random.seed(RANDOM_SEED)
+if PT_AVAILABLE:
+    torch.manual_seed(RANDOM_SEED)
+
+# --------------------------------------------
+# Multilingual translations (full dictionaries)
+# --------------------------------------------
 TRANSLATIONS = {
     'uz': {
         'app_title': "Universal Yer yuzasi Deformatsiyasi Monitoringi",
@@ -514,99 +519,99 @@ def t(key, **kwargs):
 EPS = 1e-6
 
 # --------------------------------------------
-# ILMIY HISOBLASH FUNKSIYALARI
+# Core Scientific Functions
 # --------------------------------------------
-def von_mises_stress(sigma_x, sigma_z, tau_xz, nu=None):
-    if nu is not None:
-        sigma_y = nu * (sigma_x + sigma_z)
-    else:
-        sigma_y = sigma_z
+def von_mises_stress(sigma_x: np.ndarray, sigma_z: np.ndarray, tau_xz: np.ndarray, nu: float = None) -> np.ndarray:
+    sigma_y = nu * (sigma_x + sigma_z) if nu is not None else sigma_z
     return np.sqrt(np.maximum(sigma_x**2 - sigma_x*sigma_y + sigma_y**2 + 3*tau_xz**2, 0.0))
 
-def hoek_brown(sigma3, sigma_ci, mb, s, a):
+def hoek_brown(sigma3: np.ndarray, sigma_ci: np.ndarray, mb: np.ndarray, s: np.ndarray, a: np.ndarray) -> np.ndarray:
     sigma3_eff = np.maximum(sigma3, 0.0)
     term = mb * (sigma3_eff / (sigma_ci + EPS)) + s
     term = np.maximum(term, 0.0)
-    sigma1 = sigma3_eff + sigma_ci * term**a
-    return sigma1
+    return sigma3_eff + sigma_ci * term**a
 
-def overstress_ratio(sigma1, sigma3, sigma_ci, mb, s, a):
+def overstress_ratio(sigma1: np.ndarray, sigma3: np.ndarray, sigma_ci: np.ndarray, mb: np.ndarray, s: np.ndarray, a: np.ndarray) -> np.ndarray:
     sigma1_failure = hoek_brown(sigma3, sigma_ci, mb, s, a)
-    ratio = sigma1 / (sigma1_failure + EPS)
-    return ratio
+    return sigma1 / (sigma1_failure + EPS)
 
-def thermal_damage(T, beta):
+def thermal_damage(T: np.ndarray, beta: float) -> np.ndarray:
     return 1 - np.exp(-beta * np.maximum(T - 20, 0))
 
-def apply_thermal_degradation(ucs0, T, beta):
+def apply_thermal_degradation(ucs0: float, T: np.ndarray, beta: float) -> np.ndarray:
     dmg = thermal_damage(T, beta)
     ucs_T = ucs0 * (1 - dmg)
     return np.clip(ucs_T, 0.5, None)
 
-def thermal_conductivity(T, k0=2.5):
+def thermal_conductivity(T: np.ndarray, k0: float = 2.5) -> np.ndarray:
     k = k0 * (1 - 0.0004 * (T - 20))
     return np.clip(k, 0.5, None)
 
-def specific_heat(T):
+def specific_heat(T: np.ndarray) -> np.ndarray:
     cp = 960 + 0.14 * T
     return np.clip(cp, 900, 2200)
 
-def density_temperature(rho0, T):
+def density_temperature(rho0: float, T: np.ndarray) -> np.ndarray:
     T = np.clip(T, 20, 1200)
     thermal_expansion_ratio = 0.00012 * (T - 20)
     rho_T = rho0 * (1 - thermal_expansion_ratio)
     return np.clip(rho_T, 0.85 * rho0, rho0)
 
-def young_modulus_temperature(T):
+def young_modulus_temperature(T: np.ndarray) -> np.ndarray:
     E_T = 5e9 * np.exp(-0.0018 * (T - 20))
     return np.clip(E_T, 0.15 * 5e9, 5e9)
 
-def thermal_expansion_temperature(T):
+def thermal_expansion_temperature(T: np.ndarray) -> np.ndarray:
     T = np.clip(T, 20, 1200)
     alpha_T = PARAMS["alpha_thermal"] * (1 + 0.002 * (T - 20) + 1e-6 * (T - 20)**2)
     return alpha_T
 
-def vertical_stress(depth, density):
+def vertical_stress(depth: float, density: float) -> float:
     return density * 9.81 * depth / 1e6
 
-def solve_heat_equation_dynamic(T, Q, rho_field, cp_field, k_field, dx, dz, total_time, T_air, h=10.0):
+def solve_heat_equation_dynamic(T: np.ndarray, Q: np.ndarray, rho_field: np.ndarray, cp_field: np.ndarray,
+                                k_field: np.ndarray, dx: float, dz: float, total_time: float,
+                                T_air: float, h: float = 10.0) -> np.ndarray:
     alpha_field = k_field / (rho_field * cp_field)
     alpha_max = np.max(alpha_field)
-    dt_max = 1.0 / (2 * alpha_max * (1/dx**2 + 1/dz**2))
-    dt = 0.8 * dt_max
+    dt_cfl = 0.5 / (alpha_max * (1/dx**2 + 1/dz**2))
+    dt_max = min(dt_cfl, total_time / 2.0)
+    dt = dt_max * 0.9
     n_steps = max(int(total_time / dt), 1)
     dt = total_time / n_steps
+
     for _ in range(n_steps):
         T_old = T.copy()
-        Txx = (T_old[1:-1, 2:] - 2 * T_old[1:-1, 1:-1] + T_old[1:-1, :-2]) / dx**2
-        Tzz = (T_old[2:, 1:-1] - 2 * T_old[1:-1, 1:-1] + T_old[:-2, 1:-1]) / dz**2
+        Txx = (T_old[1:-1, 2:] - 2*T_old[1:-1, 1:-1] + T_old[1:-1, :-2]) / dx**2
+        Tzz = (T_old[2:, 1:-1] - 2*T_old[1:-1, 1:-1] + T_old[:-2, 1:-1]) / dz**2
         T_new = T_old.copy()
-        T_new[1:-1, 1:-1] = (T_old[1:-1, 1:-1] +
-                              dt * (alpha_field[1:-1, 1:-1] * (Txx + Tzz) +
-                                    Q[1:-1, 1:-1] / (rho_field[1:-1, 1:-1] * cp_field[1:-1, 1:-1])))
+        T_new[1:-1, 1:-1] = T_old[1:-1, 1:-1] + dt * (
+            alpha_field[1:-1, 1:-1] * (Txx + Tzz) +
+            Q[1:-1, 1:-1] / (rho_field[1:-1, 1:-1] * cp_field[1:-1, 1:-1])
+        )
         T_new[:, 0] = T_new[:, 1]
         T_new[:, -1] = T_new[:, -2]
         T_new[-1, :] = T_new[-2, :]
-        k_surface = k_field[0, :]
-        dz_inv = 1.0 / dz
-        T_new[0, :] = (k_surface * T_new[1, :] + dz * h * T_air) / (k_surface + dz * h)
-        T = T_new.copy()
+        k_surf = k_field[0, :]
+        T_new[0, :] = (k_surf * T_new[1, :] + dz * h * T_air) / (k_surf + dz * h)
+        T = T_new
     return T
 
-def principal_stresses(sx, sy, txy):
+def principal_stresses(sx: np.ndarray, sy: np.ndarray, txy: np.ndarray) -> (np.ndarray, np.ndarray):
     avg = (sx + sy) / 2
-    radius = np.sqrt(((sx - sy) / 2) ** 2 + txy ** 2)
+    radius = np.sqrt(((sx - sy) / 2)**2 + txy**2)
     s1 = avg + radius
     s2 = avg - radius
     return s1, s2
 
-def evolving_cavity_radius(time_h, T_field, beta):
-    thermal_dam = thermal_damage(T_field, beta)
-    growth_rate = 0.015 * np.mean(thermal_dam)
+def evolving_cavity_radius(time_h: float, T_field: np.ndarray, beta: float) -> float:
+    dmg = thermal_damage(T_field, beta)
+    growth_rate = 0.015 * np.mean(dmg)
     radius = 5.0 + growth_rate * time_h
     return np.clip(radius, 5, 40)
 
-def kirsch_stress_field(x, z, sigma_H, sigma_h, cavity_radius, pore_pressure=0.0):
+def kirsch_stress_field(x: np.ndarray, z: np.ndarray, sigma_H: np.ndarray, sigma_h: np.ndarray,
+                        cavity_radius: float, pore_pressure: np.ndarray = 0.0) -> (np.ndarray, np.ndarray, np.ndarray):
     r = np.sqrt(x**2 + z**2)
     r = np.maximum(r, cavity_radius + 1e-3)
     theta = np.arctan2(z, x)
@@ -621,27 +626,28 @@ def kirsch_stress_field(x, z, sigma_H, sigma_h, cavity_radius, pore_pressure=0.0
     sigma_tt -= pore_pressure
     return sigma_rr, sigma_tt, tau_rt
 
-def pore_pressure_field(T, depth, permeability, water_table=20):
+def pore_pressure_field(T: np.ndarray, depth: np.ndarray, permeability: np.ndarray, water_table: float = 20) -> np.ndarray:
     hydro = np.maximum(0, depth - water_table) * 1000 * 9.81 / 1e6
     gas_p = (1e5 + 0.5 * (T - 25) * 1e3) / 1e6
     perm_effect = 1e5 * np.log10(np.maximum(permeability, 1e-20) / 1e-15 + 1.0) / 1e6
-    pore_p = hydro + gas_p + perm_effect
-    return pore_p
+    return hydro + gas_p + perm_effect
 
-def monte_carlo_fos(ucs_mean, ucs_std, gsi_mean, gsi_std, mi_val, D, T_avg, H_seam, depth, density, rec_width, beta_th, n_sim=1000):
+def monte_carlo_fos(ucs_mean: float, ucs_std: float, gsi_mean: float, gsi_std: float,
+                    mi_val: float, D: float, T_avg: float, H_seam: float, depth: float,
+                    density: float, rec_width: float, beta_th: float, n_sim: int = 1000) -> (np.ndarray, float):
     rho_ucs_gsi = 0.3
     cov_ucs_gsi = rho_ucs_gsi * ucs_std * gsi_std
-    # Ensure positive-definite covariance matrix
     cov = np.array([[ucs_std**2, cov_ucs_gsi],
                     [cov_ucs_gsi, gsi_std**2]])
-    min_eig = np.min(np.linalg.eigvalsh(cov))
-    if min_eig < 0:
-        cov -= np.eye(2) * min_eig * 1.01
+    eigvals = np.linalg.eigvalsh(cov)
+    if np.min(eigvals) < 0:
+        cov -= np.eye(2) * (np.min(eigvals) - 1e-10)
     samples = np.random.multivariate_normal([ucs_mean, gsi_mean], cov, n_sim)
     ucs_samples = samples[:, 0]
     gsi_samples = np.clip(samples[:, 1], 10, 100)
-    fos = []
-    for ucs, gsi in zip(ucs_samples, gsi_samples):
+    fos = np.zeros(n_sim)
+    for i in range(n_sim):
+        ucs, gsi = ucs_samples[i], gsi_samples[i]
         mb = mi_val * np.exp((gsi - 100) / (28 - 14 * D))
         s  = np.exp((gsi - 100) / (9 - 3 * D))
         a  = 0.5 + (1/6) * (np.exp(-gsi/15) - np.exp(-20/3))
@@ -649,14 +655,21 @@ def monte_carlo_fos(ucs_mean, ucs_std, gsi_mean, gsi_std, mi_val, D, T_avg, H_se
         sigma_cm = ucs_T * (s ** a)
         pillar_strength = sigma_cm * (0.64 + 0.36 * rec_width / (H_seam + EPS))
         sv = density * 9.81 * depth / 1e6
-        fos_val = np.clip(pillar_strength / (sv + EPS), 0, 3)
-        fos.append(fos_val)
-    fos = np.array(fos)
+        fos[i] = np.clip(pillar_strength / (sv + EPS), 0, 3)
     pf = np.mean(fos < 1.0)
+    if n_sim >= 100:
+        bs_samples = 1000
+        bs_pf = np.zeros(bs_samples)
+        for j in range(bs_samples):
+            bs_idx = np.random.choice(n_sim, n_sim, replace=True)
+            bs_pf[j] = np.mean(fos[bs_idx] < 1.0)
+        ci_low, ci_high = np.percentile(bs_pf, [2.5, 97.5])
+        logger.info(f"Pf bootstrap 95% CI: [{ci_low:.4f}, {ci_high:.4f}]")
     return fos, pf
 
 @st.cache_data(show_spinner=False, max_entries=50)
-def compute_temperature_field_moving(time_h, T_source_max, burn_duration, total_depth, source_z, grid_shape):
+def compute_temperature_field_moving(time_h: float, T_source_max: float, burn_duration: float,
+                                     total_depth: float, source_z: float, grid_shape: tuple):
     x_axis = np.linspace(-total_depth * 1.5, total_depth * 1.5, grid_shape[1])
     z_axis = np.linspace(0, total_depth + 50, grid_shape[0])
     dx = x_axis[1] - x_axis[0]
@@ -676,6 +689,7 @@ def compute_temperature_field_moving(time_h, T_source_max, burn_duration, total_
     time_step = 3600.0
     n_steps = max(int(total_time / time_step), 1)
     time_step = total_time / n_steps
+
     for step in range(n_steps):
         current_time_h += time_step / 3600.0
         Q_source = np.zeros_like(temp_2d)
@@ -704,7 +718,7 @@ def compute_temperature_field_moving(time_h, T_source_max, burn_duration, total_
     return temp_2d, x_axis, z_axis, grid_x, grid_z
 
 # --------------------------------------------
-# ASOSIY PARAMETRLARNI KIRITISH
+# UI: Sidebar inputs
 # --------------------------------------------
 st.title(t('app_title'))
 st.markdown(f"### {t('app_subtitle')}")
@@ -746,9 +760,8 @@ if formula_option != formula_opts[0]:
             st.latex(r"\sigma_{ci(T)} = \sigma_{ci} \cdot (1 - D(T))")
             st.latex(r"k = k_0 \exp(8D(T)) (1 + 25 \epsilon_v)")
         elif formula_option == formula_opts[3]:
-            st.latex(r"\sigma_{th} = \eta_c \frac{E \alpha \Delta T}{1-\nu} - \lambda_r \nabla T")
+            st.latex(r"\sigma_{th} = \frac{E \alpha \Delta T}{1-\nu}")
             st.latex(r"\sigma_{t0} = \frac{\sigma_{ci}}{2}\left(m_b - \sqrt{m_b^2 + 4s}\right) \quad \text{(Hoek-Brown 2002)}")
-            st.latex(r"\sigma_{t(T)} = \sigma_{t0} \cdot \exp\left(-\beta_{th} (T - 20)\right)")
         elif formula_option == formula_opts[4]:
             st.latex(r"\sigma_{p} = \sigma_{ci} \cdot \left(0.64 + 0.36 \frac{w}{H}\right) \quad \text{(Wilson, 1972)}")
             st.latex(r"y = \frac{H}{2} \left( \sqrt{\frac{\sigma_v}{\sigma_p}} - 1 \right)")
@@ -809,7 +822,7 @@ H_seam = layers_data[-1]['thickness']
 source_z = total_depth - H_seam / 2
 
 # --------------------------------------------
-# ASOSIY FIZIK MAYDONLARNI HISOBLASH
+# MAIN PHYSICS COMPUTATION
 # --------------------------------------------
 grid_shape = (80, 100)
 temp_2d, x_axis, z_axis, grid_x, grid_z = compute_temperature_field_moving(
@@ -852,11 +865,7 @@ sigma_thermal *= relax_factor
 sigma_x_total = sigma_rr - sigma_thermal
 sigma_z_total = sigma_tt - sigma_thermal
 
-dT_dx, dT_dz = np.gradient(temp_2d, dx_val, dz_val)
-G = E_field / (2 * (1 + nu_poisson))
-tau_thermal = G * alpha_field * (dT_dx + dT_dz) / 1e6
-tau_rt += tau_thermal
-
+# Corrected: no artificial thermal shear stress
 sigma1_act, sigma3_act = principal_stresses(sigma_x_total, sigma_z_total, tau_rt)
 
 grid_ucs = np.zeros_like(grid_z)
@@ -911,7 +920,7 @@ sub_p = subsidence_raw * void_factor + 0.08 * subs_grad
 horizontal_disp_cm = -np.gradient(sub_p, dx_val) * 100
 
 # --------------------------------------------
-# USTUN (SELEK) OPTIMIZATSIYASI (Wilson, 1972)
+# PILLAR OPTIMIZATION (Wilson, 1972)
 # --------------------------------------------
 idx_closest = np.abs(z_axis - source_z).argmin()
 avg_t_p = np.mean(temp_2d[idx_closest, :])
@@ -948,7 +957,7 @@ analytical_width = np.clip(analytical_width, 5, 100)
 st.info(t('pin_approx'))
 
 # --------------------------------------------
-# MONITORING KO'RSATKICHLARI
+# MONITORING METRICS
 # --------------------------------------------
 st.subheader(t('monitoring_header', obj_name=obj_name))
 m1, m2, m3, m4, m5 = st.columns(5)
@@ -959,7 +968,7 @@ m4.metric(t('max_permeability'), f"{np.max(perm):.1e} m²")
 m5.metric(t('ai_recommendation'), f"{analytical_width:.1f} m", delta=f"Klassik: {rec_width} m", delta_color="off")
 st.markdown("---")
 
-# Grafiklar
+# Charts
 col_g1, col_g2, col_g3 = st.columns([1.5,1.5,2])
 with col_g1:
     st.plotly_chart(go.Figure(go.Scatter(x=x_axis, y=sub_p*100, fill='tozeroy', line=dict(color='magenta',width=3))).update_layout(title=t('subsidence_title'), template="plotly_dark", height=300), use_container_width=True)
@@ -984,7 +993,7 @@ with col_g3:
 st.markdown("---")
 
 # --------------------------------------------
-# QUDUQ KONFIGURATSIYASI VA FOS XARITASI
+# WELL CONFIGURATION AND FOS MAP
 # --------------------------------------------
 c1, c2 = st.columns([1, 2.5])
 with c1:
@@ -1048,12 +1057,8 @@ def compute_advanced_fos(grid_x_tuple, grid_z_tuple, active_wells_tuple, well_x_
             sigma_th = np.zeros_like(sigma_v)
             local_thermal = thermal_zone[mask]
             if np.any(local_thermal):
-                grad_T_local = np.sqrt(
-                    np.gradient(T, axis=1, edge_order=2)[mask]**2 +
-                    np.gradient(T, axis=0, edge_order=2)[mask]**2
-                )
-                th_vals = (CONFINEMENT * E * alpha * delta_T_m[local_thermal]) / (1 - nu) - RELAX * grad_T_local[local_thermal]
-                sigma_th[local_thermal] = np.clip(th_vals, 0, sigma_ci_T[local_thermal] * 0.35)
+                sigma_th[local_thermal] = (CONFINEMENT * E * alpha * delta_T_m[local_thermal]) / (1 - nu)
+                sigma_th[local_thermal] = np.clip(sigma_th[local_thermal], 0, sigma_ci_T[local_thermal] * 0.35)
             sigma_1 = sigma_v + sigma_th
             sigma_limit = hoek_brown(sigma_3, sigma_ci_T, mb, s_hb, a_hb)
             fos_val = np.where(sigma_1 > 0.01, sigma_limit / sigma_1, 3.0)
@@ -1194,7 +1199,7 @@ with c2:
         st.success(f"✅ BARQAROR: Selek o'lchami ({selek_eni:.1f} m) me'yorda.")
 
 # --------------------------------------------
-# SUN'IY INTELLEKT MODULI
+# AI/ML MODULE (with improved training)
 # --------------------------------------------
 def physics_features(T, s1, s3, depth, ucs_seam_val):
     dmg = thermal_damage(T, beta_thermal)
@@ -1212,6 +1217,14 @@ def generate_physics_dataset(temp_field, sigma1, sigma3, depth, ucs_seam_val):
     return feat, collapse
 
 X_ai, y_ai = generate_physics_dataset(temp_2d, sigma1_act, sigma3_act, grid_z, ucs_seam)
+
+def train_random_forest_with_cv(X_scaled, y):
+    param_grid = {'n_estimators': [100, 300], 'max_depth': [8, 12, 16], 'min_samples_split': [2, 5]}
+    rf = RandomForestClassifier(random_state=RANDOM_SEED, n_jobs=-1)
+    grid_search = GridSearchCV(rf, param_grid, cv=3, scoring='accuracy', n_jobs=-1)
+    grid_search.fit(X_scaled, y)
+    logger.info(f"Best RF params: {grid_search.best_params_}")
+    return grid_search.best_estimator_
 
 if PT_AVAILABLE:
     class HybridPINN(nn.Module):
@@ -1254,25 +1267,20 @@ if PT_AVAILABLE:
             opt.step()
         return model
 
-def train_random_forest(X_scaled, y):
-    rf = RandomForestClassifier(n_estimators=300, max_depth=12, random_state=42, n_jobs=-1)
-    rf.fit(X_scaled, y)
-    return rf
-
 @st.cache_resource
 def get_ensemble_model(X, y, sigma1, sigma_ci, temp, damage):
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=RANDOM_SEED)
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
     if PT_AVAILABLE:
-        torch.manual_seed(42)
+        torch.manual_seed(RANDOM_SEED)
         model = train_hybrid_model(X_train_scaled, y_train, sigma1[:len(X_train)], sigma_ci[:len(X_train)],
                                    temp[:len(X_train)], damage[:len(X_train)])
-        rf = train_random_forest(X_train_scaled, y_train)
+        rf = train_random_forest_with_cv(X_train_scaled, y_train)
     else:
         model = None
-        rf = train_random_forest(X_train_scaled, y_train)
+        rf = train_random_forest_with_cv(X_train_scaled, y_train)
     return model, rf, scaler, X_test_scaled, y_test
 
 hybrid_model, rf_model, scaler, X_test, y_test = get_ensemble_model(
@@ -1332,7 +1340,7 @@ entropy = -np.sum(risk_prob * np.log(risk_prob + 1e-12))
 st.metric(t('system_entropy'), f"{entropy:.3f}")
 
 # --------------------------------------------
-# ILG'OR TAHLIL BO'LIMLARI
+# ADVANCED ANALYSIS SECTIONS
 # --------------------------------------------
 with st.expander("🪨 Phase-Field Fracture Damage Evolution (based on Bourdin et al., 2000)"):
     st.markdown(t('phase_field_info'))
