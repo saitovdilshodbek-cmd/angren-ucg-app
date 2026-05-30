@@ -27,11 +27,7 @@ import logging
 from scipy.signal import savgol_filter
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-try:
-    from fastapi import FastAPI
-    FASTAPI_AVAILABLE = True
-except ImportError:
-    FASTAPI_AVAILABLE = False
+
 try:
     import torch
     import torch.nn as nn
@@ -40,54 +36,31 @@ try:
 except ImportError:
     PT_AVAILABLE = False
     device = "cpu"
+
 try:
     from SALib.sample import saltelli
     from SALib.analyze import sobol
     SALIB_AVAILABLE = True
 except ImportError:
     SALIB_AVAILABLE = False
+
 try:
     from pyDOE import lhs
     PYDOE_AVAILABLE = True
 except ImportError:
     PYDOE_AVAILABLE = False
+
 try:
     import pyvista as pv
     PYVISTA_AVAILABLE = True
 except ImportError:
     PYVISTA_AVAILABLE = False
+
 try:
     import shap
     SHAP_AVAILABLE = True
 except ImportError:
     SHAP_AVAILABLE = False
-try:
-    from filterpy.kalman import KalmanFilter
-    FILTERPY_AVAILABLE = True
-except ImportError:
-    FILTERPY_AVAILABLE = False
-try:
-    import pymc as pm
-    PYMC_AVAILABLE = True
-except ImportError:
-    PYMC_AVAILABLE = False
-try:
-    import torch_geometric.nn as geo_nn
-    TORCH_GEO_AVAILABLE = True
-except ImportError:
-    TORCH_GEO_AVAILABLE = False
-try:
-    import cupy as cp
-    GPU_AVAILABLE = True
-    xp = cp
-except ImportError:
-    GPU_AVAILABLE = False
-    xp = np
-try:
-    from mpi4py import MPI
-    MPI_AVAILABLE = True
-except ImportError:
-    MPI_AVAILABLE = False
 
 # --------------------------------------------
 # Til va mavzu sozlamalari
@@ -99,7 +72,6 @@ if "theme" not in st.session_state:
 if "live_history_df" not in st.session_state:
     st.session_state.live_history_df = pd.DataFrame(columns=['step', 'mean_subsidence_cm', 'max_temp_c', 'FOS', 'pillar_width_m'])
 
-# Barcha konstantalarni yagona markazda yig‘amiz
 PARAMS = {
     "phi_deg": 35.0,
     "cohesion": 5e6,
@@ -117,9 +89,6 @@ PARAMS = {
     "R_UNIVERSAL": 8.314
 }
 
-# --------------------------------------------
-# Tarjimalar (to'liq uch til)
-# --------------------------------------------
 TRANSLATIONS = {
     'uz': {
         'app_title': "Universal Yer yuzasi Deformatsiyasi Monitoringi",
@@ -538,7 +507,6 @@ FORMULA_OPTIONS = {
 }
 
 def t(key, **kwargs):
-    """Tarjima funksiyasi: joriy tilga qarab matn qaytaradi."""
     lang = st.session_state.get('language', 'uz')
     text = TRANSLATIONS.get(lang, TRANSLATIONS['uz']).get(key, key)
     return text.format(**kwargs) if kwargs else text
@@ -549,15 +517,13 @@ EPS = 1e-6
 # ILMIY HISOBLASH FUNKSIYALARI
 # --------------------------------------------
 def von_mises_stress(sigma_x, sigma_z, tau_xz, nu=None):
-    """Von Mises ekvivalent kuchlanishi (Pa). Plane‑strain: sigma_y = nu*(sigma_x+sigma_z)."""
     if nu is not None:
         sigma_y = nu * (sigma_x + sigma_z)
     else:
-        sigma_y = np.zeros_like(sigma_x)
+        sigma_y = sigma_z
     return np.sqrt(np.maximum(sigma_x**2 - sigma_x*sigma_y + sigma_y**2 + 3*tau_xz**2, 0.0))
 
 def hoek_brown(sigma3, sigma_ci, mb, s, a):
-    """Hoek-Brown buzilish mezoni (2018)."""
     sigma3_eff = np.maximum(sigma3, 0.0)
     term = mb * (sigma3_eff / (sigma_ci + EPS)) + s
     term = np.maximum(term, 0.0)
@@ -565,58 +531,45 @@ def hoek_brown(sigma3, sigma_ci, mb, s, a):
     return sigma1
 
 def overstress_ratio(sigma1, sigma3, sigma_ci, mb, s, a):
-    """Ortiqcha yuklanish nisbati (yield indikatori), 0...1."""
     sigma1_failure = hoek_brown(sigma3, sigma_ci, mb, s, a)
     ratio = sigma1 / (sigma1_failure + EPS)
-    return np.clip(ratio, 0, 1)
+    return ratio
 
 def thermal_damage(T, beta):
-    """Termal degradatsiya darajasi D(T) = 1 - exp(-beta*(T-20))."""
     return 1 - np.exp(-beta * np.maximum(T - 20, 0))
 
 def apply_thermal_degradation(ucs0, T, beta):
-    """Termik ta'sir ostida qoldiq mustahkamlik (MPa)."""
     dmg = thermal_damage(T, beta)
     ucs_T = ucs0 * (1 - dmg)
     return np.clip(ucs_T, 0.5, None)
 
 def thermal_conductivity(T, k0=2.5):
-    """Haroratga bog'liq issiqlik o'tkazuvchanlik (W/m·K)."""
     k = k0 * (1 - 0.0004 * (T - 20))
     return np.clip(k, 0.5, None)
 
 def specific_heat(T):
-    """Haroratga bog'liq solishtirma issiqlik sig'imi (J/kg·K)."""
     cp = 960 + 0.14 * T
     return np.clip(cp, 900, 2200)
 
 def density_temperature(rho0, T):
-    """Termal kengayish hisobiga zichlikning pasayishi (kg/m³)."""
     T = np.clip(T, 20, 1200)
     thermal_expansion_ratio = 0.00012 * (T - 20)
     rho_T = rho0 * (1 - thermal_expansion_ratio)
-    return np.clip(rho_T, 0.55 * rho0, rho0)
+    return np.clip(rho_T, 0.85 * rho0, rho0)
 
 def young_modulus_temperature(T):
-    """Haroratga bog'liq elastiklik moduli (Pa)."""
     E_T = 5e9 * np.exp(-0.0018 * (T - 20))
     return np.clip(E_T, 0.15 * 5e9, 5e9)
 
 def thermal_expansion_temperature(T):
-    """Haroratga bog'liq termal kengayish koeffitsienti (1/°C)."""
     T = np.clip(T, 20, 1200)
     alpha_T = PARAMS["alpha_thermal"] * (1 + 0.002 * (T - 20) + 1e-6 * (T - 20)**2)
     return alpha_T
 
 def vertical_stress(depth, density):
-    """Geostatik vertikal kuchlanish (MPa)."""
     return density * 9.81 * depth / 1e6
 
 def solve_heat_equation_dynamic(T, Q, rho_field, cp_field, k_field, dx, dz, total_time, T_air, h=10.0):
-    """
-    Issiqlik tarqalish tenglamasini aniq finit-farq usulida yechish.
-    total_time: haqiqiy simulyatsiya vaqti (s).
-    """
     alpha_field = k_field / (rho_field * cp_field)
     alpha_max = np.max(alpha_field)
     dt_max = 1.0 / (2 * alpha_max * (1/dx**2 + 1/dz**2))
@@ -634,12 +587,13 @@ def solve_heat_equation_dynamic(T, Q, rho_field, cp_field, k_field, dx, dz, tota
         T_new[:, 0] = T_new[:, 1]
         T_new[:, -1] = T_new[:, -2]
         T_new[-1, :] = T_new[-2, :]
-        T_new[0, :] = T_new[1, :] + dz * h / k_field[0, :] * (T_air - T_new[0, :])
+        k_surface = k_field[0, :]
+        dz_inv = 1.0 / dz
+        T_new[0, :] = (k_surface * T_new[1, :] + dz * h * T_air) / (k_surface + dz * h)
         T = T_new.copy()
     return T
 
 def principal_stresses(sx, sy, txy):
-    """2D kuchlanish tenzoridan bosh kuchlanishlarni qaytaradi."""
     avg = (sx + sy) / 2
     radius = np.sqrt(((sx - sy) / 2) ** 2 + txy ** 2)
     s1 = avg + radius
@@ -647,14 +601,12 @@ def principal_stresses(sx, sy, txy):
     return s1, s2
 
 def evolving_cavity_radius(time_h, T_field, beta):
-    """Termal shikastlanishga qarab o'suvchi bo'shliq radiusi (m)."""
     thermal_dam = thermal_damage(T_field, beta)
     growth_rate = 0.015 * np.mean(thermal_dam)
     radius = 5.0 + growth_rate * time_h
     return np.clip(radius, 5, 40)
 
 def kirsch_stress_field(x, z, sigma_H, sigma_h, cavity_radius, pore_pressure=0.0):
-    """Kirsch yechimi (plastik zona yo'q) - bo'shliq atrofidagi kuchlanish maydoni."""
     r = np.sqrt(x**2 + z**2)
     r = np.maximum(r, cavity_radius + 1e-3)
     theta = np.arctan2(z, x)
@@ -670,19 +622,21 @@ def kirsch_stress_field(x, z, sigma_H, sigma_h, cavity_radius, pore_pressure=0.0
     return sigma_rr, sigma_tt, tau_rt
 
 def pore_pressure_field(T, depth, permeability, water_table=20):
-    """G'ovak bosimi (MPa): gidrostatik + gaz + o'tkazuvchanlik hissasi."""
     hydro = np.maximum(0, depth - water_table) * 1000 * 9.81 / 1e6
     gas_p = (1e5 + 0.5 * (T - 25) * 1e3) / 1e6
-    perm_effect = 1e5 * np.log10(permeability / 1e-15 + 1) / 1e6
+    perm_effect = 1e5 * np.log10(np.maximum(permeability, 1e-20) / 1e-15 + 1.0) / 1e6
     pore_p = hydro + gas_p + perm_effect
     return pore_p
 
 def monte_carlo_fos(ucs_mean, ucs_std, gsi_mean, gsi_std, mi_val, D, T_avg, H_seam, depth, density, rec_width, beta_th, n_sim=1000):
-    """Monte-Karlo simulyatsiyasi: UCS va GSI noaniqligi ostida FOS taqsimoti."""
-    rho_ucs_gsi = 0.3  # Sonmez & Ulusay, 2002
+    rho_ucs_gsi = 0.3
     cov_ucs_gsi = rho_ucs_gsi * ucs_std * gsi_std
-    cov = [[ucs_std**2, cov_ucs_gsi],
-           [cov_ucs_gsi, gsi_std**2]]
+    # Ensure positive-definite covariance matrix
+    cov = np.array([[ucs_std**2, cov_ucs_gsi],
+                    [cov_ucs_gsi, gsi_std**2]])
+    min_eig = np.min(np.linalg.eigvalsh(cov))
+    if min_eig < 0:
+        cov -= np.eye(2) * min_eig * 1.01
     samples = np.random.multivariate_normal([ucs_mean, gsi_mean], cov, n_sim)
     ucs_samples = samples[:, 0]
     gsi_samples = np.clip(samples[:, 1], 10, 100)
@@ -695,7 +649,7 @@ def monte_carlo_fos(ucs_mean, ucs_std, gsi_mean, gsi_std, mi_val, D, T_avg, H_se
         sigma_cm = ucs_T * (s ** a)
         pillar_strength = sigma_cm * (0.64 + 0.36 * rec_width / (H_seam + EPS))
         sv = density * 9.81 * depth / 1e6
-        fos_val = np.clip(pillar_strength / (sv + EPS), 0, 10)
+        fos_val = np.clip(pillar_strength / (sv + EPS), 0, 3)
         fos.append(fos_val)
     fos = np.array(fos)
     pf = np.mean(fos < 1.0)
@@ -703,7 +657,6 @@ def monte_carlo_fos(ucs_mean, ucs_std, gsi_mean, gsi_std, mi_val, D, T_avg, H_se
 
 @st.cache_data(show_spinner=False, max_entries=50)
 def compute_temperature_field_moving(time_h, T_source_max, burn_duration, total_depth, source_z, grid_shape):
-    """Ko'chuvchi manba bilan issiqlik maydonini hisoblaydi."""
     x_axis = np.linspace(-total_depth * 1.5, total_depth * 1.5, grid_shape[1])
     z_axis = np.linspace(0, total_depth + 50, grid_shape[0])
     dx = x_axis[1] - x_axis[0]
@@ -739,7 +692,7 @@ def compute_temperature_field_moving(time_h, T_source_max, burn_duration, total_
                 curr_T = T_source_max
             else:
                 curr_T = 25 + (T_source_max - 25) * np.exp(-0.03 * (elapsed - burn_duration))
-            pen_depth = np.sqrt(4 * PARAMS["THERMAL_DIFFUSIVITY"] * dt_sec) + 15
+            pen_depth = np.sqrt(4 * PARAMS["THERMAL_DIFFUSIVITY"] * max(dt_sec, 3600)) + 15
             dist_sq = (grid_x - x_center)**2 + (grid_z - source_z)**2
             rho_cp_ref = 1400 * 960
             dt_source = 3600.0
