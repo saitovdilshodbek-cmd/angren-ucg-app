@@ -121,7 +121,6 @@ BIENIAWSKI_C1: float = 0.64
 BIENIAWSKI_C2: float = 0.36
 # Kod ichida WILSON_C1/C2 nomlanishi saqlanadi — lekin izohlar to'g'rilandi
 WILSON_C1 = BIENIAWSKI_C1
-  # [FIX C-24] σp = σcm·(C1 + C2·w/H), Bieniawski 1992
 WILSON_C2 = BIENIAWSKI_C2
 
 # [FIX #26] Biot effektiv stress koeffitsienti
@@ -1791,9 +1790,9 @@ def predict_collapse(
     proba = rf.predict_proba(X_sc)
     rf_pred = proba[:, 1].reshape(-1, 1) if proba.shape[1] >= 2 else proba[:, 0].reshape(-1, 1)
     # [FIX C-16] When model=None (no PyTorch), use RF only
-      w_nn = 0.6 if (nn_pred is not None and np.any(nn_pred != 0.0)) else 0.0
-      w_rf = 1.0 - w_nn
-      return w_nn * nn_pred + w_rf * rf_pred
+    w_nn = 0.6 if (nn_pred is not None and np.any(nn_pred != 0.0)) else 0.0
+    w_rf = 1.0 - w_nn
+    return w_nn * nn_pred + w_rf * rf_pred
 
 
 def predict_risk_from_sensor(
@@ -1868,10 +1867,11 @@ def compute_advanced_fos(
             ucs_l = layer['ucs']
             gsi_l = layer['gsi']
             mi_l = layer['mi']
-            gsi_l_eff = gsi_thermal_degradation(gsi_l, float(np.mean(delta_T_m)) if np.any(mask) else 0.0)  # [FIX C-26]
-          mb_l, s_hb, a_hb = hoek_brown_params(gsi_l_eff, mi_l, D_factor)
-            sigma_v = sigma_v_field[mask]
+            # [FIX C-26] GSI termal degradatsiyasi
             delta_T_m = delta_T[mask]
+            gsi_l_eff = gsi_thermal_degradation(gsi_l, float(np.mean(delta_T_m)) if np.any(mask) else 0.0)
+            mb_l, s_hb, a_hb = hoek_brown_params(gsi_l_eff, mi_l, D_factor)
+            sigma_v = sigma_v_field[mask]
             sigma_ci_T = apply_thermal_degradation(ucs_l, delta_T_m, beta_th)
             sigma_3 = K0 * sigma_v * (0.6 + 0.4 * (1.0 - thermal_damage(delta_T_m, beta_th)))
             sigma_th = np.zeros_like(sigma_v)
@@ -2721,7 +2721,8 @@ beta_thermal = st.sidebar.slider(
 )
 st.sidebar.subheader(t('combustion'))
 burn_duration = st.sidebar.number_input(t('burn_duration'), value=40, min_value=1)
-T_source_max = st.sidebar.slider(t('max_temp'), 600, 1400,  # [FIX C-39] UCG ko'mir max~1400°C PARAMS.gas_temp)
+T_source_max = st.sidebar.slider(t('max_temp'), 600, 1400,  # [FIX C-39] UCG ko'mir max~1400°C
+                                 value=PARAMS.gas_temp)
 
 # [FIX #13] Extraction ratio — slider (adabiyot: 30-80%)
 # Manba: Perkins, G. (2018). UCG. Springer, p. 98.
@@ -3374,8 +3375,7 @@ with st.expander("🪨 Phase-Field Fracture Damage (Bourdin et al., 2000)"):
         d_trial = phase_field_update(overstress, strain_energy, dx_val, dz_val, dt=0.1)
         d_updated = np.maximum(overstress, d_trial)
         # [FIX #42] Robin chegara sharti yangilanishi
-        k_surf_val = float(np.mean(thermal_conductivity_temperature(temp_2d[0, :])))  # [FIX C-02]
-        k_surf_val = float(np.mean(thermal_conductivity_temperature(temp_2d[0, :])))  # [FIX C-02]
+        k_surf_val = float(np.mean(thermal_conductivity(temp_2d[0, :])))  # [FIX C-02]
         temp_updated_robin = robin_bc_update(temp_2d, k_surface=k_surf_val, h_conv=50.0, T_air=T_REF_AMBIENT, dz=dz_val)  # [FIX C-02]
         st.caption(f"[FIX #42] Robin BC: T_surface = {float(temp_updated_robin[0, len(x_axis)//2]):.1f} °C (h=50 W/m²K)")
         fig_pf = go.Figure(go.Heatmap(
@@ -4312,7 +4312,7 @@ with tab_ai_orig:
                     y_pred_bin = (np.array(preds_tab2) >= fos_target * 0.95).astype(int)
                     cm_res = compute_confusion_roc_f1(y_true_bin, y_pred_bin)
                     cm_cols = st.columns(4)
-                    cm_cols[0].metric("Accuracy", f"{cm_res.get('accuracy', (cm_res.get('TP',0)+cm_res.get('TN',0)) / max(cm_res.get('TP',0)+cm_res.get('TN',0)+cm_res.get('FP',0)+cm_res.get('FN',0),1))  # [FIX C-27]:.3f}")
+                    cm_cols[0].metric("Accuracy", f"{cm_res.get('accuracy', (cm_res.get('TP',0)+cm_res.get('TN',0)) / max(cm_res.get('TP',0)+cm_res.get('TN',0)+cm_res.get('FP',0)+cm_res.get('FN',0),1)):.3f}")
                     cm_cols[1].metric("F1-Score", f"{cm_res.get('f1', 0):.3f}")
                     cm_cols[2].metric("Precision", f"{cm_res.get('precision', 0):.3f}")
                     cm_cols[3].metric("Recall", f"{cm_res.get('recall', 0):.3f}")
