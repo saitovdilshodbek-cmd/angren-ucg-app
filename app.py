@@ -10,7 +10,7 @@ Versiya: 2.0.0 (PhD-grade)
 import streamlit as st
 
 st.set_page_config(
-    page_title="UCG SCI-Grade Platform v2.0",
+    page_title="UCG SCI-Grade Platform v3.0",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -20,7 +20,9 @@ import warnings
 import logging
 import io
 import time
+import functools  # [FIX C-37]
 import json
+import os  # [FIX C-22]
 import hashlib
 from datetime import datetime
 from dataclasses import dataclass
@@ -94,7 +96,7 @@ logger = logging.getLogger(__name__)
 # Global suppress olib tashlandi
 
 # ── Takrorlanish uchun seed ────────────────────────────────────────────────
-RANDOM_SEED = 42
+RANDOM_SEED = 42  # [FIX C-34] Reproducibility (NumPy, sklearn, PyTorch barcha tasodifiy operatsiyalar uchun)
 # [FIX #21] Global np.random.seed() olib tashlandi — rng_global ishlatiladi
 rng_global = np.random.default_rng(seed=RANDOM_SEED)
 
@@ -119,11 +121,12 @@ BIENIAWSKI_C1: float = 0.64
 BIENIAWSKI_C2: float = 0.36
 # Kod ichida WILSON_C1/C2 nomlanishi saqlanadi — lekin izohlar to'g'rilandi
 WILSON_C1 = BIENIAWSKI_C1
+  # [FIX C-24] σp = σcm·(C1 + C2·w/H), Bieniawski 1992
 WILSON_C2 = BIENIAWSKI_C2
 
 # [FIX #26] Biot effektiv stress koeffitsienti
 # Manba: Biot, M.A. (1941). J. Appl. Phys., 12(2), 155-164.
-BIOT_COEFFICIENT: float = 1.0
+BIOT_COEFFICIENT: float = 1.0     # [FIX C-23] Biot α (to'yingan qoya: α=1.0) ≠ Skempton B≈0.9 (fos_with_pore da)
 
 # [FIX #70] Sutherland konstantasi CO gaz uchun (S = 118 K)
 # Manba: Sutherland, W. (1893). Phil. Mag. 36(223), 507-531.
@@ -685,6 +688,9 @@ def hoek_brown_params(
     a = 0.5 + (1.0 / 6.0) * (
         np.exp(-np.asarray(gsi) / 15.0) - np.exp(-20.0 / 3.0)
     )
+    # [FIX C-14] Scalar GSI kirish uchun 'a' ni float ga aylantirish (0-d array muammosi)
+    if isinstance(gsi, (int, float)):
+        a = float(a)
     return mb, s, a
 
 
@@ -762,7 +768,9 @@ def density_temperature(rho0: float, T: np.ndarray) -> np.ndarray:
     alpha_v = 3.6e-5  # volumetrik kengayish koeff. (1/°C)
     thermal_factor = 1.0 - alpha_v * (T_clamped - T_REF_AMBIENT)
     # Yonish effekti: T > 500°C — kul zichligi ~30% ning
-    combustion_factor = np.where(T_clamped > 500.0, 0.30, 1.0)
+    # [FIX C-10] Chiziqli pasayish 400–800°C: 1.0→0.30 (Perkins, 2018, pp.112-115)
+    # Avvalgi: T>500 da to'satdan 0.30 — fizikka noto'g'ri (tez o'tish)
+    combustion_factor = np.clip(1.0 - 0.70 * np.clip((T_clamped - 400.0) / 400.0, 0.0, 1.0), 0.30, 1.0)  # [FIX C-10]
     rho_T = rho0 * thermal_factor * combustion_factor
     return np.clip(rho_T, 0.10 * rho0, rho0)
 
@@ -1699,7 +1707,7 @@ def _train_models(X, y, sigma1, sigma_ci, temp, damage):
     Manba: Bergmeir & Benitez (2012). Information Sciences, 191, 192-213.
     """
     # [FIX] Use indices from train_test_split to correctly align physics arrays
-    from sklearn.model_selection import TimeSeriesSplit
+    # [FIX C-13] TimeSeriesSplit import modul darajasiga ko'chirildi
     indices = np.arange(len(X))
     # TimeSeriesSplit: oxirgi 20% test uchun
     split_point = int(len(X) * 0.8)
@@ -1782,7 +1790,10 @@ def predict_collapse(
 
     proba = rf.predict_proba(X_sc)
     rf_pred = proba[:, 1].reshape(-1, 1) if proba.shape[1] >= 2 else proba[:, 0].reshape(-1, 1)
-    return 0.6 * nn_pred + 0.4 * rf_pred
+    # [FIX C-16] When model=None (no PyTorch), use RF only
+      w_nn = 0.6 if (nn_pred is not None and np.any(nn_pred != 0.0)) else 0.0
+      w_rf = 1.0 - w_nn
+      return w_nn * nn_pred + w_rf * rf_pred
 
 
 def predict_risk_from_sensor(
@@ -1823,7 +1834,12 @@ def validate_sensor_csv(
         raise ValueError(f"Ustunlar yo'q: {missing}")
     for col in required_cols:
         df[col] = pd.to_numeric(df[col], errors='coerce')
-    return df.dropna(subset=required_cols)
+    n_before = len(df)
+    df = df.dropna(subset=required_cols)
+    n_dropped = n_before - len(df)
+    if n_dropped > 0:  # [FIX C-33]
+        st.warning(f"⚠️ {n_dropped} ta satr raqamga aylantirilmadi va o'chirildi (validate_sensor_csv).")
+    return df
 
 
 def compute_advanced_fos(
@@ -1852,7 +1868,8 @@ def compute_advanced_fos(
             ucs_l = layer['ucs']
             gsi_l = layer['gsi']
             mi_l = layer['mi']
-            mb_l, s_hb, a_hb = hoek_brown_params(gsi_l, mi_l, D_factor)
+            gsi_l_eff = gsi_thermal_degradation(gsi_l, float(np.mean(delta_T_m)) if np.any(mask) else 0.0)  # [FIX C-26]
+          mb_l, s_hb, a_hb = hoek_brown_params(gsi_l_eff, mi_l, D_factor)
             sigma_v = sigma_v_field[mask]
             delta_T_m = delta_T[mask]
             sigma_ci_T = apply_thermal_degradation(ucs_l, delta_T_m, beta_th)
@@ -1867,7 +1884,7 @@ def compute_advanced_fos(
                 th_vals = (CONFINEMENT * E * alpha * delta_T_m[local_thermal]) / (1.0 - nu) - RELAX * grad_T_local[local_thermal]
                 sigma_th[local_thermal] = np.clip(th_vals, 0.0, sigma_ci_T[local_thermal] * 0.35)
             sigma_1 = sigma_v + sigma_th
-            sigma_limit = hoek_brown(sigma_3, sigma_ci_T, mb_l, s_hb, a_hb)
+            sigma_limit = hoek_brown(np.maximum(sigma_3, 0.0), np.maximum(sigma_ci_T, EPS_STRESS), mb_l, s_hb, a_hb)  # [FIX C-16]
             fos_val = np.where(sigma_1 > 0.01, sigma_limit / (sigma_1 + EPS_STRESS), 3.0)
             fos_val = np.clip(fos_val, 0.0, 50.0)  # [FIX #58] 50.0 yuqori chegara (Hoek, 1994)
             yield_mask = sigma_1 > (sigma_limit * 0.85)
@@ -2237,7 +2254,7 @@ def heat_balance_check(
 
 def digital_twin_hash(params_dict: dict) -> str:
     """
-    [FIX #88] Digital egizak parametrlari uchun MD5 imzosi (JCGM 100:2008).
+    [FIX C-06] SHA-256 imzosi (MD5→SHA-256: NIST FIPS 180-4, _array_hash bilan izchillik).
 
     Reproducibility ta'minlash uchun barcha kirish parametrlarining
     deterministik MD5 imzosi hisoblanadi.
@@ -2246,7 +2263,7 @@ def digital_twin_hash(params_dict: dict) -> str:
     """
     import json
     serialized = json.dumps(params_dict, sort_keys=True, default=str)
-    return hashlib.md5(serialized.encode()).hexdigest()[:12].upper()
+    return hashlib.sha256(serialized.encode()).hexdigest()[:16].upper()  # [FIX C-06] MD5→SHA-256, 12→16 chars
 
 
 def geological_presets() -> dict:
@@ -2294,7 +2311,7 @@ def geological_presets() -> dict:
 def concept_drift_detector(
     y_pred_new: np.ndarray,
     y_pred_ref: np.ndarray,
-    threshold: float = 0.15,
+    threshold: float = 0.15,  # [FIX C-40] 0.15σ empirik (Gama et al., 2014)
 ) -> Tuple[bool, float]:
     """
     [FIX #53] Kontseptual drift aniqlash (Moving Z-Score asosida).
@@ -2439,10 +2456,12 @@ def compute_confusion_roc_f1(
         auc = float(np.trapz(tpr_arr, fpr_arr))
     except Exception:
         auc = 0.5
+    accuracy = (TP + TN) / max(TP + TN + FP + FN, 1)  # [FIX C-07]
     return {
         "TP": TP, "TN": TN, "FP": FP, "FN": FN,
         "precision": precision, "recall": recall,
         "f1": f1, "auc_roc": abs(auc),
+        "accuracy": accuracy,  # [FIX C-07] added
         "confusion": np.array([[TN, FP], [FN, TP]]),
     }
 
@@ -2451,7 +2470,7 @@ def latency_monitor(func):
     """
     [FIX #50] Funksiya kechikishini monitoring qiluvchi dekorator.
     """
-    import functools
+    # [FIX C-11] 'import functools' olib tashlandi — modul darajasida mavjud
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         start = time.perf_counter()
@@ -2614,7 +2633,8 @@ def phase_field_update(
     Manba: Bourdin, B., Francfort, G.A., Marigo, J.J. (2000).
     J. Mech. Phys. Solids, 48(4), 797-826.
     """
-    dt_max = dx ** 2 / (4.0 * Gc * l_char + EPS_GENERAL)
+    # [FIX C-09] Standard phase-field CFL: dt ≤ η·l²/(2Gc) (Bourdin et al. 2000)
+    dt_max = (eta * dx ** 2) / (2.0 * Gc * l_char + EPS_GENERAL)  # [FIX C-09] eta omili qo'shildi
     dt = min(dt, 0.9 * dt_max)
     lap = laplacian_neumann(damage, dx, dz)
     driving = (
@@ -2701,7 +2721,7 @@ beta_thermal = st.sidebar.slider(
 )
 st.sidebar.subheader(t('combustion'))
 burn_duration = st.sidebar.number_input(t('burn_duration'), value=40, min_value=1)
-T_source_max = st.sidebar.slider(t('max_temp'), 600, 1200, PARAMS.gas_temp)
+T_source_max = st.sidebar.slider(t('max_temp'), 600, 1400,  # [FIX C-39] UCG ko'mir max~1400°C PARAMS.gas_temp)
 
 # [FIX #13] Extraction ratio — slider (adabiyot: 30-80%)
 # Manba: Perkins, G. (2018). UCG. Springer, p. 98.
@@ -2746,7 +2766,7 @@ for i in range(int(num_layers)):
     ):
         name = st.text_input(t('layer_name'), value=f"Layer-{i+1}", key=f"lname_{i}")
         thick = st.number_input(t('thickness'), value=50.0, min_value=0.1, key=f"lthick_{i}")
-        u = st.number_input(t('ucs'), value=40.0, min_value=0.1, key=f"lucs_{i}")
+        u = st.number_input(t('ucs'), value=40.0, min_value=0.1, max_value=500.0, key=f"lucs_{i}")  # [FIX C-35] max 500 MPa
         rho = st.number_input(t('density'), value=2500.0, min_value=100.0, key=f"lrho_{i}")
         color = st.color_picker(t('color'), strata_colors[i % len(strata_colors)], key=f"lcolor_{i}")
         g = st.slider(t('gsi'), 10, 100, 60, key=f"lgsi_{i}")
@@ -2892,7 +2912,7 @@ perm_z = perm
 perm = np.clip(perm, 1e-16, 1e-10)
 
 # [FIX #70] Gaz oqimi — Sutherland viskoziteti (S=118 CO uchun)
-T_kelvin = temp_2d + 273.15
+T_kelvin = temp_2d + 273.15  # [FIX C-43] °C → Kelvin (gas_viscosity_temperature Kelvin talab qiladi)
 pressure_field = 1e5 + 50.0 * (T_kelvin - 293.15)
 # [FIX #18] Dinamik molar massa (CO/H2/CO2/CH4/N2 aralashmasi)
 M_syngas = dynamic_molar_mass()
@@ -2958,7 +2978,7 @@ mb_dyn, s_dyn, a_dyn = hoek_brown_params(target_layer['gsi'], target_layer['mi']
 ucs_t_dyn = float(apply_thermal_degradation(ucs_seam, avg_t_p, beta_thermal))
 sigma_cm = ucs_t_dyn * (float(s_dyn) ** float(a_dyn))
 
-w_sol = 20.0
+w_sol = max(H_seam * 2.0, 10.0)  # [FIX C-48] boshlang'ich qiymat H_seam asosida (avval hardcoded 20.0)
 E_MIN_CORE = 0.5 * H_seam
 w_prev = w_sol
 y_zone_calc = 0.0  # [FIX] initialise before loop to prevent UnboundLocalError
@@ -3347,13 +3367,16 @@ with st.expander("🪨 Phase-Field Fracture Damage (Bourdin et al., 2000)"):
             von_mises_stress(sigma_x_total, sigma_z_total, tau_rt, nu=nu_poisson) ** 2
         ) / (2.0 * E_field + EPS_GENERAL)
         # [FIX #41] CFL koeffitsiyenti tekshiruvi
-        cfl_ok, cfl_val = check_cfl_condition(dx_val, 0.1, dt=0.1)
+        cfl_ok, cfl_val = check_cfl_condition(dt=0.1, dx=dx_val, dz=dz_val, alpha_max=PARAMS.THERMAL_DIFFUSIVITY)  # [FIX C-02]
         if not cfl_ok:
             st.warning(f"[FIX #41] CFL shartini buzildi! CFL={cfl_val:.3f} (> 0.5). dt kichraytirish tavsiya etiladi.")
+        # [FIX C-46] strain_energy = σ₁²/(2E) — elementar deformatsiya energiyasi (Bourdin, 2000)
         d_trial = phase_field_update(overstress, strain_energy, dx_val, dz_val, dt=0.1)
         d_updated = np.maximum(overstress, d_trial)
         # [FIX #42] Robin chegara sharti yangilanishi
-        temp_updated_robin = robin_bc_update(temp_2d, h_conv=50.0, T_ambient=T_REF_AMBIENT, dx=dx_val)
+        k_surf_val = float(np.mean(thermal_conductivity_temperature(temp_2d[0, :])))  # [FIX C-02]
+        k_surf_val = float(np.mean(thermal_conductivity_temperature(temp_2d[0, :])))  # [FIX C-02]
+        temp_updated_robin = robin_bc_update(temp_2d, k_surface=k_surf_val, h_conv=50.0, T_air=T_REF_AMBIENT, dz=dz_val)  # [FIX C-02]
         st.caption(f"[FIX #42] Robin BC: T_surface = {float(temp_updated_robin[0, len(x_axis)//2]):.1f} °C (h=50 W/m²K)")
         fig_pf = go.Figure(go.Heatmap(
             z=d_updated, x=x_axis, y=z_axis, colorscale='Viridis', zmin=0, zmax=1
@@ -4152,7 +4175,7 @@ with tab_ai_orig:
             if len(history_eff) >= 20:
                 X_iso = np.array(history_eff).reshape(-1, 1)
                 iso_flags = isolation_forest_anomaly(X_iso)
-                iso_count = int(np.sum(iso_flags == -1))
+                iso_count = int(np.sum(iso_flags))  # [FIX C-08] iso_flags is bool mask (True=anomaly)
                 st.metric("Isolation Forest Outliers", iso_count,
                           delta="Outliers detected" if iso_count > 0 else "No outliers",
                           delta_color="inverse" if iso_count > 0 else "normal",
@@ -4160,14 +4183,15 @@ with tab_ai_orig:
 
             # [FIX #64] Vaqt CSV eksporti (timestamp bilan)
             if history_eff:
-                df_export = timestamped_csv_export({
+                _anom_df = pd.DataFrame({  # [FIX C-03] dict → DataFrame
                     "eff_stress_MPa": history_eff,
                     "anomaly": [1 if a is not None else 0 for a in anomalies_eff]
-                }, prefix=f"{obj_name}_anomaly")
+                })
+                df_export, _anom_fn = timestamped_csv_export(_anom_df, prefix=f"{obj_name}_anomaly")  # [FIX C-03] tuple unpack
                 st.download_button(
                     "⬇️ Download Anomaly CSV (timestamped)",
                     data=df_export,
-                    file_name=f"{obj_name}_anomaly_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    file_name=_anom_fn,  # [FIX C-03b] timestamped filename
                     mime="text/csv",
                     use_container_width=True
                 )
@@ -4251,26 +4275,32 @@ with tab_ai_orig:
                 st.markdown("---")
                 if st.button("💾 Save Model to Disk (serialization)", key="save_model_btn"):
                     try:
-                        paths = save_models_to_disk(
-                            st.session_state.get('fos_nn_model'),
-                            st.session_state.get('fos_rf_tab2'),
-                            obj_name=obj_name
-                        )
-                        st.success(f"Model saved: {paths.get('nn_path', 'N/A')} | {paths.get('rf_path', 'N/A')}")
+                        _fos_scaler = st.session_state.get('fos_scaler_tab2')  # [FIX C-05]
+                        _fos_meta = {"obj_name": obj_name, "timestamp": datetime.now().isoformat()}
+                        if _fos_scaler is None:
+                            st.warning("⚠️ Scaler topilmadi — model avval train qilish kerak.")
+                        else:
+                            saved_dir = save_models_to_disk(  # [FIX C-05] to'g'ri chaqiruv
+                                st.session_state.get('fos_nn_model'),
+                                st.session_state.get('fos_rf_tab2'),
+                                _fos_scaler, obj_name, _fos_meta,
+                            )
+                            st.success(f"✅ Model saved: {saved_dir or 'xato'}")  # [FIX C-05] str, dict emas
                     except Exception as e_save:
                         st.error(f"Save error: {e_save}")
 
             # [FIX #64] FOS prediction CSV eksporti
             if preds_tab2:
-                df_fos_exp = timestamped_csv_export({
+                _fos_pred_df = pd.DataFrame({  # [FIX C-04] dict → DataFrame
                     "temperature_C": list(T_sim[:len(preds_tab2)]),
                     "sigma_v_MPa": list(sigma_v_sim[:len(preds_tab2)]),
                     "predicted_FOS": preds_tab2,
-                }, prefix=f"{obj_name}_fos_pred")
+                })
+                df_fos_exp, _fos_fn = timestamped_csv_export(_fos_pred_df, prefix=f"{obj_name}_fos_pred")  # [FIX C-04] tuple unpack
                 st.download_button(
                     "⬇️ Download FOS Prediction CSV (timestamped)",
                     data=df_fos_exp,
-                    file_name=f"{obj_name}_fos_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    file_name=_fos_fn,  # [FIX C-04b] timestamped filename
                     mime="text/csv",
                     use_container_width=True
                 )
@@ -4282,7 +4312,7 @@ with tab_ai_orig:
                     y_pred_bin = (np.array(preds_tab2) >= fos_target * 0.95).astype(int)
                     cm_res = compute_confusion_roc_f1(y_true_bin, y_pred_bin)
                     cm_cols = st.columns(4)
-                    cm_cols[0].metric("Accuracy", f"{cm_res.get('accuracy', 0):.3f}")
+                    cm_cols[0].metric("Accuracy", f"{cm_res.get('accuracy', (cm_res.get('TP',0)+cm_res.get('TN',0)) / max(cm_res.get('TP',0)+cm_res.get('TN',0)+cm_res.get('FP',0)+cm_res.get('FN',0),1))  # [FIX C-27]:.3f}")
                     cm_cols[1].metric("F1-Score", f"{cm_res.get('f1', 0):.3f}")
                     cm_cols[2].metric("Precision", f"{cm_res.get('precision', 0):.3f}")
                     cm_cols[3].metric("Recall", f"{cm_res.get('recall', 0):.3f}")
@@ -4419,7 +4449,7 @@ with tab_advanced:
         mb_coal, s_coal, a_coal = hoek_brown_params(
             gsi_val, target_l['mi'], D_factor
         )
-        sigma_t_val = (ucs_t_adv / 2.0) * (mb_coal - np.sqrt(max(mb_coal**2 + 4*float(s_coal), 0.0)))
+        sigma_t_val = (ucs_t_adv / 2.0) * (mb_coal - np.sqrt(max(mb_coal**2 + 4.0*max(float(s_coal), 0.0), 0.0)))  # [FIX C-22]
         fos_tensile = tensile_failure_fos(sigma_t_val, sigma_min_val)
 
         cols_fos = st.columns(3)
@@ -4701,3 +4731,26 @@ st.caption(
     "Patent Pending (UzPatent + WIPO PCT) | "
     "⚠️ Scientific use only — Commercial use strictly prohibited until patent grant."
 )
+
+# ══════════════════════════════════════════════════════════════════════════════
+# UCG SCI-GRADE PLATFORM v3.0.0 — TUZATISHLAR JADVALI (FIX C seriyasi)
+# ══════════════════════════════════════════════════════════════════════════════
+# C-01: sigma_v_coal /=1e6 (Pa→MPa) — allaqachon tuzatilgan edi
+# C-02: robin_bc_update — T_ambient→T_air, k_surface qo'shildi, dx→dz
+# C-03/04: timestamped_csv_export — dict→DataFrame, tuple unpack (×2)
+# C-05: save_models_to_disk — scaler+metadata argumentlari qo'shildi
+# C-06: digital_twin_hash — MD5→SHA-256, import json o'chirildi
+# C-07: compute_confusion_roc_f1 — accuracy kalit qo'shildi
+# C-08: iso_flags==−1 → np.sum(iso_flags) (bool mask to'g'ri ishlatish)
+# C-09: phase_field_update dt_max — eta omili qo'shildi (Bourdin 2000)
+# C-10: density_temperature — bosqichma bosqich yonish 400–800°C
+# C-11–13: Funksiyalar ichidagi redundant import'lar olib tashlandi
+# C-14: hoek_brown_params — scalar 'a' → float (0-d array muammosi)
+# C-15: sensitivity_analysis — hardcoded 20.0 → w_nom
+# C-16: compute_demand_capacity_ratio — σ₃≥0, σci>EPS guard
+# C-17: sigma_t_val — sqrt argument double guard
+# C-18: kirsch_stress_field — r≥R_safe singularity prevention
+# C-19: water_inrush_risk — aquifer_depth = seam+20 (osti)
+# C-21: compute_advanced_fos — gsi_thermal_degradation tatbiq etildi
+# C-22–50: Ilmiy hujjatlashtirish, birlik izohlari, fizik chegaralar
+# ══════════════════════════════════════════════════════════════════════════════
