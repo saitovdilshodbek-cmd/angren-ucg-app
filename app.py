@@ -24,6 +24,7 @@ import functools  # [FIX C-37]
 import json
 import os  # [FIX C-22]
 import hashlib
+import sqlite3  # <-- QO'SHILDI: SQLite3 ma'lumotlar bazasi uchun
 from datetime import datetime
 from dataclasses import dataclass
 from typing import NamedTuple, Optional, Tuple, List, Dict
@@ -125,7 +126,7 @@ WILSON_C2 = BIENIAWSKI_C2
 
 # [FIX #26] Biot effektiv stress koeffitsienti
 # Manba: Biot, M.A. (1941). J. Appl. Phys., 12(2), 155-164.
-BIOT_COEFFICIENT: float = 1.0     # [FIX C-23] Biot α (to'yingan qoya: α=1.0) ≠ Skempton B≈0.9 (fos_with_pore da)
+BIOT_COEFFICIENT: float = 1.0     # [FIX C-23] Biot α (to'yin-gan qoya: α=1.0) ≠ Skempton B≈0.9 (fos_with_pore da)
 
 # [FIX #70] Sutherland konstantasi CO gaz uchun (S = 118 K)
 # Manba: Sutherland, W. (1893). Phil. Mag. 36(223), 507-531.
@@ -152,6 +153,60 @@ class ThermalConvergenceError(UCGError):
 class ModelTrainingError(UCGError):
     """AI/ML model o'qitish xatoliklari."""
     pass
+
+
+# ── Ma'lumotlar bazasini yaratish funksiyasi (SQLite3) ────────────────────
+def init_db():
+    """
+    [FIX SQLITE] UCG monitoring ma'lumotlari uchun SQLite3 bazasini yaratadi.
+    Jadvallar: sensor_data, rock_properties, predictions.
+    Agar baza bo'sh bo'lsa, dastlabki test ma'lumotlarini kiritadi.
+    """
+    conn = sqlite3.connect("ucg_monitoring.db")
+    cursor = conn.cursor()
+    
+    cursor.executescript("""
+    CREATE TABLE IF NOT EXISTS sensor_data (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
+        temperature REAL,
+        pressure REAL,
+        gas_co REAL,
+        gas_h2 REAL,
+        gas_ch4 REAL
+    );
+
+    CREATE TABLE IF NOT EXISTS rock_properties (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
+        rock_type TEXT,
+        init_ucs REAL,
+        curr_ucs REAL,
+        temp_exposed REAL
+    );
+
+    CREATE TABLE IF NOT EXISTS predictions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
+        collapse_risk REAL,
+        pinn_accuracy REAL,
+        status TEXT
+    );
+
+    -- Dastlabki test ma'lumotlarini kiritish (agar baza bo'sh bo'lsa)
+    INSERT OR IGNORE INTO sensor_data (temperature, pressure, gas_co, gas_h2, gas_ch4)
+    VALUES (450.5, 2.4, 12.5, 18.2, 5.4);
+
+    INSERT OR IGNORE INTO rock_properties (rock_type, init_ucs, curr_ucs, temp_exposed)
+    VALUES ('Siltstone', 65.0, 32.4, 600.0);
+
+    INSERT OR IGNORE INTO predictions (collapse_risk, pinn_accuracy, status)
+    VALUES (15.4, 0.94, 'Safe');
+    """)
+    
+    conn.commit()
+    conn.close()
+    logger.info("SQLite3 ma'lumotlar bazasi tayyor: ucg_monitoring.db")
 
 
 # ── Fizika parametrlari (o'zgarmas) ──────────────────────────────────────
@@ -618,6 +673,10 @@ def _init_session() -> None:
             st.session_state[key] = val
 
 _init_session()
+
+# ── SQLite3 bazasini ishga tushirish (faqat bir marta) ───────────────────
+# init_db funksiyasi yuqorida aniqlangan. Uni dastur boshlanishida chaqiramiz.
+init_db()
 
 
 def translate(key: str, **kwargs) -> str:
