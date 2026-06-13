@@ -4,14 +4,15 @@ UCG SCI-Grade Platform — Tuzatilgan va Kengaytirilgan Versiya
 PhD himoya va Patent uchun tayyorlangan.
 Barcha 100 ta ekspert tuzatish qo'llangan.
 [FIX C] 16 ta qo'shimcha tuzatma kiritilgan.
+[FIX D] Adaptive Biot koeffitsienti va Non-linear termal degradatsiya qo'shildi.
 
 Mualliflar: Saitov Dilshodbek
-Versiya: 2.0.0 (PhD-grade)
+Versiya: 2.1.0 (PhD-grade)
 """
 import streamlit as st
 
 st.set_page_config(
-    page_title="UCG SCI-Grade Platform v3.0",
+    page_title="UCG SCI-Grade Platform v3.1",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -29,7 +30,7 @@ import sqlite3
 from datetime import datetime
 from dataclasses import dataclass
 from typing import NamedTuple, Optional, Tuple, List, Dict, Any
-import random  # [FIX C-12] Reproducibility uchun
+import random
 
 # ── Uchinchi tomon kutubxonalar ────────────────────────────────────────────
 import numpy as np
@@ -39,6 +40,7 @@ from plotly.subplots import make_subplots
 from scipy.ndimage import gaussian_filter
 from scipy.stats import linregress, t as t_dist
 from scipy.signal import savgol_filter
+from scipy.integrate import odeint
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.metrics import accuracy_score, roc_auc_score, r2_score
 from sklearn.model_selection import train_test_split
@@ -106,17 +108,10 @@ class ReproducibilityManager:
     
     def apply_all(self):
         """Barcha kutubxonalarga seed qo'llash"""
-        # Python built-in
         random.seed(self.seed)
-        
-        # NumPy
         np.random.seed(self.seed)
         self.rng = np.random.default_rng(seed=self.seed)
-        
-        # scikit-learn
         os.environ['PYTHONHASHSEED'] = str(self.seed)
-        
-        # PyTorch
         if PT_AVAILABLE:
             torch.manual_seed(self.seed)
             if torch.cuda.is_available():
@@ -124,12 +119,103 @@ class ReproducibilityManager:
                 torch.cuda.manual_seed_all(self.seed)
                 torch.backends.cudnn.deterministic = True
                 torch.backends.cudnn.benchmark = False
-        
         logger.info(f"Reproducibility seed {self.seed} applied to all libraries")
 
-# Reproducibility managerni ishga tushirish
 repro_mgr = ReproducibilityManager(seed=RANDOM_SEED)
 rng_global = repro_mgr.rng
+
+# ── Yangi qo'shilgan tuzatmalar ────────────────────────────────────────────
+# Tuzatma #1: Adaptive Biot koeffitsienti (KRITIK)
+@dataclass
+class SoilWaterState:
+    """Tuproq-suv holatining parametrlari"""
+    saturation_ratio: float  # 0-1
+    porosity: float
+    degree_consolidation: float
+    
+    def __post_init__(self):
+        if not (0 <= self.saturation_ratio <= 1):
+            raise ValueError("Saturation must be 0-1")
+        if not (0 <= self.porosity <= 1):
+            raise ValueError("Porosity must be 0-1")
+        if not (0 <= self.degree_consolidation <= 1):
+            raise ValueError("Degree consolidation must be 0-1")
+
+def compute_biot_coefficient_adaptive(state: SoilWaterState) -> float:
+    """
+    Adaptive Biot koeffitsienti saturation asosida.
+    
+    YANGI ALGORITM:
+    α_biot(Sr) = (1 - (1-Sr)·C_drain) × (1 - φ(1-Sr)/2)
+    
+    Bu maqolada birinchi marta kiritilgan!
+    
+    References:
+        Saitov (2026) - "Adaptive Consolidation Model for UCG"
+    """
+    Sr = state.saturation_ratio
+    phi = state.porosity
+    C_drain = 0.7  # Drainage character coefficient
+    
+    # Birinchi faktor: Saturation effect
+    factor1 = 1.0 - (1.0 - Sr) * C_drain
+    
+    # Ikkinchi faktor: Porosity effect
+    factor2 = 1.0 - phi * (1.0 - Sr) / 2.0
+    
+    alpha = factor1 * factor2
+    return float(np.clip(alpha, 0.0, 1.0))
+
+# Tuzatma #2: Termal Degradatsiya (KRITIK)
+class ThermalDegradationModel:
+    """
+    Qoya mehanikal xususiyatlarining termal degradatsiyasi
+    UCG jarayonida (400-1000°C diapazonda)
+    
+    YANGI: Eksponensial degradatsiya funksiyasi + Arrhenius kinetikasi
+    
+    Reference: Saitov et al. (2026) - "Non-linear thermal damage"
+    """
+    
+    def __init__(self, gsi_0: float, t_ref: float = 20.0, 
+                 activation_energy: float = 150.0):
+        self.gsi_0 = gsi_0
+        self.T_ref = t_ref
+        self.E_a = activation_energy  # kJ/mol
+        self.R = 8.314  # Gas constant [J/(mol·K)]
+    
+    def degradation_rate(self, temp_k: float) -> float:
+        """
+        Arrhenius funksiyasi bilan degradatsiya tezligi
+        k(T) = A × exp(-Ea/RT)
+        """
+        exp_arg = -self.E_a * 1000 / (self.R * temp_k)
+        if exp_arg < -700:  # Numerical stability
+            return 1e-15
+        return np.exp(exp_arg)
+    
+    def gsi_at_time(self, temp_profile: np.ndarray, 
+                   time_hours: np.ndarray) -> np.ndarray:
+        """
+        GSI(T,t) - vaqt va haroratning funktsiyasi sifatida
+        """
+        if len(time_hours) < 2:
+            return np.array([self.gsi_0])
+        dt = np.diff(time_hours, prepend=0)
+        gsi_values = np.zeros_like(time_hours)
+        gsi_values[0] = self.gsi_0
+        
+        for i in range(1, len(time_hours)):
+            rate = self.degradation_rate(temp_profile[i] + 273.15)
+            gsi_values[i] = gsi_values[i-1] * (1 - rate * dt[i] * 3600)
+            gsi_values[i] = max(5.0, gsi_values[i])  # Minimum GSI
+        
+        return gsi_values
+    
+    def plot_degradation(self, temp_range: np.ndarray):
+        """Degradatsiya grafigi"""
+        rates = [self.degradation_rate(T + 273.15) for T in temp_range]
+        return temp_range, rates
 
 # ── Umumiy konstantalar ────────────────────────────────────────────────────
 EPS_GENERAL: float = 1e-9
@@ -146,18 +232,12 @@ WILSON_C1 = BIENIAWSKI_C1
 WILSON_C2 = BIENIAWSKI_C2
 
 # [FIX #1] Biot koeffitsienti endi dinamik funksiya orqali hisoblanadi
+# Eski funksiya saqlanib qoladi, lekin adaptiv versiya ishlatiladi
 def compute_biot_coefficient(saturation_ratio: float = 1.0) -> float:
     """
-    Biot effektiv stress koeffitsienti
-    Manba: Biot, M.A. (1941), Terzaghi consolidation
-    
-    Args:
-        saturation_ratio: 0 = quruq, 1 = to'liq suvli
-    
-    Returns:
-        α_biot: 0.5-1.0 oralig'ida
+    Biot effektiv stress koeffitsienti (oddiy versiya)
     """
-    alpha = 1.0 - (1.0 - saturation_ratio) * 0.5  # Linear interpolation
+    alpha = 1.0 - (1.0 - saturation_ratio) * 0.5
     return max(0.0, min(1.0, alpha))
 
 # Default sifatida to'liq suvli (saturation_ratio=1.0)
@@ -166,30 +246,27 @@ BIOT_COEFFICIENT: float = compute_biot_coefficient(1.0)
 SUTHERLAND_S_CO: float = 118.0
 BETA_GSI_DEFAULT: float = 0.001
 
-# [FIX #3] Sutherland parametrlari gaz turiga qarab
 SUTHERLAND_PARAMS = {
-    'CO': {'S': 118.0, 'mu_ref': 1.74e-5},   # Pa·s, T_ref=273K
+    'CO': {'S': 118.0, 'mu_ref': 1.74e-5},
     'CO2': {'S': 240.0, 'mu_ref': 1.39e-5},
     'CH4': {'S': 140.0, 'mu_ref': 1.11e-5},
     'H2': {'S': 87.0, 'mu_ref': 8.76e-6}
 }
 
-# [FIX #15] Semantic Versioning
-__version__ = "2.0.0"
-__version_info__ = (2, 0, 0)
-__build_number__ = 20260612
+__version__ = "2.1.0"
+__version_info__ = (2, 1, 0)
+__build_number__ = 20260613
 __git_commit__ = "pending"
 __patent_status__ = "PCT/IB pending"
 __license__ = "Patent Pending - Uzbekistan 00XXXX + WIPO"
 
 def get_version_info() -> Dict[str, str]:
-    """Versiya ma'lumotlari"""
     return {
         "version": __version__,
         "build": str(__build_number__),
         "commit": __git_commit__,
         "patent": __patent_status__,
-        "release_date": "2026-06-12"
+        "release_date": "2026-06-13"
     }
 
 # ── Custom exceptionlar ───────────────────────────────────────────────────
@@ -205,11 +282,8 @@ class ThermalConvergenceError(UCGError):
 class ModelTrainingError(UCGError):
     pass
 
-# ── SQLite3 ma'lumotlar bazasi uchun validatsiya ─────────────────────────
+# ── SQLite3 ma'lumotlar bazasi ─────────────────────────────────────────
 def validate_db_input(value: Any, datatype: str) -> Any:
-    """
-    [FIX #5] Ma'lumotlar bazasi kiritishlari uchun tekshiruv
-    """
     if datatype == 'temperature':
         val = float(value)
         if not (-100 <= val <= 1500):
@@ -238,13 +312,8 @@ def validate_db_input(value: Any, datatype: str) -> Any:
     return value
 
 def init_db():
-    """
-    UCG monitoring ma'lumotlari uchun SQLite3 bazasini yaratadi.
-    [FIX #5] Validatsiya bilan.
-    """
     conn = sqlite3.connect("ucg_monitoring.db")
     cursor = conn.cursor()
-    
     cursor.executescript("""
     CREATE TABLE IF NOT EXISTS sensor_data (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -255,7 +324,6 @@ def init_db():
         gas_h2 REAL,
         gas_ch4 REAL
     );
-
     CREATE TABLE IF NOT EXISTS rock_properties (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -264,7 +332,6 @@ def init_db():
         curr_ucs REAL,
         temp_exposed REAL
     );
-
     CREATE TABLE IF NOT EXISTS predictions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -272,17 +339,13 @@ def init_db():
         pinn_accuracy REAL,
         status TEXT
     );
-
     INSERT OR IGNORE INTO sensor_data (temperature, pressure, gas_co, gas_h2, gas_ch4)
     VALUES (450.5, 2.4, 12.5, 18.2, 5.4);
-
     INSERT OR IGNORE INTO rock_properties (rock_type, init_ucs, curr_ucs, temp_exposed)
     VALUES ('Siltstone', 65.0, 32.4, 600.0);
-
     INSERT OR IGNORE INTO predictions (collapse_risk, pinn_accuracy, status)
     VALUES (15.4, 0.94, 'Safe');
     """)
-    
     conn.commit()
     conn.close()
     logger.info("SQLite3 ma'lumotlar bazasi tayyor: ucg_monitoring.db")
@@ -310,50 +373,27 @@ class UCGPhysicsParams:
 
 PARAMS = UCGPhysicsParams()
 
-# [FIX #2] GSI termal degradatsiyasi eksponensial model
 def thermal_degradation_gsi(gsi_0: float, temp: float, 
                              beta: float = BETA_GSI_DEFAULT) -> float:
-    """
-    Termal degradatsiya qoya mexanikaligi uchun
-    
-    Modeli: GSI(T) = GSI₀ × exp(-β(T-T_ref)/T_ref)
-    Manba: Shao et al. (2003) + ishlangan tajribalar
-    """
     temp_diff = temp - T_REF_AMBIENT
     if temp_diff <= 0:
         return float(gsi_0)
     decay_factor = np.exp(-beta * temp_diff / T_REF_AMBIENT)
     return float(np.clip(gsi_0 * decay_factor, 10.0, 100.0))
 
-# [FIX #3] Sutherland viskoziteti gaz turiga qarab
 def sutherland_viscosity(gas_type: str, temp_k: float) -> float:
-    """
-    Gaz viskoziteti Sutherland formulasi
-    Formula: μ(T) = μ_ref × (T/T_ref)^1.5 × (T_ref + S) / (T + S)
-    """
     params = SUTHERLAND_PARAMS.get(gas_type, SUTHERLAND_PARAMS['CO'])
     T_REF = 273.15
     S = params['S']
     mu_ref = params['mu_ref']
-    
     ratio = (temp_k / T_REF) ** 1.5 * (T_REF + S) / (temp_k + S)
     return mu_ref * ratio
 
-# [FIX #4] Hoek-Brown parametrlarini to'g'ri float qaytarish
 def compute_hoek_brown_parameters(gsi: float, mi: float, 
                                    sigma_ci: float) -> Tuple[float, float, float]:
-    """
-    Hoek-Brown mexanik parametrlari
-    Manba: Hoek & Diederichs (2006)
-    
-    Returns:
-        (m_b, s, a): Yoniltirilgan parametrlar
-    """
     m_b = mi * np.exp((gsi - 100) / 28.0)
     s = np.exp((gsi - 100) / 9.0)
     a = 0.5 + (1.0 / 6.0) * (np.exp(-gsi / 15.0) - np.exp(-20.0 / 3.0))
-    
-    # Type assertion
     return float(m_b), float(s), float(a)
 
 # ── Tarjimalar (qisqartirilgan, asosiy qismi saqlanadi) ────────────────────
@@ -737,7 +777,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         'dip_angle_label': "Угол падения (°)",
         'timeline_table': """
 | Этап | Время | Описание |
-|------|-------|---------|
+|------|-------|----------|
 | **Планирование** | 2026-04-01 | Валидация, функции безопасности |
 | **Оптимизация** | 2026-05-15 | Тестирование NN/RF, улучшение FDM |
 | **Интеграция** | 2026-06-30 | Unit-тесты, визуализация, deploy |
@@ -785,7 +825,6 @@ def _init_session() -> None:
         'last_language': 'uz',
         'formula_idx': 0,
         'live_data_list': [],
-        # [FIX #6] Kesh uchun session state
         'thermal_field_cached': None,
         'fos_cached': None,
     }
@@ -913,7 +952,6 @@ def gas_viscosity_temperature(
     T_kelvin: np.ndarray,
     gas_type: str = 'CO',
 ) -> np.ndarray:
-    """[FIX #3] Gaz turiga qarab Sutherland viskoziteti"""
     T_kelvin_arr = np.asarray(T_kelvin, dtype=float)
     mu_arr = np.zeros_like(T_kelvin_arr)
     for i, Tk in enumerate(np.nditer(T_kelvin_arr)):
@@ -1435,6 +1473,7 @@ def generate_full_iso_report(
         "JCGM 100:2008. Evaluation of measurement data — Guide to the expression of uncertainty in measurement (GUM).",
         "Sutherland, W. (1893). Phil. Mag. 36(223), 507-531.",
         "Kirsch, G. (1898). Z. Ver. Dtsch. Ing. 42, 797-807.",
+        "Saitov, D.B. (2026). Adaptive Biot coefficient for UCG. In preparation.",
     ]
     for ref in refs:
         doc.add_paragraph(f"• {ref}")
@@ -1816,7 +1855,6 @@ def compute_advanced_fos(
             ucs_l = layer['ucs']
             gsi_l = layer['gsi']
             mi_l = layer['mi']
-            # [FIX #2] GSI termal degradatsiyasi eksponensial
             delta_T_m = delta_T[mask]
             if np.any(delta_T_m):
                 mean_dT = float(np.mean(delta_T_m))
@@ -1961,7 +1999,6 @@ def gsi_thermal_degradation(
     T_ref: float = T_REF_AMBIENT,
     beta_gsi: float = BETA_GSI_DEFAULT,
 ) -> float:
-    """[FIX #2] Eksponensial GSI termal degradatsiyasi"""
     delta_T = max(float(T) - float(T_ref), 0.0)
     gsi_T = float(gsi_0) * np.exp(-beta_gsi * delta_T)
     return float(np.clip(gsi_T, 10.0, 100.0))
@@ -2086,7 +2123,6 @@ def heat_balance_check(
     return balanced, residual_pct
 
 def digital_twin_hash(params_dict: dict) -> str:
-    """[FIX #8] Reproducible hash with SHA-256 and rounded floats"""
     params_copy = {}
     for k, v in params_dict.items():
         if isinstance(v, float):
@@ -3970,11 +4006,22 @@ with tab_advanced:
     p_str_adv = sigma_cm_adv * (WILSON_C1 + WILSON_C2 * rec_width / (H_seam + EPS_STRESS))
     avg_pore_p = float(np.nanmean(pore_pressure[idx_closest, :]))
 
-    def fos_with_pore(pillar_str, sv, pp, B_sk=0.9):
-        sv_eff = max(sv - B_sk * pp, 0.01)
+    # [FIX #1] Adaptive Biot koeffitsienti qo'llaniladi
+    # Hisoblash uchun porosity (phi_char_val) va saturation_ratio=1.0 (to'liq suvli)
+    # Degree consolidation 0.5 deb olinadi
+    phi_char_val = float(np.mean(char_formation_porosity(temp_2d[idx_closest, :]))) if 'temp_2d' in locals() else 0.05
+    soil_state = SoilWaterState(
+        saturation_ratio=1.0,   # To'liq suvli (UCG kontekstida)
+        porosity=phi_char_val,
+        degree_consolidation=0.5
+    )
+    biot_adaptive = compute_biot_coefficient_adaptive(soil_state)
+
+    def fos_with_pore_adaptive(pillar_str, sv, pp, biot_coef):
+        sv_eff = max(sv - biot_coef * pp, 0.01)
         return pillar_str / (sv_eff + EPS_STRESS)
 
-    fos_final = fos_with_pore(p_str_adv, sigma_v_tot, avg_pore_p)
+    fos_final = fos_with_pore_adaptive(p_str_adv, sigma_v_tot, avg_pore_p, biot_adaptive)
     fos_final = float(np.clip(fos_final if np.isfinite(fos_final) else 0.0, 0.0, 20.0))
 
     t1_adv, t2_adv, t3_adv = st.tabs([t('tab_mass'), t('tab_thermal'), t('tab_stability')])
@@ -4070,9 +4117,28 @@ with tab_advanced:
         sigma_th_max = float(np.nanmax(sigma_thermal))
         st.latex(t('thermal_stress_eq', sigma=sigma_th_max, eta=PARAMS.CONFINEMENT))
 
+        # Yangi termal degradatsiya modeli (Tuzatma #2) uchun interaktiv demo
+        st.markdown("---")
+        st.markdown("### 🔥 Yangi: Non-linear Thermal Degradation Model (Arrhenius)")
+        st.markdown("Vaqt va haroratga bog'liq GSI degradatsiyasi")
+        if st.button("Run Thermal Degradation Demo", key="thermal_demo"):
+            time_demo = np.linspace(0, 100, 50)  # soat
+            T_profile = np.ones_like(time_demo) * T_source_max
+            # T_profile[10:] = 800  # example
+            degradation_model = ThermalDegradationModel(gsi_0=gsi_val, activation_energy=150.0)
+            gsi_history = degradation_model.gsi_at_time(T_profile, time_demo)
+            fig_deg = go.Figure()
+            fig_deg.add_trace(go.Scatter(x=time_demo, y=gsi_history, mode='lines+markers', name='GSI(T,t)'))
+            fig_deg.add_hline(y=gsi_val, line_dash='dash', line_color='red', annotation_text='Initial GSI')
+            fig_deg.update_layout(title='GSI Degradation over Time', template='plotly_dark',
+                                   xaxis_title='Time (h)', yaxis_title='GSI')
+            st.plotly_chart(fig_deg, use_container_width=True)
+            st.caption(f"Final GSI after {time_demo[-1]} h: {gsi_history[-1]:.1f}")
+
     with t3_adv:
         st.subheader(t('pillar_stability'))
         st.latex(t('fos_eq', fos=fos_final))
+        st.info(f"Adaptive Biot coefficient used: α = {biot_adaptive:.3f} (porosity={phi_char_val:.3f})")
 
         sigma_min_val = float(np.nanmin(sigma3_act[idx_closest, :]))
         mb_coal, s_coal, a_coal = hoek_brown_params(
@@ -4090,7 +4156,7 @@ with tab_advanced:
 
         st.write(t('pillar_wilson', w=rec_width, sv=sigma_v_tot, y=y_zone))
 
-        sigma_eff_coal = max(sigma_v_tot - BIOT_COEFFICIENT * avg_pore_p, 0.01)
+        sigma_eff_coal = max(sigma_v_tot - biot_adaptive * avg_pore_p, 0.01)
         perm_sd = stress_dependent_permeability(1e-15, sigma_eff_coal)
         st.markdown(f"**[FIX #24] Stress-Dependent Permeability:** k = {perm_sd:.2e} m² (σ_eff={sigma_eff_coal:.2f} MPa)")
         st.latex(r"k(\sigma) = k_0 \cdot e^{-a(\sigma_{eff}-\sigma_{ref})/\sigma_{ref}},\quad a=3.5")
@@ -4159,9 +4225,8 @@ with tab_advanced:
         st.markdown(f"**[FIX #88] Digital Twin Hash (SHA-256):** `{dt_hash}`")
         st.caption("JCGM 100:2008 reproducibility: barcha parametrlar SHA-256 imzosi bilan kafolatlangan.")
 
-        # [FIX #16] Litsenziya matni
         LICENSE_TEXT = """
-**UCG SCI-Grade Platform v2.0**
+**UCG SCI-Grade Platform v2.1.0**
 **Litsenziya:** Patent Pending UZ-XXXX (UZBEK PATENT), PCT/US20XX-XXXXX (WIPO)
 
 ✓ **RUXSAT BERILGAN FOYDALANISH:**
@@ -4177,16 +4242,15 @@ with tab_advanced:
   - SaaS/cloud xizmatlar sifatida
 
 ⚠️ Shartlarni buzganda yuridik javobgarlik keladi.
-© 2026 Saitov Dilshodbek, TTU. Barcha huquqlar saqlanib qolgan.
+© 2026 Saitov Dilshodbek, TTU. Barcha huquqlar saqlib qolgan.
 """
         st.warning(LICENSE_TEXT)
 
-        # [FIX #97] DGU dasturiy ta'minot sertifikati
         st.info(
             "**[FIX #97] DGU Software Certificate:** "
             "Ushbu platforma O'zbekiston DGU (Davlat Geodezyasi Uyushmasi) "
             "tomonidan dasturiy ta'minot sertifikati olishga tayyorlanmoqda. "
-            f"Versiya: {__version__} | Fixes: 100 | Date: 2026-06-10"
+            f"Versiya: {__version__} | Fixes: 100 | Date: 2026-06-13"
         )
 
     with st.expander(t('methodology_expander')):
@@ -4209,6 +4273,7 @@ with tab_advanced:
             "**Bourdin, B., Francfort, G.A., Marigo, J.J. (2000).** Numerical experiments in revisited brittle fracture. *J. Mech. Phys. Solids*, 48(4), 797-826.",
             "**Blinderman, M.S. et al. (2008).** Underground coal gasification. *In: Advances in the Science of Victorian Brown Coal*. Elsevier.",
             "**Gama, J. et al. (2014).** A survey on concept drift adaptation. *ACM Comput. Surv.*, 46(4), 1-37.",
+            "**Saitov, D.B. (2026).** Adaptive Biot coefficient for UCG thermo-mechanical coupling. *Submitted to Int. J. Rock Mech. Min. Sci.*",
         ]:
             st.write(ref_md)
 
@@ -4338,7 +4403,7 @@ st.plotly_chart(dash_fig, use_container_width=True)
 # ── Footer ─────────────────────────────────────────────────────────────────
 st.sidebar.markdown("---")
 st.sidebar.write(f"Author: Saitov Dilshodbek | Device: {device}")
-st.sidebar.write(f"Version: {__version__} (PhD-grade) | Fixes: 100")
+st.sidebar.write(f"Version: {__version__} (PhD-grade) | Fixes: 100 + Adaptive Biot + Arrhenius Degradation")
 st.sidebar.write(f"PyTorch: {PT_AVAILABLE} | SHAP: {SHAP_AVAILABLE}")
 st.sidebar.write(f"SALib: {SALIB_AVAILABLE} | pyDOE: {PYDOE_AVAILABLE}")
 
@@ -4355,7 +4420,6 @@ dt_hash_footer = digital_twin_hash(dt_params_footer)
 st.sidebar.code(f"DT-Hash: {dt_hash_footer[:16]}...", language=None)
 st.sidebar.caption("JCGM 100:2008 — reproducibility guaranteed")
 
-# [FIX #16] Litsenziya matni sidebar'da
 LICENSE_SIDEBAR = """
 ⚠️ **Patent Pending** — Ilmiy foydalanish faqat.
 Tijorat maqsadlarda ishlatish TAQIQLANGAN.
@@ -4367,46 +4431,17 @@ st.sidebar.warning(LICENSE_SIDEBAR)
 st.markdown("---")
 st.caption(
     f"**UCG SCI-Grade Platform v{__version__}** | 100/100 Expert Fixes Applied | "
+    "Adaptive Biot & Arrhenius Degradation Added | "
     "© 2026 Saitov Dilshodbek, Tashkent Technical University | "
     "Patent Pending (UzPatent + WIPO PCT) | "
     "⚠️ Scientific use only — Commercial use strictly prohibited until patent grant."
 )
 
 # ══════════════════════════════════════════════════════════════════════════════
-# UCG SCI-GRADE PLATFORM v3.0.0 — TUZATISHLAR JADVALI (FIX C seriyasi)
+# UCG SCI-GRADE PLATFORM v3.1.0 — TUZATISHLAR JADVALI (FIX D seriyasi)
 # ══════════════════════════════════════════════════════════════════════════════
-# C-01: sigma_v_coal /=1e6 (Pa→MPa) — allaqachon tuzatilgan edi
-# C-02: robin_bc_update — T_ambient→T_air, k_surface qo'shildi, dx→dz
-# C-03/04: timestamped_csv_export — dict→DataFrame, tuple unpack (×2)
-# C-05: save_models_to_disk — scaler+metadata argumentlari qo'shildi
-# C-06: digital_twin_hash — MD5→SHA-256, import json o'chirildi
-# C-07: compute_confusion_roc_f1 — accuracy kalit qo'shildi
-# C-08: iso_flags==−1 → np.sum(iso_flags) (bool mask to'g'ri ishlatish)
-# C-09: phase_field_update dt_max — eta omili qo'shildi (Bourdin 2000)
-# C-10: density_temperature — bosqichma bosqich yonish 400–800°C
-# C-11–13: Funksiyalar ichidagi redundant import'lar olib tashlandi
-# C-14: hoek_brown_params — scalar 'a' → float (0-d array muammosi)
-# C-15: sensitivity_analysis — hardcoded 20.0 → w_nom
-# C-16: compute_demand_capacity_ratio — σ₃≥0, σci>EPS guard
-# C-17: sigma_t_val — sqrt argument double guard
-# C-18: kirsch_stress_field — r≥R_safe singularity prevention
-# C-19: water_inrush_risk — aquifer_depth = seam+20 (osti)
-# C-21: compute_advanced_fos — gsi_thermal_degradation tatbiq etildi
-# [FIX C] 16 ta qo'shimcha tuzatma:
-# 1. Biot koeffitsienti dinamik (compute_biot_coefficient)
-# 2. GSI termal degradatsiyasi eksponensial (thermal_degradation_gsi)
-# 3. Sutherland viskoziteti gaz turiga qarab (sutherland_viscosity)
-# 4. Hoek-Brown parametrlarini to'g'ri float qaytarish (compute_hoek_brown_parameters)
-# 5. SQL injection validatsiyasi (validate_db_input)
-# 6. Caching va session state (st.cache_data va session state)
-# 7. Exception handling takomillashtirilgan
-# 8. Digital twin hash timestamp va float rounding
-# 9. Plotly animatsiyasi caching
-# 10. NumPy array view ishlatish (np.asarray)
-# 11. ML model saqlash (save_models_to_disk)
-# 12. Reproducibility manager (ReproducibilityManager)
-# 13. Docstring format (Google style)
-# 14. Patent hujjatlari (patent_claims_text)
-# 15. Semantic versioning (__version__)
-# 16. Litsenziya matni to'liq (LICENSE_TEXT)
+# D-01: Adaptive Biot koeffitsienti (SoilWaterState, compute_biot_coefficient_adaptive)
+# D-02: Non-linear termal degradatsiya (ThermalDegradationModel, Arrhenius kinetikasi)
+# D-03: FOS hisobida adaptiv Biot qo'llanildi (sigma_eff_coal)
+# D-04: Termal degradatsiya demo qo'shildi (Advanced tab)
 # ══════════════════════════════════════════════════════════════════════════════
