@@ -98,13 +98,28 @@ logger = logging.getLogger(__name__)
 # ── Takrorlanish uchun seed ────────────────────────────────────────────────
 RANDOM_SEED = 42
 
-# [FIX C-12] Reproducibility Manager - barcha random seedlarni markaziy boshqarish
+# ==============================================
+# [FIX #12] Reproducibility Manager - Singleton pattern
+# ==============================================
 class ReproducibilityManager:
-    """Barcha random seeds markaziy tekshiruv"""
+    """Barcha random seedlarni markaziy tekshiruv (Singleton)
+    
+    Attributes:
+        seed (int): Asosiy seed qiymati
+        rng (np.random.Generator): NumPy random generator
+    """
+    _instance = None
+    
+    def __new__(cls, seed: int = 42):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
     
     def __init__(self, seed: int = 42):
-        self.seed = seed
-        self.apply_all()
+        if not hasattr(self, 'initialized'):
+            self.seed = seed
+            self.initialized = True
+            self.apply_all()
     
     def apply_all(self):
         """Barcha kutubxonalarga seed qo'llash"""
@@ -124,11 +139,18 @@ class ReproducibilityManager:
 repro_mgr = ReproducibilityManager(seed=RANDOM_SEED)
 rng_global = repro_mgr.rng
 
-# ── Yangi qo'shilgan tuzatmalar ────────────────────────────────────────────
-# Tuzatma #1: Adaptive Biot koeffitsienti (KRITIK)
+# ==============================================
+# [FIX #1] Adaptive Biot koeffitsienti (KRITIK)
+# ==============================================
 @dataclass
 class SoilWaterState:
-    """Tuproq-suv holatining parametrlari"""
+    """Tuproq-suv holatining parametrlari
+    
+    Attributes:
+        saturation_ratio (float): Suv bilan to'yinganlik darajasi (0-1)
+        porosity (float): G'ovaklik koeffitsienti (0-1)
+        degree_consolidation (float): Konsolidatsiya darajasi (0-1)
+    """
     saturation_ratio: float  # 0-1
     porosity: float
     degree_consolidation: float
@@ -150,6 +172,12 @@ def compute_biot_coefficient_adaptive(state: SoilWaterState) -> float:
     
     Bu maqolada birinchi marta kiritilgan!
     
+    Args:
+        state (SoilWaterState): Tuproq-suv holati
+        
+    Returns:
+        float: Biot koeffitsienti [0,1] oralig'ida
+        
     References:
         Saitov (2026) - "Adaptive Consolidation Model for UCG"
     """
@@ -166,7 +194,9 @@ def compute_biot_coefficient_adaptive(state: SoilWaterState) -> float:
     alpha = factor1 * factor2
     return float(np.clip(alpha, 0.0, 1.0))
 
-# Tuzatma #2: Termal Degradatsiya (KRITIK)
+# ==============================================
+# [FIX #2] Non-linear termal degradatsiya (Arrhenius kinetics)
+# ==============================================
 class ThermalDegradationModel:
     """
     Qoya mehanikal xususiyatlarining termal degradatsiyasi
@@ -179,6 +209,12 @@ class ThermalDegradationModel:
     
     def __init__(self, gsi_0: float, t_ref: float = 20.0, 
                  activation_energy: float = 150.0):
+        """
+        Args:
+            gsi_0 (float): Boshlang'ich GSI qiymati
+            t_ref (float): Referent harorat (°C)
+            activation_energy (float): Aktivatsiya energiyasi (kJ/mol)
+        """
         self.gsi_0 = gsi_0
         self.T_ref = t_ref
         self.E_a = activation_energy  # kJ/mol
@@ -188,6 +224,12 @@ class ThermalDegradationModel:
         """
         Arrhenius funksiyasi bilan degradatsiya tezligi
         k(T) = A × exp(-Ea/RT)
+        
+        Args:
+            temp_k (float): Harorat (Kelvin)
+            
+        Returns:
+            float: Degradatsiya tezligi (1/soat)
         """
         exp_arg = -self.E_a * 1000 / (self.R * temp_k)
         if exp_arg < -700:  # Numerical stability
@@ -198,6 +240,13 @@ class ThermalDegradationModel:
                    time_hours: np.ndarray) -> np.ndarray:
         """
         GSI(T,t) - vaqt va haroratning funktsiyasi sifatida
+        
+        Args:
+            temp_profile (np.ndarray): Harorat profili (°C)
+            time_hours (np.ndarray): Vaqt massivi (soat)
+            
+        Returns:
+            np.ndarray: Vaqt bo'yicha GSI qiymatlari
         """
         if len(time_hours) < 2:
             return np.array([self.gsi_0])
@@ -282,8 +331,11 @@ class ThermalConvergenceError(UCGError):
 class ModelTrainingError(UCGError):
     pass
 
-# ── SQLite3 ma'lumotlar bazasi ─────────────────────────────────────────
+# ==============================================
+# [FIX #5] SQLite3 ma'lumotlar bazasi va validation
+# ==============================================
 def validate_db_input(value: Any, datatype: str) -> Any:
+    """DB ga kiritiladigan ma'lumotlarni tekshirish va tozalash"""
     if datatype == 'temperature':
         val = float(value)
         if not (-100 <= val <= 1500):
@@ -310,6 +362,30 @@ def validate_db_input(value: Any, datatype: str) -> Any:
             raise ValueError(f"CH4 hajmi noto'g'ri: {val}%")
         return val
     return value
+
+def validate_sensor_data(temperature: float, pressure: float, gas_co: float) -> Dict[str, float]:
+    """
+    Sensor ma'lumotlarini to'liq tekshirish va tozalash.
+    
+    Args:
+        temperature (°C): Harorat
+        pressure (MPa): Bosim
+        gas_co (%): Uglerod oksidi konsentratsiyasi
+        
+    Returns:
+        Dict[str, float]: Validatsiyadan o'tgan qiymatlar
+        
+    Raises:
+        ValueError: Agar qiymatlar ruxsat etilgan chegaradan chiqsa
+    """
+    validated = {}
+    validated['temperature'] = validate_db_input(temperature, 'temperature')
+    validated['pressure'] = validate_db_input(pressure, 'pressure')
+    validated['gas_co'] = validate_db_input(gas_co, 'gas_co')
+    # Qo'shimcha tekshiruvlar
+    if validated['gas_co'] > 30:
+        raise ValueError(f"CO konsentratsiyasi juda yuqori: {validated['gas_co']}%")
+    return validated
 
 def init_db():
     conn = sqlite3.connect("ucg_monitoring.db")
@@ -2122,17 +2198,33 @@ def heat_balance_check(
     balanced = residual_pct < tol * 100.0
     return balanced, residual_pct
 
-def digital_twin_hash(params_dict: dict) -> str:
-    params_copy = {}
-    for k, v in params_dict.items():
-        if isinstance(v, float):
-            params_copy[k] = round(v, 6)
-        elif isinstance(v, dict):
-            params_copy[k] = {kk: round(vv, 6) if isinstance(vv, float) else vv for kk, vv in v.items()}
+# ==============================================
+# [FIX #8] Digital Twin Hash (Secure fingerprinting)
+# ==============================================
+def digital_twin_hash_secure(params: Dict) -> str:
+    """
+    Secure digital twin fingerprinting using SHA-256.
+    
+    Args:
+        params (Dict): Parameters dictionary (must be JSON serializable)
+        
+    Returns:
+        str: 64-character hexadecimal hash
+    """
+    normalized = {}
+    for key in sorted(params.keys()):
+        val = params[key]
+        if isinstance(val, float):
+            normalized[key] = round(val, 6)
+        elif isinstance(val, dict):
+            normalized[key] = digital_twin_hash_secure(val)
+        elif isinstance(val, (list, tuple)):
+            normalized[key] = [digital_twin_hash_secure(x) if isinstance(x, dict) else x for x in val]
         else:
-            params_copy[k] = v
-    serialized = json.dumps(params_copy, sort_keys=True, default=str)
-    return hashlib.sha256(serialized.encode()).hexdigest()[:16].upper()
+            normalized[key] = val
+    params_json = json.dumps(normalized, sort_keys=True, default=str)
+    hash_obj = hashlib.sha256(params_json.encode())
+    return hash_obj.hexdigest()
 
 def geological_presets() -> dict:
     return {
@@ -2396,8 +2488,11 @@ def phase_field_update(
     )
     return np.clip(damage + (dt / eta) * driving, 0.0, 1.0)
 
-# ── Streamlit UI (asosiy qismi) ──────────────────────────────────────────
-# Til tanlash
+# ════════════════════════════════════════════════════════════════════════════
+# STREAMLIT UI (ASOSIY QISMI)
+# ════════════════════════════════════════════════════════════════════════════
+
+# ── Til tanlash ─────────────────────────────────────────────────────────
 lang_col1, lang_col2, lang_col3 = st.sidebar.columns(3)
 if lang_col1.button("🇺🇿 UZ", use_container_width=True):
     st.session_state.language = "uz"
@@ -2852,7 +2947,7 @@ if rf_model is not None:
     else:
         st.info("AUC: only 1 class in test set.")
 
-# ── Grafiklar (qisqartirilgan) ───────────────────────────────────────────
+# ── Grafiklar ───────────────────────────────────────────────────────────
 sub_lower, sub_upper = subsidence_confidence_interval(sub_p * 100.0, n_measurements=20)
 
 col_g1, col_g2, col_g3 = st.columns([1.5, 1.5, 2])
@@ -4221,8 +4316,8 @@ with tab_advanced:
             "algorithm_version": __version__,
             "git_commit": __git_commit__,
         }
-        dt_hash = digital_twin_hash(dt_params)
-        st.markdown(f"**[FIX #88] Digital Twin Hash (SHA-256):** `{dt_hash}`")
+        dt_hash = digital_twin_hash_secure(dt_params)
+        st.markdown(f"**[FIX #88] Digital Twin Hash (SHA-256):** `{dt_hash[:16]}...`")
         st.caption("JCGM 100:2008 reproducibility: barcha parametrlar SHA-256 imzosi bilan kafolatlangan.")
 
         LICENSE_TEXT = """
@@ -4416,7 +4511,7 @@ dt_params_footer = {
     "algorithm_version": __version__,
     "git_commit": __git_commit__,
 }
-dt_hash_footer = digital_twin_hash(dt_params_footer)
+dt_hash_footer = digital_twin_hash_secure(dt_params_footer)
 st.sidebar.code(f"DT-Hash: {dt_hash_footer[:16]}...", language=None)
 st.sidebar.caption("JCGM 100:2008 — reproducibility guaranteed")
 
@@ -4444,4 +4539,9 @@ st.caption(
 # D-02: Non-linear termal degradatsiya (ThermalDegradationModel, Arrhenius kinetikasi)
 # D-03: FOS hisobida adaptiv Biot qo'llanildi (sigma_eff_coal)
 # D-04: Termal degradatsiya demo qo'shildi (Advanced tab)
+# D-05: SQL validation (validate_sensor_data, validate_db_input)
+# D-06: Caching (st.cache_data va st.cache_resource)
+# D-07: Digital Twin Hash (digital_twin_hash_secure)
+# D-08: Reproducibility Manager (Singleton pattern)
+# D-09: Docstrings (namuna keltirildi)
 # ══════════════════════════════════════════════════════════════════════════════
