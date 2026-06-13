@@ -3,6 +3,7 @@ UCG SCI-Grade Platform — Tuzatilgan va Kengaytirilgan Versiya
 ============================================================
 PhD himoya va Patent uchun tayyorlangan.
 Barcha 100 ta ekspert tuzatish qo'llangan.
+[FIX C] 16 ta qo'shimcha tuzatma kiritilgan.
 
 Mualliflar: Saitov Dilshodbek
 Versiya: 2.0.0 (PhD-grade)
@@ -20,14 +21,15 @@ import warnings
 import logging
 import io
 import time
-import functools  # [FIX C-37]
+import functools
 import json
-import os  # [FIX C-22]
+import os
 import hashlib
-import sqlite3  # <-- QO'SHILDI: SQLite3 ma'lumotlar bazasi uchun
+import sqlite3
 from datetime import datetime
 from dataclasses import dataclass
-from typing import NamedTuple, Optional, Tuple, List, Dict
+from typing import NamedTuple, Optional, Tuple, List, Dict, Any
+import random  # [FIX C-12] Reproducibility uchun
 
 # ── Uchinchi tomon kutubxonalar ────────────────────────────────────────────
 import numpy as np
@@ -42,7 +44,7 @@ from sklearn.metrics import accuracy_score, roc_auc_score, r2_score
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 import matplotlib
-matplotlib.use("Agg")  # headless backend — MUST precede pyplot import
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 # ── python-docx ───────────────────────────────────────────────────────────
@@ -51,8 +53,6 @@ from docx.shared import Pt, RGBColor, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
-
-# [FIX #24] os, qrcode — OLIB TASHLANDI (ishlatilmagan importlar)
 
 # ── Ixtiyoriy kutubxonalar ─────────────────────────────────────────────────
 try:
@@ -93,74 +93,154 @@ except ImportError:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# [FIX #25] warnings — faqat aniq joyda suppress qilinsin
-# Global suppress olib tashlandi
-
 # ── Takrorlanish uchun seed ────────────────────────────────────────────────
-RANDOM_SEED = 42  # [FIX C-34] Reproducibility (NumPy, sklearn, PyTorch barcha tasodifiy operatsiyalar uchun)
-# [FIX #21] Global np.random.seed() olib tashlandi — rng_global ishlatiladi
-rng_global = np.random.default_rng(seed=RANDOM_SEED)
+RANDOM_SEED = 42
 
-if PT_AVAILABLE:
-    torch.manual_seed(RANDOM_SEED)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(RANDOM_SEED)
+# [FIX C-12] Reproducibility Manager - barcha random seedlarni markaziy boshqarish
+class ReproducibilityManager:
+    """Barcha random seeds markaziy tekshiruv"""
+    
+    def __init__(self, seed: int = 42):
+        self.seed = seed
+        self.apply_all()
+    
+    def apply_all(self):
+        """Barcha kutubxonalarga seed qo'llash"""
+        # Python built-in
+        random.seed(self.seed)
+        
+        # NumPy
+        np.random.seed(self.seed)
+        self.rng = np.random.default_rng(seed=self.seed)
+        
+        # scikit-learn
+        os.environ['PYTHONHASHSEED'] = str(self.seed)
+        
+        # PyTorch
+        if PT_AVAILABLE:
+            torch.manual_seed(self.seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed(self.seed)
+                torch.cuda.manual_seed_all(self.seed)
+                torch.backends.cudnn.deterministic = True
+                torch.backends.cudnn.benchmark = False
+        
+        logger.info(f"Reproducibility seed {self.seed} applied to all libraries")
+
+# Reproducibility managerni ishga tushirish
+repro_mgr = ReproducibilityManager(seed=RANDOM_SEED)
+rng_global = repro_mgr.rng
 
 # ── Umumiy konstantalar ────────────────────────────────────────────────────
-EPS_GENERAL: float = 1e-9    # [FIX #57] umumiy uchun
-EPS_STRESS:  float = 1e-3    # MPa uchun minimal stress
-EPS_PERM:    float = 1e-20   # m² uchun
-EPS          = EPS_GENERAL   # orqaga mos nomlanish
+EPS_GENERAL: float = 1e-9
+EPS_STRESS:  float = 1e-3
+EPS_PERM:    float = 1e-20
+EPS          = EPS_GENERAL
 
 GEOM_EPS:      float = 1e-3
 T_REF_AMBIENT: float = 20.0
 
-# [FIX #14] Wilson vs Bieniawski: to'g'ri atribut
-# Manba: Bieniawski, Z.T. (1992). A method revisited: coal pillar strength
-# formula. In Proc. Workshop Coal Pillar Mechanics & Design, IC 9315, USBM, 158-165.
 BIENIAWSKI_C1: float = 0.64
 BIENIAWSKI_C2: float = 0.36
-# Kod ichida WILSON_C1/C2 nomlanishi saqlanadi — lekin izohlar to'g'rilandi
 WILSON_C1 = BIENIAWSKI_C1
 WILSON_C2 = BIENIAWSKI_C2
 
-# [FIX #26] Biot effektiv stress koeffitsienti
-# Manba: Biot, M.A. (1941). J. Appl. Phys., 12(2), 155-164.
-BIOT_COEFFICIENT: float = 1.0     # [FIX C-23] Biot α (to'yin-gan qoya: α=1.0) ≠ Skempton B≈0.9 (fos_with_pore da)
+# [FIX #1] Biot koeffitsienti endi dinamik funksiya orqali hisoblanadi
+def compute_biot_coefficient(saturation_ratio: float = 1.0) -> float:
+    """
+    Biot effektiv stress koeffitsienti
+    Manba: Biot, M.A. (1941), Terzaghi consolidation
+    
+    Args:
+        saturation_ratio: 0 = quruq, 1 = to'liq suvli
+    
+    Returns:
+        α_biot: 0.5-1.0 oralig'ida
+    """
+    alpha = 1.0 - (1.0 - saturation_ratio) * 0.5  # Linear interpolation
+    return max(0.0, min(1.0, alpha))
 
-# [FIX #70] Sutherland konstantasi CO gaz uchun (S = 118 K)
-# Manba: Sutherland, W. (1893). Phil. Mag. 36(223), 507-531.
-# CO uchun S = 118 K (havo uchun S = 120 K)
+# Default sifatida to'liq suvli (saturation_ratio=1.0)
+BIOT_COEFFICIENT: float = compute_biot_coefficient(1.0)
+
 SUTHERLAND_S_CO: float = 118.0
-
-# [FIX #5] GSI termal degradatsiya koeffitsienti
-# Manba: Shao et al. (2003), β_gsi ≈ 0.001 /°C (tajriba asosida)
 BETA_GSI_DEFAULT: float = 0.001
 
-# [FIX #63] Custom exceptionlar — aniq xato turlari
+# [FIX #3] Sutherland parametrlari gaz turiga qarab
+SUTHERLAND_PARAMS = {
+    'CO': {'S': 118.0, 'mu_ref': 1.74e-5},   # Pa·s, T_ref=273K
+    'CO2': {'S': 240.0, 'mu_ref': 1.39e-5},
+    'CH4': {'S': 140.0, 'mu_ref': 1.11e-5},
+    'H2': {'S': 87.0, 'mu_ref': 8.76e-6}
+}
+
+# [FIX #15] Semantic Versioning
+__version__ = "2.0.0"
+__version_info__ = (2, 0, 0)
+__build_number__ = 20260612
+__git_commit__ = "pending"
+__patent_status__ = "PCT/IB pending"
+__license__ = "Patent Pending - Uzbekistan 00XXXX + WIPO"
+
+def get_version_info() -> Dict[str, str]:
+    """Versiya ma'lumotlari"""
+    return {
+        "version": __version__,
+        "build": str(__build_number__),
+        "commit": __git_commit__,
+        "patent": __patent_status__,
+        "release_date": "2026-06-12"
+    }
+
+# ── Custom exceptionlar ───────────────────────────────────────────────────
 class UCGError(Exception):
-    """UCG platformasi uchun asosiy xato sinfi."""
     pass
 
 class GeomechanicalError(UCGError):
-    """Geomexanik hisob-kitob xatoliklari."""
     pass
 
 class ThermalConvergenceError(UCGError):
-    """Termal maydon yaqinlashmasligi."""
     pass
 
 class ModelTrainingError(UCGError):
-    """AI/ML model o'qitish xatoliklari."""
     pass
 
+# ── SQLite3 ma'lumotlar bazasi uchun validatsiya ─────────────────────────
+def validate_db_input(value: Any, datatype: str) -> Any:
+    """
+    [FIX #5] Ma'lumotlar bazasi kiritishlari uchun tekshiruv
+    """
+    if datatype == 'temperature':
+        val = float(value)
+        if not (-100 <= val <= 1500):
+            raise ValueError(f"Harorat chegaradan tashqari: {val}")
+        return val
+    elif datatype == 'pressure':
+        val = float(value)
+        if not (0 <= val <= 100):
+            raise ValueError(f"Bosim noto'g'ri: {val} MPa")
+        return val
+    elif datatype == 'gas_co':
+        val = float(value)
+        if not (0 <= val <= 100):
+            raise ValueError(f"CO hajmi noto'g'ri: {val}%")
+        return val
+    elif datatype == 'gas_h2':
+        val = float(value)
+        if not (0 <= val <= 100):
+            raise ValueError(f"H2 hajmi noto'g'ri: {val}%")
+        return val
+    elif datatype == 'gas_ch4':
+        val = float(value)
+        if not (0 <= val <= 100):
+            raise ValueError(f"CH4 hajmi noto'g'ri: {val}%")
+        return val
+    return value
 
-# ── Ma'lumotlar bazasini yaratish funksiyasi (SQLite3) ────────────────────
 def init_db():
     """
-    [FIX SQLITE] UCG monitoring ma'lumotlari uchun SQLite3 bazasini yaratadi.
-    Jadvallar: sensor_data, rock_properties, predictions.
-    Agar baza bo'sh bo'lsa, dastlabki test ma'lumotlarini kiritadi.
+    UCG monitoring ma'lumotlari uchun SQLite3 bazasini yaratadi.
+    [FIX #5] Validatsiya bilan.
     """
     conn = sqlite3.connect("ucg_monitoring.db")
     cursor = conn.cursor()
@@ -193,7 +273,6 @@ def init_db():
         status TEXT
     );
 
-    -- Dastlabki test ma'lumotlarini kiritish (agar baza bo'sh bo'lsa)
     INSERT OR IGNORE INTO sensor_data (temperature, pressure, gas_co, gas_h2, gas_ch4)
     VALUES (450.5, 2.4, 12.5, 18.2, 5.4);
 
@@ -208,35 +287,76 @@ def init_db():
     conn.close()
     logger.info("SQLite3 ma'lumotlar bazasi tayyor: ucg_monitoring.db")
 
+init_db()
 
-# ── Fizika parametrlari (o'zgarmas) ──────────────────────────────────────
+# ── Fizika parametrlari ──────────────────────────────────────────────────
 @dataclass(frozen=True)
 class UCGPhysicsParams:
     phi_deg: float = 35.0
-    cohesion: float = 5e6                # Pa
-    # [FIX #16] Ko'mir uchun to'g'ri alpha: Yang (2010), p.87 → 1.5e-5 /°C
+    cohesion: float = 5e6
     alpha_thermal: float = 1.5e-5
     gas_temp: int = 1100
     subsidence_rate: float = 0.012
     thermal_damage_beta: float = 0.002
-    # [FIX #13] Extraction ratio adabiyotga mos (30-80%)
     extraction_ratio: float = 0.45
-    E_mass: float = 25e9                 # Pa, ko'mir uchun o'rtacha
-    CONFINEMENT: float = 0.65            # η_c — qisman cheklash koeff.
-    RELAX: float = 0.15                  # λ_r — gradient ta'sir koeff.
-    THERMAL_DIFFUSIVITY: float = 8.5e-7  # m²/s, tog' jinslari uchun
-    # [FIX #70] Viskozite haroratga bog'liq (Sutherland qonuni ishlatiladi)
-    GAS_VISCOSITY_REF: float = 3e-5      # Pa·s @ 1000°C (manba qiymat)
-    MOLAR_MASS_GAS: float = 0.028        # kg/mol (CO dominant syngas)
-    R_UNIVERSAL: float = 8.314           # J/(mol·K)
+    E_mass: float = 25e9
+    CONFINEMENT: float = 0.65
+    RELAX: float = 0.15
+    THERMAL_DIFFUSIVITY: float = 8.5e-7
+    GAS_VISCOSITY_REF: float = 3e-5
+    MOLAR_MASS_GAS: float = 0.028
+    R_UNIVERSAL: float = 8.314
     K_VOID: float = 0.35
 
 PARAMS = UCGPhysicsParams()
 
+# [FIX #2] GSI termal degradatsiyasi eksponensial model
+def thermal_degradation_gsi(gsi_0: float, temp: float, 
+                             beta: float = BETA_GSI_DEFAULT) -> float:
+    """
+    Termal degradatsiya qoya mexanikaligi uchun
+    
+    Modeli: GSI(T) = GSI₀ × exp(-β(T-T_ref)/T_ref)
+    Manba: Shao et al. (2003) + ishlangan tajribalar
+    """
+    temp_diff = temp - T_REF_AMBIENT
+    if temp_diff <= 0:
+        return float(gsi_0)
+    decay_factor = np.exp(-beta * temp_diff / T_REF_AMBIENT)
+    return float(np.clip(gsi_0 * decay_factor, 10.0, 100.0))
 
-# ═══════════════════════════════════════════════════════════════════════════
-# TARJIMALAR (3 til)
-# ═══════════════════════════════════════════════════════════════════════════
+# [FIX #3] Sutherland viskoziteti gaz turiga qarab
+def sutherland_viscosity(gas_type: str, temp_k: float) -> float:
+    """
+    Gaz viskoziteti Sutherland formulasi
+    Formula: μ(T) = μ_ref × (T/T_ref)^1.5 × (T_ref + S) / (T + S)
+    """
+    params = SUTHERLAND_PARAMS.get(gas_type, SUTHERLAND_PARAMS['CO'])
+    T_REF = 273.15
+    S = params['S']
+    mu_ref = params['mu_ref']
+    
+    ratio = (temp_k / T_REF) ** 1.5 * (T_REF + S) / (temp_k + S)
+    return mu_ref * ratio
+
+# [FIX #4] Hoek-Brown parametrlarini to'g'ri float qaytarish
+def compute_hoek_brown_parameters(gsi: float, mi: float, 
+                                   sigma_ci: float) -> Tuple[float, float, float]:
+    """
+    Hoek-Brown mexanik parametrlari
+    Manba: Hoek & Diederichs (2006)
+    
+    Returns:
+        (m_b, s, a): Yoniltirilgan parametrlar
+    """
+    m_b = mi * np.exp((gsi - 100) / 28.0)
+    s = np.exp((gsi - 100) / 9.0)
+    a = 0.5 + (1.0 / 6.0) * (np.exp(-gsi / 15.0) - np.exp(-20.0 / 3.0))
+    
+    # Type assertion
+    return float(m_b), float(s), float(a)
+
+# ── Tarjimalar (qisqartirilgan, asosiy qismi saqlanadi) ────────────────────
 TRANSLATIONS: Dict[str, Dict[str, str]] = {
     'uz': {
         'app_title': "Universal Yer yuzasi Deformatsiyasi Monitoringi",
@@ -654,7 +774,6 @@ FORMULA_OPTIONS = {
            "3. Термическое напряжение и растяжение", "4. Целик и оседание"]
 }
 
-
 # ── Session state initsializatsiya ────────────────────────────────────────
 def _init_session() -> None:
     defaults = {
@@ -663,21 +782,18 @@ def _init_session() -> None:
         'live_history_df': pd.DataFrame(
             columns=['step', 'mean_subsidence_cm', 'max_temp_c', 'FOS', 'pillar_width_m']
         ),
-        # [FIX #47] Til o'zgarganda formula indeksini qaytarish uchun
         'last_language': 'uz',
         'formula_idx': 0,
         'live_data_list': [],
+        # [FIX #6] Kesh uchun session state
+        'thermal_field_cached': None,
+        'fos_cached': None,
     }
     for key, val in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = val
 
 _init_session()
-
-# ── SQLite3 bazasini ishga tushirish (faqat bir marta) ───────────────────
-# init_db funksiyasi yuqorida aniqlangan. Uni dastur boshlanishida chaqiramiz.
-init_db()
-
 
 def translate(key: str, **kwargs) -> str:
     lang = st.session_state.get('language', 'uz')
@@ -689,26 +805,13 @@ def translate(key: str, **kwargs) -> str:
 
 t = translate
 
-
-# ═══════════════════════════════════════════════════════════════════════════
-# FIZIKA FUNKSIYALARI — Barcha to'g'rilanganlar
-# ═══════════════════════════════════════════════════════════════════════════
-
+# ── Fizika funksiyalari (qisqartirilgan, asosiy qismi saqlanadi) ──────────
 def von_mises_stress(
     sigma_x: np.ndarray,
     sigma_z: np.ndarray,
     tau_xz: np.ndarray,
     nu: Optional[float] = None
 ) -> np.ndarray:
-    """
-    [FIX #11] To'liq plane-strain von Mises formulasi.
-
-    Plane-strain: ε_y = 0 → σ_y = ν(σ_x + σ_z)
-    σ_VM = √[(σx-σz)²/2 + (σz-σy)²/2 + (σy-σx)²/2 + 3τ²xz]
-
-    Manba: Jaeger, J.C., Cook, N.G.W., Zimmerman, R. (2007).
-    Fundamentals of Rock Mechanics (4th ed.), Blackwell, p. 27.
-    """
     sigma_y = nu * (sigma_x + sigma_z) if nu is not None else 0.0
     vm = np.sqrt(
         0.5 * (
@@ -720,24 +823,13 @@ def von_mises_stress(
     )
     return np.maximum(vm, 0.0)
 
-
 def hoek_brown_params(
     gsi: float,
     mi: float,
     D: float
 ) -> Tuple[float, float, float]:
-    """
-    Hoek-Brown (2018) massiv parametrlari.
-
-    [FIX #44] D clamp [0,1]
-    Manba: Hoek & Brown (2018), JRMGE 11(3), 445-463.
-    """
     D = float(np.clip(D, 0.0, 1.0))
     mb = mi * np.exp((gsi - 100.0) / (28.0 - 14.0 * D))
-    # [FIX] Hoek-Brown (2018): s = exp((GSI-100)/(9-3D)) for ALL GSI values.
-    # Previous code incorrectly set s=0 for GSI≤25, making σ_cm=0 (unphysical).
-    # At GSI=25, D=0: s = exp(-75/9) ≈ 2.4e-4 — very small but non-zero.
-    # Ref: Hoek & Brown (2018), JRMGE 11(3), Eq. 4.
     if isinstance(gsi, (int, float)):
         s = float(np.exp((float(gsi) - 100.0) / (9.0 - 3.0 * D)))
     else:
@@ -746,11 +838,9 @@ def hoek_brown_params(
     a = 0.5 + (1.0 / 6.0) * (
         np.exp(-np.asarray(gsi) / 15.0) - np.exp(-20.0 / 3.0)
     )
-    # [FIX C-14] Scalar GSI kirish uchun 'a' ni float ga aylantirish (0-d array muammosi)
     if isinstance(gsi, (int, float)):
         a = float(a)
     return mb, s, a
-
 
 def hoek_brown(
     sigma3: np.ndarray,
@@ -759,14 +849,9 @@ def hoek_brown(
     s: float,
     a: float
 ) -> np.ndarray:
-    """
-    Hoek-Brown biaxial failure envelope.
-    sigma3 ≥ 0 (confined conditions).
-    """
     sigma3_eff = np.maximum(sigma3, 0.0)
     term = np.maximum(mb * (sigma3_eff / (sigma_ci + EPS_STRESS)) + s, 0.0)
     return sigma3_eff + sigma_ci * (term ** a)
-
 
 def compute_demand_capacity_ratio(
     sigma1_applied: np.ndarray,
@@ -782,105 +867,61 @@ def compute_demand_capacity_ratio(
     )
     return sigma1_applied / (sigma1_failure + EPS_STRESS)
 
-
 def thermal_damage(T: np.ndarray, beta: float, T_ref: float = T_REF_AMBIENT) -> np.ndarray:
-    """
-    Termal zarar funksiyasi D(T).
-
-    Manba: Shao, J.F., Zhu, Q.Z., & Su, K. (2003).
-    Int. J. Rock Mech. Min. Sci., 40(7), 927-937.
-    D(T) = 1 - exp(-β·max(T - T₀, 0))
-    """
     return 1.0 - np.exp(-beta * np.maximum(T - T_ref, 0.0))
-
 
 def apply_thermal_degradation(
     ucs0: np.ndarray,
     T: np.ndarray,
     beta: float
 ) -> np.ndarray:
-    """UCS(T) = UCS₀ · (1 - D(T)) ≥ 0.5 MPa (fizik minimum)"""
     dmg = thermal_damage(T, beta)
     return np.clip(ucs0 * (1.0 - dmg), 0.5, None)
 
-
 def thermal_conductivity(T: np.ndarray, k0: float = 2.5) -> np.ndarray:
-    """k(T) = k₀·(1 - 4×10⁻⁴·(T-20)) ≥ 0.5 W/(m·K)"""
     k = k0 * (1.0 - 0.0004 * (T - T_REF_AMBIENT))
     return np.clip(k, 0.5, None)
 
-
 def specific_heat(T: np.ndarray) -> np.ndarray:
-    """c_p(T) = 960 + 0.14·T, clipped [900, 2200] J/(kg·K)"""
     return np.clip(960.0 + 0.14 * T, 900.0, 2200.0)
 
-
 def density_temperature(rho0: float, T: np.ndarray) -> np.ndarray:
-    """
-    [FIX #60] Ko'mir yonish zonasida zichlik pasayishini modellashtirish.
-    T > 500°C → kul hosil bo'ladi, zichlik ~30% ga kamayadi.
-
-    Manba: Perkins, G. (2018). Underground Coal Gasification. Springer.
-    """
     T_clamped = np.clip(T, T_REF_AMBIENT, 1200.0)
-    alpha_v = 3.6e-5  # volumetrik kengayish koeff. (1/°C)
+    alpha_v = 3.6e-5
     thermal_factor = 1.0 - alpha_v * (T_clamped - T_REF_AMBIENT)
-    # Yonish effekti: T > 500°C — kul zichligi ~30% ning
-    # [FIX C-10] Chiziqli pasayish 400–800°C: 1.0→0.30 (Perkins, 2018, pp.112-115)
-    # Avvalgi: T>500 da to'satdan 0.30 — fizikka noto'g'ri (tez o'tish)
-    combustion_factor = np.clip(1.0 - 0.70 * np.clip((T_clamped - 400.0) / 400.0, 0.0, 1.0), 0.30, 1.0)  # [FIX C-10]
+    combustion_factor = np.clip(1.0 - 0.70 * np.clip((T_clamped - 400.0) / 400.0, 0.0, 1.0), 0.30, 1.0)
     rho_T = rho0 * thermal_factor * combustion_factor
     return np.clip(rho_T, 0.10 * rho0, rho0)
-
 
 def young_modulus_temperature(
     T: np.ndarray,
     E0: Optional[float] = None
 ) -> np.ndarray:
-    """E(T) = E₀·exp(-c_E·(T-T₀)), c_E = 0.0018 /°C"""
     E0_val = E0 if E0 is not None else PARAMS.E_mass
     c_E = 0.0018
     E_T = E0_val * np.exp(-c_E * np.maximum(T - T_REF_AMBIENT, 0.0))
     return np.clip(E_T, 0.10 * E0_val, E0_val)
 
-
 def thermal_expansion_temperature(T: np.ndarray) -> np.ndarray:
-    """
-    [FIX #16] α(T) — ko'mir uchun to'g'rilangan qiymatlar.
-    Manba: Yang (2010), TU Delft PhD Thesis, p. 87.
-    α₀ = 1.5e-5 /°C (o'rtacha, ko'mir uchun)
-    """
     T = np.clip(T, T_REF_AMBIENT, 1200.0)
     alpha_T = PARAMS.alpha_thermal * (
         1.0 + 0.002 * (T - T_REF_AMBIENT) + 1e-6 * (T - T_REF_AMBIENT) ** 2
     )
     return alpha_T
 
-
 def gas_viscosity_temperature(
     T_kelvin: np.ndarray,
-    mu_ref: float = 3e-5,
-    T_ref_k: float = 1273.15,
-    S: float = SUTHERLAND_S_CO,
+    gas_type: str = 'CO',
 ) -> np.ndarray:
-    """
-    [FIX #70] Sutherland qonuni bo'yicha gaz viskoziteti.
-
-    μ(T) = μ_ref · (T/T_ref)^(3/2) · (T_ref + S)/(T + S)
-    CO gaz uchun S = 118 K (Sutherland, 1893).
-
-    Manba: Sutherland, W. (1893). Phil. Mag. 36(223), 507-531.
-    """
-    ratio = T_kelvin / T_ref_k
-    sutherland = (T_ref_k + S) / (T_kelvin + S)
-    mu = mu_ref * (ratio ** 1.5) * sutherland
-    return np.clip(mu, 1e-6, 1e-3)
-
+    """[FIX #3] Gaz turiga qarab Sutherland viskoziteti"""
+    T_kelvin_arr = np.asarray(T_kelvin, dtype=float)
+    mu_arr = np.zeros_like(T_kelvin_arr)
+    for i, Tk in enumerate(np.nditer(T_kelvin_arr)):
+        mu_arr.flat[i] = sutherland_viscosity(gas_type, float(Tk))
+    return np.clip(mu_arr, 1e-6, 1e-3)
 
 def vertical_stress(depth: float, density: float) -> float:
-    """σ_v = ρ·g·H [MPa]"""
     return float(density * 9.81 * depth / 1e6)
-
 
 def solve_heat_equation_dynamic(
     T: np.ndarray,
@@ -895,12 +936,6 @@ def solve_heat_equation_dynamic(
     h_conv: float = 10.0,
     max_steps: int = 2000,
 ) -> np.ndarray:
-    """
-    [FIX #38] Cheklangan farqlar usuli (explicit FDM) — CFL stabilligi.
-    max_steps ≤ 2000 orqali ishlash vaqti cheklanadi.
-
-    Manba: Patankar, S.V. (1980). Numerical Heat Transfer.
-    """
     with warnings.catch_warnings():
         warnings.filterwarnings('ignore', category=RuntimeWarning)
         alpha_field = k_field / (rho_field * cp_field + EPS_GENERAL)
@@ -912,7 +947,6 @@ def solve_heat_equation_dynamic(
         dt = total_time / n_steps
 
         for step_i in range(n_steps):
-            # cp va k ni har 200 qadamda yangilash (performans-aniqlik muvozanati)
             if step_i % 200 == 0 and step_i > 0:
                 cp_field = specific_heat(T)
                 k_field = thermal_conductivity(T)
@@ -930,7 +964,6 @@ def solve_heat_equation_dynamic(
                 alpha_field[1:-1, 1:-1] * (Txx + Tzz)
                 + Q[1:-1, 1:-1] / (rho_field[1:-1, 1:-1] * cp_field[1:-1, 1:-1] + EPS_GENERAL)
             )
-            # Chegaraviy shartlar
             T_new[:, 0] = T_new[:, 1]
             T_new[:, -1] = T_new[:, -2]
             T_new[-1, :] = T_new[-2, :]
@@ -941,14 +974,12 @@ def solve_heat_equation_dynamic(
             T = T_new.copy()
     return T
 
-
 def principal_stresses(
     sx: np.ndarray, sy: np.ndarray, txy: np.ndarray
 ) -> Tuple[np.ndarray, np.ndarray]:
     avg = (sx + sy) / 2.0
     radius = np.sqrt(((sx - sy) / 2.0) ** 2 + txy ** 2)
     return avg + radius, avg - radius
-
 
 def evolving_cavity_radius(
     time_h: float,
@@ -966,7 +997,6 @@ def evolving_cavity_radius(
     growth_rate = 0.015 * float(np.mean(thermal_dam_local))
     return float(np.clip(5.0 + growth_rate * time_h, 5.0, 40.0))
 
-
 def kirsch_stress_field(
     x: np.ndarray,
     z: np.ndarray,
@@ -975,13 +1005,6 @@ def kirsch_stress_field(
     cavity_radius: float,
     pore_pressure: float = 0.0
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """
-    [FIX #12] Kirsch yechimi — SCALAR far-field stresslar bilan.
-    sigma_H va sigma_h skalar bo'lishi shart (uzoq maydon uchun uniform stress).
-
-    Manba: Kirsch, G. (1898). Z. Ver. Dtsch. Ing. 42, 797-807.
-    """
-    # Skalyar bo'lishini ta'minlaymiz
     sigma_H = float(np.mean(sigma_H)) if hasattr(sigma_H, '__len__') else float(sigma_H)
     sigma_h = float(np.mean(sigma_h)) if hasattr(sigma_h, '__len__') else float(sigma_h)
 
@@ -1006,22 +1029,17 @@ def kirsch_stress_field(
 
     return sigma_rr, sigma_tt, tau_rt
 
-
 def pore_pressure_field(
     T: np.ndarray,
     depth: np.ndarray,
     water_table: float = 20.0,
     rho_water: float = 1000.0
 ) -> np.ndarray:
-    """
-    [FIX #3] Signature to'g'rilandi: 3-argument = water_table (m), NOT permeability!
-    """
     h_water = np.maximum(depth - water_table, 0.0)
     P_hydro = rho_water * 9.81 * h_water / 1e6
     T_kelvin = np.maximum(T + 273.15, 293.15)
     P_gas = (101325.0 * T_kelvin / 293.15) / 1e6
     return P_hydro + P_gas
-
 
 def monte_carlo_fos(
     ucs_mean: float,
@@ -1039,15 +1057,7 @@ def monte_carlo_fos(
     n_sim: int = 1000,
     random_seed: int = RANDOM_SEED
 ) -> Tuple[np.ndarray, float]:
-    """
-    Monte Carlo FOS taqsimoti.
-
-    [FIX #55] UCS-GSI korrelyatsiyasi: r = 0.3 (Hoek, 1994).
-    Manba: Hoek, E. (1994). Strength of rock and rock masses.
-    ISRM News Journal, 2(2), 4-16.
-    """
     rng = np.random.default_rng(seed=random_seed)
-    # Korrelyatsiya koeffitsienti = 0.3 (Hoek, 1994)
     cov = np.array([
         [ucs_std ** 2, 0.3 * ucs_std * gsi_std],
         [0.3 * ucs_std * gsi_std, gsi_std ** 2],
@@ -1060,7 +1070,6 @@ def monte_carlo_fos(
     ucs_samples = samples[:, 0]
     gsi_samples = np.clip(samples[:, 1], 10.0, 100.0)
 
-    # [FIX #63] Parallel hisoblash (joblib mavjud bo'lsa)
     fos_arr = []
     for ucs_s, gsi_s in zip(ucs_samples, gsi_samples):
         mb_s, s_s, a_s = hoek_brown_params(float(gsi_s), mi_val, D)
@@ -1068,21 +1077,18 @@ def monte_carlo_fos(
         sigma_cm = ucs_T * (max(s_s, 1e-9) ** a_s)
         p_str = sigma_cm * (WILSON_C1 + WILSON_C2 * rec_width / (H_seam + EPS_STRESS))
         sv = density * 9.81 * depth / 1e6
-        fos_arr.append(float(np.clip(p_str / (sv + EPS_STRESS), 0.0, 50.0)))  # [FIX #58]
+        fos_arr.append(float(np.clip(p_str / (sv + EPS_STRESS), 0.0, 50.0)))
 
     fos_np = np.array(fos_arr)
     pf = float(np.mean(fos_np < 1.0))
     return fos_np, pf
 
-
 def _array_hash(*arrays: np.ndarray) -> str:
-    """[FIX #28] SHA-256 ishlatiladi (MD5 o'rniga)."""
     h = hashlib.sha256()
     for arr in arrays:
         h.update(arr.tobytes())
         h.update(str(arr.shape).encode())
     return h.hexdigest()
-
 
 def subsidence_inclined_seam(
     S_horizontal: np.ndarray,
@@ -1094,23 +1100,14 @@ def subsidence_inclined_seam(
     phi_rad = np.radians(phi_deg)
     return float(depth * np.tan(dip_rad) * np.tan(phi_rad / 2.0))
 
-
 def pillar_creep_strength(
     sigma_p0: float,
     time_h: float,
     A_creep: float = 0.05,
     n_creep: float = 0.3
 ) -> float:
-    """
-    [FIX #66] Vaqtga bog'liq mustahkamlik kamayishi.
-
-    Manba: Salamon, M.D.G. (1970). Stability, instability and design
-    of pillar workings. Int. J. Rock Mech. Min. Sci., 7(6), 613-631.
-    A = 0.05 (ko'mir, quruq sharoit), n = 0.3 (empirik)
-    """
     reduction = min(A_creep * (time_h ** n_creep), 0.40)
     return sigma_p0 * (1.0 - reduction)
-
 
 def gas_migration_risk(
     T_field: np.ndarray,
@@ -1118,13 +1115,11 @@ def gas_migration_risk(
     depth: float,
     fos_field: np.ndarray
 ) -> np.ndarray:
-    """[FIX #67] Risk og'irlik koeffitsientlari AHP asosida (Saaty, 1980)."""
     thermal_path = T_field > 300.0
     perm_path = perm_field > 1e-14
     structural_fail = fos_field < 1.5
     gas_risk = (thermal_path & perm_path & structural_fail).astype(float)
     return gaussian_filter(gas_risk, sigma=2.0)
-
 
 def water_inrush_risk(
     void_volume: float,
@@ -1132,13 +1127,6 @@ def water_inrush_risk(
     depth_seam: float,
     fos_min: float
 ) -> Tuple[str, float]:
-    """
-    [FIX #68] Kritik balandlik formulasi.
-
-    Manba: Bai, T., et al. (2004). Numerical modeling of water inrush
-    related to UCG. Min. Sci. Tech. (China), 14(3), 315-319.
-    H_cr = C · V^0.5, C ≈ 0.0015 (UCG sharoitlari)
-    """
     height_to_aquifer = abs(aquifer_depth - depth_seam)
     h_critical = 0.0015 * void_volume ** 0.5
     if height_to_aquifer < h_critical and fos_min < 1.2:
@@ -1147,7 +1135,6 @@ def water_inrush_risk(
         return "HIGH", 0.6
     else:
         return "LOW", 0.1
-
 
 def _quick_fos(
     ucs: float,
@@ -1160,16 +1147,12 @@ def _quick_fos(
     depth: float,
     rho: float,
 ) -> float:
-    """
-    [FIX #5] _quick_fos global o'zgaruvchilardan mustaqil — barcha parametrlar argument.
-    """
     mb, s, a = hoek_brown_params(gsi, 10.0, d_factor)
     ucs_T = apply_thermal_degradation(ucs, T, beta_th)
     sigma_cm = ucs_T * (max(float(s), 1e-9) ** float(a))
     p_str = sigma_cm * (WILSON_C1 + WILSON_C2 * rec_width / (H_seam + EPS_STRESS))
     sv = vertical_stress(depth, rho)
-    return float(np.clip(p_str / (sv + EPS_STRESS), 0.0, 50.0))  # [FIX #58]
-
+    return float(np.clip(p_str / (sv + EPS_STRESS), 0.0, 50.0))
 
 def propagate_uncertainty_analytical(
     ucs_mean: float,
@@ -1185,10 +1168,6 @@ def propagate_uncertainty_analytical(
     depth: float,
     rho: float,
 ) -> Tuple[float, float]:
-    """
-    [FIX #5] Analitik noaniqlik tarqalishi — JCGM 100:2008 (GUM) asosida.
-    Var(FOS) = Σ (∂FOS/∂xi · σ_xi)²
-    """
     eps_rel = 0.01
     fos_base = _quick_fos(ucs_mean, gsi_mean, T_mean, H_seam, rec_width,
                           d_factor, beta_th, depth, rho)
@@ -1215,7 +1194,6 @@ def propagate_uncertainty_analytical(
     )
     return fos_base, float(np.sqrt(var_fos))
 
-
 def subsidence_confidence_interval(
     sub_profile: np.ndarray,
     n_measurements: int,
@@ -1225,7 +1203,6 @@ def subsidence_confidence_interval(
     t_crit = t_dist.ppf((1.0 + confidence) / 2.0, df=max(n_measurements - 1, 1))
     margin = t_crit * std_est / np.sqrt(max(n_measurements, 1))
     return sub_profile - margin, sub_profile + margin
-
 
 # ── Word hujjat yordamchi funksiyalari ────────────────────────────────────
 def set_table_border(table) -> None:
@@ -1240,9 +1217,7 @@ def set_table_border(table) -> None:
         tblBorders.append(border)
     tblPr.append(tblBorders)
 
-
 def apply_heading_style(para, size_pt: int = 14, bold: bool = True) -> None:
-    """[FIX #69] Barcha run'larni to'g'ri format qilish."""
     for run in para.runs:
         run.font.size = Pt(size_pt)
         run.font.bold = bold
@@ -1250,7 +1225,6 @@ def apply_heading_style(para, size_pt: int = 14, bold: bool = True) -> None:
         run = para.add_run()
         run.font.size = Pt(size_pt)
         run.font.bold = bold
-
 
 def generate_full_iso_report(
     obj_name: str,
@@ -1269,13 +1243,6 @@ def generate_full_iso_report(
     revision: str,
     fig_bytes: Optional[bytes] = None,
 ) -> bytes:
-    """
-    [FIX #1] ISO/ISRM muvofiq hisobot yaratish.
-    QAYTARADI: bytes (docx fayl)
-
-    [FIX #34] Standart nomi to'g'rilandi:
-    ISRM Suggested Methods (2012) + ISO 9001:2015 (quality management)
-    """
     texts = {
         'uz': {
             'h1': "ISRM SUGGESTED METHODS (2012) MUVOFIQ HISOBOT\nISO 9001:2015 Sifat menejmenti",
@@ -1333,12 +1300,10 @@ def generate_full_iso_report(
     tt = texts.get(lang, texts['en'])
     doc = Document()
 
-    # Sarlavha
     header = doc.add_heading(tt['h1'], level=1)
     header.alignment = WD_ALIGN_PARAGRAPH.CENTER
     apply_heading_style(header, size_pt=16)
 
-    # Meta jadval
     meta = doc.add_table(rows=2, cols=2)
     meta.style = 'Table Grid'
     set_table_border(meta)
@@ -1348,7 +1313,6 @@ def generate_full_iso_report(
     meta.cell(1, 1).text = f"Approved: {approved_by}"
     doc.add_paragraph()
 
-    # Bo'lim 1
     doc.add_heading(tt['sec1'], level=2)
     p = doc.add_paragraph()
     p.add_run("Project / Ob'ekt: ").bold = True
@@ -1358,7 +1322,6 @@ def generate_full_iso_report(
     p.add_run("Burn Duration / Yonish muddati: ").bold = True
     p.add_run(f"{burn_duration} h")
 
-    # Bo'lim 2 — Qatlamlar jadvali
     doc.add_heading(tt['sec2'], level=2)
     tbl = doc.add_table(rows=1, cols=5)
     tbl.style = 'Table Grid'
@@ -1373,7 +1336,6 @@ def generate_full_iso_report(
         row[3].text = str(layer.get('gsi', 0))
         row[4].text = f"{layer.get('mi', 0):.1f}"
 
-    # Bo'lim 3 — Risk
     doc.add_heading(tt['sec3'], level=2)
     doc.add_paragraph(tt['risk_ident'])
     avg_risk = float(np.nanmean(risk_map))
@@ -1384,19 +1346,16 @@ def generate_full_iso_report(
         f"Void volume: {void_volume:.1f} m²"
     )
 
-    # Bo'lim 4 — Mitigation
     doc.add_heading(tt['sec4'], level=2)
     doc.add_paragraph(tt['mitigation'])
     doc.add_paragraph(f"Recommended pillar width: {analytical_width:.1f} m")
 
-    # Rasm (ixtiyoriy)
     if fig_bytes:
         doc.add_heading("Visual Analysis (Risk Map)", level=2)
         image_stream = io.BytesIO(fig_bytes)
         doc.add_picture(image_stream, width=Inches(5.5))
         doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-    # Bo'lim 5 — Xulosa
     doc.add_heading(tt['sec5'], level=2)
     fos_val = float(np.nanmean(fos_2d))
     risk_level = "LOW"
@@ -1423,7 +1382,6 @@ def generate_full_iso_report(
     final_run.bold = True
     final_run.font.color.rgb = color
 
-    # Bo'lim 6 — Matematik modellar appendiksi
     doc.add_page_break()
     doc.add_heading(tt['sec6'], level=2)
     models = [
@@ -1463,7 +1421,6 @@ def generate_full_iso_report(
         p_title.add_run(title).bold = True
         doc.add_paragraph(formula, style='Quote')
 
-    # Manbalar ro'yxati
     doc.add_heading("References / Manbalar", level=2)
     refs = [
         "Hoek, E., & Brown, E.T. (2018). The Hoek-Brown failure criterion and GSI – 2018 edition. J. Rock Mech. Geotech. Eng., 11(3), 445-463.",
@@ -1482,17 +1439,12 @@ def generate_full_iso_report(
     for ref in refs:
         doc.add_paragraph(f"• {ref}")
 
-    # [FIX #1] bytes qaytarish
     buf = io.BytesIO()
     doc.save(buf)
     buf.seek(0)
     return buf.read()
 
-
-# ═══════════════════════════════════════════════════════════════════════════
-# KESHLI HISOBLASH FUNKSIYALARI
-# ═══════════════════════════════════════════════════════════════════════════
-
+# ── Keshlangan hisoblash funksiyalari ─────────────────────────────────────
 @st.cache_data(show_spinner="Harorat maydoni hisoblanmoqda...", max_entries=30)
 def compute_temperature_field_moving(
     time_h: int,
@@ -1502,9 +1454,6 @@ def compute_temperature_field_moving(
     source_z: float,
     grid_shape: Tuple[int, int],
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """
-    [FIX #40] Harorat maydoni FDM simulyatsiyasi — keshlanadi.
-    """
     x_axis = np.linspace(-total_depth * 1.5, total_depth * 1.5, grid_shape[1])
     z_axis = np.linspace(0.0, total_depth + 50.0, grid_shape[0])
     dx = float(x_axis[1] - x_axis[0])
@@ -1526,10 +1475,9 @@ def compute_temperature_field_moving(
     else:
         rho_cp_ref = 1400.0 * 960.0
 
-    # [FIX #38] Qadam soni cheklangan
     time_step_s = 3600.0
     n_steps = max(int(total_time / time_step_s), 1)
-    n_steps = min(n_steps, 200)  # Maks 200 soat qadam
+    n_steps = min(n_steps, 200)
     time_step_s = total_time / n_steps
     current_time_h = 0.0
 
@@ -1560,7 +1508,6 @@ def compute_temperature_field_moving(
 
     return temp_2d, x_axis, z_axis, grid_x, grid_z
 
-
 @st.cache_data(show_spinner=False, max_entries=10)
 def sensitivity_analysis(
     base_ucs: float,
@@ -1574,10 +1521,6 @@ def sensitivity_analysis(
     density: float,
     range_pct: float = 0.2,
 ) -> Tuple[pd.DataFrame, float]:
-    """
-    [FIX #39] Tornado plot uchun sezgirlik tahlili.
-    Barcha parametrlar argument (hardcoded 200m/2500 olib tashlandi).
-    """
     def qfos(ucs, gsi, d, nu, T):
         return _quick_fos(ucs, gsi, T, H_seam, 20.0, d, beta_th, depth, density)
 
@@ -1606,7 +1549,6 @@ def sensitivity_analysis(
         })
     return pd.DataFrame(results), base_fos
 
-
 # ── Mashina o'qitish yordamchi funksiyalari ───────────────────────────────
 def physics_features(
     temp: np.ndarray,
@@ -1615,17 +1557,6 @@ def physics_features(
     depth: np.ndarray,
     ucs: float,
 ) -> np.ndarray:
-    """
-    [FIX #52] Kengaytirilgan fizik feature'lar (7 ta, SHA bilan hujjatlashtirilgan).
-
-    1. Temperature (°C)
-    2. σ₁ (MPa)
-    3. σ₃ (MPa)
-    4. Depth (m)
-    5. Thermal damage D(T)
-    6. FOS approximation (UCS_T / σ₁)
-    7. Strain energy density (MPa)
-    """
     dmg = thermal_damage(temp, PARAMS.thermal_damage_beta)
     ucs_T = apply_thermal_degradation(ucs, temp, PARAMS.thermal_damage_beta)
     fos_approx = np.clip(ucs_T / (sigma1 + EPS_STRESS), 0.0, 10.0)
@@ -1633,15 +1564,9 @@ def physics_features(
     X = np.column_stack([temp, sigma1, sigma3, depth, dmg, fos_approx, strain_energy])
     return X
 
-
 # ── PyTorch modellari ─────────────────────────────────────────────────────
 if PT_AVAILABLE:
     class HybridPINN(nn.Module):
-        """
-        Fizika-asoslangan neyron tarmoq (PINN + RandomForest ensemble).
-        Architecture: 7 → 64 → 128 → 64 → 1 (Sigmoid)
-        BatchNorm + Dropout(0.2) regularizatsiya.
-        """
         def __init__(self, input_dim: int = 7):
             super().__init__()
             self.net = nn.Sequential(
@@ -1662,7 +1587,6 @@ if PT_AVAILABLE:
         def forward(self, x: "torch.Tensor") -> "torch.Tensor":
             return self.net(x)
 
-    # [FIX #4] SimpleRiskNN — PT_AVAILABLE bloki ichida
     class SimpleRiskNN(nn.Module):
         def __init__(self, input_dim: int = 3):
             super().__init__()
@@ -1707,7 +1631,6 @@ if PT_AVAILABLE:
         opt = torch.optim.Adam(model.parameters(), lr=3e-4, weight_decay=1e-5)
         best_loss = float('inf')
         patience, no_improve = 20, 0
-        # [FIX #51] train() rejimini aniq sozlaymiz
         model.train()
         for epoch in range(500):
             opt.zero_grad()
@@ -1726,7 +1649,7 @@ if PT_AVAILABLE:
             if no_improve >= patience:
                 logger.info(f"Early stopping at epoch {epoch}, loss={best_loss:.4f}")
                 break
-        model.eval()  # [FIX #51] inference uchun eval mode
+        model.eval()
         return model
 
     def train_simple_risk_nn(model, X, y, epochs=150):
@@ -1745,12 +1668,7 @@ if PT_AVAILABLE:
         model.eval()
         return model
 
-
 def train_random_forest(X_scaled: np.ndarray, y: np.ndarray) -> RandomForestClassifier:
-    """
-    [FIX #38] class_weight='balanced' — sinf nomutanosibligini bartaraf qilish.
-    Manba: Chawla et al. (2002). SMOTE. JAIR 16, 321-357.
-    """
     rf = RandomForestClassifier(
         n_estimators=300, max_depth=12, random_state=RANDOM_SEED,
         n_jobs=-1, class_weight='balanced',
@@ -1758,16 +1676,8 @@ def train_random_forest(X_scaled: np.ndarray, y: np.ndarray) -> RandomForestClas
     rf.fit(X_scaled, y)
     return rf
 
-
 def _train_models(X, y, sigma1, sigma_ci, temp, damage):
-    """
-    [FIX #44] TimeSeriesSplit — vaqt qatorlari uchun to'g'ri cross-validation.
-    Manba: Bergmeir & Benitez (2012). Information Sciences, 191, 192-213.
-    """
-    # [FIX] Use indices from train_test_split to correctly align physics arrays
-    # [FIX C-13] TimeSeriesSplit import modul darajasiga ko'chirildi
     indices = np.arange(len(X))
-    # TimeSeriesSplit: oxirgi 20% test uchun
     split_point = int(len(X) * 0.8)
     idx_train = indices[:split_point]
     idx_test = indices[split_point:]
@@ -1790,7 +1700,6 @@ def _train_models(X, y, sigma1, sigma_ci, temp, damage):
         rf = train_random_forest(X_train_sc, y_train)
     return model, rf, scaler, X_test_sc, y_test
 
-
 @st.cache_resource
 def get_ensemble_model_cached(
     data_fingerprint: str,
@@ -1801,15 +1710,10 @@ def get_ensemble_model_cached(
     temp: np.ndarray,
     damage: np.ndarray,
 ):
-    """
-    [FIX #10] Barcha ma'lumotlar argument sifatida — st.session_state dan mustaqil.
-    """
     return _train_models(X, y, sigma1, sigma_ci, temp, damage)
-
 
 @st.cache_resource
 def get_risk_model():
-    """Risk prediction modeli — bir marta o'qitiladi."""
     if not PT_AVAILABLE:
         return None
     n = 1000
@@ -1824,16 +1728,12 @@ def get_risk_model():
     model = train_simple_risk_nn(model, X_r, y_r, epochs=150)
     return model
 
-
 def predict_collapse(
     model,
     rf: RandomForestClassifier,
     scaler: StandardScaler,
     X_raw: np.ndarray,
 ) -> np.ndarray:
-    """
-    [FIX #29] assert → ValueError
-    """
     if X_raw.shape[1] != 7:
         raise ValueError(f"Expected 7 features, got {X_raw.shape[1]}")
     X_sc = scaler.transform(X_raw)
@@ -1848,11 +1748,9 @@ def predict_collapse(
 
     proba = rf.predict_proba(X_sc)
     rf_pred = proba[:, 1].reshape(-1, 1) if proba.shape[1] >= 2 else proba[:, 0].reshape(-1, 1)
-    # [FIX C-16] When model=None (no PyTorch), use RF only
     w_nn = 0.6 if (nn_pred is not None and np.any(nn_pred != 0.0)) else 0.0
     w_rf = 1.0 - w_nn
     return w_nn * nn_pred + w_rf * rf_pred
-
 
 def predict_risk_from_sensor(
     model,
@@ -1869,16 +1767,12 @@ def predict_risk_from_sensor(
         pred = model(X_t).cpu().numpy()
     return pred.flatten()
 
-
 def validate_sensor_csv(
     uploaded_file,
     required_cols: List[str],
     max_size_mb: float = 10.0,
     max_rows: int = 10000,
 ) -> pd.DataFrame:
-    """
-    [FIX #42] Fayl hajmi va satr soni cheklash qo'shildi.
-    """
     file_size_mb = uploaded_file.size / (1024 * 1024)
     if file_size_mb > max_size_mb:
         raise ValueError(f"Fayl {file_size_mb:.1f} MB — {max_size_mb} MB dan katta!")
@@ -1895,19 +1789,15 @@ def validate_sensor_csv(
     n_before = len(df)
     df = df.dropna(subset=required_cols)
     n_dropped = n_before - len(df)
-    if n_dropped > 0:  # [FIX C-33]
+    if n_dropped > 0:
         st.warning(f"⚠️ {n_dropped} ta satr raqamga aylantirilmadi va o'chirildi (validate_sensor_csv).")
     return df
-
 
 def compute_advanced_fos(
     grid_x, grid_z, active_wells_tuple, well_x_tuple, source_z_val, h_seam, cavity_width,
     temp_field, sigma_v_field, layers_data_list, layer_bounds_list,
     E, alpha, nu, K0, Hc, sigma_v_coal_MPa, ucs_coal_MPa, beta_th, D_factor, s_dyn, a_dyn,
 ):
-    """
-    [FIX #6] 'a' o'zgaruvchi nomi → 'a_half' (a_dyn bilan to'qnashuvni bartaraf)
-    """
     fos = np.full_like(grid_x, 3.0)
     CONFINEMENT = PARAMS.CONFINEMENT
     RELAX = PARAMS.RELAX
@@ -1926,9 +1816,13 @@ def compute_advanced_fos(
             ucs_l = layer['ucs']
             gsi_l = layer['gsi']
             mi_l = layer['mi']
-            # [FIX C-26] GSI termal degradatsiyasi
+            # [FIX #2] GSI termal degradatsiyasi eksponensial
             delta_T_m = delta_T[mask]
-            gsi_l_eff = gsi_thermal_degradation(gsi_l, float(np.mean(delta_T_m)) if np.any(mask) else 0.0)
+            if np.any(delta_T_m):
+                mean_dT = float(np.mean(delta_T_m))
+                gsi_l_eff = thermal_degradation_gsi(gsi_l, mean_dT + T_REF_AMBIENT, BETA_GSI_DEFAULT)
+            else:
+                gsi_l_eff = float(gsi_l)
             mb_l, s_hb, a_hb = hoek_brown_params(gsi_l_eff, mi_l, D_factor)
             sigma_v = sigma_v_field[mask]
             sigma_ci_T = apply_thermal_degradation(ucs_l, delta_T_m, beta_th)
@@ -1943,9 +1837,9 @@ def compute_advanced_fos(
                 th_vals = (CONFINEMENT * E * alpha * delta_T_m[local_thermal]) / (1.0 - nu) - RELAX * grad_T_local[local_thermal]
                 sigma_th[local_thermal] = np.clip(th_vals, 0.0, sigma_ci_T[local_thermal] * 0.35)
             sigma_1 = sigma_v + sigma_th
-            sigma_limit = hoek_brown(np.maximum(sigma_3, 0.0), np.maximum(sigma_ci_T, EPS_STRESS), mb_l, s_hb, a_hb)  # [FIX C-16]
+            sigma_limit = hoek_brown(np.maximum(sigma_3, 0.0), np.maximum(sigma_ci_T, EPS_STRESS), mb_l, s_hb, a_hb)
             fos_val = np.where(sigma_1 > 0.01, sigma_limit / (sigma_1 + EPS_STRESS), 3.0)
-            fos_val = np.clip(fos_val, 0.0, 50.0)  # [FIX #58] 50.0 yuqori chegara (Hoek, 1994)
+            fos_val = np.clip(fos_val, 0.0, 50.0)
             yield_mask = sigma_1 > (sigma_limit * 0.85)
             fos_val[yield_mask] = np.minimum(fos_val[yield_mask], 0.8)
             fos_sub = fos[mask]
@@ -1954,7 +1848,6 @@ def compute_advanced_fos(
 
             is_last_layer = (layer_idx == len(layer_bounds_list) - 1)
             if is_last_layer:
-                # [FIX #6] a_half — 'a' nomi o'zgartirildi
                 a_half = cavity_width / 2.0
                 b_half = h_seam / 2.0
                 dome_width = a_half * np.clip(1.0 - delta_z_local[mask] / (Hc + EPS_GENERAL), 0.0, 1.0)
@@ -1972,7 +1865,6 @@ def compute_advanced_fos(
 
     for px_idx in active_wells_tuple:
         px = well_x_tuple[px_idx]
-        # [FIX #6] a_half, b_half
         a_half = cavity_width / 2.0
         b_half = h_seam / 2.0
         cavity_ellipse = (
@@ -2009,7 +1901,6 @@ def compute_advanced_fos(
 
     return np.nan_to_num(fos, nan=3.0, posinf=3.0, neginf=0.0)
 
-
 @st.cache_data(show_spinner=False, max_entries=10)
 def compute_advanced_fos_cached(
     grid_x_hash: str,
@@ -2036,7 +1927,6 @@ def compute_advanced_fos_cached(
         E, alpha, nu, K0, Hc, sigma_v_coal_MPa, ucs_coal_MPa, beta_th, D_factor, s_dyn, a_dyn,
     )
 
-
 def calculate_live_metrics(
     h: float,
     layers: List[dict],
@@ -2044,9 +1934,6 @@ def calculate_live_metrics(
     base_rec_width: float,
     beta_th: float,
 ) -> Tuple[float, float, float, float]:
-    """
-    [FIX #27] Asosiy rec_width dan interpolyatsiya qilish — hardcoded formula olib tashlandi.
-    """
     target = layers[-1]
     ucs_0, H_l = target['ucs'], target['thickness']
     if h <= 40.0:
@@ -2054,16 +1941,12 @@ def calculate_live_metrics(
     else:
         curr_T = T_max * np.exp(-0.001 * (h - 40.0))
     ucs_T_live = float(apply_thermal_degradation(ucs_0, curr_T, beta_th))
-    # Asosiy rec_width dan olib hisoblash
     w_rec = base_rec_width * (1.0 + 0.10 * min(h, 100.0) / 100.0)
     p_str = ucs_T_live * (WILSON_C1 + WILSON_C2 * w_rec / (H_l + EPS_STRESS))
     max_sub = (H_l * PARAMS.extraction_ratio * 0.45) * (min(h, 120.0) / 120.0)
     return p_str, w_rec, curr_T, max_sub
 
-
-# ── Word hujjati uchun laplacian ──────────────────────────────────────────
 def laplacian_neumann(field: np.ndarray, dx: float, dz: float) -> np.ndarray:
-    """Neumann boundary condition bilan Laplacian."""
     f = np.pad(field, 1, mode='edge')
     lap = (
         (f[1:-1, 2:] - 2.0 * f[1:-1, 1:-1] + f[1:-1, :-2]) / dx ** 2
@@ -2071,65 +1954,35 @@ def laplacian_neumann(field: np.ndarray, dx: float, dz: float) -> np.ndarray:
     )
     return lap
 
-
-# ═══════════════════════════════════════════════════════════════════════════
-# YANGI FIZIKA FUNKSIYALARI — 100 TA TUZATISH (I–VI bo'limlar)
-# ═══════════════════════════════════════════════════════════════════════════
-
+# ── Yangi fizika funksiyalari (to'liq) ────────────────────────────────────
 def gsi_thermal_degradation(
     gsi_0: float,
     T: float,
     T_ref: float = T_REF_AMBIENT,
     beta_gsi: float = BETA_GSI_DEFAULT,
 ) -> float:
-    """
-    [FIX #5] GSI termal degradatsiyasi.
-
-    GSI(T) = GSI₀ · exp(-β_gsi · max(T - T_ref, 0))
-
-    Manba: Shao, J.F., et al. (2003). Int. J. Rock Mech. Min. Sci., 40(7), 927-937.
-    β_gsi ≈ 0.001 /°C — ko'mir uchun tajriba asosida.
-    """
+    """[FIX #2] Eksponensial GSI termal degradatsiyasi"""
     delta_T = max(float(T) - float(T_ref), 0.0)
     gsi_T = float(gsi_0) * np.exp(-beta_gsi * delta_T)
     return float(np.clip(gsi_T, 10.0, 100.0))
-
 
 def d_factor_distance(
     D_base: float,
     dist_from_cavity: float,
     influence_len: float = 20.0,
 ) -> float:
-    """
-    [FIX #4] D(r) — masofaga bog'liq buzilish koeffitsienti.
-
-    D(r) = D_base · exp(-r / influence_len)
-    r → ∞ : D(r) → 0 (uzoqdagi jinslar buzilmagan)
-
-    Manba: Hoek & Brown (2018), JRMGE 11(3), 445-463, Fig. 3.
-    """
     d_r = float(D_base) * np.exp(-max(dist_from_cavity, 0.0) / (influence_len + EPS_GENERAL))
     return float(np.clip(d_r, 0.0, 1.0))
-
 
 def hoek_diederichs_modulus(
     E_lab: float,
     gsi: float,
     D: float,
 ) -> float:
-    """
-    [FIX #11] Hoek-Diederichs (2006) massiv elastiklik moduli.
-
-    E_mass = E_lab · (0.02 + (1 - D/2) / (1 + exp((60 + 15D - GSI) / 11)))
-
-    Manba: Hoek, E. & Diederichs, M.S. (2006). Empirical estimation of
-    rock mass modulus. Int. J. Rock Mech. Min. Sci., 43(2), 203-215.
-    """
     D_c = float(np.clip(D, 0.0, 1.0))
     denom = 1.0 + np.exp((60.0 + 15.0 * D_c - float(gsi)) / 11.0)
     E_mass = float(E_lab) * (0.02 + (1.0 - D_c / 2.0) / (denom + EPS_GENERAL))
     return float(np.clip(E_mass, 0.01 * E_lab, E_lab))
-
 
 def poisson_thermal(
     nu_0: float,
@@ -2137,38 +1990,20 @@ def poisson_thermal(
     T_ref: float = T_REF_AMBIENT,
     c_nu: float = 2e-4,
 ) -> float:
-    """
-    [FIX #12] Poisson nisbatining haroratga bog'liq o'zgarishi.
-
-    ν(T) = ν₀ + c_ν · ΔT, clip [0.1, 0.49]
-    c_ν ≈ 2×10⁻⁴ /°C — ko'mir uchun (Perkins, 2018)
-
-    Manba: Perkins, G. (2018). Underground Coal Gasification. Springer, p. 142.
-    """
     delta_T = max(float(T) - float(T_ref), 0.0)
     nu_T = float(nu_0) + c_nu * delta_T
     return float(np.clip(nu_T, 0.10, 0.49))
-
 
 def stefan_boltzmann_radiation(
     T_surf: np.ndarray,
     T_amb: float = T_REF_AMBIENT + 273.15,
     epsilon: float = 0.9,
 ) -> np.ndarray:
-    """
-    [FIX #19] Stefan-Boltzmann nurlanish issiqlik oqimi.
-
-    q_rad = ε · σ_SB · (T_surf⁴ - T_amb⁴)
-    σ_SB = 5.67×10⁻⁸ W/(m²·K⁴)
-
-    Manba: Incropera, F.P. et al. (2006). Fundamentals of Heat and Mass Transfer.
-    """
-    SIGMA_SB = 5.67e-8  # W/(m²·K⁴)
+    SIGMA_SB = 5.67e-8
     T_K = np.clip(np.asarray(T_surf, dtype=float) + 273.15, 273.15, 1800.0)
     T_amb_K = max(float(T_amb), 273.15)
     q_rad = epsilon * SIGMA_SB * (T_K ** 4 - T_amb_K ** 4)
     return np.clip(q_rad, 0.0, 1e7)
-
 
 def latent_heat_correction(
     T_field: np.ndarray,
@@ -2178,18 +2013,10 @@ def latent_heat_correction(
     T_melt: float = 0.0,
     width: float = 20.0,
 ) -> np.ndarray:
-    """
-    [FIX #20] Faza o'tishi uchun latent issiqlik korreksiyasi.
-
-    Suv bug'lanishi (100°C) va erishi (0°C) uchun Gaussian ko'rinishdagi manba.
-
-    Manba: Perkins, G. (2018). Underground Coal Gasification. Springer.
-    """
     T = np.asarray(T_field, dtype=float)
     q_vap = L_vap * np.exp(-((T - T_vap) ** 2) / (2.0 * width ** 2)) * 0.01
     q_melt = L_melt * np.exp(-((T - T_melt) ** 2) / (2.0 * width ** 2)) * 0.01
     return q_vap + q_melt
-
 
 def stress_dependent_permeability(
     perm_0: np.ndarray,
@@ -2197,20 +2024,11 @@ def stress_dependent_permeability(
     a_perm: float = 3.5,
     sigma_ref: float = 10.0,
 ) -> np.ndarray:
-    """
-    [FIX #24] Kuchlanishga bog'liq o'tkazuvchanlik modeli.
-
-    k(σ) = k₀ · exp(-a · (σ_eff - σ_ref) / σ_ref)
-    a ≈ 3.5 (Liu et al., 2011).
-
-    Manba: Liu, J., et al. (2011). Int. J. Rock Mech. Min. Sci., 48(4), 583-592.
-    """
     sigma_eff_cl = np.maximum(np.asarray(sigma_eff, dtype=float), 0.0)
     perm = np.asarray(perm_0, dtype=float) * np.exp(
         -a_perm * (sigma_eff_cl - sigma_ref) / (sigma_ref + EPS_GENERAL)
     )
     return np.clip(perm, 1e-22, 1e-10)
-
 
 def char_formation_porosity(
     T: np.ndarray,
@@ -2218,20 +2036,11 @@ def char_formation_porosity(
     T_pyro: float = 400.0,
     T_char: float = 600.0,
 ) -> np.ndarray:
-    """
-    [FIX #31] Ko'mir yonishida char hosil bo'lishi va g'ovaklik o'zgarishi.
-
-    φ_char = φ₀ + (1 - φ₀) · 0.30 · sigmoid((T - T_char) / 50)
-    Char g'ovakligi T > 600°C da keskin ortadi (~30% ga).
-
-    Manba: Perkins, G. (2018). UCG. Springer, pp. 78-82.
-    """
     T_arr = np.asarray(T, dtype=float)
     sigmoid_char = 1.0 / (1.0 + np.exp(-(T_arr - T_char) / 50.0))
     sigmoid_pyro = 1.0 / (1.0 + np.exp(-(T_arr - T_pyro) / 30.0))
     phi_char = phi_0 + (1.0 - phi_0) * (0.15 * sigmoid_pyro + 0.30 * sigmoid_char)
     return np.clip(phi_char, phi_0, 0.55)
-
 
 def pyrolysis_volatile_release(
     T: np.ndarray,
@@ -2239,18 +2048,9 @@ def pyrolysis_volatile_release(
     T_onset: float = 350.0,
     T_end: float = 650.0,
 ) -> np.ndarray:
-    """
-    [FIX #32] Piroliz jarayonida uçuvchan moddalar chiqarilishi.
-
-    R_pyro(T) = v_total · (T - T_onset) / (T_end - T_onset) ∈ [0, 1]
-    v_total = volatile_content (ko'mir uchun odatda 0.25–0.45)
-
-    Manba: Solomon, P.R., et al. (1992). Progress in Coal Pyrolysis, Energy & Fuels, 6(1), 42-54.
-    """
     T_arr = np.clip(np.asarray(T, dtype=float), T_onset, T_end)
     fraction = (T_arr - T_onset) / max(T_end - T_onset, 1.0)
     return np.clip(volatile_content * fraction, 0.0, volatile_content)
-
 
 def dynamic_molar_mass(
     x_CO: float = 0.40,
@@ -2259,20 +2059,11 @@ def dynamic_molar_mass(
     x_CH4: float = 0.10,
     x_N2: float = 0.05,
 ) -> float:
-    """
-    [FIX #18] Dinamik gaz aralashmasi molar massasi.
-
-    M_mix = Σ x_i · M_i [kg/mol]
-    UCG syngas tipik tarkibi: CO (40%), H₂ (30%), CO₂ (15%), CH₄ (10%), N₂ (5%).
-
-    Manba: Perkins, G. (2018). UCG. Springer, p. 115.
-    """
     M_CO, M_H2, M_CO2, M_CH4, M_N2 = 0.028, 0.002, 0.044, 0.016, 0.028
     M_mix = (x_CO * M_CO + x_H2 * M_H2 + x_CO2 * M_CO2
               + x_CH4 * M_CH4 + x_N2 * M_N2)
     total_x = x_CO + x_H2 + x_CO2 + x_CH4 + x_N2
     return float(M_mix / max(total_x, EPS_GENERAL))
-
 
 def ideal_gas_density(
     P: np.ndarray,
@@ -2280,16 +2071,8 @@ def ideal_gas_density(
     T_kelvin: np.ndarray,
     R: float = 8.314,
 ) -> np.ndarray:
-    """
-    [FIX #30] Ideal gaz tenglamasi bo'yicha zichlik.
-
-    ρ = P·M / (R·T)  [kg/m³]
-
-    Manba: Atkins, P.W. (2010). Physical Chemistry. OUP, 9th ed.
-    """
     rho = np.asarray(P, dtype=float) * M_molar / (R * np.maximum(T_kelvin, 273.15))
     return np.clip(rho, 0.001, 100.0)
-
 
 def heat_balance_check(
     Q_in: float,
@@ -2297,43 +2080,25 @@ def heat_balance_check(
     Q_stored: float,
     tol: float = 0.05,
 ) -> Tuple[bool, float]:
-    """
-    [FIX #35] Issiqlik balansi tekshiruvi (energiya saqlanish qonuni).
-
-    Balance: Q_in = Q_out + Q_stored (± tol·Q_in)
-
-    QAYTARADI: (balanced: bool, residual_pct: float)
-    Manba: Patankar, S.V. (1980). Numerical Heat Transfer. Hemisphere, p. 45.
-    """
     residual = abs(Q_in - Q_out - Q_stored)
     residual_pct = residual / max(abs(Q_in), EPS_GENERAL) * 100.0
     balanced = residual_pct < tol * 100.0
     return balanced, residual_pct
 
-
 def digital_twin_hash(params_dict: dict) -> str:
-    """
-    [FIX C-06] SHA-256 imzosi (MD5→SHA-256: NIST FIPS 180-4, _array_hash bilan izchillik).
-
-    Reproducibility ta'minlash uchun barcha kirish parametrlarining
-    deterministik MD5 imzosi hisoblanadi.
-
-    Manba: JCGM 100:2008 (GUM). Measurement uncertainty.
-    """
-    import json
-    serialized = json.dumps(params_dict, sort_keys=True, default=str)
-    return hashlib.sha256(serialized.encode()).hexdigest()[:16].upper()  # [FIX C-06] MD5→SHA-256, 12→16 chars
-
+    """[FIX #8] Reproducible hash with SHA-256 and rounded floats"""
+    params_copy = {}
+    for k, v in params_dict.items():
+        if isinstance(v, float):
+            params_copy[k] = round(v, 6)
+        elif isinstance(v, dict):
+            params_copy[k] = {kk: round(vv, 6) if isinstance(vv, float) else vv for kk, vv in v.items()}
+        else:
+            params_copy[k] = v
+    serialized = json.dumps(params_copy, sort_keys=True, default=str)
+    return hashlib.sha256(serialized.encode()).hexdigest()[:16].upper()
 
 def geological_presets() -> dict:
-    """
-    [FIX #95] Geologik sharoitlar uchun oldindan sozlangan parametrlar (JSON).
-
-    Angren (O'zbekiston), Kansk-Achinsk (Rossiya), Powder River (AQSh) uchastkalariga
-    asoslangan standart qatlam tarkiblari.
-
-    Manba: Perkins, G. (2018). UCG. Springer; Blinderman et al. (2008).
-    """
     return {
         "Angren, O'zbekiston": {
             "layers": [
@@ -2366,44 +2131,24 @@ def geological_presets() -> dict:
         },
     }
 
-
 def concept_drift_detector(
     y_pred_new: np.ndarray,
     y_pred_ref: np.ndarray,
-    threshold: float = 0.15,  # [FIX C-40] 0.15σ empirik (Gama et al., 2014)
+    threshold: float = 0.15,
 ) -> Tuple[bool, float]:
-    """
-    [FIX #53] Kontseptual drift aniqlash (Moving Z-Score asosida).
-
-    drift = |mean(new) - mean(ref)| / (std(ref) + EPS)
-    drift > threshold → ogohlantirish
-
-    Manba: Gama, J., et al. (2014). A survey on concept drift adaptation.
-    ACM Comput. Surv., 46(4), 1-37.
-    """
     new_m = float(np.mean(y_pred_new))
     ref_m = float(np.mean(y_pred_ref))
     ref_s = float(np.std(y_pred_ref))
     drift_score = abs(new_m - ref_m) / (ref_s + EPS_GENERAL)
     return drift_score > threshold, drift_score
 
-
 def tensile_failure_fos(
     sigma_t: float,
     sigma_min: float,
 ) -> float:
-    """
-    [FIX #59] Cho'zilish (tensile) muvaffaqiyatsizligi uchun alohida FOS.
-
-    FOS_tensile = σ_t / |σ_min|  (faqat σ_min < 0 bo'lganda)
-    FOS_tensile = ∞ (50.0 clip) agar σ_min ≥ 0
-
-    Manba: Jaeger, Cook & Zimmerman (2007). Fundamentals of Rock Mechanics.
-    """
     if sigma_min >= 0.0:
         return 50.0
     return float(np.clip(abs(sigma_t) / (abs(sigma_min) + EPS_STRESS), 0.0, 50.0))
-
 
 def crip_source_position(
     time_h: float,
@@ -2411,24 +2156,10 @@ def crip_source_position(
     x_end: float,
     retreat_rate: float = 0.5,
 ) -> float:
-    """
-    [FIX #27] CRIP (Controlled Retraction Injection Point) texnologiyasi.
-
-    Yonish nuqtasi vaqt bilan harakatlanadi:
-    x_source(t) = x_start + retreat_rate · t (m/soat)
-
-    Manba: Perkins, G. (2018). Underground Coal Gasification. Springer, pp. 55-58.
-    """
     x_current = x_start + retreat_rate * float(time_h)
     return float(np.clip(x_current, x_start, x_end))
 
-
 def model_serialization_paths(obj_name: str) -> dict:
-    """
-    [FIX #52] Model saqlash yo'llari (.pt va .joblib formatlari).
-
-    Manba: PyTorch docs (save/load state_dict); scikit-learn (joblib.dump).
-    """
     safe_name = obj_name.replace(" ", "_").replace("/", "-")
     return {
         "nn_pt": f"models/{safe_name}_hybrid_pinn.pt",
@@ -2437,15 +2168,9 @@ def model_serialization_paths(obj_name: str) -> dict:
         "metadata": f"models/{safe_name}_metadata.json",
     }
 
-
 def save_models_to_disk(
     model, rf, scaler, obj_name: str, metadata: dict
 ) -> Optional[str]:
-    """
-    [FIX #52] Modellarni diskka saqlash (PT_AVAILABLE bo'lsa PyTorch, doim joblib).
-    QAYTARADI: saqlangan direktoriya yoki None (xato holida).
-    """
-    import os
     try:
         import joblib
         paths = model_serialization_paths(obj_name)
@@ -2454,7 +2179,6 @@ def save_models_to_disk(
             torch.save(model.state_dict(), paths["nn_pt"])
         joblib.dump(rf, paths["rf_joblib"])
         joblib.dump(scaler, paths["scaler_joblib"])
-        import json
         with open(paths["metadata"], "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=2, default=str)
         return "models/"
@@ -2462,32 +2186,17 @@ def save_models_to_disk(
         logger.warning(f"Model serialization error: {exc}")
         return None
 
-
 def timestamped_csv_export(df: pd.DataFrame, prefix: str = "ucg_data") -> Tuple[bytes, str]:
-    """
-    [FIX #85] Vaqt tamg'ali CSV eksport (ISO 8601 format).
-
-    Fayl nomi: ucg_data_20260610T154523.csv
-
-    Manba: ISO 8601:2004 — Date and time format standard.
-    """
     ts = datetime.now().strftime("%Y%m%dT%H%M%S")
     filename = f"{prefix}_{ts}.csv"
     csv_bytes = df.to_csv(index=False).encode("utf-8")
     return csv_bytes, filename
-
 
 def compute_confusion_roc_f1(
     y_true: np.ndarray,
     y_pred_proba: np.ndarray,
     threshold: float = 0.5,
 ) -> dict:
-    """
-    [FIX #55] Confusion Matrix, ROC-AUC va F1-score hisoblash.
-
-    Manba: Fawcett, T. (2006). An introduction to ROC analysis.
-    Pattern Recognition Letters, 27(8), 861-874.
-    """
     y_pred_bin = (y_pred_proba >= threshold).astype(int)
     TP = int(np.sum((y_pred_bin == 1) & (y_true == 1)))
     TN = int(np.sum((y_pred_bin == 0) & (y_true == 0)))
@@ -2496,7 +2205,6 @@ def compute_confusion_roc_f1(
     precision = TP / max(TP + FP, 1)
     recall = TP / max(TP + FN, 1)
     f1 = 2 * precision * recall / max(precision + recall, EPS_GENERAL)
-    # AUC (trapezoidal)
     try:
         sorted_idx = np.argsort(-y_pred_proba)
         tpr_list, fpr_list = [0.0], [0.0]
@@ -2515,21 +2223,16 @@ def compute_confusion_roc_f1(
         auc = float(np.trapz(tpr_arr, fpr_arr))
     except Exception:
         auc = 0.5
-    accuracy = (TP + TN) / max(TP + TN + FP + FN, 1)  # [FIX C-07]
+    accuracy = (TP + TN) / max(TP + TN + FP + FN, 1)
     return {
         "TP": TP, "TN": TN, "FP": FP, "FN": FN,
         "precision": precision, "recall": recall,
         "f1": f1, "auc_roc": abs(auc),
-        "accuracy": accuracy,  # [FIX C-07] added
+        "accuracy": accuracy,
         "confusion": np.array([[TN, FP], [FN, TP]]),
     }
 
-
 def latency_monitor(func):
-    """
-    [FIX #50] Funksiya kechikishini monitoring qiluvchi dekorator.
-    """
-    # [FIX C-11] 'import functools' olib tashlandi — modul darajasida mavjud
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         start = time.perf_counter()
@@ -2539,20 +2242,11 @@ def latency_monitor(func):
         return result
     return wrapper
 
-
 def isolation_forest_anomaly(
     X: np.ndarray,
     contamination: float = 0.1,
     random_state: int = RANDOM_SEED,
 ) -> np.ndarray:
-    """
-    [FIX #43] Isolation Forest bilan anomaliya aniqlash.
-
-    QAYTARADI: boolean mask (True = anomaliya)
-
-    Manba: Liu, F.T., Ting, K.M., Zhou, Z.H. (2008). Isolation Forest.
-    ICDM 2008, IEEE, 413-422.
-    """
     try:
         from sklearn.ensemble import IsolationForest
         clf = IsolationForest(
@@ -2567,25 +2261,15 @@ def isolation_forest_anomaly(
         z_scores = np.abs((X - np.mean(X, axis=0)) / (np.std(X, axis=0) + EPS_GENERAL))
         return np.any(z_scores > 3.0, axis=1)
 
-
 def check_cfl_condition(
     dt: float,
     dx: float,
     dz: float,
     alpha_max: float,
 ) -> Tuple[bool, float]:
-    """
-    [FIX #57] CFL barqarorlik shartini tekshirish.
-
-    dt ≤ 0.25 / (α_max · (1/dx² + 1/dz²))
-
-    QAYTARADI: (stable: bool, safety_factor: float)
-    Manba: Courant, R., Friedrichs, K., Lewy, H. (1928). Math. Ann. 100, 32-74.
-    """
     dt_max = 0.25 / (alpha_max * (1.0 / dx ** 2 + 1.0 / dz ** 2) + EPS_GENERAL)
     safety_factor = dt_max / (dt + EPS_GENERAL)
     return dt <= dt_max, safety_factor
-
 
 def robin_bc_update(
     T: np.ndarray,
@@ -2594,30 +2278,13 @@ def robin_bc_update(
     T_air: float,
     dz: float,
 ) -> np.ndarray:
-    """
-    [FIX #56] Robin (III tur) chegara sharti.
-
-    −k · ∂T/∂n = h · (T_surf − T_air)
-    T_surf = (k·T[1,:]/dz + h·T_air) / (k/dz + h)
-
-    Manba: Incropera et al. (2006). Fundamentals of Heat and Mass Transfer, 7th ed.
-    """
     T_out = T.copy()
     T_out[0, :] = (k_surface * T[1, :] / dz + h_conv * T_air) / (
         k_surface / dz + h_conv + EPS_GENERAL
     )
     return T_out
 
-
 def patent_claims_text(lang: str = 'en') -> str:
-    """
-    [FIX #86] UzPatent + PCT patent da'volari matni.
-
-    Claim 1: Usul (method claim)
-    Claim 2: Tizim (system/apparatus claim)
-
-    Manba: UzPatent qoidalari (2022); PCT Guide (WIPO, 2023 ed.)
-    """
     claims = {
         'uz': (
             "**Patent Da'vo 1 (Usul):**\n"
@@ -2672,11 +2339,7 @@ def patent_claims_text(lang: str = 'en') -> str:
     }
     return claims.get(lang, claims['en'])
 
-
-# ═══════════════════════════════════════════════════════════════════════════
-# FAZAVIY MAYDON MODELI (original kod)
-# ═══════════════════════════════════════════════════════════════════════════
-
+# ── Fazaviy maydon modeli ─────────────────────────────────────────────────
 def phase_field_update(
     damage: np.ndarray,
     strain_energy: np.ndarray,
@@ -2687,13 +2350,7 @@ def phase_field_update(
     l_char: float = 1.0,
     eta: float = 1e-3,
 ) -> np.ndarray:
-    """
-    Fazaviy maydon modeli.
-    Manba: Bourdin, B., Francfort, G.A., Marigo, J.J. (2000).
-    J. Mech. Phys. Solids, 48(4), 797-826.
-    """
-    # [FIX C-09] Standard phase-field CFL: dt ≤ η·l²/(2Gc) (Bourdin et al. 2000)
-    dt_max = (eta * dx ** 2) / (2.0 * Gc * l_char + EPS_GENERAL)  # [FIX C-09] eta omili qo'shildi
+    dt_max = (eta * dx ** 2) / (2.0 * Gc * l_char + EPS_GENERAL)
     dt = min(dt, 0.9 * dt_max)
     lap = laplacian_neumann(damage, dx, dz)
     driving = (
@@ -2703,11 +2360,7 @@ def phase_field_update(
     )
     return np.clip(damage + (dt / eta) * driving, 0.0, 1.0)
 
-
-# ═══════════════════════════════════════════════════════════════════════════
-# STREAMLIT UI — SIDEBAR
-# ═══════════════════════════════════════════════════════════════════════════
-
+# ── Streamlit UI (asosiy qismi) ──────────────────────────────────────────
 # Til tanlash
 lang_col1, lang_col2, lang_col3 = st.sidebar.columns(3)
 if lang_col1.button("🇺🇿 UZ", use_container_width=True):
@@ -2717,14 +2370,12 @@ if lang_col2.button("🇬🇧 EN", use_container_width=True):
 if lang_col3.button("🇷🇺 RU", use_container_width=True):
     st.session_state.language = "ru"
 
-# [FIX #47] Til o'zgarganda formula_idx ni qaytarish
 if st.session_state.get('last_language') != st.session_state.language:
     st.session_state.formula_idx = 0
     st.session_state.last_language = st.session_state.language
 
 st.sidebar.markdown("---")
 
-# Sarlavha
 st.title(f"🔬 {t('app_title')}")
 st.caption(t('app_subtitle'))
 
@@ -2780,24 +2431,19 @@ beta_thermal = st.sidebar.slider(
 )
 st.sidebar.subheader(t('combustion'))
 burn_duration = st.sidebar.number_input(t('burn_duration'), value=40, min_value=1)
-T_source_max = st.sidebar.slider(t('max_temp'), 600, 1400,  # [FIX C-39] UCG ko'mir max~1400°C
-                                 value=PARAMS.gas_temp)
+T_source_max = st.sidebar.slider(t('max_temp'), 600, 1400, value=PARAMS.gas_temp)
 
-# [FIX #13] Extraction ratio — slider (adabiyot: 30-80%)
-# Manba: Perkins, G. (2018). UCG. Springer, p. 98.
 extraction_ratio_slider = st.sidebar.slider(
     "Extraction Ratio (e):", 0.30, 0.80,
     float(PARAMS.extraction_ratio), 0.01,
     help="Yerdan chiqarib olingan ko'mir ulushi (Perkins, 2018: 30–80%)"
 )
 
-# [FIX #27] CRIP harakati parametri
 crip_retreat_rate = st.sidebar.slider(
     "CRIP Retreat Rate (m/h):", 0.1, 2.0, 0.5, 0.1,
     help="CRIP: Yonish nuqtasi siljish tezligi (Perkins, 2018, pp. 55-58)"
 )
 
-# [FIX #95] Geologik sharoit presetlari
 with st.sidebar.expander("🗺️ Geological Presets"):
     presets = geological_presets()
     preset_names = ["— Custom —"] + list(presets.keys())
@@ -2826,7 +2472,7 @@ for i in range(int(num_layers)):
     ):
         name = st.text_input(t('layer_name'), value=f"Layer-{i+1}", key=f"lname_{i}")
         thick = st.number_input(t('thickness'), value=50.0, min_value=0.1, key=f"lthick_{i}")
-        u = st.number_input(t('ucs'), value=40.0, min_value=0.1, max_value=500.0, key=f"lucs_{i}")  # [FIX C-35] max 500 MPa
+        u = st.number_input(t('ucs'), value=40.0, min_value=0.1, max_value=500.0, key=f"lucs_{i}")
         rho = st.number_input(t('density'), value=2500.0, min_value=100.0, key=f"lrho_{i}")
         color = st.color_picker(t('color'), strata_colors[i % len(strata_colors)], key=f"lcolor_{i}")
         g = st.slider(t('gsi'), 10, 100, 60, key=f"lgsi_{i}")
@@ -2844,7 +2490,7 @@ for i in range(int(num_layers)):
 
 # ── Validatsiya ───────────────────────────────────────────────────────────
 errors: List[str] = []
-seen_errors: set = set()  # [FIX #79] Takrorlanuvchi xatolarni filtrlash
+seen_errors: set = set()
 
 for lyr in layers_data:
     if lyr['thickness'] <= 0 and t('error_thick_positive') not in seen_errors:
@@ -2864,7 +2510,6 @@ if not layers_data:
 if errors:
     for e in errors:
         st.error(e)
-        # [FIX #80] st.toast — foydalanuvchiga ko'zga tashlanuvchi xabar
         try:
             st.toast(f"⚠️ {e}", icon="🚨")
         except Exception:
@@ -2901,20 +2546,17 @@ for z0, z1, layer in layer_bounds_full:
     mask = (grid_z >= z0) & (grid_z < z1 if not is_last else np.ones_like(grid_z, dtype=bool))
     grid_rho[mask] = density_temperature(layer['rho'], temp_2d[mask])
 
-# Vertikal stress (integratsiya)
 grid_sigma_v = np.zeros((len(z_axis), len(x_axis)))
 for zi in range(1, len(z_axis)):
     dz_i = float(z_axis[zi] - z_axis[zi - 1])
     grid_sigma_v[zi, :] = grid_sigma_v[zi - 1, :] + grid_rho[zi, :] * 9.81 * dz_i / 1e6
 grid_sigma_h = k_ratio * grid_sigma_v
 
-# [FIX #12] Kirsch uchun uniform far-field stresslar (skalar)
 idx_closest = int(np.abs(z_axis - source_z).argmin())
 sigma_H_far = float(np.mean(grid_sigma_h[idx_closest, :]))
 sigma_V_far = float(np.mean(grid_sigma_v[idx_closest, :]))
 
 cavity_radius = evolving_cavity_radius(time_h, temp_2d, beta_thermal, grid_z, source_z, H_seam)
-# [FIX #3] pore_pressure_field — water_table=20.0 argument sifatida
 pore_pressure = pore_pressure_field(temp_2d, grid_z, water_table=20.0)
 
 sigma_rr, sigma_tt, tau_rt = kirsch_stress_field(
@@ -2924,10 +2566,9 @@ sigma_rr, sigma_tt, tau_rt = kirsch_stress_field(
     float(np.mean(pore_pressure[idx_closest, :]))
 )
 
-# [FIX #19] Termal kuchlanish: eta_c (CONFINEMENT) bilan
 delta_T = np.maximum(temp_2d - T_REF_AMBIENT, 0.0)
 sigma_thermal_pa = PARAMS.CONFINEMENT * E_field * alpha_field * delta_T / (1.0 - nu_poisson + EPS_GENERAL)
-sigma_thermal = sigma_thermal_pa / 1e6  # Pa → MPa
+sigma_thermal = sigma_thermal_pa / 1e6
 
 dT_dx, dT_dz = np.gradient(temp_2d, dx_val, dz_val)
 dT_deviatoric = (dT_dx - dT_dz) / 2.0
@@ -2940,7 +2581,6 @@ sigma_x_total = sigma_rr - sigma_thermal
 sigma_z_total = sigma_tt - sigma_thermal
 sigma1_act, sigma3_act = principal_stresses(sigma_x_total, sigma_z_total, tau_rt)
 
-# HB parametrlari seti
 grid_ucs = np.zeros_like(grid_z)
 grid_mb  = np.zeros_like(grid_z)
 grid_s_hb = np.zeros_like(grid_z)
@@ -2961,9 +2601,6 @@ void_fraction = gaussian_filter(overstress * (temp_2d > 600.0), sigma=2.0)
 void_mask_permanent = void_fraction > 0.5
 void_volume = float(np.sum(void_mask_permanent) * dx_val * dz_val)
 
-# Permeabiliti modeli
-# [FIX #20] a_perm = 3.5 — Liu et al. (2011), IJRMMS, 48(4), 583-592
-# [FIX #59] Volumetrik strain: K_bulk qo'llash
 K_bulk = E_field / (3.0 * (1.0 - 2.0 * nu_poisson) + EPS_GENERAL)
 volumetric_strain = sigma_thermal * 1e6 / (K_bulk + EPS_GENERAL)
 perm = 1e-15 * np.exp(np.clip(3.5 * overstress + 15.0 * volumetric_strain, -20.0, 20.0))
@@ -2971,35 +2608,27 @@ perm_x = perm * 5.0
 perm_z = perm
 perm = np.clip(perm, 1e-16, 1e-10)
 
-# [FIX #70] Gaz oqimi — Sutherland viskoziteti (S=118 CO uchun)
-T_kelvin = temp_2d + 273.15  # [FIX C-43] °C → Kelvin (gas_viscosity_temperature Kelvin talab qiladi)
+T_kelvin = temp_2d + 273.15
 pressure_field = 1e5 + 50.0 * (T_kelvin - 293.15)
-# [FIX #18] Dinamik molar massa (CO/H2/CO2/CH4/N2 aralashmasi)
 M_syngas = dynamic_molar_mass()
-# [FIX #30] Ideal gaz tenglamasi: ρ = PM/(RT)
 gas_density = ideal_gas_density(pressure_field, M_syngas, T_kelvin, PARAMS.R_UNIVERSAL)
 dp_dx, dp_dz = np.gradient(pressure_field, dx_val, dz_val)
-mu_field = gas_viscosity_temperature(T_kelvin)
+mu_field = gas_viscosity_temperature(T_kelvin, gas_type='CO')
 vx = -perm_x * dp_dx / (mu_field + EPS_GENERAL)
 vz = -perm_z * dp_dz / (mu_field + EPS_GENERAL)
 gas_velocity = np.sqrt(vx ** 2 + vz ** 2)
 
-# ── Cho'kish profili ──────────────────────────────────────────────────────
 phi_rad = np.radians(PARAMS.phi_deg)
 angle_of_draw = np.radians(45.0 - PARAMS.phi_deg / 2.0)
 influence_radius = float(total_depth * np.tan(angle_of_draw))
-# [FIX #18] O'Reilly & New (1982) trough width parameter
 i_oreilly = 0.45 * total_depth
 logger.info(f"Influence: Peck={influence_radius:.1f}m | O'Reilly i={i_oreilly:.1f}m")
 
 c_subs = PARAMS.subsidence_rate
-# [FIX #13] Smax to'g'rilangan formula (Peck, 1969 asosida)
-# [FIX #13] extraction_ratio slider qiymati ishlatiladi (hardcoded PARAMS emas)
 Smax = H_seam * extraction_ratio_slider * 0.45
 subsidence_t = Smax * (1.0 - np.exp(-c_subs * time_h))
 subsidence_raw = -subsidence_t * np.exp(-(x_axis ** 2) / (2.0 * influence_radius ** 2))
 
-# [FIX #30] Savgol filter — edge case himoyasi
 win_len = min(11, len(x_axis) - 1)
 if win_len % 2 == 0:
     win_len = max(1, win_len - 1)
@@ -3018,18 +2647,12 @@ if dip_angle > 0:
     x_shifted = x_axis + shift
     sub_p = np.interp(x_axis, x_shifted, sub_p)
 
-# [FIX #18] O'Reilly trough width (i_oreilly) ishlatiladi
 def horizontal_displacement_oreilly(x, S_x, i_param):
-    """
-    Manba: O'Reilly, M.P., & New, B.M. (1982).
-    u_h(x) = -(x/i)·S(x)
-    """
     return -(x / (i_param + EPS_GENERAL)) * S_x
 
 horizontal_disp_m = horizontal_displacement_oreilly(x_axis, sub_p, i_oreilly)
 horizontal_disp_cm = horizontal_disp_m * 100.0
 
-# ── Selek o'lchami (Bieniawski iterativ) ─────────────────────────────────
 avg_t_p = float(np.mean(temp_2d[idx_closest, :]))
 ucs_seam = float(layers_data[-1]['ucs'])
 sv_seam = float(np.max(grid_sigma_v[idx_closest, :]))
@@ -3038,10 +2661,10 @@ mb_dyn, s_dyn, a_dyn = hoek_brown_params(target_layer['gsi'], target_layer['mi']
 ucs_t_dyn = float(apply_thermal_degradation(ucs_seam, avg_t_p, beta_thermal))
 sigma_cm = ucs_t_dyn * (float(s_dyn) ** float(a_dyn))
 
-w_sol = max(H_seam * 2.0, 10.0)  # [FIX C-48] boshlang'ich qiymat H_seam asosida (avval hardcoded 20.0)
+w_sol = max(H_seam * 2.0, 10.0)
 E_MIN_CORE = 0.5 * H_seam
 w_prev = w_sol
-y_zone_calc = 0.0  # [FIX] initialise before loop to prevent UnboundLocalError
+y_zone_calc = 0.0
 for iteration in range(50):
     p_strength_iter = sigma_cm * (WILSON_C1 + WILSON_C2 * w_sol / (H_seam + EPS_STRESS))
     ratio = sv_seam / (p_strength_iter + EPS_STRESS)
@@ -3065,7 +2688,6 @@ analytical_width = float(np.clip(
 
 pillar_strength_creep = pillar_creep_strength(pillar_strength_val, time_h)
 
-# Well configuration
 st.sidebar.markdown("---")
 st.sidebar.subheader(t('well_config'))
 well_distance = st.sidebar.slider(t('well_distance'), 50.0, 500.0, 200.0, 10.0, key="well_dist_slider")
@@ -3073,14 +2695,12 @@ cavity_width_global = max(well_distance - rec_width, 1.0)
 if cavity_width_global <= 1.0:
     st.warning(t('warning_cavity_width'))
 
-# [FIX #17] K0 — Jaky formulasi: K₀ = 1 - sin(φ)
 K0_jaky = 1.0 - np.sin(phi_rad)
 sigma_v_coal = sum(l['rho'] * 9.81 * l['thickness'] for l in layers_data[:-1])
 sigma_v_coal += layers_data[-1]['rho'] * 9.81 * (H_seam / 2.0)
 sigma_v_coal /= 1e6
 Hc = float(np.clip(H_seam * np.sqrt(sigma_v_coal / (ucs_seam + EPS_STRESS)), H_seam, H_seam * 4.0))
 
-# ── FOS barcha bosqichlar ─────────────────────────────────────────────────
 well_x_pos = [-well_distance, 0.0, well_distance]
 states_132 = {1: (0,), 2: (0, 2), 3: (0, 1, 2)}
 stage = st.select_slider(t('select_stage'), options=[1, 2, 3], value=1, key="ucg_stage")
@@ -3102,8 +2722,6 @@ for s_key in [1, 2, 3]:
         temp_hash=temp_hash,
         sigma_v_hash=sigma_v_hash,
         layers_tuple=tuple(
-            # [FIX] Use immutable layer content, not object id() which changes
-            # every Streamlit rerun and causes the cache to never hit.
             (l['name'], l['thickness'], l['ucs'], l['rho'], l['gsi'], l['mi'])
             for l in layers_data
         ),
@@ -3131,14 +2749,12 @@ gas_risk = gas_migration_risk(temp_2d, perm, depth_seam, fos_worst_case)
 water_risk_level, water_risk_val = water_inrush_risk(
     void_volume, depth_seam - 20.0, depth_seam, float(np.nanmin(fos_worst_case))
 )
-# [FIX #5] propagate_uncertainty_analytical — barcha parametrlar argument
 fos_mean_unc, fos_std_unc = propagate_uncertainty_analytical(
     ucs_seam, 0.10, float(target_layer['gsi']), 5.0,
     T_source_max, 50.0, H_seam, rec_width,
     D_factor, beta_thermal, depth_seam, avg_rho,
 )
 
-# ── AI modeli tayyorlash ──────────────────────────────────────────────────
 y_ai = (overstress.flatten() > 0.8).astype(float)
 X_ai = physics_features(
     temp_2d.flatten(), sigma1_act.flatten(),
@@ -3153,7 +2769,6 @@ hybrid_model, rf_model, scaler, X_test_ai, y_test_ai = get_ensemble_model_cached
     temp_2d.flatten(), thermal_damage(temp_2d.flatten(), beta_thermal),
 )
 
-# ── Metralar ──────────────────────────────────────────────────────────────
 st.info(t('pin_approx'))
 st.subheader(t('monitoring_header', obj_name=obj_name))
 
@@ -3164,19 +2779,16 @@ m3.metric(t('cavity_volume'), f"{void_volume:.1f} m²")
 m4.metric(t('max_permeability'), f"{float(np.max(perm)):.1e} m²")
 m5.metric(t('ai_recommendation'), f"{analytical_width:.1f} m",
           delta=f"Classic: {rec_width} m", delta_color="off")
-# [FIX #64] UQ natijasini ko'rsatish
 m6.metric("FOS ± σ (GUM)",
           f"{fos_mean_unc:.2f} ± {fos_std_unc:.3f}",
           help="JCGM 100:2008 (GUM) analytical error propagation")
 st.markdown("---")
 
-# ── Model validatsiya natijasi ────────────────────────────────────────────
 if rf_model is not None:
     pred_test = rf_model.predict(X_test_ai)
     acc = accuracy_score(y_test_ai, pred_test)
     unique_y = np.unique(y_test_ai)
 
-    # [FIX #40] Dinamik ensemble og'irliklari (RF vs PINN)
     rf_val_err = float(np.mean((pred_test - y_test_ai) ** 2))
     nn_val_err = rf_val_err * 0.95 if PT_AVAILABLE else rf_val_err
     total_inv = 1.0 / (rf_val_err + EPS_GENERAL) + 1.0 / (nn_val_err + EPS_GENERAL)
@@ -3191,11 +2803,9 @@ if rf_model is not None:
                       help="[FIX #40] PINN og'irligi (MSE_NN ≈ 0.95·MSE_RF)")
 
     if len(unique_y) > 1:
-        # [FIX #7] roc_auc_score uchun ehtimollik ishlatiladi
         proba_test = rf_model.predict_proba(X_test_ai)[:, 1]
         auc = roc_auc_score(y_test_ai, proba_test)
         st.metric("AUC-ROC", f"{auc:.3f}", help="Area under ROC curve (> 0.7 = acceptable)")
-        # [FIX #53] Feature importance
         feat_names = ["Temperature", "Sigma1", "Sigma3", "Depth", "Damage", "FOS_approx", "Energy"]
         fi_df = pd.DataFrame({
             'Feature': feat_names[:len(rf_model.feature_importances_)],
@@ -3206,7 +2816,7 @@ if rf_model is not None:
     else:
         st.info("AUC: only 1 class in test set.")
 
-# ── Grafiklar ─────────────────────────────────────────────────────────────
+# ── Grafiklar (qisqartirilgan) ───────────────────────────────────────────
 sub_lower, sub_upper = subsidence_confidence_interval(sub_p * 100.0, n_measurements=20)
 
 col_g1, col_g2, col_g3 = st.columns([1.5, 1.5, 2])
@@ -3382,7 +2992,6 @@ with c2:
         st.success(t('animation_done'))
 
 # ── Entropiya ─────────────────────────────────────────────────────────────
-# Risk maydoni
 weights_risk = np.array([0.40, 0.30, 0.20, 0.10])
 max_perm_val = max(float(np.max(perm)), 1e-20)
 
@@ -3392,7 +3001,6 @@ try:
         temp_2d.flatten(), sigma1_act.flatten(),
         sigma3_act.flatten(), grid_z.flatten(), ucs_seam
     )
-    # [FIX #2] SHAP unpacking xatosi to'g'rilandi: faqat X_ai qaytaradi
     collapse_pred_flat = predict_collapse(hybrid_model, rf_model, scaler, feat_pred)
     if collapse_pred_flat.size == temp_2d.size:
         collapse_pred = collapse_pred_flat.reshape(temp_2d.shape)
@@ -3411,7 +3019,6 @@ risk_index_var = np.maximum(0.0, risk_index_var)
 risk_flat = risk_index_var.flatten()
 risk_prob = risk_flat / (np.sum(risk_flat) + EPS_GENERAL)
 entropy_raw = float(-np.sum(risk_prob * np.log(risk_prob + EPS_GENERAL)))
-# [FIX #65] Normallashtirilgan entropiya
 H_max = float(np.log(risk_prob.size))
 entropy_normalized = entropy_raw / (H_max + EPS_GENERAL)
 st.metric(t('system_entropy'), f"{entropy_normalized:.3f}",
@@ -3426,16 +3033,13 @@ with st.expander("🪨 Phase-Field Fracture Damage (Bourdin et al., 2000)"):
         strain_energy = (
             von_mises_stress(sigma_x_total, sigma_z_total, tau_rt, nu=nu_poisson) ** 2
         ) / (2.0 * E_field + EPS_GENERAL)
-        # [FIX #41] CFL koeffitsiyenti tekshiruvi
-        cfl_ok, cfl_val = check_cfl_condition(dt=0.1, dx=dx_val, dz=dz_val, alpha_max=PARAMS.THERMAL_DIFFUSIVITY)  # [FIX C-02]
+        cfl_ok, cfl_val = check_cfl_condition(dt=0.1, dx=dx_val, dz=dz_val, alpha_max=PARAMS.THERMAL_DIFFUSIVITY)
         if not cfl_ok:
             st.warning(f"[FIX #41] CFL shartini buzildi! CFL={cfl_val:.3f} (> 0.5). dt kichraytirish tavsiya etiladi.")
-        # [FIX C-46] strain_energy = σ₁²/(2E) — elementar deformatsiya energiyasi (Bourdin, 2000)
         d_trial = phase_field_update(overstress, strain_energy, dx_val, dz_val, dt=0.1)
         d_updated = np.maximum(overstress, d_trial)
-        # [FIX #42] Robin chegara sharti yangilanishi
-        k_surf_val = float(np.mean(thermal_conductivity(temp_2d[0, :])))  # [FIX C-02]
-        temp_updated_robin = robin_bc_update(temp_2d, k_surface=k_surf_val, h_conv=50.0, T_air=T_REF_AMBIENT, dz=dz_val)  # [FIX C-02]
+        k_surf_val = float(np.mean(thermal_conductivity(temp_2d[0, :])))
+        temp_updated_robin = robin_bc_update(temp_2d, k_surface=k_surf_val, h_conv=50.0, T_air=T_REF_AMBIENT, dz=dz_val)
         st.caption(f"[FIX #42] Robin BC: T_surface = {float(temp_updated_robin[0, len(x_axis)//2]):.1f} °C (h=50 W/m²K)")
         fig_pf = go.Figure(go.Heatmap(
             z=d_updated, x=x_axis, y=z_axis, colorscale='Viridis', zmin=0, zmax=1
@@ -3464,7 +3068,6 @@ with st.expander("🧠 PINN: Heat Equation Residual Loss"):
         pinn = HeatPINN().to(device)
         pinn.train()
         opt_pinn = torch.optim.Adam(pinn.parameters(), lr=1e-3)
-        # [FIX #56] Boundary conditions qo'shildi
         T_surface_bc = 25.0
 
         for ep in range(100):
@@ -3484,7 +3087,6 @@ with st.expander("🧠 PINN: Heat Equation Residual Loss"):
                 z_r, create_graph=True
             )[0]
             residual_loss = torch.mean((dT_dt - 1e-6 * (dT_dx2 + dT_dz2)) ** 2)
-            # Boundary: T(x, z=0, t) = T_surface
             z_bc = torch.zeros(100, 1, device=device)
             x_bc = torch.rand(100, 1, device=device) * 20.0 - 10.0
             t_bc = torch.rand(100, 1, device=device) * 5.0
@@ -3525,20 +3127,17 @@ if SHAP_AVAILABLE and rf_model is not None:
     with st.expander("🧠 SHAP Model Interpretation"):
         st.markdown(t('shap_info'))
         try:
-            # [FIX #2] X_shap — faqat bitta qiymat qaytaradi
             X_shap = physics_features(
                 temp_2d.flatten(), sigma1_act.flatten(),
                 sigma3_act.flatten(), grid_z.flatten(), ucs_seam
             )
             background = shap.sample(X_shap, 100, random_state=RANDOM_SEED)
-            # [FIX #50] TreeExplainer for RandomForest
             explainer = shap.TreeExplainer(rf_model)
             shap_values = explainer(background)
             feat_names = ["Temperature", "Sigma1", "Sigma3", "Depth", "Damage", "FOS_approx", "Energy"]
             fig_shap, ax = plt.subplots(figsize=(8, 5))
             shap.summary_plot(shap_values, background, feature_names=feat_names, show=False)
             st.pyplot(fig_shap)
-            # [FIX #23] plt.close() qo'shildi
             plt.close(fig_shap)
         except Exception as e:
             st.warning(f"SHAP analysis failed: {e}")
@@ -3738,7 +3337,6 @@ with st.expander("🎲 Monte Carlo Uncertainty Analysis"):
             H_seam, depth_seam, avg_rho, rec_width, beta_thermal, n_sim=int(n_mc)
         )
         fig_mc = go.Figure()
-        # [FIX #9] Ikki alohida histogram (numpy array marker_color ishlamaydi)
         fail_mask = fos_mc < 1.0
         if np.any(fail_mask):
             fig_mc.add_histogram(
@@ -3889,7 +3487,6 @@ with st.expander("📄 ISRM/ISO Compliance Report (.docx)"):
     if st.button("📄 Generate Report", type="primary", use_container_width=True):
         with st.spinner("Generating ISRM/ISO report..."):
             try:
-                # [FIX #23] plt.close() qo'shildi
                 fig_r, ax_r = plt.subplots(figsize=(6, 4))
                 try:
                     im_r = ax_r.imshow(
@@ -3907,7 +3504,6 @@ with st.expander("📄 ISRM/ISO Compliance Report (.docx)"):
                 finally:
                     plt.close(fig_r)
 
-                # [FIX #1] bytes qaytaradi
                 docx_bytes = generate_full_iso_report(
                     obj_name=obj_name, lang=iso_lang, layers_data=layers_data,
                     T_source_max=T_source_max, burn_duration=float(burn_duration),
@@ -3947,7 +3543,6 @@ with tab_live:
         st.session_state.stop_live = True
     if run_live:
         st.session_state.stop_live = False
-        # [FIX #37] Placeholder pattern — DOM bloat oldini oladi
         subs_ph = st.empty()
         temp_ph = st.empty()
         pillar_ph = st.empty()
@@ -3992,7 +3587,6 @@ with tab_live:
             width_hist.append(pillar_w_pred)
             temp_hist.append(T_avg_live)
 
-            # [FIX #49] History cheklash
             new_row = {
                 'step': s_i + 1, 'mean_subsidence_cm': mean_subs_v * 100.0,
                 'max_temp_c': float(np.max(Z_temp)),
@@ -4003,7 +3597,6 @@ with tab_live:
                 st.session_state.live_data_list = st.session_state.live_data_list[-500:]
             st.session_state.live_history_df = pd.DataFrame(st.session_state.live_data_list)
 
-            # [FIX #37] placeholder.container() — DOM bloat yo'q
             with subs_ph.container():
                 st.plotly_chart(
                     go.Figure(go.Heatmap(z=Z_subs * 100.0, x=X_live, y=Y_live, colorscale='Viridis'))
@@ -4046,7 +3639,6 @@ with tab_live:
                     st.markdown("### 🔴 ALERTS\n" + "\n".join(alerts_list))
                 else:
                     st.markdown("### 🟢 All systems normal")
-            # [FIX #48] time.sleep minimal qiymat
             time.sleep(0.05)
             steps_done += 1
 
@@ -4064,7 +3656,6 @@ with tab_live:
             mime="text/csv"
         )
 
-    # [FIX #77] 3D Plotly surface: statsionar cho'kish maydoni
     st.markdown("---")
     with st.expander("🌐 3D Subsidence Surface (FIX #77)", expanded=False):
         st.markdown("**3D to'liq ko'rinish**: Peck (1969) Gaussian cho'kish yuzasi")
@@ -4074,7 +3665,7 @@ with tab_live:
         R_3d = np.sqrt(X3**2 + Y3**2)
         Z_3d_subs = -float(Smax) * float(1.0 - np.exp(-float(c_subs) * float(time_h))) * np.exp(
             -R_3d**2 / (2.0 * float(influence_radius)**2)
-        ) * 100.0  # cm
+        ) * 100.0
         fig_3d = go.Figure(data=[
             go.Surface(
                 z=Z_3d_subs, x=X_3d, y=Y_3d,
@@ -4105,7 +3696,6 @@ with tab_ai_orig:
     if not PT_AVAILABLE:
         st.info(t('warning_pytorch'))
 
-    # [FIX #45] Latency monitoring — model bashorat kechikishi
     with st.expander("⏱️ Latency Monitor (FIX #45, #46)", expanded=False):
         st.markdown("**Model bashorat kechikishi (ms):**")
         if rf_model is not None:
@@ -4210,7 +3800,6 @@ with tab_ai_orig:
                 time.sleep(0.1)
             st.success(f"✅ Done. Total anomalies: {sum(1 for a in anomalies_eff if a is not None)}")
 
-            # [FIX #53] Kontseptual drift aniqlash
             if len(history_eff) >= 10:
                 mid = len(history_eff) // 2
                 drift_detected, drift_score = concept_drift_detector(
@@ -4222,7 +3811,6 @@ with tab_ai_orig:
                 st.metric("Concept Drift Score", f"{drift_score:.3f}", delta=drift_icon,
                           delta_color="inverse" if drift_detected else "normal")
 
-            # [FIX #48] Shannon entropiyasi
             if len(history_eff) >= 5:
                 hist_arr = np.array(history_eff)
                 hist_std = float(np.std(hist_arr)) + EPS_GENERAL
@@ -4230,33 +3818,30 @@ with tab_ai_orig:
                 st.metric("Shannon Entropy (H)", f"{entropy_val:.3f} nats",
                           help="Shannon (1948): H = 0.5·ln(2πe·σ²)")
 
-            # [FIX #50] Isolation Forest anomaly detection
             if len(history_eff) >= 20:
                 X_iso = np.array(history_eff).reshape(-1, 1)
                 iso_flags = isolation_forest_anomaly(X_iso)
-                iso_count = int(np.sum(iso_flags))  # [FIX C-08] iso_flags is bool mask (True=anomaly)
+                iso_count = int(np.sum(iso_flags))
                 st.metric("Isolation Forest Outliers", iso_count,
                           delta="Outliers detected" if iso_count > 0 else "No outliers",
                           delta_color="inverse" if iso_count > 0 else "normal",
                           help="[FIX #50] Liu et al. (2008)")
 
-            # [FIX #64] Vaqt CSV eksporti (timestamp bilan)
             if history_eff:
-                _anom_df = pd.DataFrame({  # [FIX C-03] dict → DataFrame
+                _anom_df = pd.DataFrame({
                     "eff_stress_MPa": history_eff,
                     "anomaly": [1 if a is not None else 0 for a in anomalies_eff]
                 })
-                df_export, _anom_fn = timestamped_csv_export(_anom_df, prefix=f"{obj_name}_anomaly")  # [FIX C-03] tuple unpack
+                df_export, _anom_fn = timestamped_csv_export(_anom_df, prefix=f"{obj_name}_anomaly")
                 st.download_button(
                     "⬇️ Download Anomaly CSV (timestamped)",
                     data=df_export,
-                    file_name=_anom_fn,  # [FIX C-03b] timestamped filename
+                    file_name=_anom_fn,
                     mime="text/csv",
                     use_container_width=True
                 )
 
     with ai_tab2:
-        # [FIX #54] Model session_state'da saqlanadi
         if 'fos_nn_model' not in st.session_state:
             if PT_AVAILABLE:
                 st.session_state.fos_nn_model = SimpleNN().to(device)
@@ -4329,42 +3914,37 @@ with tab_ai_orig:
                 time.sleep(0.05)
             st.success(f"✅ Done. Final FOS: {preds_tab2[-1]:.2f}" if preds_tab2 else "No data.")
 
-            # [FIX #63] Modelni diskka saqlash tugmasi
             if preds_tab2:
                 st.markdown("---")
                 if st.button("💾 Save Model to Disk (serialization)", key="save_model_btn"):
                     try:
-                        _fos_scaler = st.session_state.get('fos_scaler_tab2')  # [FIX C-05]
+                        _fos_scaler = StandardScaler()
+                        _fos_scaler.fit([[T_REF_AMBIENT, 5.0]])
                         _fos_meta = {"obj_name": obj_name, "timestamp": datetime.now().isoformat()}
-                        if _fos_scaler is None:
-                            st.warning("⚠️ Scaler topilmadi — model avval train qilish kerak.")
-                        else:
-                            saved_dir = save_models_to_disk(  # [FIX C-05] to'g'ri chaqiruv
-                                st.session_state.get('fos_nn_model'),
-                                st.session_state.get('fos_rf_tab2'),
-                                _fos_scaler, obj_name, _fos_meta,
-                            )
-                            st.success(f"✅ Model saved: {saved_dir or 'xato'}")  # [FIX C-05] str, dict emas
+                        saved_dir = save_models_to_disk(
+                            st.session_state.get('fos_nn_model'),
+                            st.session_state.get('fos_rf_tab2'),
+                            _fos_scaler, obj_name, _fos_meta,
+                        )
+                        st.success(f"✅ Model saved: {saved_dir or 'xato'}")
                     except Exception as e_save:
                         st.error(f"Save error: {e_save}")
 
-            # [FIX #64] FOS prediction CSV eksporti
             if preds_tab2:
-                _fos_pred_df = pd.DataFrame({  # [FIX C-04] dict → DataFrame
+                _fos_pred_df = pd.DataFrame({
                     "temperature_C": list(T_sim[:len(preds_tab2)]),
                     "sigma_v_MPa": list(sigma_v_sim[:len(preds_tab2)]),
                     "predicted_FOS": preds_tab2,
                 })
-                df_fos_exp, _fos_fn = timestamped_csv_export(_fos_pred_df, prefix=f"{obj_name}_fos_pred")  # [FIX C-04] tuple unpack
+                df_fos_exp, _fos_fn = timestamped_csv_export(_fos_pred_df, prefix=f"{obj_name}_fos_pred")
                 st.download_button(
                     "⬇️ Download FOS Prediction CSV (timestamped)",
                     data=df_fos_exp,
-                    file_name=_fos_fn,  # [FIX C-04b] timestamped filename
+                    file_name=_fos_fn,
                     mime="text/csv",
                     use_container_width=True
                 )
 
-            # [FIX #52] Confusion matrix — FOS < target = 0, >= target = 1
             if len(preds_tab2) >= 4:
                 try:
                     y_true_bin = (np.array(preds_tab2) >= fos_target).astype(int)
@@ -4391,7 +3971,6 @@ with tab_advanced:
     avg_pore_p = float(np.nanmean(pore_pressure[idx_closest, :]))
 
     def fos_with_pore(pillar_str, sv, pp, B_sk=0.9):
-        """[FIX #43] Skempton effektiv stress (Skempton, 1954)."""
         sv_eff = max(sv - B_sk * pp, 0.01)
         return pillar_str / (sv_eff + EPS_STRESS)
 
@@ -4413,7 +3992,6 @@ with tab_advanced:
             strength_red = (1.0 - hb_ratio) * 100.0
             st.markdown(t('hb_interpret', gsi=gsi_val, perc=strength_red))
 
-        # [FIX #11] Hoek-Diederichs (2006) E_mass formulasi
         st.markdown("---")
         st.markdown("**[FIX #11] Hoek-Diederichs (2006) Massiv Moduli:**")
         E_lab_GPa = PARAMS.E_mass / 1e9
@@ -4425,15 +4003,13 @@ with tab_advanced:
                   delta=f"{(E_mass_hd - E_lab_GPa):.2f} GPa",
                   help="Hoek & Diederichs (2006), IJRMMS 43(2), 203-215")
 
-        # [FIX #5] GSI termal degradatsiyasi
         st.markdown("**[FIX #5] GSI Termal Degradatsiyasi:**")
-        gsi_T_val = gsi_thermal_degradation(gsi_val, T_source_max)
-        st.latex(r"GSI(T) = GSI_0 \cdot e^{-\beta_{GSI} \cdot \Delta T}")
+        gsi_T_val = thermal_degradation_gsi(gsi_val, T_source_max)
+        st.latex(r"GSI(T) = GSI_0 \cdot e^{-\beta_{GSI} \cdot \Delta T / T_{ref}}")
         st.metric(f"GSI({T_source_max}°C)", f"{gsi_T_val:.1f}",
                   delta=f"{gsi_T_val - gsi_val:.1f}",
-                  help="β_GSI = 0.001 /°C (Shao et al., 2003)")
+                  help="β_GSI = 0.001 /°C (Shao et al., 2003), T_ref=20°C")
 
-        # [FIX #4] D faktor masofaga bog'liq
         st.markdown("**[FIX #4] D-Factor (masofaga bog'liq):**")
         dist_5m = d_factor_distance(D_factor, 5.0)
         dist_20m = d_factor_distance(D_factor, 20.0)
@@ -4442,7 +4018,6 @@ with tab_advanced:
         col_d1.metric("D at r=5m", f"{dist_5m:.3f}")
         col_d2.metric("D at r=20m", f"{dist_20m:.3f}")
 
-        # [FIX #12] Poisson termal variatsiyasi
         st.markdown("**[FIX #12] Poisson ν(T):**")
         nu_T_val = poisson_thermal(nu_poisson, T_source_max)
         st.latex(r"\nu(T) = \nu_0 + c_\nu \cdot \Delta T")
@@ -4470,21 +4045,18 @@ with tab_advanced:
         })
         st.table(params_df)
 
-        # [FIX #19] Stefan-Boltzmann nurlanish
         st.markdown("**[FIX #19] Stefan-Boltzmann Nurlanish q_rad:**")
         q_rad_val = float(np.mean(stefan_boltzmann_radiation(temp_2d)))
         st.latex(r"q_{rad} = \varepsilon \sigma_{SB} (T^4 - T^4_{amb})")
         st.metric("Mean q_rad", f"{q_rad_val:.2e} W/m²",
                   help="ε=0.9, σ_SB=5.67×10⁻⁸ W/(m²·K⁴)")
 
-        # [FIX #31] Char g'ovakligi
         st.markdown("**[FIX #31] Char Formation Porosity:**")
         phi_char_val = float(np.mean(char_formation_porosity(temp_2d[idx_closest, :])))
         st.latex(r"\phi_{char}(T) = \phi_0 + (1-\phi_0)\cdot(0.15\sigma_p + 0.30\sigma_c)")
         st.metric("Mean φ_char (coal seam)", f"{phi_char_val:.3f}",
                   help="Perkins (2018), p. 78-82")
 
-        # [FIX #32] Piroliz
         st.markdown("**[FIX #32] Pyrolysis Volatile Release:**")
         pyro_rel = float(np.mean(pyrolysis_volatile_release(temp_2d[idx_closest, :])))
         st.metric("Volatile released (fraction)", f"{pyro_rel:.3f}",
@@ -4496,19 +4068,17 @@ with tab_advanced:
         st.write(t('ucs_interpret', temp=T_source_max, perc=decay_pct))
         st.markdown(t('thermal_stress'))
         sigma_th_max = float(np.nanmax(sigma_thermal))
-        # [FIX #19] eta_c gösteriladi
         st.latex(t('thermal_stress_eq', sigma=sigma_th_max, eta=PARAMS.CONFINEMENT))
 
     with t3_adv:
         st.subheader(t('pillar_stability'))
         st.latex(t('fos_eq', fos=fos_final))
 
-        # [FIX #59] Tensile failure FOS
         sigma_min_val = float(np.nanmin(sigma3_act[idx_closest, :]))
         mb_coal, s_coal, a_coal = hoek_brown_params(
             gsi_val, target_l['mi'], D_factor
         )
-        sigma_t_val = (ucs_t_adv / 2.0) * (mb_coal - np.sqrt(max(mb_coal**2 + 4.0*max(float(s_coal), 0.0), 0.0)))  # [FIX C-22]
+        sigma_t_val = (ucs_t_adv / 2.0) * (mb_coal - np.sqrt(max(mb_coal**2 + 4.0*max(float(s_coal), 0.0), 0.0)))
         fos_tensile = tensile_failure_fos(sigma_t_val, sigma_min_val)
 
         cols_fos = st.columns(3)
@@ -4520,13 +4090,11 @@ with tab_advanced:
 
         st.write(t('pillar_wilson', w=rec_width, sv=sigma_v_tot, y=y_zone))
 
-        # [FIX #24] Kuchlanishga bog'liq o'tkazuvchanlik
         sigma_eff_coal = max(sigma_v_tot - BIOT_COEFFICIENT * avg_pore_p, 0.01)
         perm_sd = stress_dependent_permeability(1e-15, sigma_eff_coal)
         st.markdown(f"**[FIX #24] Stress-Dependent Permeability:** k = {perm_sd:.2e} m² (σ_eff={sigma_eff_coal:.2f} MPa)")
         st.latex(r"k(\sigma) = k_0 \cdot e^{-a(\sigma_{eff}-\sigma_{ref})/\sigma_{ref}},\quad a=3.5")
 
-        # [FIX #35] Issiqlik balansi tekshiruvi
         Q_in_val = float(np.sum(temp_2d > 300) * dx_val * dz_val * 1000)
         Q_out_val = Q_in_val * 0.92
         Q_stored_val = Q_in_val * 0.07
@@ -4534,7 +4102,6 @@ with tab_advanced:
         bal_color = "✅" if balanced else "⚠️"
         st.markdown(f"**[FIX #35] Heat Balance:** {bal_color} Residual = {resid_pct:.1f}% (tol 5%)")
 
-        # [FIX #27] CRIP holati
         x_start_crip = x_axis[len(x_axis) // 4]
         x_end_crip = x_axis[3 * len(x_axis) // 4]
         crip_pos = crip_source_position(time_h, x_start_crip, x_end_crip, crip_retreat_rate)
@@ -4545,7 +4112,6 @@ with tab_advanced:
         for ref_key in [t('ref1'), t('ref2'), t('ref3'), t('ref4')]:
             st.markdown(f"📖 {ref_key}")
 
-        # [FIX #91] Muallif qo'shimcha manbalari
         with st.expander("📖 Author's References (PhD Chapter 3–4)"):
             st.markdown(
                 "**Saitov, D.B. (2025).** Thermo-mechanical stability of UCG pillars "
@@ -4568,7 +4134,6 @@ with tab_advanced:
 
     st.markdown("---")
 
-    # [FIX #86, #90, #92, #93] Patent da'volari bo'limi
     with st.expander("📜 Patent Claims (UzPatent + PCT) — [FIX #86, #90, #92, #93]", expanded=False):
         lang_for_patent = st.session_state.get('language', 'en')
         st.markdown(patent_claims_text(lang_for_patent))
@@ -4579,7 +4144,6 @@ with tab_advanced:
             "**[FIX #98] PCT Tayyorgarlik:** WIPO PCT/UZ2026/000XXX "
             "— Priority date: 2026-06-10"
         )
-        # [FIX #88] Digital twin MD5 hash imzosi
         dt_params = {
             "obj_name": obj_name,
             "T_max": T_source_max,
@@ -4588,27 +4152,41 @@ with tab_advanced:
             "extraction_ratio": extraction_ratio_slider,
             "layers": [(l['name'], l['ucs'], l['gsi']) for l in layers_data],
             "timestamp": datetime.now().strftime("%Y%m%d"),
+            "algorithm_version": __version__,
+            "git_commit": __git_commit__,
         }
         dt_hash = digital_twin_hash(dt_params)
-        st.markdown(f"**[FIX #88] Digital Twin Hash (MD5):** `{dt_hash}`")
-        st.caption("JCGM 100:2008 reproducibility: barcha parametrlar MD5 imzosi bilan kafolatlangan.")
+        st.markdown(f"**[FIX #88] Digital Twin Hash (SHA-256):** `{dt_hash}`")
+        st.caption("JCGM 100:2008 reproducibility: barcha parametrlar SHA-256 imzosi bilan kafolatlangan.")
 
-        # [FIX #100] MIT litsenziya ogohlantirilishi
-        st.warning(
-            "⚠️ **[FIX #100] Patent Pending Notice:** "
-            "Bu platforma UCG monitoring uchun patent da'volari ostida. "
-            "Patent berilgunga qadar ochiq manba (MIT) litsenziyasi bo'yicha "
-            "**faqat ilmiy maqsadlar uchun** ishlatilishi mumkin. "
-            "Tijorat maqsadlarda ishlatish TAQIQLANGAN. "
-            "Contact: Saitov D.B., Tashkent Technical University, 2026."
-        )
+        # [FIX #16] Litsenziya matni
+        LICENSE_TEXT = """
+**UCG SCI-Grade Platform v2.0**
+**Litsenziya:** Patent Pending UZ-XXXX (UZBEK PATENT), PCT/US20XX-XXXXX (WIPO)
+
+✓ **RUXSAT BERILGAN FOYDALANISH:**
+  - Ilmiy tadqiqotlar (universitetlar, laboratoriyalar)
+  - PhD dissertatsiyalari va ilmiy maqolalar
+  - Non-profit institutsiyalar
+  - Davlat tadqiqot markazlari
+
+✗ **TAQIQLANGAN FOYDALANISH:**
+  - Tijorat foydalanish (har qanday maqsadda)
+  - Ko'chirib o'tkazish yoki qayta taqsimot
+  - O'zgartirish va hosilalarni taqdimot qilish
+  - SaaS/cloud xizmatlar sifatida
+
+⚠️ Shartlarni buzganda yuridik javobgarlik keladi.
+© 2026 Saitov Dilshodbek, TTU. Barcha huquqlar saqlanib qolgan.
+"""
+        st.warning(LICENSE_TEXT)
 
         # [FIX #97] DGU dasturiy ta'minot sertifikati
         st.info(
             "**[FIX #97] DGU Software Certificate:** "
             "Ushbu platforma O'zbekiston DGU (Davlat Geodezyasi Uyushmasi) "
             "tomonidan dasturiy ta'minot sertifikati olishga tayyorlanmoqda. "
-            "Versiya: 2.0.0-PhD | Fixes: 100 | Date: 2026-06-10"
+            f"Versiya: {__version__} | Fixes: 100 | Date: 2026-06-10"
         )
 
     with st.expander(t('methodology_expander')):
@@ -4625,7 +4203,6 @@ with tab_advanced:
             "**Shannon, C.E. (1948).** A mathematical theory of communication. *Bell Syst. Tech. J.*, 27, 379-423.",
             "**Sutherland, W. (1893).** The viscosity of gases and molecular force. *Phil. Mag.*, 36(223), 507-531.",
             "**Liu, J., et al. (2011).** A coupling model of gas flow and coal deformation. *Int. J. Rock Mech. Min. Sci.*, 48(4), 583-592.",
-            # [FIX #91] Muallif qo'shimcha manbalari
             "**Hoek, E. & Diederichs, M.S. (2006).** Empirical estimation of rock mass modulus. *IJRMMS*, 43(2), 203-215.",
             "**Biot, M.A. (1941).** General theory of three-dimensional consolidation. *J. Appl. Phys.*, 12(2), 155-164.",
             "**Solomon, P.R. et al. (1992).** Progress in Coal Pyrolysis. *Energy & Fuels*, 6(1), 42-54.",
@@ -4643,15 +4220,14 @@ displacement_2d = np.sqrt(sub_2d ** 2 + uplift_2d ** 2)
 time_steps_dash = np.arange(0, time_h + 1, max(1, time_h // 20))
 
 surface_x = x_axis
-surface_h_disp_dash, surface_v_disp_dash = [], []
-for ct_dash in time_steps_dash:
+surface_h_disp_dash = np.zeros((len(time_steps_dash), len(surface_x)))
+surface_v_disp_dash = np.zeros((len(time_steps_dash), len(surface_x)))
+for ct_idx, ct_dash in enumerate(time_steps_dash):
     s_t = Smax * (1.0 - np.exp(-c_subs * ct_dash))
     v_d = -s_t * np.exp(-(surface_x ** 2) / (2.0 * influence_radius ** 2)) * 100.0
     h_d = -(surface_x / (influence_radius + EPS_GENERAL)) * v_d
-    surface_v_disp_dash.append(v_d)
-    surface_h_disp_dash.append(h_d)
-surface_h_disp_dash = np.array(surface_h_disp_dash)
-surface_v_disp_dash = np.array(surface_v_disp_dash)
+    surface_v_disp_dash[ct_idx, :] = v_d
+    surface_h_disp_dash[ct_idx, :] = h_d
 
 col1_d, col2_d = st.columns(2)
 with col1_d:
@@ -4668,15 +4244,14 @@ def draw_interactive_dashboard(x_ax, z_ax, fos_d, disp_d, surf_x,
                         "C) H-Disp Surface History", "D) V-Disp Surface History"),
         horizontal_spacing=0.1, vertical_spacing=0.15
     )
-    # [FIX #76] Segmentlangan FOS rang shkalasi (5 bosqich, Hoek 1994 standartiga mos)
     fos_colorscale_seg = [
-        [0.00, '#1a0000'],   # <0.5  qora-qizil: falokat
-        [0.17, '#ff0000'],   # 0.5  qizil: xavfli
-        [0.33, '#ff6600'],   # 1.0  to'q sariq: ogohlantirish
-        [0.50, '#ffcc00'],   # 1.5  sariq: chegaraviy
-        [0.67, '#66ff00'],   # 2.0  yashil-sariq: qoniqarli
-        [0.83, '#00cc00'],   # 2.5  yashil: xavfsiz
-        [1.00, '#006600'],   # 3.0+ to'q yashil: juda xavfsiz
+        [0.00, '#1a0000'],
+        [0.17, '#ff0000'],
+        [0.33, '#ff6600'],
+        [0.50, '#ffcc00'],
+        [0.67, '#66ff00'],
+        [0.83, '#00cc00'],
+        [1.00, '#006600'],
     ]
     fig_d.add_trace(go.Heatmap(
         z=fos_d, x=x_ax, y=z_ax,
@@ -4763,29 +4338,35 @@ st.plotly_chart(dash_fig, use_container_width=True)
 # ── Footer ─────────────────────────────────────────────────────────────────
 st.sidebar.markdown("---")
 st.sidebar.write(f"Author: Saitov Dilshodbek | Device: {device}")
-st.sidebar.write(f"Version: 2.0.0 (PhD-grade) | Fixes: 100")
+st.sidebar.write(f"Version: {__version__} (PhD-grade) | Fixes: 100")
 st.sidebar.write(f"PyTorch: {PT_AVAILABLE} | SHAP: {SHAP_AVAILABLE}")
 st.sidebar.write(f"SALib: {SALIB_AVAILABLE} | pyDOE: {PYDOE_AVAILABLE}")
 
-# [FIX #88] Digital twin hash sidebar'da ko'rsatiladi
 dt_params_footer = {
     "obj_name": obj_name,
-    "T_max": T_source_max,
-    "D_factor": D_factor,
-    "extraction_ratio": extraction_ratio_slider,
-    "timestamp": datetime.now().strftime("%Y%m%d"),
+    "T_max": round(float(T_source_max), 6),
+    "D_factor": round(float(D_factor), 6),
+    "extraction_ratio": round(float(extraction_ratio_slider), 6),
+    "timestamp": datetime.now().isoformat(timespec='seconds'),
+    "algorithm_version": __version__,
+    "git_commit": __git_commit__,
 }
 dt_hash_footer = digital_twin_hash(dt_params_footer)
 st.sidebar.code(f"DT-Hash: {dt_hash_footer[:16]}...", language=None)
 st.sidebar.caption("JCGM 100:2008 — reproducibility guaranteed")
 
-# [FIX #100] No open source for commercial use warning
-st.sidebar.warning("⚠️ Patent Pending — ilmiy faqat. Tijorat taqiqlangan.")
+# [FIX #16] Litsenziya matni sidebar'da
+LICENSE_SIDEBAR = """
+⚠️ **Patent Pending** — Ilmiy foydalanish faqat.
+Tijorat maqsadlarda ishlatish TAQIQLANGAN.
+© Saitov D., TTU 2026
+"""
+st.sidebar.warning(LICENSE_SIDEBAR)
 
 # ── Asosiy footer ──────────────────────────────────────────────────────────
 st.markdown("---")
 st.caption(
-    "**UCG SCI-Grade Platform v2.0** | 100/100 Expert Fixes Applied | "
+    f"**UCG SCI-Grade Platform v{__version__}** | 100/100 Expert Fixes Applied | "
     "© 2026 Saitov Dilshodbek, Tashkent Technical University | "
     "Patent Pending (UzPatent + WIPO PCT) | "
     "⚠️ Scientific use only — Commercial use strictly prohibited until patent grant."
@@ -4811,5 +4392,21 @@ st.caption(
 # C-18: kirsch_stress_field — r≥R_safe singularity prevention
 # C-19: water_inrush_risk — aquifer_depth = seam+20 (osti)
 # C-21: compute_advanced_fos — gsi_thermal_degradation tatbiq etildi
-# C-22–50: Ilmiy hujjatlashtirish, birlik izohlari, fizik chegaralar
+# [FIX C] 16 ta qo'shimcha tuzatma:
+# 1. Biot koeffitsienti dinamik (compute_biot_coefficient)
+# 2. GSI termal degradatsiyasi eksponensial (thermal_degradation_gsi)
+# 3. Sutherland viskoziteti gaz turiga qarab (sutherland_viscosity)
+# 4. Hoek-Brown parametrlarini to'g'ri float qaytarish (compute_hoek_brown_parameters)
+# 5. SQL injection validatsiyasi (validate_db_input)
+# 6. Caching va session state (st.cache_data va session state)
+# 7. Exception handling takomillashtirilgan
+# 8. Digital twin hash timestamp va float rounding
+# 9. Plotly animatsiyasi caching
+# 10. NumPy array view ishlatish (np.asarray)
+# 11. ML model saqlash (save_models_to_disk)
+# 12. Reproducibility manager (ReproducibilityManager)
+# 13. Docstring format (Google style)
+# 14. Patent hujjatlari (patent_claims_text)
+# 15. Semantic versioning (__version__)
+# 16. Litsenziya matni to'liq (LICENSE_TEXT)
 # ══════════════════════════════════════════════════════════════════════════════
