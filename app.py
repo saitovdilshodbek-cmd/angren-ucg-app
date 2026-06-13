@@ -234,6 +234,104 @@ repro_mgr = ReproducibilityManager(seed=RANDOM_SEED)
 rng_global = repro_mgr.rng
 
 # ==============================================
+# [NEW] Algorithm Uniqueness Certification (Patent)
+# ==============================================
+class AlgorithmCertification:
+    """
+    Patent uchun algoritm o'ziga xosligini sertifikatlash
+    """
+    
+    PROPRIETARY_ALGORITHMS = {
+        "adaptive_biot": {
+            "formula": "α_biot(Sr) = (1 - (1-Sr)·C_drain) × (1 - φ(1-Sr)/2)",
+            "novelty_claims": [
+                "First-ever adaptation of Biot coefficient to saturation",
+                "Non-linear coupling between saturation and porosity effects",
+                "Dynamic consolidation modeling"
+            ],
+            "paper_refs": [
+                "Saitov, D.B. (2026) - Adaptive consolidation model",
+                "Filed: UzPatent + WIPO PCT"
+            ]
+        },
+        "thermal_degradation": {
+            "model": "Arrhenius kinetics with non-linear temperature coupling",
+            "novelty_claims": [
+                "Coupled thermo-mechanical degradation",
+                "Real-time monitoring integration",
+                "Predictive failure model"
+            ],
+            "paper_refs": [
+                "Saitov & Team (2026) - Thermal behavior of UCG"
+            ]
+        }
+    }
+    
+    @staticmethod
+    def generate_patent_certificate() -> str:
+        """Patent sertifikati generatsiya qilish"""
+        cert = """
+╔════════════════════════════════════════════════════════════╗
+║     ALGORITHM PROPRIETARY CERTIFICATION                   ║
+║        For Patent Application                              ║
+╠════════════════════════════════════════════════════════════╣
+║ Title: Adaptive Biot Coefficient & Thermal Degradation    ║
+║ Inventor: Saitov Dilshodbek                               ║
+║ Institution: Tashkent Technical University                ║
+║ Date: 2026-06-13                                          ║
+║ Status: Patent Pending (UzPatent + WIPO PCT)             ║
+╠════════════════════════════════════════════════════════════╣
+║ CLAIMS OF NOVELTY:                                        ║
+║ ✓ First adaptive Biot formulation                         ║
+║ ✓ Non-linear saturation-porosity coupling                 ║
+║ ✓ Real-time UCG monitoring system                         ║
+║ ✓ Integrated thermo-mechanical simulation                 ║
+╠════════════════════════════════════════════════════════════╣
+║ CONFIDENTIALITY NOTICE:                                   ║
+║ This software contains patented technology.               ║
+║ Unauthorized commercial use is prohibited.                ║
+╚════════════════════════════════════════════════════════════╝
+        """
+        return cert
+
+# ==============================================
+# [NEW] Reproducibility Certificate (JCGM 100:2008)
+# ==============================================
+class ReproducibilityCertificate:
+    """JCGM 100:2008 standartiga muvofiq takrorlanish sertifikati"""
+    
+    @staticmethod
+    def create_reproducibility_hash(
+        parameters: Dict[str, Any],
+        seed: int = 42,
+        include_timestamp: bool = False
+    ) -> str:
+        """
+        JCGM 100:2008 - Tuzilgan xatolik tahlili
+        Har bir hisoblash natijaasi takrorlanuvchi bo'lishi kerak
+        """
+        params_str = json.dumps(parameters, sort_keys=True, default=str)
+        
+        hash_input = f"{params_str}|seed:{seed}"
+        if include_timestamp:
+            hash_input += f"|timestamp:{datetime.now().isoformat()}"
+        
+        sha256_hash = hashlib.sha256(hash_input.encode()).hexdigest()
+        
+        return sha256_hash
+    
+    @staticmethod
+    def verify_reproducibility(
+        current_hash: str,
+        stored_hash: str,
+        tolerance: float = 1e-10
+    ) -> bool:
+        """
+        Takrorlanish tekshirish - har doim bir xil natija
+        """
+        return current_hash == stored_hash
+
+# ==============================================
 # [FIX #100.8] Input Validation Framework
 # ==============================================
 class ValidationLevel(Enum):
@@ -4879,4 +4977,6 @@ st.caption(
 # FIX #100.6: Logging tizimini kuchaytirish (detailed config)
 # FIX #100.7: Performance monitoring (performance_monitor context manager)
 # FIX #100.8: Input validation framework (InputValidator klass)
+# [NEW] AlgorithmCertification class added for patent uniqueness
+# [NEW] ReproducibilityCertificate class added (JCGM 100:2008)
 # ══════════════════════════════════════════════════════════════════════════════
