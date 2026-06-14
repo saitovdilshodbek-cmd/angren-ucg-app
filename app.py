@@ -904,7 +904,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         'app_title': "Universal Yer yuzasi Deformatsiyasi Monitoringi",
         'app_subtitle': "Termo-Mexanik (TM) tahlil va Selek O'lchami Optimizatsiyasi",
         'sidebar_header_params': "⚙️ Umumiy parametrlar",
-        'global_settings': "⚙️ Global sozlamalar (Tezkor kirish)",
         'formula_show': "Formulalarni ko'rish:",
         'project_name': "Loyiha nomi:",
         'process_time': "Jarayon vaqti (soat):",
@@ -1040,7 +1039,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         'app_title': "Universal Surface Deformation Monitoring",
         'app_subtitle': "Thermo-Mechanical (TM) Analysis and Pillar Size Optimization",
         'sidebar_header_params': "⚙️ General Parameters",
-        'global_settings': "⚙️ Global settings (Quick access)",
         'formula_show': "View formulas:",
         'project_name': "Project name:",
         'process_time': "Process time (hours):",
@@ -1176,7 +1174,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         'app_title': "Универсальный мониторинг деформаций поверхности",
         'app_subtitle': "Термомеханический (TM) анализ и оптимизация размеров целиков",
         'sidebar_header_params': "⚙️ Общие параметры",
-        'global_settings': "⚙️ Глобальные настройки (Быстрый доступ)",
         'formula_show': "Показать формулы:",
         'project_name': "Название проекта:",
         'process_time': "Время процесса (часы):",
@@ -2937,33 +2934,6 @@ if st.session_state.get('last_language') != st.session_state.language:
 
 st.sidebar.markdown("---")
 
-# Yangi global sozlamalar qo'shilgan blok (FIX #101)
-with st.sidebar.expander(t("global_settings"), expanded=True):
-    st.info(
-        "ℹ️ **Ilmiy eslatma:** Bu yerdagi parametrlar Hoek-Brown (2018) va "
-        "Shao (2003) termo-geomekhanik modellarining boshlang'ich nuqtasi hisoblanadi."
-    )
-    
-    global_max_temp = st.slider(
-        "Maksimal harorat (°C)", 
-        20, 1200, 800,
-        help="YKG yonish kamerasidagi harorat. Jins mustahkamligining pasayishini (Shao 2003) belgilaydi."
-    )
-    
-    global_depth = st.number_input(
-        "Chuqurlik (m)", 
-        100, 1500, 450,
-        help="Geostatik vertikal kuchlanishni (σ_v) hisoblash uchun chuqurlik ko'rsatkichi."
-    )
-    
-    global_gsi = st.slider(
-        "GSI (Geological Strength Index)", 
-        10, 100, 65,
-        help="Massiv blokliligi va yoriqlari ko'rsatkichi. Hoek-Brown mezonlari uchun kritik parametr."
-    )
-
-st.sidebar.markdown("---")
-
 st.title(f"🔬 {t('app_title')}")
 st.caption(t('app_subtitle'))
 
@@ -3021,18 +2991,6 @@ st.sidebar.subheader(t('combustion'))
 burn_duration = st.sidebar.number_input(t('burn_duration'), value=40, min_value=1)
 T_source_max = st.sidebar.slider(t('max_temp'), 600, 1400, value=PARAMS.gas_temp)
 
-# Global sozlamalarni qo'llash (ustunlik berish)
-# Agar foydalanuvchi global sozlamalarda o'zgartirgan bo'lsa, ularni asosiy o'zgaruvchilarga o'tkazamiz.
-# Bu yerda max_temp, depth va gsi ni mos ravishda T_source_max, total_depth va oxirgi qatlam GSI ga o'rnatamiz.
-# E'tibor: total_depth keyinchalik qatlamlar yig'indisi sifatida hisoblanadi, ammo bu global chuqurlikni hisobga olish uchun qatlamlarning umumiy qalinligini o'zgartirish kerak.
-# Buning o'rniga biz global chuqurlikni faqat stress va boshqa hisoblarda ishlatiladigan sigma_v ga ta'sir qilish uchun ishlatamiz. Ammo kodda total_depth qatlamlardan olinadi.
-# Shuning uchun biz faqat T_source_max va oxirgi qatlam GSI ni global qiymatlar bilan almashtiramiz. Chuqurlik uchun esa qatlamlar qalinliklarini o'zgartirish murakkab, uni hozircha o'tkazib yuboramiz.
-# Foydalanuvchi xohlasa, qatlamlar qalinliklarini o'zi o'zgartirishi mumkin.
-T_source_max = global_max_temp  # maksimal haroratni global sozlamadan olamiz
-# Oxirgi qatlamning GSI qiymatini global_gsi bilan almashtiramiz
-if 'layers_data' in locals() and len(layers_data) > 0:
-    layers_data[-1]['gsi'] = global_gsi
-
 extraction_ratio_slider = st.sidebar.slider(
     "Extraction Ratio (e):", 0.30, 0.80,
     float(PARAMS.extraction_ratio), 0.01,
@@ -3087,10 +3045,6 @@ for i in range(int(num_layers)):
         'z_start': total_depth, 'sigma_t0_manual': s_t0_val,
     })
     total_depth += thick
-
-# Global GSI qayta o'rnatilgandan so'ng, oxirgi qatlamni yangilaymiz
-if 'layers_data' in locals() and len(layers_data) > 0:
-    layers_data[-1]['gsi'] = global_gsi
 
 # ── Validatsiya ───────────────────────────────────────────────────────────
 errors: List[str] = []
@@ -5025,5 +4979,4 @@ st.caption(
 # FIX #100.8: Input validation framework (InputValidator klass)
 # [NEW] AlgorithmCertification class added for patent uniqueness
 # [NEW] ReproducibilityCertificate class added (JCGM 100:2008)
-# [NEW] Global settings expander (tovar mahsulot) - tezkor kirish uchun maksimal harorat, chuqurlik va GSI
 # ══════════════════════════════════════════════════════════════════════════════
