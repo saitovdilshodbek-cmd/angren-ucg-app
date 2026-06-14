@@ -6,17 +6,14 @@ Barcha 100 ta ekspert tuzatish qo'llangan.
 [FIX C] 16 ta qo'shimcha tuzatma kiritilgan.
 [FIX D] Adaptive Biot koeffitsienti va Non-linear termal degradatsiya qo'shildi.
 [FIX #100] To'liq xavfsizlik, logging, monitoring va validation tuzatmalari.
-[NEW] 20 ta patent darajasidagi yangilik: Unit tests, Monte-Carlo UQ, Sobol,
-LHS, FEM validation, Bayesian calibration, Kalman filter, Phase-field,
-GPU, mesh adaptivity, benchmark, DOI, novelty score, claim generator.
 
 Mualliflar: Saitov Dilshodbek
-Versiya: 3.2.0 (PhD-grade + Patent-ready)
+Versiya: 3.1.0 (PhD-grade + Patent-ready)
 """
 import streamlit as st
 
 st.set_page_config(
-    page_title="UCG SCI-Grade Platform v3.2",
+    page_title="UCG SCI-Grade Platform v3.1",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -47,7 +44,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from scipy.ndimage import gaussian_filter
-from scipy.stats import linregress, t as t_dist, norm
+from scipy.stats import linregress, t as t_dist
 from scipy.signal import savgol_filter
 from scipy.integrate import odeint
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
@@ -107,27 +104,6 @@ try:
 except ImportError:
     SHAP_AVAILABLE = False
 
-# Yangi kutubxonalar (20 ta tuzatma uchun)
-try:
-    import pymc as pm
-    import arviz as az
-    PYMCMC_AVAILABLE = True
-except ImportError:
-    PYMCMC_AVAILABLE = False
-
-try:
-    from filterpy.kalman import KalmanFilter
-    FILTERPY_AVAILABLE = True
-except ImportError:
-    FILTERPY_AVAILABLE = False
-
-try:
-    import cupy as cp
-    GPU_AVAILABLE = True
-except ImportError:
-    GPU_AVAILABLE = False
-    cp = None
-
 # ── Logging (FIX #100.6) ─────────────────────────────────────────────────
 LOGGING_CONFIG = {
     "version": 1,
@@ -169,8 +145,6 @@ logger = logging.getLogger("ucg_platform")
 
 # ── Takrorlanish uchun seed ────────────────────────────────────────────────
 RANDOM_SEED = 42
-np.random.seed(RANDOM_SEED)
-random.seed(RANDOM_SEED)
 
 # ==============================================
 # [FIX #100.5] VersionInfo va Git commit
@@ -179,7 +153,7 @@ random.seed(RANDOM_SEED)
 class VersionInfo:
     """Versioning va git ma'lumotlari"""
     major: int = 3
-    minor: int = 2
+    minor: int = 1
     patch: int = 0
     prerelease: str = "patent"  # alpha, beta, patent, stable
     
@@ -203,8 +177,8 @@ class VersionInfo:
 
 version_info = VersionInfo()
 __version__ = version_info.full_version
-__version_info__ = (3, 2, 0)
-__build_number__ = 20260614
+__version_info__ = (3, 1, 0)
+__build_number__ = 20260613
 __git_commit__ = version_info.get_git_commit()
 __patent_status__ = "PCT/IB pending"
 __license__ = "Patent Pending - Uzbekistan 00XXXX + WIPO"
@@ -215,7 +189,7 @@ def get_version_info() -> Dict[str, str]:
         "build": str(__build_number__),
         "commit": __git_commit__,
         "patent": __patent_status__,
-        "release_date": "2026-06-14"
+        "release_date": "2026-06-13"
     }
 
 # ==============================================
@@ -258,323 +232,6 @@ class ReproducibilityManager:
 
 repro_mgr = ReproducibilityManager(seed=RANDOM_SEED)
 rng_global = repro_mgr.rng
-
-# ==============================================
-# 20 TA YANGI TUZATMA (PATENT DARAJASIDAGI YANGILIKLAR)
-# ==============================================
-
-# ---------- 1. Unit testlar ----------
-def test_biot():
-    """Adaptive Biot koeffitsienti testi"""
-    @dataclass
-    class SoilWaterState:
-        saturation_ratio: float
-        porosity: float
-        degree_consolidation: float
-    def compute_biot_coefficient_adaptive(state):
-        Sr = state.saturation_ratio
-        phi = state.porosity
-        C_drain = 0.7
-        factor1 = 1.0 - (1.0 - Sr) * C_drain
-        factor2 = 1.0 - phi * (1.0 - Sr) / 2.0
-        return max(0.0, min(1.0, factor1 * factor2))
-    
-    state = SoilWaterState(saturation_ratio=0.8, porosity=0.4, degree_consolidation=0.5)
-    alpha = compute_biot_coefficient_adaptive(state)
-    assert 0 <= alpha <= 1, f"Biot coefficient out of range: {alpha}"
-    logger.info("✅ test_biot o'tdi")
-    return alpha
-
-def run_all_unit_tests():
-    """Barcha unit testlarni ishga tushirish"""
-    test_biot()
-    # Qo'shimcha testlar qo'shilishi mumkin
-    logger.info("Barcha unit testlar muvaffaqiyatli yakunlandi.")
-    return True
-
-# ---------- 2. Monte-Carlo uncertainty ----------
-def monte_carlo_biot(n=10000):
-    """Monte-Carlo orqali Biot koeffitsienti noaniqligi"""
-    @dataclass
-    class SoilWaterState:
-        saturation_ratio: float
-        porosity: float
-        degree_consolidation: float
-    def compute_biot_coefficient_adaptive(state):
-        Sr = state.saturation_ratio
-        phi = state.porosity
-        C_drain = 0.7
-        factor1 = 1.0 - (1.0 - Sr) * C_drain
-        factor2 = 1.0 - phi * (1.0 - Sr) / 2.0
-        return max(0.0, min(1.0, factor1 * factor2))
-    
-    results = []
-    for _ in range(n):
-        state = SoilWaterState(
-            saturation_ratio=np.random.uniform(0.5, 1.0),
-            porosity=np.random.uniform(0.1, 0.6),
-            degree_consolidation=np.random.uniform(0, 1)
-        )
-        results.append(compute_biot_coefficient_adaptive(state))
-    return np.array(results)
-
-# ---------- 3. Confidence interval ----------
-def confidence_interval(data, confidence=0.95):
-    """Ishonch oralig'ini hisoblash (normal taqsimot)"""
-    mean = np.mean(data)
-    std = np.std(data)
-    n = len(data)
-    z = norm.ppf((1 + confidence) / 2)
-    margin = z * std / np.sqrt(n)
-    return mean, mean - margin, mean + margin
-
-# ---------- 4. Sobol global sensitivity ----------
-def sobol_global_sensitivity(model_func, bounds, n_samples=1024):
-    """Sobol global sezgirlik tahlili"""
-    if not SALIB_AVAILABLE:
-        logger.warning("SALib not available, skipping Sobol")
-        return None
-    problem = {
-        'num_vars': len(bounds),
-        'names': list(bounds.keys()),
-        'bounds': list(bounds.values())
-    }
-    param_values = saltelli.sample(problem, n_samples, calc_second_order=False)
-    Y = np.array([model_func(p) for p in param_values])
-    Si = sobol.analyze(problem, Y)
-    return Si
-
-# ---------- 5. LHS Sampling ----------
-def lhs_sampling(n_samples, n_vars):
-    """Latin Hypercube Sampling"""
-    if not PYDOE_AVAILABLE:
-        logger.warning("pyDOE not available, using random uniform")
-        return np.random.uniform(0, 1, (n_samples, n_vars))
-    samples = lhs(n_vars, samples=n_samples)
-    return samples
-
-# ---------- 6. FEM/FDM validation ----------
-def validate_with_analytical(biot_adaptive, biot_constant, analytical_solution):
-    """FEM natijalarini analitik yechim bilan solishtirish"""
-    error = np.abs(biot_adaptive - analytical_solution) / (analytical_solution + 1e-9)
-    return error < 0.05  # 5% xatolik
-
-# ---------- 7. Thermal model calibration ----------
-def calibrate_arrhenius(experimental_data):
-    """Arrhenius parametrlarini kalibratsiya qilish (eng kichik kvadratlar)"""
-    T = np.array(experimental_data['temperature'])
-    rate = np.array(experimental_data['degradation_rate'])
-    log_rate = np.log(rate + 1e-9)
-    inv_T = 1.0 / (T + 273.15)
-    slope, intercept = np.polyfit(inv_T, log_rate, 1)
-    Ea = -slope * 8.314  # kJ/mol
-    A = np.exp(intercept)
-    return Ea, A
-
-# ---------- 8. Bayesian calibration ----------
-def bayesian_calibration(data, samples=500):
-    """PyMC bilan Bayes kalibratsiyasi"""
-    if not PYMCMC_AVAILABLE:
-        logger.warning("pymc not available, skipping Bayesian calibration")
-        return None
-    with pm.Model() as model:
-        Ea = pm.Normal('Ea', mu=150, sigma=20)
-        sigma = pm.HalfNormal('sigma', sigma=10)
-        mu = pm.Deterministic('mu', Ea * data['invT'])
-        y_obs = pm.Normal('y_obs', mu=mu, sigma=sigma, observed=data['rate'])
-        trace = pm.sample(samples, return_inferencedata=False, progressbar=False)
-    return trace
-
-# ---------- 9. Sensor noise model ----------
-def add_sensor_noise(signal, noise_percent=1.0):
-    """Sensorni shovqin bilan modellashtirish (Gauss shovqini)"""
-    signal = np.asarray(signal)
-    noise = np.random.normal(0, noise_percent/100 * np.abs(signal), size=len(signal))
-    return signal + noise
-
-# ---------- 10. Drift compensation ----------
-def compensate_drift(raw_signal, bias, drift_rate=0.001):
-    """Driftni kompensatsiya qilish (chiziqli drift)"""
-    raw_signal = np.asarray(raw_signal)
-    time_arr = np.arange(len(raw_signal))
-    corrected = raw_signal - (bias + drift_rate * time_arr)
-    return corrected
-
-# ---------- 11. Digital Twin ----------
-class DigitalTwin:
-    def __init__(self, initial_state):
-        self.state = np.array(initial_state, dtype=float)
-        self.history = [self.state.copy()]
-        if FILTERPY_AVAILABLE:
-            self.kf = KalmanFilter(dim_x=len(self.state), dim_z=len(self.state))
-            self.kf.x = self.state
-            self.kf.P *= 1000
-            self.kf.R = np.eye(len(self.state)) * 0.01
-            self.kf.Q = np.eye(len(self.state)) * 0.001
-            self.kf.H = np.eye(len(self.state))
-        else:
-            self.kf = None
-    
-    def update(self, new_state):
-        self.state = np.array(new_state, dtype=float)
-        self.history.append(self.state.copy())
-    
-    def sync(self, real_sensor_data):
-        real_data = np.array(real_sensor_data, dtype=float)
-        if self.kf is not None:
-            self.kf.predict()
-            self.kf.update(real_data)
-            self.state = self.kf.x
-        else:
-            # Fallback: oddiy o'rtacha
-            self.state = 0.7 * self.state + 0.3 * real_data
-        return self.state.copy()
-
-# ---------- 12. Real-time data assimilation (Kalman) ----------
-def kalman_filter_update(prior, measurement, process_noise=0.001, measurement_noise=0.01):
-    """Kalman filtri yordamida real-vaqt ma'lumotlarni assimilyatsiya qilish"""
-    if not FILTERPY_AVAILABLE:
-        return np.array(measurement, dtype=float)
-    kf = KalmanFilter(dim_x=len(prior), dim_z=len(measurement))
-    kf.x = np.array(prior, dtype=float)
-    kf.P = np.eye(len(prior)) * 1000
-    kf.R = np.eye(len(measurement)) * measurement_noise
-    kf.Q = np.eye(len(prior)) * process_noise
-    kf.H = np.eye(len(measurement), len(prior))
-    kf.predict()
-    kf.update(np.array(measurement, dtype=float))
-    return kf.x
-
-# ---------- 13. Crack propagation (Phase-field) ----------
-def phase_field_crack(damage_field, strain_energy, Gc=0.01, l0=1.0, dt=0.1):
-    """Phase-field modeli (Bourdin et al., 2000)"""
-    laplacian = gaussian_filter(damage_field, sigma=1.0) - damage_field
-    driving = Gc * l0 * laplacian - (Gc / l0) * damage_field + (1 - damage_field) * strain_energy
-    new_damage = damage_field + dt * driving
-    return np.clip(new_damage, 0, 1)
-
-# ---------- 14. Damage mechanics (Lemaitre) ----------
-def lemaitre_damage(elastic_modulus_initial, elastic_modulus_current):
-    """Lemaitre zarar modeli: D = 1 - E/E0"""
-    D = 1 - elastic_modulus_current / (elastic_modulus_initial + 1e-9)
-    return np.clip(D, 0, 1)
-
-# ---------- 15. GPU parallelization ----------
-def gpu_compute_biot(saturation_ratio, porosity):
-    """GPU yordamida Biot koeffitsientini hisoblash (cupy)"""
-    if cp is None or not GPU_AVAILABLE:
-        return None
-    Sr_gpu = cp.array(saturation_ratio)
-    phi_gpu = cp.array(porosity)
-    C_drain = 0.7
-    factor1 = 1.0 - (1.0 - Sr_gpu) * C_drain
-    factor2 = 1.0 - phi_gpu * (1.0 - Sr_gpu) / 2.0
-    alpha_gpu = factor1 * factor2
-    alpha_gpu = cp.clip(alpha_gpu, 0, 1)
-    return cp.asnumpy(alpha_gpu)
-
-# ---------- 16. Mesh adaptivity ----------
-def adapt_mesh(temperature_field, threshold=800, refine_factor=2):
-    """Yuqori harorat zonalarida to'rni maydalash"""
-    high_temp_mask = temperature_field > threshold
-    refined_mesh = np.where(high_temp_mask, refine_factor, 1)
-    return refined_mesh
-
-# ---------- 17. Scientific benchmarks ----------
-def run_benchmarks():
-    """Hoek-Brown, Kirsch, Terzaghi, Biot benchmarklari"""
-    results = {}
-    # Hoek-Brown (2018)
-    sigma3 = np.linspace(0, 10, 100)
-    sigma_ci = 50
-    mb = 2.0
-    s = 0.001
-    a = 0.5
-    sigma1_hb = sigma3 + sigma_ci * (mb * sigma3 / sigma_ci + s) ** a
-    results['hoek_brown_max'] = float(np.max(sigma1_hb))
-    # Kirsch (1898) aylana teshik atrofidagi kuchlanish
-    r = np.linspace(1, 10, 100)
-    sigma_inf = 10
-    sigma_rr = sigma_inf * (1 - (1/r)**2)
-    results['kirsch_min'] = float(np.min(sigma_rr))
-    # Terzaghi (1925) effektiv kuchlanish
-    depth = 100  # m
-    gamma = 20e3  # N/m^3
-    sigma_v = gamma * depth
-    u = 0.5 * sigma_v
-    sigma_eff = sigma_v - u
-    results['terzaghi_eff'] = float(sigma_eff / 1e6)  # MPa
-    # Biot (1941) effektiv kuchlanish
-    alpha = 0.8
-    p = 5e6  # Pa
-    sigma_total = 10e6
-    sigma_eff_biot = sigma_total - alpha * p
-    results['biot_eff'] = float(sigma_eff_biot / 1e6)
-    return results
-
-# ---------- 18. DOI generator ----------
-def generate_doi(parameters_hash):
-    """DOI identifikatorini yaratish (vaqt va hash asosida)"""
-    timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
-    short_hash = hashlib.md5(parameters_hash.encode()).hexdigest()[:8]
-    doi = f"10.6084/m9.figshare.{timestamp}.{short_hash}"
-    return doi
-
-# ---------- 19. Patent novelty score ----------
-def patent_novelty_score():
-    """Patent yangilik balini hisoblash (5 mezon)"""
-    scores = {
-        'adaptive_biot': 25,
-        'thermal_degradation': 25,
-        'monitoring': 20,
-        'ai_prediction': 15,
-        'validation': 15
-    }
-    total = sum(scores.values())
-    return total, scores
-
-# ---------- 20. Patent claim generator ----------
-def generate_patent_claims(lang='en'):
-    """Patent da'volarini avtomatik yaratish"""
-    claims = {
-        'en': [
-            "1. Adaptive Biot coefficient based on saturation ratio and porosity for UCG.",
-            "2. Non-linear thermo-mechanical degradation using Arrhenius kinetics.",
-            "3. Real-time UCG monitoring platform with sensor fusion and anomaly detection.",
-            "4. Physics-informed neural network (PINN) for stability prediction.",
-            "5. Monte-Carlo uncertainty quantification with confidence intervals.",
-            "6. Global sensitivity analysis (Sobol) for parameter ranking.",
-            "7. Digital twin with Kalman filter data assimilation.",
-            "8. Phase-field crack propagation model for UCG cavities.",
-            "9. GPU-accelerated computation for real-time simulation.",
-            "10. Automatic ISO/ISRM compliant report generation."
-        ],
-        'uz': [
-            "1. Toʻyinganlik va gʻovaklikka asoslangan adaptiv Biot koeffitsienti.",
-            "2. Arrhenius kinetikasiga asoslangan nochiziqli termo-mexanik degradatsiya.",
-            "3. Sensorlar uygʻunligi va anomaliyalarni aniqlash bilan real-vaqt UCG monitoring platformasi.",
-            "4. Barqarorlikni bashorat qilish uchun fizikaga asoslangan neyron tarmoq (PINN).",
-            "5. Ishonch oraliqlari bilan Monte-Karlo noaniqlik miqdoriy tahlili.",
-            "6. Parametrlarni tartiblash uchun global sezgirlik tahlili (Sobol).",
-            "7. Kalman filtridan foydalanadigan raqamli egizak (digital twin).",
-            "8. UCG boʻshliqlari uchun fazaviy maydon yoriq oʻsish modeli.",
-            "9. Real-vaqt simulyatsiya uchun GPU tezlatkichli hisoblashlar.",
-            "10. Avtomatik ISO/ISRM talablariga mos hisobot tayyorlash."
-        ],
-        'ru': [
-            "1. Адаптивный коэффициент Био на основе насыщения и пористости.",
-            "2. Нелинейная термомеханическая деградация с кинетикой Аррениуса.",
-            "3. Платформа мониторинга ПГУ в реальном времени с обнаружением аномалий.",
-            "4. Физически-информированная нейронная сеть (PINN) для прогноза устойчивости.",
-            "5. Количественная оценка неопределённости Монте-Карло с доверительными интервалами.",
-            "6. Глобальный анализ чувствительности (Соболь) для ранжирования параметров.",
-            "7. Цифровой двойник с ассимиляцией данных фильтром Калмана.",
-            "8. Фазово-полевая модель распространения трещин для полостей ПГУ.",
-            "9. GPU-ускоренные вычисления для моделирования в реальном времени.",
-            "10. Автоматическая генерация отчётов по стандартам ISO/ISRM."
-        ]
-    }
-    return claims.get(lang, claims['en'])
 
 # ==============================================
 # [NEW] Algorithm Uniqueness Certification (Patent)
@@ -621,7 +278,7 @@ class AlgorithmCertification:
 ║ Title: Adaptive Biot Coefficient & Thermal Degradation    ║
 ║ Inventor: Saitov Dilshodbek                               ║
 ║ Institution: Tashkent Technical University                ║
-║ Date: 2026-06-14                                          ║
+║ Date: 2026-06-13                                          ║
 ║ Status: Patent Pending (UzPatent + WIPO PCT)             ║
 ╠════════════════════════════════════════════════════════════╣
 ║ CLAIMS OF NOVELTY:                                        ║
@@ -3259,7 +2916,7 @@ def phase_field_update(
     return np.clip(damage + (dt / eta) * driving, 0.0, 1.0)
 
 # ════════════════════════════════════════════════════════════════════════════
-# STREAMLIT UI (ASOSIY QISMI) - YANGI 20 TA TUZATMA BILAN KENGAYTIRILGAN
+# STREAMLIT UI (ASOSIY QISMI)
 # ════════════════════════════════════════════════════════════════════════════
 
 # ── Til tanlash ─────────────────────────────────────────────────────────
@@ -3276,55 +2933,7 @@ if st.session_state.get('last_language') != st.session_state.language:
     st.session_state.last_language = st.session_state.language
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("## 🆕 YANGI PATENT FUNKSIYALARI")
 
-# Yangi tugmalar
-if st.sidebar.button("🧪 Unit testlarni ishga tushirish"):
-    run_all_unit_tests()
-    st.sidebar.success("✅ Barcha testlar o'tdi")
-
-if st.sidebar.button("📊 Monte-Carlo Biot noaniqligi"):
-    results = monte_carlo_biot(5000)
-    mean, low, high = confidence_interval(results)
-    st.sidebar.metric("Biot koeffitsienti", f"{mean:.4f}", f"95% CI: {low:.4f}–{high:.4f}")
-    fig = go.Figure(go.Histogram(x=results, nbinsx=40))
-    fig.update_layout(template="plotly_dark", height=300)
-    st.sidebar.plotly_chart(fig, use_container_width=True)
-
-if st.sidebar.button("🌍 Sobol global sezgirlik (demo)"):
-    def demo_model(params):
-        Sr, phi, _ = params
-        return (1 - (1 - Sr) * 0.7) * (1 - phi * (1 - Sr) / 2)
-    bounds = {'Sr': [0.5, 1.0], 'phi': [0.1, 0.6], 'consol': [0, 1]}
-    Si = sobol_global_sensitivity(demo_model, bounds, n_samples=512)
-    if Si:
-        st.sidebar.write("Birinchi tartibli indekslar (S1):")
-        st.sidebar.json({k: round(v, 3) for k, v in zip(bounds.keys(), Si['S1'])})
-
-if st.sidebar.button("🎲 LHS namunasi (3 parametr)"):
-    samples = lhs_sampling(500, 3)
-    df_lhs = pd.DataFrame(samples, columns=['Sr', 'phi', 'consol'])
-    st.sidebar.dataframe(df_lhs.head(10))
-
-if st.sidebar.button("🔬 Ilmiy benchmarklar"):
-    bench = run_benchmarks()
-    st.sidebar.json(bench)
-
-if st.sidebar.button("📜 Patent da'volari (uzbek)"):
-    claims = generate_patent_claims('uz')
-    for c in claims:
-        st.sidebar.markdown(f"- {c}")
-
-novelty_total, novelty_details = patent_novelty_score()
-st.sidebar.metric("Patent yangilik bali", f"{novelty_total}/100", help="25+25+20+15+15")
-st.sidebar.json(novelty_details)
-
-doi = generate_doi(str(datetime.now()))
-st.sidebar.info(f"🔗 DOI: {doi}")
-
-st.sidebar.markdown("---")
-
-# Eski UI davom etadi
 st.title(f"🔬 {t('app_title')}")
 st.caption(t('app_subtitle'))
 
@@ -5137,7 +4746,7 @@ with tab_advanced:
         st.caption("JCGM 100:2008 reproducibility: barcha parametrlar SHA-256 imzosi bilan kafolatlangan.")
 
         LICENSE_TEXT = """
-**UCG SCI-Grade Platform v3.2.0**
+**UCG SCI-Grade Platform v3.1.0**
 **Litsenziya:** Patent Pending UZ-XXXX (UZBEK PATENT), PCT/US20XX-XXXXX (WIPO)
 
 ✓ **RUXSAT BERILGAN FOYDALANISH:**
@@ -5161,7 +4770,7 @@ with tab_advanced:
             "**[FIX #97] DGU Software Certificate:** "
             "Ushbu platforma O'zbekiston DGU (Davlat Geodezyasi Uyushmasi) "
             "tomonidan dasturiy ta'minot sertifikati olishga tayyorlanmoqda. "
-            f"Versiya: {__version__} | Fixes: 100+ | Date: 2026-06-14"
+            f"Versiya: {__version__} | Fixes: 100+ | Date: 2026-06-13"
         )
 
     with st.expander(t('methodology_expander')):
@@ -5314,7 +4923,7 @@ st.plotly_chart(dash_fig, use_container_width=True)
 # ── Footer ─────────────────────────────────────────────────────────────────
 st.sidebar.markdown("---")
 st.sidebar.write(f"Author: Saitov Dilshodbek | Device: {device}")
-st.sidebar.write(f"Version: {__version__} (PhD-grade) | Fixes: 100+20 new patent features")
+st.sidebar.write(f"Version: {__version__} (PhD-grade) | Fixes: 100 + Adaptive Biot + Arrhenius Degradation")
 st.sidebar.write(f"PyTorch: {PT_AVAILABLE} | SHAP: {SHAP_AVAILABLE}")
 st.sidebar.write(f"SALib: {SALIB_AVAILABLE} | pyDOE: {PYDOE_AVAILABLE}")
 
@@ -5343,35 +4952,31 @@ st.markdown("---")
 st.caption(
     f"**UCG SCI-Grade Platform v{__version__}** | 100/100 Expert Fixes Applied | "
     "Adaptive Biot & Arrhenius Degradation Added | "
-    "20 new patent-ready features: Unit tests, Monte-Carlo, Sobol, LHS, FEM validation, "
-    "Bayesian calibration, Kalman filter, Phase-field, GPU, mesh adaptivity, benchmark, "
-    "DOI, novelty score, claim generator | "
     "© 2026 Saitov Dilshodbek, Tashkent Technical University | "
     "Patent Pending (UzPatent + WIPO PCT) | "
     "⚠️ Scientific use only — Commercial use strictly prohibited until patent grant."
 )
 
 # ══════════════════════════════════════════════════════════════════════════════
-# UCG SCI-GRADE PLATFORM v3.2.0 — YANGI 20 TA TUZATMA QO'SHILDI
+# UCG SCI-GRADE PLATFORM v3.1.0 — TUZATISHLAR JADVALI (FIX D seriyasi + FIX #100)
 # ══════════════════════════════════════════════════════════════════════════════
-# 1. Unit testlar (test_biot, run_all_unit_tests)
-# 2. Monte-Carlo uncertainty (monte_carlo_biot)
-# 3. Confidence interval (confidence_interval)
-# 4. Sobol global sensitivity (sobol_global_sensitivity)
-# 5. LHS Sampling (lhs_sampling)
-# 6. FEM/FDM validation (validate_with_analytical)
-# 7. Thermal model calibration (calibrate_arrhenius)
-# 8. Bayesian calibration (bayesian_calibration)
-# 9. Sensor noise model (add_sensor_noise)
-# 10. Drift compensation (compensate_drift)
-# 11. Digital Twin (DigitalTwin class)
-# 12. Real-time data assimilation (kalman_filter_update)
-# 13. Crack propagation (phase_field_crack)
-# 14. Damage mechanics (lemaitre_damage)
-# 15. GPU parallelization (gpu_compute_biot)
-# 16. Mesh adaptivity (adapt_mesh)
-# 17. Scientific benchmarks (run_benchmarks)
-# 18. DOI generator (generate_doi)
-# 19. Patent novelty score (patent_novelty_score)
-# 20. Patent claim generator (generate_patent_claims)
+# D-01: Adaptive Biot koeffitsienti (SoilWaterState, compute_biot_coefficient_adaptive)
+# D-02: Non-linear termal degradatsiya (ThermalDegradationModel, Arrhenius kinetikasi)
+# D-03: FOS hisobida adaptiv Biot qo'llanildi (sigma_eff_coal)
+# D-04: Termal degradatsiya demo qo'shildi (Advanced tab)
+# D-05: SQL validation (validate_sensor_data, validate_db_input)
+# D-06: Caching (st.cache_data va st.cache_resource)
+# D-07: Digital Twin Hash (digital_twin_hash_secure)
+# D-08: Reproducibility Manager (Singleton pattern)
+# D-09: Docstrings (PEP 257 + Google style)
+# FIX #100.1: PyTorch import Exception handling kengaytirildi
+# FIX #100.2: SQL injection himoyasi (validate_sensor_data_full parameterized query)
+# FIX #100.3: Memory boshqaruvi (compute_stress_field_optimized)
+# FIX #100.4: Docstring standartizatsiya (compute_biot_coefficient_adaptive)
+# FIX #100.5: Versioning va git commit dinamik olish (VersionInfo)
+# FIX #100.6: Logging tizimini kuchaytirish (detailed config)
+# FIX #100.7: Performance monitoring (performance_monitor context manager)
+# FIX #100.8: Input validation framework (InputValidator klass)
+# [NEW] AlgorithmCertification class added for patent uniqueness
+# [NEW] ReproducibilityCertificate class added (JCGM 100:2008)
 # ══════════════════════════════════════════════════════════════════════════════
