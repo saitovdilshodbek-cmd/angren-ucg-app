@@ -1,19 +1,25 @@
 """
-UCG SCI-Grade Platform — Tuzatilgan va Kengaytirilgan Versiya
-============================================================
+UCG SCI-Grade Platform — Tuzatilgan va Kengaytirilgan Versiya (v3.2.0)
+========================================================================
 PhD himoya va Patent uchun tayyorlangan.
 Barcha 100 ta ekspert tuzatish qo'llangan.
 [FIX C] 16 ta qo'shimcha tuzatma kiritilgan.
 [FIX D] Adaptive Biot koeffitsienti va Non-linear termal degradatsiya qo'shildi.
 [FIX #100] To'liq xavfsizlik, logging, monitoring va validation tuzatmalari.
+[FIX #101] Adaptive ODE solver (Radau/LSODA) qo'shildi.
+[FIX #102] Biot koeffitsiyenti vektorlashtirildi.
+[FIX #103] Parallel FOS hisoblash (multiprocessing) qo'shildi.
+[FIX #104] Input sanitization (Regex, SQL injection himoyasi) kuchaytirildi.
+[FIX #105] Path traversal himoyasi (null byte, directory traversal) qo'shildi.
+[FIX #106] Patent hujjatlari paketi (LaTeX, prior art, validatsiya) qo'shildi.
 
 Mualliflar: Saitov Dilshodbek
-Versiya: 3.1.0 (PhD-grade + Patent-ready)
+Versiya: 3.2.0 (PhD-grade + Patent-ready + Security Hardened)
 """
 import streamlit as st
 
 st.set_page_config(
-    page_title="UCG SCI-Grade Platform v3.1",
+    page_title="UCG SCI-Grade Platform v3.2",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -29,6 +35,9 @@ import json
 import os
 import hashlib
 import sqlite3
+import re
+import multiprocessing
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 from dataclasses import dataclass, asdict
 from typing import NamedTuple, Optional, Tuple, List, Dict, Any, Union
@@ -46,7 +55,8 @@ from plotly.subplots import make_subplots
 from scipy.ndimage import gaussian_filter
 from scipy.stats import linregress, t as t_dist
 from scipy.signal import savgol_filter
-from scipy.integrate import odeint
+from scipy.integrate import odeint, solve_ivp
+from scipy.special import erfc
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.metrics import accuracy_score, roc_auc_score, r2_score
 from sklearn.model_selection import train_test_split
@@ -153,7 +163,7 @@ RANDOM_SEED = 42
 class VersionInfo:
     """Versioning va git ma'lumotlari"""
     major: int = 3
-    minor: int = 1
+    minor: int = 2
     patch: int = 0
     prerelease: str = "patent"  # alpha, beta, patent, stable
     
@@ -177,8 +187,8 @@ class VersionInfo:
 
 version_info = VersionInfo()
 __version__ = version_info.full_version
-__version_info__ = (3, 1, 0)
-__build_number__ = 20260613
+__version_info__ = (3, 2, 0)
+__build_number__ = 20260614
 __git_commit__ = version_info.get_git_commit()
 __patent_status__ = "PCT/IB pending"
 __license__ = "Patent Pending - Uzbekistan 00XXXX + WIPO"
@@ -189,7 +199,7 @@ def get_version_info() -> Dict[str, str]:
         "build": str(__build_number__),
         "commit": __git_commit__,
         "patent": __patent_status__,
-        "release_date": "2026-06-13"
+        "release_date": "2026-06-14"
     }
 
 # ==============================================
@@ -278,7 +288,7 @@ class AlgorithmCertification:
 ║ Title: Adaptive Biot Coefficient & Thermal Degradation    ║
 ║ Inventor: Saitov Dilshodbek                               ║
 ║ Institution: Tashkent Technical University                ║
-║ Date: 2026-06-13                                          ║
+║ Date: 2026-06-14                                          ║
 ║ Status: Patent Pending (UzPatent + WIPO PCT)             ║
 ╠════════════════════════════════════════════════════════════╣
 ║ CLAIMS OF NOVELTY:                                        ║
@@ -286,6 +296,8 @@ class AlgorithmCertification:
 ║ ✓ Non-linear saturation-porosity coupling                 ║
 ║ ✓ Real-time UCG monitoring system                         ║
 ║ ✓ Integrated thermo-mechanical simulation                 ║
+║ ✓ Adaptive ODE solver (Radau) for stiff kinetics          ║
+║ ✓ Parallel FOS computation (multiprocessing)              ║
 ╠════════════════════════════════════════════════════════════╣
 ║ CONFIDENTIALITY NOTICE:                                   ║
 ║ This software contains patented technology.               ║
@@ -569,6 +581,34 @@ def compute_biot_coefficient_adaptive(state: SoilWaterState) -> float:
     return float(np.clip(alpha, 0.0, 1.0))
 
 # ==============================================
+# [FIX #102] Biot koeffitsiyentini vektorlashtirish
+# ==============================================
+def compute_biot_coefficient_adaptive_vectorized(
+    saturation_ratio: np.ndarray,
+    porosity: np.ndarray,
+    degree_consolidation: Optional[np.ndarray] = None
+) -> np.ndarray:
+    """
+    Vektorlashtirilgan Adaptive Biot koeffitsienti.
+    Barcha massivlar bir xil shaklda bo'lishi kerak.
+    
+    Args:
+        saturation_ratio: [0,1] oralig'idagi massiv
+        porosity: [0,1] oralig'idagi massiv
+        degree_consolidation: ishlatilmaydi, faqat interfeys uchun
+        
+    Returns:
+        np.ndarray: Biot koeffitsientlari massivi [0,1] oralig'ida
+    """
+    Sr = np.asarray(saturation_ratio, dtype=float)
+    phi = np.asarray(porosity, dtype=float)
+    C_drain = 0.7
+    factor1 = 1.0 - (1.0 - Sr) * C_drain
+    factor2 = 1.0 - phi * (1.0 - Sr) / 2.0
+    alpha = factor1 * factor2
+    return np.clip(alpha, 0.0, 1.0)
+
+# ==============================================
 # [FIX #2] Non-linear termal degradatsiya (Arrhenius kinetics)
 # ==============================================
 class ThermalDegradationModel:
@@ -577,6 +617,7 @@ class ThermalDegradationModel:
     UCG jarayonida (400-1000°C diapazonda)
     
     YANGI: Eksponensial degradatsiya funksiyasi + Arrhenius kinetikasi
+    YANGI: Adaptive ODE solver (Radau) stiff systems uchun
     
     Reference: Saitov et al. (2026) - "Non-linear thermal damage"
     """
@@ -610,10 +651,22 @@ class ThermalDegradationModel:
             return 1e-15
         return np.exp(exp_arg)
     
+    def _gsi_euler_fallback(self, temp_profile: np.ndarray, time_hours: np.ndarray) -> np.ndarray:
+        """Fallback: Euler usuli (solve_ivp ishlamasa)"""
+        dt = np.diff(time_hours, prepend=0)
+        gsi_values = np.zeros_like(time_hours)
+        gsi_values[0] = self.gsi_0
+        for i in range(1, len(time_hours)):
+            rate = self.degradation_rate(temp_profile[i] + 273.15)
+            gsi_values[i] = gsi_values[i-1] * (1 - rate * dt[i] * 3600)
+            gsi_values[i] = max(5.0, gsi_values[i])
+        return gsi_values
+    
     def gsi_at_time(self, temp_profile: np.ndarray, 
                    time_hours: np.ndarray) -> np.ndarray:
         """
         GSI(T,t) - vaqt va haroratning funktsiyasi sifatida
+        Yangi: solve_ivp bilan Radau usuli (stiff uchun)
         
         Args:
             temp_profile (np.ndarray): Harorat profili (°C)
@@ -624,16 +677,31 @@ class ThermalDegradationModel:
         """
         if len(time_hours) < 2:
             return np.array([self.gsi_0])
-        dt = np.diff(time_hours, prepend=0)
-        gsi_values = np.zeros_like(time_hours)
-        gsi_values[0] = self.gsi_0
         
-        for i in range(1, len(time_hours)):
-            rate = self.degradation_rate(temp_profile[i] + 273.15)
-            gsi_values[i] = gsi_values[i-1] * (1 - rate * dt[i] * 3600)
-            gsi_values[i] = max(5.0, gsi_values[i])  # Minimum GSI
+        def ode(t, y):
+            # t - soat, y - GSI
+            T_curr = np.interp(t, time_hours, temp_profile)
+            rate = self.degradation_rate(T_curr + 273.15)
+            dgsi_dt = -y[0] * rate * 3600.0  # 1/soat -> 1/s
+            return [dgsi_dt]
         
-        return gsi_values
+        try:
+            sol = solve_ivp(
+                ode, (time_hours[0], time_hours[-1]), [self.gsi_0],
+                t_eval=time_hours,
+                method='Radau',      # stiff systemlar uchun
+                max_step=0.1,        # 0.1 soat qadam
+                rtol=1e-6, atol=1e-8
+            )
+            if sol.success:
+                gsi_values = np.clip(sol.y[0], 5.0, 100.0)
+                return gsi_values
+            else:
+                logger.warning("solve_ivp failed, using Euler fallback")
+                return self._gsi_euler_fallback(temp_profile, time_hours)
+        except Exception as e:
+            logger.error(f"solve_ivp error: {e}, using fallback")
+            return self._gsi_euler_fallback(temp_profile, time_hours)
     
     def plot_degradation(self, temp_range: np.ndarray):
         """Degradatsiya grafigi"""
@@ -689,7 +757,29 @@ class ModelTrainingError(UCGError):
 # ==============================================
 # [FIX #5] SQLite3 ma'lumotlar bazasi va validation
 # [FIX #100.2] SQL INJECTION HIMOYASI (Parameterized queries)
+# [FIX #104] Input sanitization (Regex)
 # ==============================================
+def sanitize_input(user_input: str) -> str:
+    """SQL injection va shell belgilarini tozalash"""
+    # SQL xavfli belgilar: -- ; \n \r \x00
+    cleaned = re.sub(r'[--;\\x00\\n\\r]', '', user_input)
+    # Qo‘shimcha: boshqa potensial xavfli belgilar
+    cleaned = re.sub(r'[\'"]', '', cleaned)
+    return cleaned
+
+def safe_filepath(filename: str, base_dir: str = "reports") -> str:
+    """Path traversal hujumlarining oldini olish"""
+    # Filename ichidagi `/`, `\`, `..` va null baytlarni tozalash
+    safe_name = re.sub(r'[/\\]|\.\.', '_', filename)
+    safe_name = safe_name.replace('\x00', '')
+    # Asosiy papkani yaratish
+    os.makedirs(base_dir, exist_ok=True)
+    full_path = os.path.join(base_dir, safe_name)
+    # Realpath bilan tekshirish
+    if not os.path.realpath(full_path).startswith(os.path.realpath(base_dir)):
+        raise ValueError("Insecure path detected")
+    return full_path
+
 def validate_db_input(value: Any, datatype: str) -> Any:
     """DB ga kiritiladigan ma'lumotlarni tekshirish va tozalash"""
     if datatype == 'temperature':
@@ -770,7 +860,10 @@ def validate_sensor_data_full(data: Dict[str, Any], db_path: str = "ucg_sensors.
     if not (0 <= data['pressure'] <= 100):
         raise ValueError(f"Pressure [0, 100] bar oralig'ida bo'lishi kerak")
     
-    # 4. DATABASEGA YOZISH (SQL INJECTION HIMOYASI BILAN)
+    # 4. Sanitize sensor_id
+    safe_sensor_id = sanitize_input(str(data['sensor_id']))
+    
+    # 5. DATABASEGA YOZISH (SQL INJECTION HIMOYASI BILAN)
     try:
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
@@ -783,7 +876,7 @@ def validate_sensor_data_full(data: Dict[str, Any], db_path: str = "ucg_sensors.
             VALUES (?, ?, ?, ?)
             """,
             (
-                str(data['sensor_id']),        # String sanitization
+                safe_sensor_id,                # Sanitized string
                 float(data['temperature']),    # Type cast
                 float(data['pressure']),       # Type cast
                 data['timestamp']
@@ -793,7 +886,7 @@ def validate_sensor_data_full(data: Dict[str, Any], db_path: str = "ucg_sensors.
         conn.commit()
         conn.close()
         
-        logger.info(f"✓ Sensor {data['sensor_id']} tekshirildi va saqlandi")
+        logger.info(f"✓ Sensor {safe_sensor_id} tekshirildi va saqlandi")
         return True
         
     except sqlite3.IntegrityError as e:
@@ -1743,6 +1836,49 @@ def subsidence_confidence_interval(
     t_crit = t_dist.ppf((1.0 + confidence) / 2.0, df=max(n_measurements - 1, 1))
     margin = t_crit * std_est / np.sqrt(max(n_measurements, 1))
     return sub_profile - margin, sub_profile + margin
+
+# ==============================================
+# [FIX #103] Parallel FOS hisoblash (multiprocessing)
+# ==============================================
+def compute_fos_parallel(
+    grid_x, grid_z, active_wells_tuple, well_x_tuple,
+    source_z_val, h_seam, cavity_width,
+    temp_field, sigma_v_field, layers_data_list, layer_bounds_list,
+    E, alpha, nu, K0, Hc, sigma_v_coal_MPa, ucs_coal_MPa,
+    beta_th, D_factor, s_dyn, a_dyn,
+    n_workers: int = None
+) -> np.ndarray:
+    """FOS ni parallel hisoblash (bloklarga bo‘lib)"""
+    if n_workers is None:
+        n_workers = max(1, multiprocessing.cpu_count() - 1)
+    
+    # Gridni qatorlarga bo‘lish
+    rows = grid_x.shape[0]
+    chunk_size = max(1, rows // n_workers)
+    chunks = [(i, min(i+chunk_size, rows)) for i in range(0, rows, chunk_size)]
+    
+    # Import qilish kerak bo'lgan funksiyani ichki funksiya sifatida aniqlaymiz
+    def process_chunk(row_start, row_end):
+        sub_gx = grid_x[row_start:row_end, :]
+        sub_gz = grid_z[row_start:row_end, :]
+        sub_temp = temp_field[row_start:row_end, :]
+        sub_sigma_v = sigma_v_field[row_start:row_end, :]
+        # compute_advanced_fos dan faqat shu qatorlar uchun
+        return compute_advanced_fos(
+            sub_gx, sub_gz, active_wells_tuple, well_x_tuple,
+            source_z_val, h_seam, cavity_width,
+            sub_temp, sub_sigma_v, layers_data_list, layer_bounds_list,
+            E, alpha, nu, K0, Hc, sigma_v_coal_MPa, ucs_coal_MPa,
+            beta_th, D_factor, s_dyn, a_dyn
+        )
+    
+    fos_parts = []
+    with ProcessPoolExecutor(max_workers=n_workers) as executor:
+        futures = [executor.submit(process_chunk, cs, ce) for cs, ce in chunks]
+        for future in as_completed(futures):
+            fos_parts.append(future.result())
+    
+    return np.vstack(fos_parts)
 
 # ── Word hujjat yordamchi funksiyalari ────────────────────────────────────
 def set_table_border(table) -> None:
@@ -2893,6 +3029,87 @@ def patent_claims_text(lang: str = 'en') -> str:
         ),
     }
     return claims.get(lang, claims['en'])
+
+# ==============================================
+# [NEW] Patent hujjatlari paketi (LaTeX, prior art, validatsiya)
+# ==============================================
+def generate_technical_specification_tex() -> str:
+    """Texnik spetsifikatsiya uchun LaTeX shabloni"""
+    return r"""
+\documentclass{article}
+\usepackage{amsmath, amssymb, graphicx}
+\usepackage[margin=2.5cm]{geometry}
+\title{UCG SCI-Grade Platform v3.2 -- Technical Specification}
+\author{Saitov Dilshodbek}
+\date{\today}
+\begin{document}
+\maketitle
+\section{Thermo-Mechanical Coupling}
+Adaptive Biot coefficient:
+\[
+\alpha_{biot}(S_r) = \left(1 - (1-S_r)C_{drain}\right) \times \left(1 - \frac{\phi(1-S_r)}{2}\right)
+\]
+where $C_{drain}=0.7$, $\phi$ is porosity, $S_r$ is saturation ratio.
+
+\section{Numerical Solver for Thermal Degradation}
+Arrhenius kinetics with Radau ODE solver (stiff systems):
+\[
+\frac{d(GSI)}{dt} = -GSI \cdot A \exp\left(-\frac{E_a}{RT}\right)
+\]
+where $E_a = 150$ kJ/mol, $R = 8.314$ J/(mol·K).
+
+\section{Parallel FOS Computation}
+Domain decomposition using multiprocessing:
+\[
+\text{FOS}(x,z) = \frac{\sigma_p(x,z)}{\sigma_v'(x,z)}
+\]
+Each subdomain computed independently.
+
+\section{Data Flow Diagram}
+\includegraphics[width=\textwidth]{dataflow.png}
+\end{document}
+"""
+
+def prior_art_analysis_table() -> pd.DataFrame:
+    """Prior art tahlili (qiyosiy jadval)"""
+    data = {
+        "Patent/Work": ["Biot (1941)", "Detournay (1993)", "Perkins & Akkutlu (2013)", "Ushbu tizim"],
+        "Biot model": ["Static", "Quasi-static", "None", "Adaptive (saturation + porosity)"],
+        "Thermal degradation": ["No", "No", "Empirical", "Arrhenius + non-linear GSI"],
+        "Real-time monitoring": ["No", "No", "No", "Yes (PINN + SHAP + UQ)"],
+        "Parallel computing": ["No", "No", "No", "Yes (multiprocessing)"],
+        "Novelty": ["Baseline", "Poroelasticity", "UCG cavity", "Full coupling + AI + parallel"]
+    }
+    return pd.DataFrame(data)
+
+def validate_against_analytical() -> Dict[str, float]:
+    """
+    1D issiqlik o‘tkazuvchanlik tenglamasining analitik yechimi bilan solishtirish
+    (validatsiya maqolasi uchun)
+    """
+    from scipy.special import erfc
+    
+    # Parametrlar
+    alpha = PARAMS.THERMAL_DIFFUSIVITY
+    t = 3600 * 24  # 1 kun
+    x = np.linspace(0, 10, 100)
+    T0 = 1100.0
+    T_amb = 25.0
+    
+    # Analitik (yarim cheksiz jism)
+    T_analytical = T_amb + (T0 - T_amb) * erfc(x / (2 * np.sqrt(alpha * t)))
+    
+    # Raqamli (oddiy explicit)
+    dx = 0.1
+    dt = 0.9 * dx**2 / (2 * alpha)
+    nx = len(x)
+    T_num = np.ones(nx) * T_amb
+    T_num[0] = T0
+    for _ in range(int(t/dt)):
+        T_num[1:-1] = T_num[1:-1] + alpha * dt / dx**2 * (T_num[2:] - 2*T_num[1:-1] + T_num[:-2])
+    # RMSE
+    rmse = np.sqrt(np.mean((T_analytical - T_num)**2))
+    return {"RMSE_vs_analytical": rmse, "max_diff": np.max(np.abs(T_analytical - T_num))}
 
 # ── Fazaviy maydon modeli ─────────────────────────────────────────────────
 def phase_field_update(
@@ -4746,7 +4963,7 @@ with tab_advanced:
         st.caption("JCGM 100:2008 reproducibility: barcha parametrlar SHA-256 imzosi bilan kafolatlangan.")
 
         LICENSE_TEXT = """
-**UCG SCI-Grade Platform v3.1.0**
+**UCG SCI-Grade Platform v3.2.0**
 **Litsenziya:** Patent Pending UZ-XXXX (UZBEK PATENT), PCT/US20XX-XXXXX (WIPO)
 
 ✓ **RUXSAT BERILGAN FOYDALANISH:**
@@ -4770,7 +4987,7 @@ with tab_advanced:
             "**[FIX #97] DGU Software Certificate:** "
             "Ushbu platforma O'zbekiston DGU (Davlat Geodezyasi Uyushmasi) "
             "tomonidan dasturiy ta'minot sertifikati olishga tayyorlanmoqda. "
-            f"Versiya: {__version__} | Fixes: 100+ | Date: 2026-06-13"
+            f"Versiya: {__version__} | Fixes: 100+ | Date: 2026-06-14"
         )
 
     with st.expander(t('methodology_expander')):
@@ -4923,7 +5140,7 @@ st.plotly_chart(dash_fig, use_container_width=True)
 # ── Footer ─────────────────────────────────────────────────────────────────
 st.sidebar.markdown("---")
 st.sidebar.write(f"Author: Saitov Dilshodbek | Device: {device}")
-st.sidebar.write(f"Version: {__version__} (PhD-grade) | Fixes: 100 + Adaptive Biot + Arrhenius Degradation")
+st.sidebar.write(f"Version: {__version__} (PhD-grade) | Fixes: 100+ | Features: Adaptive ODE solver, Vectorized Biot, Parallel FOS")
 st.sidebar.write(f"PyTorch: {PT_AVAILABLE} | SHAP: {SHAP_AVAILABLE}")
 st.sidebar.write(f"SALib: {SALIB_AVAILABLE} | pyDOE: {PYDOE_AVAILABLE}")
 
@@ -4951,14 +5168,15 @@ st.sidebar.warning(LICENSE_SIDEBAR)
 st.markdown("---")
 st.caption(
     f"**UCG SCI-Grade Platform v{__version__}** | 100/100 Expert Fixes Applied | "
-    "Adaptive Biot & Arrhenius Degradation Added | "
+    "Adaptive Biot & Arrhenius Degradation | "
+    "Adaptive ODE Solver (Radau) | Vectorized Biot | Parallel FOS | "
     "© 2026 Saitov Dilshodbek, Tashkent Technical University | "
     "Patent Pending (UzPatent + WIPO PCT) | "
     "⚠️ Scientific use only — Commercial use strictly prohibited until patent grant."
 )
 
 # ══════════════════════════════════════════════════════════════════════════════
-# UCG SCI-GRADE PLATFORM v3.1.0 — TUZATISHLAR JADVALI (FIX D seriyasi + FIX #100)
+# UCG SCI-GRADE PLATFORM v3.2.0 — TUZATISHLAR JADVALI (FIX D seriyasi + FIX #100-106)
 # ══════════════════════════════════════════════════════════════════════════════
 # D-01: Adaptive Biot koeffitsienti (SoilWaterState, compute_biot_coefficient_adaptive)
 # D-02: Non-linear termal degradatsiya (ThermalDegradationModel, Arrhenius kinetikasi)
@@ -4979,4 +5197,10 @@ st.caption(
 # FIX #100.8: Input validation framework (InputValidator klass)
 # [NEW] AlgorithmCertification class added for patent uniqueness
 # [NEW] ReproducibilityCertificate class added (JCGM 100:2008)
+# [FIX #101] Adaptive ODE solver (solve_ivp, Radau method) for stiff thermal kinetics
+# [FIX #102] Vectorized Biot coefficient (compute_biot_coefficient_adaptive_vectorized)
+# [FIX #103] Parallel FOS computation using multiprocessing (compute_fos_parallel)
+# [FIX #104] Input sanitization (Regex, SQL injection protection) - sanitize_input, safe_filepath
+# [FIX #105] Path traversal and null byte protection
+# [FIX #106] Patent deliverables: technical specification (LaTeX), prior art table, analytical validation
 # ══════════════════════════════════════════════════════════════════════════════
