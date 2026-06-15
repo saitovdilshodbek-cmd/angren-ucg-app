@@ -13,5 +13,3 @@ streamlit
 psutil
 pydantic
 sqlalchemy
-upgrade 
-kaleido
