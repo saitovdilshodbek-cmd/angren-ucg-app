@@ -4381,7 +4381,7 @@ with st.expander("🤖 AI Risk Prediction (Sensor CSV)", expanded=False):
             )
             st.plotly_chart(fig_risk_l, use_container_width=True)
             avg_risk_val = float(np.mean(risk_vals))
-            st.metric("Mean Risk", f"{avg_risk_val:.3f",
+            st.metric("Mean Risk", f"{avg_risk_val:.3f}",
                       delta="High" if avg_risk_val > 0.7 else ("Medium" if avg_risk_val > 0.5 else "Low"))
             if avg_risk_val > 0.7:
                 st.error("⚠️ High risk! Immediate action required.")
