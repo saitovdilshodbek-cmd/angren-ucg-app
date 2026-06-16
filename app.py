@@ -1,5 +1,4 @@
-[file name]: app - 2026-06-16T195202.905.py
-[file content begin]
+# [file name]: app - 2026-06-16T195202.905.py
 """
 UCG SCI-Grade Platform — Tuzatilgan va Kengaytirilgan Versiya (v4.0.0)
 ========================================================================
@@ -5250,4 +5249,3 @@ Tijorat maqsadlarda ishlatish TAQIQLANGAN.
 # ══════════════════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
     main()
-[file content end]
