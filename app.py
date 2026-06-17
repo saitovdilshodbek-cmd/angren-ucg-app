@@ -366,6 +366,70 @@ class NoveltyAnalyzer:
     def novelty_score(self, df: pd.DataFrame) -> float:
         return df.attrs.get("Novelty Index", 0.0)
 
+# ── SimilarityAnalyzer (FIX #15: oldin aniqlanadi) ──────────────────────
+class SimilarityAnalyzer:
+    def __init__(self, novelty_analyzer: NoveltyAnalyzer):
+        self.analyzer = novelty_analyzer
+        self.feature_names = [f.name for f in self.analyzer.features]
+        self.prior_vectors = []
+        self.prior_labels = []
+        for ref in self.analyzer.prior_art:
+            vec = [1.0 if ref.features.get(fname, False) else 0.0 for fname in self.feature_names]
+            self.prior_vectors.append(vec)
+            self.prior_labels.append(f"{ref.author} {ref.year}")
+        self.prior_vectors = np.array(self.prior_vectors)
+
+    def invention_vector(self) -> np.ndarray:
+        return np.ones(len(self.feature_names))
+
+    def compute_similarities(self) -> pd.DataFrame:
+        inv_vec = self.invention_vector().reshape(1, -1)
+        sims = cosine_similarity(inv_vec, self.prior_vectors).flatten()
+        df = pd.DataFrame({
+            "Prior Art": self.prior_labels,
+            "Cosine Similarity": sims
+        })
+        return df
+
+    def mean_similarity(self) -> float:
+        return float(np.mean(self.compute_similarities()["Cosine Similarity"]))
+
+# ── SemanticSimilarityAnalyzer (SimilarityAnalyzer dan meros) ────────────
+class SemanticSimilarityAnalyzer(SimilarityAnalyzer):
+    def __init__(self, novelty_analyzer: NoveltyAnalyzer, model_name: str = "sentence-transformers/all-MiniLM-L6-v2"):
+        super().__init__(novelty_analyzer)
+        self.model_name = model_name
+        self.model = None
+        try:
+            from sentence_transformers import SentenceTransformer
+            self.model = SentenceTransformer(model_name)
+            self.available = True
+        except ImportError:
+            self.available = False
+            logger.warning("Sentence-Transformers not installed. Fallback to TF-IDF.")
+    
+    def _embed(self, texts: List[str]) -> np.ndarray:
+        if self.available and self.model:
+            return self.model.encode(texts)
+        else:
+            # TF-IDF fallback
+            from sklearn.feature_extraction.text import TfidfVectorizer
+            vec = TfidfVectorizer().fit(texts)
+            return vec.transform(texts).toarray()
+    
+    def compute_semantic_similarities(self, invention_desc: str) -> pd.DataFrame:
+        prior_descs = [f"{ref.author} {ref.year} {ref.title}" for ref in self.analyzer.prior_art]
+        all_texts = [invention_desc] + prior_descs
+        embeddings = self._embed(all_texts)
+        inv_emb = embeddings[0:1]
+        prior_embs = embeddings[1:]
+        sims = cosine_similarity(inv_emb, prior_embs).flatten()
+        df = pd.DataFrame({
+            "Prior Art": self.prior_labels,
+            "Semantic Similarity": sims
+        })
+        return df
+
 @dataclass
 class BenchmarkResult:
     model_name: str
@@ -469,69 +533,6 @@ class PriorArtSearcher:
             hits = searcher.search(feat)
             df.at[idx, 'Prior Count (Auto)'] = len(hits)
         return df
-
-# ── 3. SEMANTIC SIMILARITY WITH TRANSFORMERS ────────────────────────────
-class SemanticSimilarityAnalyzer(SimilarityAnalyzer):
-    def __init__(self, novelty_analyzer: NoveltyAnalyzer, model_name: str = "sentence-transformers/all-MiniLM-L6-v2"):
-        super().__init__(novelty_analyzer)
-        self.model_name = model_name
-        self.model = None
-        try:
-            from sentence_transformers import SentenceTransformer
-            self.model = SentenceTransformer(model_name)
-            self.available = True
-        except ImportError:
-            self.available = False
-            logger.warning("Sentence-Transformers not installed. Fallback to TF-IDF.")
-    
-    def _embed(self, texts: List[str]) -> np.ndarray:
-        if self.available and self.model:
-            return self.model.encode(texts)
-        else:
-            # TF-IDF fallback
-            from sklearn.feature_extraction.text import TfidfVectorizer
-            vec = TfidfVectorizer().fit(texts)
-            return vec.transform(texts).toarray()
-    
-    def compute_semantic_similarities(self, invention_desc: str) -> pd.DataFrame:
-        prior_descs = [f"{ref.author} {ref.year} {ref.title}" for ref in self.analyzer.prior_art]
-        all_texts = [invention_desc] + prior_descs
-        embeddings = self._embed(all_texts)
-        inv_emb = embeddings[0:1]
-        prior_embs = embeddings[1:]
-        sims = cosine_similarity(inv_emb, prior_embs).flatten()
-        df = pd.DataFrame({
-            "Prior Art": self.prior_labels,
-            "Semantic Similarity": sims
-        })
-        return df
-
-class SimilarityAnalyzer:
-    def __init__(self, novelty_analyzer: NoveltyAnalyzer):
-        self.analyzer = novelty_analyzer
-        self.feature_names = [f.name for f in self.analyzer.features]
-        self.prior_vectors = []
-        self.prior_labels = []
-        for ref in self.analyzer.prior_art:
-            vec = [1.0 if ref.features.get(fname, False) else 0.0 for fname in self.feature_names]
-            self.prior_vectors.append(vec)
-            self.prior_labels.append(f"{ref.author} {ref.year}")
-        self.prior_vectors = np.array(self.prior_vectors)
-
-    def invention_vector(self) -> np.ndarray:
-        return np.ones(len(self.feature_names))
-
-    def compute_similarities(self) -> pd.DataFrame:
-        inv_vec = self.invention_vector().reshape(1, -1)
-        sims = cosine_similarity(inv_vec, self.prior_vectors).flatten()
-        df = pd.DataFrame({
-            "Prior Art": self.prior_labels,
-            "Cosine Similarity": sims
-        })
-        return df
-
-    def mean_similarity(self) -> float:
-        return float(np.mean(self.compute_similarities()["Cosine Similarity"]))
 
 # ── 6. PATENT CLAIM GENERATOR ────────────────────────────────────────────
 class PatentClaimGenerator:
