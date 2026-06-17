@@ -487,7 +487,35 @@ class PriorArtSearcher:
             df.at[idx, 'Prior Count (Auto)'] = len(hits)
         return df
 
-# ── 3. SEMANTIC SIMILARITY WITH TRANSFORMERS ────────────────────────────
+# ── 3. SIMILARITY ANALYZER (asosiy) ─────────────────────────────────────
+class SimilarityAnalyzer:
+    def __init__(self, novelty_analyzer: NoveltyAnalyzer):
+        self.analyzer = novelty_analyzer
+        self.feature_names = [f.name for f in self.analyzer.features]
+        self.prior_vectors = []
+        self.prior_labels = []
+        for ref in self.analyzer.prior_art:
+            vec = [1.0 if ref.features.get(fname, False) else 0.0 for fname in self.feature_names]
+            self.prior_vectors.append(vec)
+            self.prior_labels.append(f"{ref.author} {ref.year}")
+        self.prior_vectors = np.array(self.prior_vectors)
+
+    def invention_vector(self) -> np.ndarray:
+        return np.ones(len(self.feature_names))
+
+    def compute_similarities(self) -> pd.DataFrame:
+        inv_vec = self.invention_vector().reshape(1, -1)
+        sims = cosine_similarity(inv_vec, self.prior_vectors).flatten()
+        df = pd.DataFrame({
+            "Prior Art": self.prior_labels,
+            "Cosine Similarity": sims
+        })
+        return df
+
+    def mean_similarity(self) -> float:
+        return float(np.mean(self.compute_similarities()["Cosine Similarity"]))
+
+# ── 4. SEMANTIC SIMILARITY WITH TRANSFORMERS ────────────────────────────
 class SemanticSimilarityAnalyzer(SimilarityAnalyzer):
     def __init__(self, novelty_analyzer: NoveltyAnalyzer, model_name: str = "sentence-transformers/all-MiniLM-L6-v2"):
         super().__init__(novelty_analyzer)
@@ -525,33 +553,6 @@ class SemanticSimilarityAnalyzer(SimilarityAnalyzer):
             "Semantic Similarity": sims
         })
         return df
-
-class SimilarityAnalyzer:
-    def __init__(self, novelty_analyzer: NoveltyAnalyzer):
-        self.analyzer = novelty_analyzer
-        self.feature_names = [f.name for f in self.analyzer.features]
-        self.prior_vectors = []
-        self.prior_labels = []
-        for ref in self.analyzer.prior_art:
-            vec = [1.0 if ref.features.get(fname, False) else 0.0 for fname in self.feature_names]
-            self.prior_vectors.append(vec)
-            self.prior_labels.append(f"{ref.author} {ref.year}")
-        self.prior_vectors = np.array(self.prior_vectors)
-
-    def invention_vector(self) -> np.ndarray:
-        return np.ones(len(self.feature_names))
-
-    def compute_similarities(self) -> pd.DataFrame:
-        inv_vec = self.invention_vector().reshape(1, -1)
-        sims = cosine_similarity(inv_vec, self.prior_vectors).flatten()
-        df = pd.DataFrame({
-            "Prior Art": self.prior_labels,
-            "Cosine Similarity": sims
-        })
-        return df
-
-    def mean_similarity(self) -> float:
-        return float(np.mean(self.compute_similarities()["Cosine Similarity"]))
 
 # ── 6. PATENT CLAIM GENERATOR ────────────────────────────────────────────
 class PatentClaimGenerator:
