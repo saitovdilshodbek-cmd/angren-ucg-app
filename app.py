@@ -1,6 +1,6 @@
-[file name]: app - 2026-06-17T070250.585.py
+# UCG SCI-Grade Platform v4.1.0
 """
-UCG SCI-Grade Platform — Tuzatilgan va Kengaytirilgan Versiya (v4.0.0)
+UCG SCI-Grade Platform — Tuzatilgan va Kengaytirilgan Versiya (v4.1.0)
 ========================================================================
 [FIX #1] set_page_config eng yuqoriga ko‘chirildi
 [FIX #2] sanitize_input regex to‘g‘irlandi (null byte va SQL inj)
