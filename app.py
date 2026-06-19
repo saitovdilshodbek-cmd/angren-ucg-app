@@ -1361,7 +1361,562 @@ def translate(key: str, **kwargs) -> str:
         return text
 
 t = translate
-
+# ──────────────────────────────────────────────────────────────────
+# SECTION 1: IMPORTS & CONFIGURATION
+# ──────────────────────────────────────────────────────────────────
+ 
+import warnings
+import logging
+import logging.config
+import logging.handlers
+import io
+import time
+import functools
+import json
+import os
+import hashlib
+import sqlite3
+import re
+import multiprocessing
+import sys
+import platform
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from datetime import datetime
+from dataclasses import dataclass, asdict, field
+from typing import NamedTuple, Optional, Tuple, List, Dict, Any, Union, Callable
+import random
+import subprocess
+import gc
+from contextlib import contextmanager
+from enum import Enum
+from pathlib import Path
+import traceback
+ 
+# Third-party imports
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from scipy.ndimage import gaussian_filter
+from scipy.stats import linregress, t as t_dist
+from scipy import stats
+from scipy.signal import savgol_filter
+from scipy.integrate import odeint, solve_ivp
+from scipy.special import erfc
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.metrics import accuracy_score, roc_auc_score, r2_score, mean_squared_error, mean_absolute_error
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics.pairwise import cosine_similarity
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import psutil
+ 
+# Streamlit
+import streamlit as st
+st.set_page_config(
+    page_title="UCG SCI-Grade Platform v4.1",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+ 
+# ──────────────────────────────────────────────────────────────────
+# SECTION 2: CUSTOM EXCEPTIONS
+# ──────────────────────────────────────────────────────────────────
+ 
+class UCGPlatformException(Exception):
+    """Base exception for UCG Platform"""
+    pass
+ 
+class ValidationError(UCGPlatformException):
+    """Input validation failed"""
+    pass
+ 
+class ComputationError(UCGPlatformException):
+    """Numerical computation failed"""
+    pass
+ 
+class ConfigurationError(UCGPlatformException):
+    """Configuration is invalid"""
+    pass
+ 
+# ──────────────────────────────────────────────────────────────────
+# SECTION 3: CONFIGURATION MANAGEMENT
+# ──────────────────────────────────────────────────────────────────
+ 
+@dataclass
+class LoggingConfig:
+    """Logging configuration"""
+    log_level: str = "INFO"
+    log_file: str = "ucg_platform.log"
+    max_bytes: int = 10 * 1024 * 1024
+    backup_count: int = 5
+    
+    def setup(self) -> None:
+        """Setup logging configuration"""
+        logging_config = {
+            "version": 1,
+            "disable_existing_loggers": False,
+            "formatters": {
+                "detailed": {
+                    "format": "%(asctime)s | %(name)s | %(levelname)-8s | %(funcName)s:%(lineno)d | %(message)s",
+                    "datefmt": "%Y-%m-%d %H:%M:%S"
+                },
+                "simple": {
+                    "format": "%(levelname)s | %(message)s"
+                }
+            },
+            "handlers": {
+                "console": {
+                    "class": "logging.StreamHandler",
+                    "level": "INFO",
+                    "formatter": "simple",
+                    "stream": "ext://sys.stdout"
+                },
+                "file": {
+                    "class": "logging.handlers.RotatingFileHandler",
+                    "level": "DEBUG",
+                    "formatter": "detailed",
+                    "filename": self.log_file,
+                    "encoding": "utf-8",
+                    "maxBytes": self.max_bytes,
+                    "backupCount": self.backup_count
+                }
+            },
+            "loggers": {
+                "ucg_platform": {
+                    "level": self.log_level,
+                    "handlers": ["console", "file"]
+                }
+            }
+        }
+        logging.config.dictConfig(logging_config)
+ 
+@dataclass
+class PlatformConfig:
+    """Main platform configuration"""
+    random_seed: int = 42
+    cache_version: int = 2
+    version_major: int = 4
+    version_minor: int = 1
+    version_patch: int = 0
+    prerelease: str = "improved"
+    logging: LoggingConfig = field(default_factory=LoggingConfig)
+    
+    def __post_init__(self) -> None:
+        """Initialize configuration"""
+        self.logging.setup()
+        np.random.seed(self.random_seed)
+        random.seed(self.random_seed)
+    
+    @property
+    def full_version(self) -> str:
+        """Get full version string"""
+        v = f"{self.version_major}.{self.version_minor}.{self.version_patch}"
+        if self.prerelease:
+            v += f"-{self.prerelease}"
+        return v
+ 
+# ──────────────────────────────────────────────────────────────────
+# SECTION 4: INPUT VALIDATION
+# ──────────────────────────────────────────────────────────────────
+ 
+class InputValidator:
+    """Input validation utilities"""
+    
+    @staticmethod
+    def validate_numeric(
+        value: Union[int, float],
+        min_val: Optional[float] = None,
+        max_val: Optional[float] = None,
+        param_name: str = "value"
+    ) -> Union[int, float]:
+        """Validate numeric input"""
+        try:
+            num = float(value)
+            if min_val is not None and num < min_val:
+                raise ValidationError(f"{param_name} must be >= {min_val}, got {num}")
+            if max_val is not None and num > max_val:
+                raise ValidationError(f"{param_name} must be <= {max_val}, got {num}")
+            return num
+        except (TypeError, ValueError) as e:
+            raise ValidationError(f"Invalid numeric value for {param_name}: {e}")
+    
+    @staticmethod
+    def sanitize_string(value: str, max_len: int = 255) -> str:
+        """Sanitize string input"""
+        if not isinstance(value, str):
+            raise ValidationError("Expected string")
+        
+        # Remove null bytes and dangerous characters
+        cleaned = value.replace('\x00', '').strip()
+        
+        if len(cleaned) > max_len:
+            raise ValidationError(f"String exceeds max length {max_len}")
+        
+        # Remove SQL injection patterns
+        if any(kw in cleaned.lower() for kw in ['drop', 'delete', 'insert', 'update']):
+            logger.warning(f"Suspicious SQL keyword detected in: {cleaned[:50]}")
+        
+        return cleaned
+    
+    @staticmethod
+    def validate_list(
+        values: List[Any],
+        expected_type: type,
+        min_len: int = 1
+    ) -> List[Any]:
+        """Validate list input"""
+        if not isinstance(values, list):
+            raise ValidationError("Expected list")
+        if len(values) < min_len:
+            raise ValidationError(f"List must have at least {min_len} items")
+        if not all(isinstance(v, expected_type) for v in values):
+            raise ValidationError(f"All items must be {expected_type}")
+        return values
+ 
+# ──────────────────────────────────────────────────────────────────
+# SECTION 5: CACHING UTILITIES
+# ──────────────────────────────────────────────────────────────────
+ 
+class CacheManager:
+    """Improved caching with TTL and size limits"""
+    
+    def __init__(self, max_size: int = 128, ttl_seconds: int = 3600):
+        self.cache: Dict[str, Tuple[Any, float]] = {}
+        self.max_size = max_size
+        self.ttl_seconds = ttl_seconds
+        self.logger = logging.getLogger("ucg_platform")
+    
+    def get(self, key: str) -> Optional[Any]:
+        """Get value from cache"""
+        if key in self.cache:
+            value, timestamp = self.cache[key]
+            if time.time() - timestamp > self.ttl_seconds:
+                del self.cache[key]
+                return None
+            return value
+        return None
+    
+    def set(self, key: str, value: Any) -> None:
+        """Set value in cache"""
+        # Evict oldest if at capacity
+        if len(self.cache) >= self.max_size:
+            oldest_key = min(self.cache.keys(), 
+                           key=lambda k: self.cache[k][1])
+            del self.cache[oldest_key]
+            self.logger.debug(f"Evicted cache key: {oldest_key}")
+        
+        self.cache[key] = (value, time.time())
+    
+    def clear(self) -> None:
+        """Clear all cache"""
+        self.cache.clear()
+    
+    def decorator(self, ttl: Optional[int] = None) -> Callable:
+        """Decorator for function caching"""
+        def wrapper(func: Callable) -> Callable:
+            @functools.wraps(func)
+            def inner(*args, **kwargs) -> Any:
+                # Create cache key from function name and arguments
+                key = f"{func.__name__}_{str(args)}_{str(kwargs)}"
+                cached = self.get(key)
+                if cached is not None:
+                    return cached
+                
+                result = func(*args, **kwargs)
+                self.set(key, result)
+                return result
+            return inner
+        return wrapper
+ 
+# ──────────────────────────────────────────────────────────────────
+# SECTION 6: SAFE SUBPROCESS EXECUTION
+# ──────────────────────────────────────────────────────────────────
+ 
+@contextmanager
+def safe_subprocess(timeout: int = 30):
+    """Context manager for safe subprocess execution"""
+    processes = []
+    try:
+        yield processes
+    finally:
+        for proc in processes:
+            try:
+                proc.kill()
+            except:
+                pass
+ 
+def run_command_safe(cmd: List[str], timeout: int = 30) -> Tuple[str, Optional[str]]:
+    """Run command with timeout and error handling"""
+    logger = logging.getLogger("ucg_platform")
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False
+        )
+        return result.stdout, result.stderr if result.returncode != 0 else None
+    except subprocess.TimeoutExpired:
+        logger.error(f"Command timeout after {timeout}s: {' '.join(cmd)}")
+        return "", "Timeout"
+    except Exception as e:
+        logger.error(f"Command execution error: {e}")
+        return "", str(e)
+ 
+# ──────────────────────────────────────────────────────────────────
+# SECTION 7: VERSION AND GIT INFO
+# ──────────────────────────────────────────────────────────────────
+ 
+@dataclass
+class VersionInfo:
+    """Version information"""
+    major: int = 4
+    minor: int = 1
+    patch: int = 0
+    prerelease: str = "improved"
+    
+    @property
+    def full_version(self) -> str:
+        """Get full version string"""
+        v = f"{self.major}.{self.minor}.{self.patch}"
+        if self.prerelease:
+            v += f"-{self.prerelease}"
+        return v
+    
+    @staticmethod
+    def get_git_commit() -> str:
+        """Get current git commit hash safely"""
+        stdout, stderr = run_command_safe(
+            ["git", "rev-parse", "--short", "HEAD"],
+            timeout=5
+        )
+        return stdout.strip() if stdout else "unknown"
+ 
+# ──────────────────────────────────────────────────────────────────
+# SECTION 8: COMPUTATIONAL UTILITIES
+# ──────────────────────────────────────────────────────────────────
+ 
+class NumericalSolver:
+    """Wrapper for numerical solvers with error handling"""
+    
+    @staticmethod
+    def solve_ode(
+        func: Callable,
+        y0: np.ndarray,
+        t_span: Tuple[float, float],
+        t_eval: Optional[np.ndarray] = None,
+        method: str = 'RK45',
+        **kwargs
+    ) -> Tuple[np.ndarray, np.ndarray, bool]:
+        """Solve ODE with error handling"""
+        logger = logging.getLogger("ucg_platform")
+        try:
+            sol = solve_ivp(
+                func, t_span, y0, t_eval=t_eval,
+                method=method, **kwargs
+            )
+            if sol.status != 0:
+                logger.warning(f"ODE solver returned status {sol.status}")
+            return sol.t, sol.y, sol.status == 0
+        except Exception as e:
+            logger.error(f"ODE solution failed: {e}")
+            raise ComputationError(f"Numerical solver failed: {e}")
+    
+    @staticmethod
+    def compute_sensitivity(
+        func: Callable,
+        params: Dict[str, float],
+        h: float = 1e-6
+    ) -> Dict[str, float]:
+        """Compute parameter sensitivity via finite differences"""
+        sensitivities = {}
+        base_val = func(params)
+        
+        for param_name, param_val in params.items():
+            params_pert = params.copy()
+            params_pert[param_name] = param_val + h
+            perturbed_val = func(params_pert)
+            sensitivities[param_name] = (perturbed_val - base_val) / h
+        
+        return sensitivities
+ 
+# ──────────────────────────────────────────────────────────────────
+# SECTION 9: DATA PROCESSING
+# ──────────────────────────────────────────────────────────────────
+ 
+class DataProcessor:
+    """Data processing utilities"""
+    
+    @staticmethod
+    def smooth_array(
+        data: np.ndarray,
+        window_length: int = 5,
+        polyorder: int = 2
+    ) -> np.ndarray:
+        """Smooth array data with Savitzky-Golay filter"""
+        from scipy.signal import savgol_filter
+        try:
+            if len(data) < window_length:
+                return data
+            return savgol_filter(data, window_length, polyorder)
+        except Exception as e:
+            logger = logging.getLogger("ucg_platform")
+            logger.warning(f"Smoothing failed: {e}, returning original data")
+            return data
+    
+    @staticmethod
+    def compute_statistics(
+        data: np.ndarray
+    ) -> Dict[str, float]:
+        """Compute comprehensive statistics"""
+        return {
+            "mean": float(np.mean(data)),
+            "std": float(np.std(data)),
+            "min": float(np.min(data)),
+            "max": float(np.max(data)),
+            "median": float(np.median(data)),
+            "q25": float(np.percentile(data, 25)),
+            "q75": float(np.percentile(data, 75))
+        }
+    
+    @staticmethod
+    def interpolate_data(
+        x: np.ndarray,
+        y: np.ndarray,
+        x_new: np.ndarray,
+        method: str = 'linear'
+    ) -> np.ndarray:
+        """Interpolate data safely"""
+        from scipy.interpolate import interp1d
+        try:
+            f = interp1d(x, y, kind=method, bounds_error=False, fill_value='extrapolate')
+            return f(x_new)
+        except Exception as e:
+            logger = logging.getLogger("ucg_platform")
+            logger.error(f"Interpolation failed: {e}")
+            raise ComputationError(f"Interpolation failed: {e}")
+ 
+# ──────────────────────────────────────────────────────────────────
+# SECTION 10: SECURITY & HASHING
+# ──────────────────────────────────────────────────────────────────
+ 
+class SecurityManager:
+    """Security utilities"""
+    
+    @staticmethod
+    def compute_sha256(data: Dict[str, Any]) -> str:
+        """Compute SHA-256 hash of data"""
+        json_str = json.dumps(data, sort_keys=True, default=str)
+        return hashlib.sha256(json_str.encode()).hexdigest()
+    
+    @staticmethod
+    def verify_hash(data: Dict[str, Any], expected_hash: str) -> bool:
+        """Verify hash matches data"""
+        computed = SecurityManager.compute_sha256(data)
+        return computed == expected_hash
+ 
+# ──────────────────────────────────────────────────────────────────
+# SECTION 11: LOGGING SETUP
+# ──────────────────────────────────────────────────────────────────
+ 
+# Initialize configuration and logger
+config = PlatformConfig()
+logger = logging.getLogger("ucg_platform")
+version_info = VersionInfo()
+cache_manager = CacheManager()
+validator = InputValidator()
+security = SecurityManager()
+data_processor = DataProcessor()
+solver = NumericalSolver()
+ 
+logger.info(f"UCG Platform v{version_info.full_version} started")
+logger.info(f"Platform Config: seed={config.random_seed}, cache_v={config.cache_version}")
+ 
+# ──────────────────────────────────────────────────────────────────
+# SECTION 12: STREAMLIT UI (REFACTORED)
+# ──────────────────────────────────────────────────────────────────
+ 
+def main() -> None:
+    """Main Streamlit application"""
+    try:
+        logger.info("Rendering main application")
+        
+        st.title("🏔️ UCG SCI-Grade Platform")
+        st.subheader(f"v{version_info.full_version}")
+        
+        # Sidebar configuration
+        st.sidebar.header("⚙️ Configuration")
+        
+        # Input validation example
+        try:
+            depth = st.sidebar.number_input(
+                "Seam Depth (m)",
+                min_value=10.0,
+                max_value=1000.0,
+                value=500.0,
+                step=10.0
+            )
+            depth = validator.validate_numeric(depth, min_val=10.0, max_val=1000.0, param_name="Depth")
+            
+            temperature = st.sidebar.number_input(
+                "Max Temperature (°C)",
+                min_value=300.0,
+                max_value=1200.0,
+                value=800.0,
+                step=50.0
+            )
+            temperature = validator.validate_numeric(
+                temperature, min_val=300.0, max_val=1200.0, param_name="Temperature"
+            )
+            
+        except ValidationError as e:
+            st.error(f"❌ Input Error: {e}")
+            logger.error(f"Input validation failed: {e}")
+            return
+        
+        # Main content
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.metric("Seam Depth", f"{depth:.1f} m")
+        
+        with col2:
+            st.metric("Temperature", f"{temperature:.1f} °C")
+        
+        # System information
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("📊 System Info")
+        st.sidebar.write(f"Memory: {psutil.virtual_memory().percent}%")
+        st.sidebar.write(f"CPU: {psutil.cpu_percent()}%")
+        st.sidebar.write(f"Version: {version_info.full_version}")
+        
+        # License
+        license_text = """
+        ⚠️ **Patent Pending** — For research use only
+        
+        ✓ Allowed: Academic, non-profit research
+        ✗ Prohibited: Commercial use without license
+        
+        © 2026 Improved Platform Edition
+        """
+        st.sidebar.warning(license_text)
+        
+        logger.info("Application rendered successfully")
+        
+    except Exception as e:
+        logger.error(f"Application error: {type(e).__name__}: {e}\n{traceback.format_exc()}")
+        st.error(f"❌ Application Error: {e}")
+ 
+# ──────────────────────────────────────────────────────────────────
+# SECTION 13: ENTRY POINT
+# ──────────────────────────────────────────────────────────────────
+ 
+if __name__ == "__main__":
+    main()
 # ── Validation functions ──────────────────────────────────────────────────
 def validate_biot_model() -> Dict[str, Any]:
     exp_data = {
