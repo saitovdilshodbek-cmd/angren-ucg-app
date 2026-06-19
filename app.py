@@ -76,7 +76,66 @@ from docx.shared import Pt, RGBColor, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
-
+# ──────────────────────────────────────────────────────────────────
+# SECTION 1: IMPORTS & CONFIGURATION
+# ──────────────────────────────────────────────────────────────────
+ 
+import warnings
+import logging
+import logging.config
+import logging.handlers
+import io
+import time
+import functools
+import json
+import os
+import hashlib
+import sqlite3
+import re
+import multiprocessing
+import sys
+import platform
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from datetime import datetime
+from dataclasses import dataclass, asdict, field
+from typing import NamedTuple, Optional, Tuple, List, Dict, Any, Union, Callable
+import random
+import subprocess
+import gc
+from contextlib import contextmanager
+from enum import Enum
+from pathlib import Path
+import traceback
+ 
+# Third-party imports
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from scipy.ndimage import gaussian_filter
+from scipy.stats import linregress, t as t_dist
+from scipy import stats
+from scipy.signal import savgol_filter
+from scipy.integrate import odeint, solve_ivp
+from scipy.special import erfc
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.metrics import accuracy_score, roc_auc_score, r2_score, mean_squared_error, mean_absolute_error
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics.pairwise import cosine_similarity
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import psutil
+ 
+# Streamlit
+import streamlit as st
+st.set_page_config(
+    page_title="UCG SCI-Grade Platform v4.1",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+ 
 # ── Ixtiyoriy kutubxonalar ─────────────────────────────────────────────────
 try:
     import torch
