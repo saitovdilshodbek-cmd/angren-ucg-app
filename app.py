@@ -5926,11 +5926,11 @@ def setup_logging():
 # pytest tests/test_platform.py -v
 # pytest tests/test_platform.py -v --cov=src
 # pytest tests/test_platform.py -v --tb=short
- 
+         
         # ════════════════════════════════════════════════════════════════════════════
         # YANGI VALIDATSIYA BO'LIMLARI
         # ════════════════════════════════════════════════════════════════════════════
-        with st.expander("📊 Adaptive Biot Model Validation (FIX #108)"):
+with st.expander("📊 Adaptive Biot Model Validation (FIX #108)"):
             val_biot = validate_biot_model()
             st.metric("RMSE", f"{val_biot['RMSE']:.4f}")
             st.metric("MAE", f"{val_biot['MAE']:.4f}")
