@@ -5635,6 +5635,104 @@ def main():
             ]:
                 st.write(ref_md)
 
+    # ──────────────────────────────────────────────────────────────────
+# SECTION 11: LOGGING SETUP
+# ──────────────────────────────────────────────────────────────────
+ 
+# Initialize configuration and logger
+config = PlatformConfig()
+logger = logging.getLogger("ucg_platform")
+version_info = VersionInfo()
+cache_manager = CacheManager()
+validator = InputValidator()
+security = SecurityManager()
+data_processor = DataProcessor()
+solver = NumericalSolver()
+ 
+logger.info(f"UCG Platform v{version_info.full_version} started")
+logger.info(f"Platform Config: seed={config.random_seed}, cache_v={config.cache_version}")
+ 
+# ──────────────────────────────────────────────────────────────────
+# SECTION 12: STREAMLIT UI (REFACTORED)
+# ──────────────────────────────────────────────────────────────────
+ 
+def main() -> None:
+    """Main Streamlit application"""
+    try:
+        logger.info("Rendering main application")
+        
+        st.title("🏔️ UCG SCI-Grade Platform")
+        st.subheader(f"v{version_info.full_version}")
+        
+        # Sidebar configuration
+        st.sidebar.header("⚙️ Configuration")
+        
+        # Input validation example
+        try:
+            depth = st.sidebar.number_input(
+                "Seam Depth (m)",
+                min_value=10.0,
+                max_value=1000.0,
+                value=500.0,
+                step=10.0
+            )
+            depth = validator.validate_numeric(depth, min_val=10.0, max_val=1000.0, param_name="Depth")
+            
+            temperature = st.sidebar.number_input(
+                "Max Temperature (°C)",
+                min_value=300.0,
+                max_value=1200.0,
+                value=800.0,
+                step=50.0
+            )
+            temperature = validator.validate_numeric(
+                temperature, min_val=300.0, max_val=1200.0, param_name="Temperature"
+            )
+            
+        except ValidationError as e:
+            st.error(f"❌ Input Error: {e}")
+            logger.error(f"Input validation failed: {e}")
+            return
+        
+        # Main content
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.metric("Seam Depth", f"{depth:.1f} m")
+        
+        with col2:
+            st.metric("Temperature", f"{temperature:.1f} °C")
+        
+        # System information
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("📊 System Info")
+        st.sidebar.write(f"Memory: {psutil.virtual_memory().percent}%")
+        st.sidebar.write(f"CPU: {psutil.cpu_percent()}%")
+        st.sidebar.write(f"Version: {version_info.full_version}")
+        
+        # License
+        license_text = """
+        ⚠️ **Patent Pending** — For research use only
+        
+        ✓ Allowed: Academic, non-profit research
+        ✗ Prohibited: Commercial use without license
+        
+        © 2026 Improved Platform Edition
+        """
+        st.sidebar.warning(license_text)
+        
+        logger.info("Application rendered successfully")
+        
+    except Exception as e:
+        logger.error(f"Application error: {type(e).__name__}: {e}\n{traceback.format_exc()}")
+        st.error(f"❌ Application Error: {e}")
+ 
+# ──────────────────────────────────────────────────────────────────
+# SECTION 13: ENTRY POINT
+# ──────────────────────────────────────────────────────────────────
+ 
+if __name__ == "__main__":
+    main()
     # ── Interactive Dashboard ─────────────────────────────────────────────────
     st.header("🕹️ Interactive UCG Monitoring Dashboard")
     sub_2d = np.tile(sub_p.reshape(1, -1) * 100.0, (len(z_axis), 1))
