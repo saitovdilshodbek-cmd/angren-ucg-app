@@ -162,7 +162,78 @@ logger = logging.getLogger("ucg_platform")
 # ── Takrorlanish uchun seed ────────────────────────────────────────────────
 RANDOM_SEED = 42
 CACHE_VERSION = 2
+# ── Patent API moduli ──────────────────────────────────────────────────
+import requests
+import time
+from typing import Dict, List, Optional
 
+class PatentAPIClient:
+    """Google Patents, Lens.org, WIPO PATENTSCOPE, Espacenet uchun API"""
+    def __init__(self):
+        self.google_patents_url = "https://patents.google.com/patent/"
+        self.lens_url = "https://api.lens.org/patent/search"
+        self.wipo_url = "https://patentscope.wipo.int/search/en/search.jsf"
+        self.espacenet_url = "https://worldwide.espacenet.com/patent/search"
+
+    def search_google_patents(self, query: str, max_results: int = 10) -> List[Dict]:
+        """Google Patents API orqali qidiruv (simulyatsiya)"""
+        # Haqiqiy API yo‘qligi sababli, so‘rovni simulyatsiya qilamiz
+        time.sleep(0.5)
+        return [
+            {"title": f"Patent related to {query[:20]}...", "year": 2020+i, "abstract": "..."}
+            for i in range(min(max_results, 5))
+        ]
+
+    def search_lens(self, query: str) -> List[Dict]:
+        # Lens.org API (kalit kerak)
+        # Bu yerda simulyatsiya
+        return [{"title": f"Lens result for {query}", "year": 2022}]
+
+    def search_wipo(self, query: str) -> List[Dict]:
+        return [{"title": f"WIPO result for {query}", "year": 2021}]
+
+    def search_espacenet(self, query: str) -> List[Dict]:
+        return [{"title": f"Espacenet result for {query}", "year": 2019}]
+
+# NoveltyAnalyzer ni yangilash
+class NoveltyAnalyzerWithAPI(NoveltyAnalyzer):
+    def __init__(self):
+        super().__init__()
+        self.api = PatentAPIClient()
+
+    def search_prior_art(self, feature_name: str) -> List[Dict]:
+        results = []
+        for api_method in [self.api.search_google_patents, self.api.search_lens,
+                           self.api.search_wipo, self.api.search_espacenet]:
+            try:
+                res = api_method(feature_name)
+                results.extend(res)
+            except Exception as e:
+                logger.error(f"API error: {e}")
+        return results
+
+    def generate_novelty_matrix_with_api(self) -> pd.DataFrame:
+        """API dan olingan ma'lumotlar bilan novelty matritsasini yangilaydi"""
+        df = self.generate_novelty_matrix()
+        # Har bir feature uchun API qidiruvini qo‘shamiz
+        new_rows = []
+        for feat in self.features:
+            api_results = self.search_prior_art(feat.name)
+            row = {
+                "Feature": feat.name,
+                "Weight": feat.weight,
+                "API_Prior_Count": len(api_results),
+                "API_Novelty_Score": feat.weight * (1.0 if len(api_results) == 0 else 0.2)
+            }
+            new_rows.append(row)
+        df_api = pd.DataFrame(new_rows)
+        # Asosiy df bilan birlashtiramiz
+        df_combined = df.merge(df_api, on="Feature", suffixes=("", "_api"))
+        # Yangi Novelty Index hisoblaymiz
+        total_weight = df_combined["Weight"].sum()
+        novelty_idx = df_combined["API_Novelty_Score"].sum() / total_weight * 100
+        df_combined.attrs["Novelty_Index_API"] = novelty_idx
+        return df_combined
 # ==============================================
 # [FIX #10] VersionInfo va Git commit (timeout bilan)
 # ==============================================
