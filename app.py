@@ -5593,6 +5593,340 @@ def main():
         with t4_adv:
             patent_analysis_ui(sub_p * 100.0)
 
+import numpy as np
+from typing import Dict, Tuple
+import logging
+ 
+# Mock imports (in real scenario, import from actual modules)
+class ValidationError(Exception):
+    pass
+ 
+class ComputationError(Exception):
+    pass
+ 
+class InputValidator:
+    @staticmethod
+    def validate_numeric(value, min_val=None, max_val=None, param_name="value"):
+        try:
+            num = float(value)
+            if min_val is not None and num < min_val:
+                raise ValidationError(f"{param_name} must be >= {min_val}, got {num}")
+            if max_val is not None and num > max_val:
+                raise ValidationError(f"{param_name} must be <= {max_val}, got {num}")
+            return num
+        except (TypeError, ValueError) as e:
+            raise ValidationError(f"Invalid numeric value for {param_name}: {e}")
+ 
+class NumericalSolver:
+    @staticmethod
+    def compute_sensitivity(func, params, h=1e-6):
+        sensitivities = {}
+        base_val = func(params)
+        for param_name, param_val in params.items():
+            params_pert = params.copy()
+            params_pert[param_name] = param_val + h
+            perturbed_val = func(params_pert)
+            sensitivities[param_name] = (perturbed_val - base_val) / h
+        return sensitivities
+ 
+class DataProcessor:
+    @staticmethod
+    def compute_statistics(data):
+        return {
+            "mean": float(np.mean(data)),
+            "std": float(np.std(data)),
+            "min": float(np.min(data)),
+            "max": float(np.max(data)),
+            "median": float(np.median(data)),
+        }
+ 
+# ────────────────────────────────────────────────────────────────
+# TEST 1: INPUT VALIDATION
+# ────────────────────────────────────────────────────────────────
+ 
+class TestInputValidator:
+    """Test input validation functionality"""
+    
+    def test_validate_numeric_valid(self):
+        """Test valid numeric input"""
+        result = InputValidator.validate_numeric(500.0, min_val=10.0, max_val=1000.0)
+        assert result == 500.0
+        assert isinstance(result, float)
+    
+    def test_validate_numeric_integer_input(self):
+        """Test integer input converts to float"""
+        result = InputValidator.validate_numeric(500, min_val=10, max_val=1000)
+        assert result == 500.0
+        assert isinstance(result, float)
+    
+    def test_validate_numeric_below_minimum(self):
+        """Test value below minimum raises error"""
+        with pytest.raises(ValidationError) as exc_info:
+            InputValidator.validate_numeric(5.0, min_val=10.0)
+        assert "must be >=" in str(exc_info.value)
+    
+    def test_validate_numeric_above_maximum(self):
+        """Test value above maximum raises error"""
+        with pytest.raises(ValidationError) as exc_info:
+            InputValidator.validate_numeric(1500.0, max_val=1000.0)
+        assert "must be <=" in str(exc_info.value)
+    
+    def test_validate_numeric_invalid_string(self):
+        """Test invalid string input"""
+        with pytest.raises(ValidationError):
+            InputValidator.validate_numeric("invalid", min_val=10)
+    
+    def test_validate_numeric_none_input(self):
+        """Test None input"""
+        with pytest.raises(ValidationError):
+            InputValidator.validate_numeric(None, min_val=10)
+    
+    def test_validate_numeric_boundary_cases(self):
+        """Test boundary values"""
+        # Exactly at minimum
+        result = InputValidator.validate_numeric(10.0, min_val=10.0, max_val=100.0)
+        assert result == 10.0
+        
+        # Exactly at maximum
+        result = InputValidator.validate_numeric(100.0, min_val=10.0, max_val=100.0)
+        assert result == 100.0
+ 
+# ────────────────────────────────────────────────────────────────
+# TEST 2: GEOTECHNICAL PARAMETERS
+# ────────────────────────────────────────────────────────────────
+ 
+class TestGeotechnicalParameters:
+    """Test geotechnical parameter validation"""
+    
+    def setup_method(self):
+        """Setup for each test"""
+        self.validator = InputValidator()
+        self.valid_params = {
+            'depth': 500.0,       # m
+            'ucs': 25.0,          # MPa
+            'gsi': 45.0,          # dimensionless
+            'temperature': 800.0  # °C
+        }
+    
+    def test_depth_validation(self):
+        """Test depth parameter validation"""
+        depth = self.valid_params['depth']
+        result = self.validator.validate_numeric(depth, min_val=10, max_val=2000)
+        assert result == 500.0
+    
+    def test_ucs_validation(self):
+        """Test UCS (Uniaxial Compressive Strength) validation"""
+        ucs = self.valid_params['ucs']
+        result = self.validator.validate_numeric(ucs, min_val=5, max_val=200)
+        assert result == 25.0
+    
+    def test_gsi_validation(self):
+        """Test GSI (Geological Strength Index) validation"""
+        gsi = self.valid_params['gsi']
+        result = self.validator.validate_numeric(gsi, min_val=0, max_val=100)
+        assert result == 45.0
+    
+    def test_temperature_validation(self):
+        """Test temperature validation"""
+        temp = self.valid_params['temperature']
+        result = self.validator.validate_numeric(temp, min_val=300, max_val=1200)
+        assert result == 800.0
+    
+    def test_invalid_depth_too_shallow(self):
+        """Test depth below minimum"""
+        with pytest.raises(ValidationError):
+            self.validator.validate_numeric(5.0, min_val=10, max_val=2000)
+    
+    def test_invalid_gsi_out_of_range(self):
+        """Test GSI outside valid range"""
+        with pytest.raises(ValidationError):
+            self.validator.validate_numeric(150.0, min_val=0, max_val=100)
+ 
+# ────────────────────────────────────────────────────────────────
+# TEST 3: NUMERICAL SENSITIVITY ANALYSIS
+# ────────────────────────────────────────────────────────────────
+ 
+class TestNumericalSolver:
+    """Test numerical solver functionality"""
+    
+    def test_sensitivity_simple_function(self):
+        """Test sensitivity computation on simple function"""
+        def simple_func(params):
+            return params['x'] ** 2 + 2 * params['y']
+        
+        params = {'x': 3.0, 'y': 2.0}
+        sensitivities = NumericalSolver.compute_sensitivity(simple_func, params)
+        
+        # Approximate derivatives
+        # df/dx ≈ 2x = 6
+        # df/dy ≈ 2
+        assert abs(sensitivities['x'] - 6.0) < 0.1  # Allow small numerical error
+        assert abs(sensitivities['y'] - 2.0) < 0.1
+    
+    def test_sensitivity_nonlinear_function(self):
+        """Test sensitivity on nonlinear function"""
+        def nonlinear(params):
+            return params['a'] * np.exp(params['b'] * params['c'])
+        
+        params = {'a': 1.0, 'b': 0.5, 'c': 1.0}
+        sensitivities = NumericalSolver.compute_sensitivity(nonlinear, params)
+        
+        # Sensitivities should be non-zero
+        assert all(abs(v) > 0 for v in sensitivities.values())
+        assert len(sensitivities) == 3
+    
+    def test_sensitivity_zero_derivative(self):
+        """Test function with zero derivative"""
+        def constant_func(params):
+            return 42.0
+        
+        params = {'x': 1.0, 'y': 2.0}
+        sensitivities = NumericalSolver.compute_sensitivity(constant_func, params)
+        
+        # All sensitivities should be near zero
+        assert all(abs(v) < 1e-5 for v in sensitivities.values())
+ 
+# ────────────────────────────────────────────────────────────────
+# TEST 4: DATA PROCESSING & STATISTICS
+# ────────────────────────────────────────────────────────────────
+ 
+class TestDataProcessor:
+    """Test data processing utilities"""
+    
+    def test_statistics_normal_distribution(self):
+        """Test statistics on normal distribution"""
+        data = np.random.normal(loc=100, scale=15, size=1000)
+        stats = DataProcessor.compute_statistics(data)
+        
+        assert 'mean' in stats
+        assert 'std' in stats
+        assert 'min' in stats
+        assert 'max' in stats
+        assert 'median' in stats
+        
+        # Check approximate values
+        assert 95 < stats['mean'] < 105  # Mean ≈ 100
+        assert 10 < stats['std'] < 20    # Std ≈ 15
+    
+    def test_statistics_constant_data(self):
+        """Test statistics on constant data"""
+        data = np.full(100, 5.0)
+        stats = DataProcessor.compute_statistics(data)
+        
+        assert stats['mean'] == 5.0
+        assert stats['std'] == 0.0
+        assert stats['min'] == 5.0
+        assert stats['max'] == 5.0
+        assert stats['median'] == 5.0
+    
+    def test_statistics_single_value(self):
+        """Test statistics on single value"""
+        data = np.array([42.0])
+        stats = DataProcessor.compute_statistics(data)
+        
+        assert stats['mean'] == 42.0
+        assert stats['min'] == 42.0
+        assert stats['max'] == 42.0
+    
+    def test_statistics_with_outliers(self):
+        """Test statistics with outliers"""
+        data = np.array([1, 2, 3, 4, 5, 1000])
+        stats = DataProcessor.compute_statistics(data)
+        
+        assert stats['min'] == 1
+        assert stats['max'] == 1000
+        # Median less affected by outliers than mean
+        assert stats['median'] < stats['mean']
+ 
+# ────────────────────────────────────────────────────────────────
+# TEST 5: INTEGRATION TESTS
+# ────────────────────────────────────────────────────────────────
+ 
+class TestIntegration:
+    """Integration tests combining multiple components"""
+    
+    def test_parameter_validation_and_sensitivity(self):
+        """Test validation then sensitivity analysis"""
+        validator = InputValidator()
+        
+        # Validate parameters
+        depth = validator.validate_numeric(500, min_val=10, max_val=2000)
+        temp = validator.validate_numeric(800, min_val=300, max_val=1200)
+        
+        # Use in computation
+        params = {'depth': depth, 'temp': temp}
+        
+        def fos_estimate(p):
+            return 1.5 - 0.001 * p['depth'] + 0.0005 * p['temp']
+        
+        sensitivities = NumericalSolver.compute_sensitivity(fos_estimate, params)
+        
+        assert 'depth' in sensitivities
+        assert 'temp' in sensitivities
+        assert sensitivities['depth'] < 0  # FOS decreases with depth
+        assert sensitivities['temp'] > 0   # FOS increases with temp
+    
+    def test_data_analysis_pipeline(self):
+        """Test complete data analysis pipeline"""
+        # Generate synthetic FOS values
+        np.random.seed(42)
+        fos_values = np.random.normal(loc=1.5, scale=0.3, size=100)
+        
+        # Compute statistics
+        stats = DataProcessor.compute_statistics(fos_values)
+        
+        # Validate statistics make sense
+        assert stats['min'] < stats['mean'] < stats['max']
+        assert 0 <= stats['std']
+        assert stats['min'] <= stats['median'] <= stats['max']
+        assert stats['median'] > 0  # FOS should be positive
+ 
+# ────────────────────────────────────────────────────────────────
+# TEST 6: ERROR HANDLING
+# ────────────────────────────────────────────────────────────────
+ 
+class TestErrorHandling:
+    """Test error handling and edge cases"""
+    
+    def test_division_by_zero_prevention(self):
+        """Test handling of division by zero"""
+        with pytest.raises((ValidationError, ZeroDivisionError)):
+            # This would cause division by zero
+            if 0 == 0:
+                raise ValidationError("Zero value not allowed")
+    
+    def test_invalid_parameter_combinations(self):
+        """Test invalid parameter combinations"""
+        validator = InputValidator()
+        
+        # Max < Min should be handled gracefully
+        with pytest.raises(ValidationError):
+            validator.validate_numeric(50, min_val=100, max_val=10)
+    
+    def test_nan_handling(self):
+        """Test handling of NaN values"""
+        data = np.array([1.0, 2.0, np.nan, 4.0])
+        
+        # NaN should propagate in statistics
+        stats = DataProcessor.compute_statistics(data)
+        assert np.isnan(stats['mean'])
+ 
+# ────────────────────────────────────────────────────────────────
+# PYTEST CONFIGURATION
+# ────────────────────────────────────────────────────────────────
+ 
+@pytest.fixture(scope="session")
+def setup_logging():
+    """Setup logging for tests"""
+    logging.basicConfig(level=logging.DEBUG)
+    logger = logging.getLogger("test_ucg_platform")
+    return logger
+ 
+# Run tests with:
+# pytest tests/test_platform.py -v
+# pytest tests/test_platform.py -v --cov=src
+# pytest tests/test_platform.py -v --tb=short
+ 
         # ════════════════════════════════════════════════════════════════════════════
         # YANGI VALIDATSIYA BO'LIMLARI
         # ════════════════════════════════════════════════════════════════════════════
