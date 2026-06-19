@@ -1331,7 +1331,463 @@ FORMULA_OPTIONS = {
     'ru': ["Закрыть", "1. Разрушение Хука-Брауна (2018)", "2. Термическое повреждение и проницаемость",
            "3. Термическое напряжение и растяжение", "4. Целик и оседание"]
 }
-
+import os
+from enum import Enum
+from dataclasses import dataclass, field
+from typing import Optional, Dict, Any
+import json
+from pathlib import Path
+ 
+# ─────────────────────────────────────────────────────────────────
+# CONFIGURATION ENUMS
+# ─────────────────────────────────────────────────────────────────
+ 
+class ConfigEnvironment(str, Enum):
+    """Configuration environment"""
+    DEVELOPMENT = "development"
+    TESTING = "testing"
+    STAGING = "staging"
+    PRODUCTION = "production"
+ 
+class LogLevel(str, Enum):
+    """Logging levels"""
+    DEBUG = "DEBUG"
+    INFO = "INFO"
+    WARNING = "WARNING"
+    ERROR = "ERROR"
+    CRITICAL = "CRITICAL"
+ 
+# ─────────────────────────────────────────────────────────────────
+# NESTED CONFIGURATION DATACLASSES
+# ─────────────────────────────────────────────────────────────────
+ 
+@dataclass
+class GeotechnicalConfig:
+    """Geotechnical parameter constraints"""
+    
+    # Depth constraints (meters)
+    min_depth: float = 10.0
+    max_depth: float = 2000.0
+    default_depth: float = 500.0
+    
+    # UCS (Uniaxial Compressive Strength) constraints (MPa)
+    min_ucs: float = 5.0
+    max_ucs: float = 200.0
+    default_ucs: float = 25.0
+    
+    # GSI (Geological Strength Index) constraints
+    min_gsi: float = 0.0
+    max_gsi: float = 100.0
+    default_gsi: float = 45.0
+    
+    # Temperature constraints (°C)
+    min_temperature: float = 300.0
+    max_temperature: float = 1200.0
+    default_temperature: float = 800.0
+    
+    # Poisson's ratio constraints
+    min_poisson: float = 0.1
+    max_poisson: float = 0.4
+    default_poisson: float = 0.25
+    
+    # Biot coefficient constraints
+    min_biot: float = 0.5
+    max_biot: float = 1.0
+    default_biot: float = 0.8
+ 
+@dataclass
+class NumericalConfig:
+    """Numerical computation settings"""
+    
+    # ODE solver settings
+    ode_method: str = "RK45"  # RK45, RK23, DOP853, Radau, BDF, LSODA
+    ode_rtol: float = 1e-6
+    ode_atol: float = 1e-9
+    ode_max_step: float = 10.0
+    
+    # Finite difference settings
+    fd_step_size: float = 1e-6
+    fd_max_iterations: int = 100
+    
+    # Convergence criteria
+    convergence_tolerance: float = 0.01
+    max_iterations: int = 1000
+    
+    # Grid/mesh settings
+    min_grid_points: int = 50
+    max_grid_points: int = 1000
+    default_grid_points: int = 200
+    
+    # Time stepping
+    min_timestep: float = 0.001
+    max_timestep: float = 100.0
+    
+    # Mesh convergence test
+    convergence_study_resolutions: list = field(default_factory=lambda: [
+        (100, 80), (150, 120), (200, 160), (300, 240), (400, 320)
+    ])
+ 
+@dataclass
+class CachingConfig:
+    """Caching configuration"""
+    
+    # Cache settings
+    enabled: bool = True
+    max_size: int = 128
+    ttl_seconds: int = 3600  # 1 hour
+    
+    # Cache backends
+    use_redis: bool = False
+    redis_host: str = "localhost"
+    redis_port: int = 6379
+    redis_db: int = 0
+    
+    # Cache key prefix
+    key_prefix: str = "ucg_platform"
+    
+    # Cache clearing
+    auto_clear_on_startup: bool = True
+ 
+@dataclass
+class LoggingConfig:
+    """Logging configuration"""
+    
+    # Log level
+    level: LogLevel = LogLevel.INFO
+    
+    # Log format
+    format: str = "%(asctime)s | %(name)s | %(levelname)-8s | %(funcName)s:%(lineno)d | %(message)s"
+    date_format: str = "%Y-%m-%d %H:%M:%S"
+    
+    # File logging
+    log_file: str = "ucg_platform.log"
+    max_bytes: int = 10 * 1024 * 1024  # 10 MB
+    backup_count: int = 5
+    
+    # Console logging
+    console_enabled: bool = True
+    console_level: LogLevel = LogLevel.INFO
+    
+    # File logging
+    file_enabled: bool = True
+    file_level: LogLevel = LogLevel.DEBUG
+ 
+@dataclass
+class SecurityConfig:
+    """Security configuration"""
+    
+    # Input validation
+    max_string_length: int = 255
+    sanitize_inputs: bool = True
+    
+    # Hashing
+    hash_algorithm: str = "sha256"
+    
+    # Rate limiting
+    rate_limit_enabled: bool = True
+    requests_per_minute: int = 60
+    
+    # API key validation
+    require_api_key: bool = False
+    api_key_header: str = "X-API-Key"
+ 
+@dataclass
+class PerformanceConfig:
+    """Performance tuning"""
+    
+    # Batch processing
+    batch_size: int = 1000
+    chunk_size: int = 100
+    
+    # Parallel processing
+    enable_multiprocessing: bool = True
+    num_workers: int = 4  # CPU count
+    
+    # Memory management
+    enable_gc: bool = True
+    gc_interval: int = 100  # iterations
+    gc_threshold: int = 100 * 1024 * 1024  # 100 MB
+    
+    # Optimization
+    vectorize_operations: bool = True
+    use_numba_jit: bool = True
+ 
+@dataclass
+class UIConfig:
+    """Streamlit UI configuration"""
+    
+    # Page layout
+    page_title: str = "UCG SCI-Grade Platform v4.1"
+    page_layout: str = "wide"
+    initial_sidebar_state: str = "expanded"
+    
+    # Theme
+    theme_mode: str = "light"
+    primary_color: str = "#0078D4"
+    secondary_color: str = "#FF6B35"
+    
+    # UI elements
+    show_footer: bool = True
+    show_metrics: bool = True
+    show_charts: bool = True
+    
+    # Refresh rates
+    refresh_interval_seconds: int = 5
+    
+    # Export settings
+    enable_export_excel: bool = True
+    enable_export_pdf: bool = True
+    enable_export_json: bool = True
+ 
+@dataclass
+class VisualizationConfig:
+    """Visualization settings"""
+    
+    # Plot settings
+    plot_theme: str = "plotly_dark"
+    plot_width: int = 1200
+    plot_height: int = 600
+    
+    # Color schemes
+    colorscale_fos: str = "Turbo"
+    colorscale_displacement: str = "Viridis"
+    colorscale_stress: str = "RdBu"
+    
+    # Animation
+    enable_animation: bool = True
+    animation_frames: int = 50
+    animation_duration_ms: int = 2000
+    
+    # 3D visualization
+    enable_3d: bool = True
+    camera_distance: float = 1.5
+ 
+@dataclass
+class DatabaseConfig:
+    """Database configuration"""
+    
+    # SQLite
+    use_sqlite: bool = True
+    sqlite_path: str = "ucg_platform.db"
+    
+    # PostgreSQL (optional)
+    use_postgres: bool = False
+    postgres_host: str = "localhost"
+    postgres_port: int = 5432
+    postgres_user: str = "postgres"
+    postgres_password: str = ""
+    postgres_database: str = "ucg_platform"
+    
+    # Backup
+    enable_backup: bool = True
+    backup_interval_hours: int = 24
+ 
+@dataclass
+class APIConfig:
+    """API configuration"""
+    
+    # Server settings
+    host: str = "0.0.0.0"
+    port: int = 8000
+    debug: bool = False
+    
+    # CORS
+    enable_cors: bool = True
+    allowed_origins: list = field(default_factory=lambda: ["*"])
+    
+    # API versioning
+    api_version: str = "v1"
+    
+    # Documentation
+    enable_swagger: bool = True
+    enable_redoc: bool = True
+ 
+@dataclass
+class PlatformConfig:
+    """Main platform configuration"""
+    
+    # Environment
+    environment: ConfigEnvironment = ConfigEnvironment.DEVELOPMENT
+    
+    # Version info
+    version_major: int = 4
+    version_minor: int = 1
+    version_patch: int = 0
+    prerelease: str = "improved"
+    
+    # Random seed
+    random_seed: int = 42
+    
+    # Cache version
+    cache_version: int = 2
+    
+    # Nested configurations
+    geotechnical: GeotechnicalConfig = field(default_factory=GeotechnicalConfig)
+    numerical: NumericalConfig = field(default_factory=NumericalConfig)
+    caching: CachingConfig = field(default_factory=CachingConfig)
+    logging: LoggingConfig = field(default_factory=LoggingConfig)
+    security: SecurityConfig = field(default_factory=SecurityConfig)
+    performance: PerformanceConfig = field(default_factory=PerformanceConfig)
+    ui: UIConfig = field(default_factory=UIConfig)
+    visualization: VisualizationConfig = field(default_factory=VisualizationConfig)
+    database: DatabaseConfig = field(default_factory=DatabaseConfig)
+    api: APIConfig = field(default_factory=APIConfig)
+    
+    @property
+    def full_version(self) -> str:
+        """Get full version string"""
+        v = f"{self.version_major}.{self.version_minor}.{self.version_patch}"
+        if self.prerelease:
+            v += f"-{self.prerelease}"
+        return v
+    
+    def is_production(self) -> bool:
+        """Check if production environment"""
+        return self.environment == ConfigEnvironment.PRODUCTION
+    
+    def is_development(self) -> bool:
+        """Check if development environment"""
+        return self.environment == ConfigEnvironment.DEVELOPMENT
+ 
+# ─────────────────────────────────────────────────────────────────
+# CONFIGURATION FACTORY
+# ─────────────────────────────────────────────────────────────────
+ 
+class ConfigFactory:
+    """Factory for creating configurations"""
+    
+    _CONFIGS: Dict[ConfigEnvironment, PlatformConfig] = {}
+    
+    @staticmethod
+    def create_development_config() -> PlatformConfig:
+        """Create development configuration"""
+        config = PlatformConfig(environment=ConfigEnvironment.DEVELOPMENT)
+        config.logging.level = LogLevel.DEBUG
+        config.numerical.ode_rtol = 1e-5
+        config.caching.enabled = False
+        config.security.sanitize_inputs = True
+        return config
+    
+    @staticmethod
+    def create_testing_config() -> PlatformConfig:
+        """Create testing configuration"""
+        config = PlatformConfig(environment=ConfigEnvironment.TESTING)
+        config.logging.level = LogLevel.DEBUG
+        config.logging.file_enabled = False
+        config.caching.max_size = 10
+        config.caching.ttl_seconds = 60
+        config.database.sqlite_path = ":memory:"  # In-memory DB
+        return config
+    
+    @staticmethod
+    def create_staging_config() -> PlatformConfig:
+        """Create staging configuration"""
+        config = PlatformConfig(environment=ConfigEnvironment.STAGING)
+        config.logging.level = LogLevel.INFO
+        config.numerical.ode_rtol = 1e-7
+        config.caching.enabled = True
+        config.security.require_api_key = True
+        return config
+    
+    @staticmethod
+    def create_production_config() -> PlatformConfig:
+        """Create production configuration"""
+        config = PlatformConfig(environment=ConfigEnvironment.PRODUCTION)
+        config.logging.level = LogLevel.WARNING
+        config.numerical.ode_rtol = 1e-8
+        config.caching.enabled = True
+        config.caching.use_redis = True
+        config.security.sanitize_inputs = True
+        config.security.require_api_key = True
+        return config
+    
+    @classmethod
+    def get_config(cls, environment: ConfigEnvironment) -> PlatformConfig:
+        """Get configuration for environment"""
+        if environment not in cls._CONFIGS:
+            if environment == ConfigEnvironment.DEVELOPMENT:
+                cls._CONFIGS[environment] = cls.create_development_config()
+            elif environment == ConfigEnvironment.TESTING:
+                cls._CONFIGS[environment] = cls.create_testing_config()
+            elif environment == ConfigEnvironment.STAGING:
+                cls._CONFIGS[environment] = cls.create_staging_config()
+            elif environment == ConfigEnvironment.PRODUCTION:
+                cls._CONFIGS[environment] = cls.create_production_config()
+        
+        return cls._CONFIGS[environment]
+ 
+# ─────────────────────────────────────────────────────────────────
+# ENVIRONMENT-BASED CONFIGURATION
+# ─────────────────────────────────────────────────────────────────
+ 
+def get_environment() -> ConfigEnvironment:
+    """Get environment from environment variable"""
+    env_str = os.getenv("UCG_ENVIRONMENT", "development").lower()
+    try:
+        return ConfigEnvironment(env_str)
+    except ValueError:
+        return ConfigEnvironment.DEVELOPMENT
+ 
+def get_config(environment: Optional[ConfigEnvironment] = None) -> PlatformConfig:
+    """Get configuration"""
+    if environment is None:
+        environment = get_environment()
+    return ConfigFactory.get_config(environment)
+ 
+# ─────────────────────────────────────────────────────────────────
+# CONFIGURATION FROM FILE
+# ─────────────────────────────────────────────────────────────────
+ 
+def load_config_from_json(filepath: str) -> PlatformConfig:
+    """Load configuration from JSON file"""
+    config_path = Path(filepath)
+    if not config_path.exists():
+        raise FileNotFoundError(f"Config file not found: {filepath}")
+    
+    with open(config_path, 'r') as f:
+        config_dict = json.load(f)
+    
+    return PlatformConfig(**config_dict)
+ 
+def save_config_to_json(config: PlatformConfig, filepath: str) -> None:
+    """Save configuration to JSON file"""
+    from dataclasses import asdict
+    config_path = Path(filepath)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    with open(config_path, 'w') as f:
+        json.dump(asdict(config), f, indent=2)
+ 
+# ─────────────────────────────────────────────────────────────────
+# USAGE EXAMPLES
+# ─────────────────────────────────────────────────────────────────
+ 
+if __name__ == "__main__":
+    # Example 1: Get configuration
+    config = get_config()
+    print(f"Platform Version: {config.full_version}")
+    print(f"Environment: {config.environment.value}")
+    print(f"Min Depth: {config.geotechnical.min_depth}")
+    
+    # Example 2: Environment-specific
+    import os
+    os.environ["UCG_ENVIRONMENT"] = "production"
+    prod_config = get_config()
+    print(f"Production Logging Level: {prod_config.logging.level.value}")
+    
+    # Example 3: Access nested configuration
+    depth = config.geotechnical.default_depth
+    ode_method = config.numerical.ode_method
+    print(f"Default Depth: {depth}m")
+    print(f"ODE Method: {ode_method}")
+    
+    # Example 4: Save configuration
+    save_config_to_json(config, "config.json")
+    
+    # Example 5: Load from file
+    loaded_config = load_config_from_json("config.json")
+    print(f"Loaded Version: {loaded_config.full_version}")
+ 
 # ── Session state ────────────────────────────────────────────────────────
 def _init_session() -> None:
     defaults = {
