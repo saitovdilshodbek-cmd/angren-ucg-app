@@ -5945,8 +5945,7 @@ with st.expander("📊 Adaptive Biot Model Validation (FIX #108)"):
                                    yaxis_title='Biot coefficient α')
             st.plotly_chart(fig_biot, use_container_width=True)
             st.caption("Eksperimental ma'lumotlar: Biot (1941) va Terzaghi (1943) asosida. Model RMSE < 0.05 maqbul.")
-
-        with st.expander("🧪 Hoek-Brown Validation (FLAC3D benchmark) (FIX #111)"):
+with st.expander("🧪 Hoek-Brown Validation (FLAC3D benchmark) (FIX #111)"):
             val_hb = validate_hoek_brown()
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Uniaxial error %", f"{val_hb['uniaxial_error_pct']:.2f}%")
