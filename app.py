@@ -54,7 +54,7 @@ import platform
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 from dataclasses import dataclass, asdict, field
-from typing import NamedTuple, Optional, Tuple, List, Dict, Any, Union, Callable
+from typing import NamedTuple, Optional, Tuple, List, Dict, Any, Union, Callable, Sequence
 import random
 import subprocess
 import gc
@@ -100,13 +100,11 @@ try:
 except ImportError:
     PT_AVAILABLE = False
     device = "cpu"
-    logger_temp = logging.getLogger(__name__)
-    logger_temp.warning("PyTorch not available. CPU fallback activated.")
+    BOOTSTRAP_LOGGER.warning("PyTorch not available. CPU fallback activated.")
 except Exception as e:
     PT_AVAILABLE = False
     device = "cpu"
-    logger_temp = logging.getLogger(__name__)
-    logger_temp.error(f"PyTorch initialization error: {type(e).__name__}: {e}")
+    BOOTSTRAP_LOGGER.error(f"PyTorch initialization error: {type(e).__name__}: {e}")
 
 try:
     from SALib.sample import saltelli
@@ -133,6 +131,93 @@ try:
 except ImportError:
     SHAP_AVAILABLE = False
 
+BOOTSTRAP_LOGGER = logging.getLogger("ucg_platform.bootstrap")
+DEFAULT_LOG_DIR = Path(os.getenv("UCG_LOG_DIR", Path.home() / ".ucg_platform" / "logs")).expanduser()
+DEFAULT_REPORT_DIR = "reports"
+MAX_SUBPROCESS_TIMEOUT_SEC = 2.0
+MAX_STREAMLIT_CACHE_ENTRIES = 32
+SAFE_SUBPROCESS_COMMANDS: Tuple[Tuple[str, ...], ...] = (
+    ("git", "rev-parse", "--short", "HEAD"),
+)
+
+
+def _resolve_log_file() -> str:
+    """Yozish mumkin bo'lgan log fayl yo'lini aniqlaydi."""
+    candidate_dirs = [
+        DEFAULT_LOG_DIR,
+        Path.cwd() / "logs",
+        Path("/tmp/ucg_platform_logs"),
+    ]
+    for log_dir in candidate_dirs:
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)
+            return str((log_dir / "ucg_platform.log").resolve())
+        except OSError:
+            continue
+    return str((Path.cwd() / "ucg_platform.log").resolve())
+
+
+def run_safe_subprocess(
+    command: Sequence[str],
+    timeout: float = MAX_SUBPROCESS_TIMEOUT_SEC,
+    cwd: Optional[Union[str, Path]] = None,
+) -> str:
+    """Faqat ruxsat etilgan buyruqlarni timeout bilan ishga tushiradi."""
+    normalized = tuple(str(part) for part in command)
+    if normalized not in SAFE_SUBPROCESS_COMMANDS:
+        raise ValueError(f"Unsupported subprocess command: {normalized}")
+
+    resolved_cwd = Path(cwd or os.getcwd()).resolve()
+    return subprocess.check_output(
+        list(normalized),
+        text=True,
+        timeout=max(0.1, float(timeout)),
+        stderr=subprocess.DEVNULL,
+        cwd=str(resolved_cwd),
+    ).strip()
+
+
+def _to_1d_float_array(values: Any, name: str) -> np.ndarray:
+    """Qiymatni tekis va sonli NumPy massivga o'tkazadi."""
+    array = np.asarray(values, dtype=float).reshape(-1)
+    if array.size == 0:
+        raise ValueError(f"`{name}` bo'sh bo'lmasligi kerak")
+    if not np.all(np.isfinite(array)):
+        raise ValueError(f"`{name}` ichida faqat chekli sonlar bo'lishi kerak")
+    return array
+
+
+def _align_prediction_to_reference(
+    prediction: np.ndarray,
+    x_prediction: np.ndarray,
+    x_reference: np.ndarray,
+    reference_name: str,
+) -> np.ndarray:
+    """Prediction va reference o'qlarini moslab beradi."""
+    pred = _to_1d_float_array(prediction, "prediction")
+    x_pred = _to_1d_float_array(x_prediction, "x_prediction")
+    x_ref = _to_1d_float_array(x_reference, reference_name)
+
+    if pred.size != x_pred.size:
+        raise ValueError("`prediction` va `x_prediction` uzunliklari bir xil bo'lishi kerak")
+    if x_pred.size < 2 or x_ref.size < 2:
+        raise ValueError("Interpolatsiya uchun kamida 2 ta nuqta kerak")
+
+    order = np.argsort(x_pred)
+    x_pred = x_pred[order]
+    pred = pred[order]
+
+    unique_mask = np.concatenate(([True], np.diff(x_pred) > 0))
+    x_pred = x_pred[unique_mask]
+    pred = pred[unique_mask]
+    if x_pred.size < 2:
+        raise ValueError("`x_prediction` ichida takrorlanmagan kamida 2 ta nuqta bo'lishi kerak")
+
+    from scipy.interpolate import interp1d
+
+    interpolator = interp1d(x_pred, pred, kind="linear", fill_value="extrapolate", assume_sorted=True)
+    return np.asarray(interpolator(x_ref), dtype=float).reshape(-1)
+
 # ── Logging (FIX #5: eng boshida) ──────────────────────────────────────────
 LOGGING_CONFIG = {
     "version": 1,
@@ -157,7 +242,7 @@ LOGGING_CONFIG = {
             "class": "logging.handlers.RotatingFileHandler",
             "level": "DEBUG",
             "formatter": "detailed",
-            "filename": "ucg_platform.log",
+            "filename": _resolve_log_file(),
             "encoding": "utf-8",
             "maxBytes": 10*1024*1024,
             "backupCount": 5
@@ -175,7 +260,7 @@ logger = logging.getLogger("ucg_platform")
 
 # ── Takrorlanish uchun seed ────────────────────────────────────────────────
 RANDOM_SEED = 42
-CACHE_VERSION = 2
+CACHE_VERSION = 3
 
 # ==============================================
 # [FIX #10] VersionInfo va Git commit (timeout bilan)
@@ -195,14 +280,9 @@ class VersionInfo:
         return v
     
     def get_git_commit(self) -> str:
+        """Git commit hashini xavfsiz ravishda qaytaradi."""
         try:
-            return subprocess.check_output(
-                ['git', 'rev-parse', '--short', 'HEAD'],
-                text=True,
-                timeout=1,
-                stderr=subprocess.DEVNULL,
-                cwd=os.getcwd()
-            ).strip()
+            return run_safe_subprocess(["git", "rev-parse", "--short", "HEAD"], cwd=os.getcwd())
         except Exception:
             return "unknown"
 
@@ -892,14 +972,14 @@ def benchmark_model(experimental: np.ndarray, prediction: np.ndarray, model_name
         source_path=source_path,
     )
 
-@st.cache_data
+@st.cache_data(show_spinner=False, max_entries=MAX_STREAMLIT_CACHE_ENTRIES)
 def load_flac3d_benchmark_data(csv_path: Optional[str] = None) -> Dict[str, Any]:
     x = np.linspace(0, 50, 100)
     subsidence_flac = -0.3 * (1 - np.exp(-0.02 * x)) * 100  # cm
     dataset = load_benchmark_dataset("FLAC3D", csv_path, fallback_x=x, fallback_y=subsidence_flac)
     return {"x": dataset.x, "subsidence_cm": dataset.y, "source_type": dataset.source_type, "source_path": dataset.source_path}
 
-@st.cache_data
+@st.cache_data(show_spinner=False, max_entries=MAX_STREAMLIT_CACHE_ENTRIES)
 def load_rs2_benchmark_data(csv_path: Optional[str] = None) -> Dict[str, Any]:
     x = np.linspace(0, 50, 100)
     subsidence_rs2 = -0.28 * (1 - np.exp(-0.018 * x)) * 100
@@ -907,20 +987,16 @@ def load_rs2_benchmark_data(csv_path: Optional[str] = None) -> Dict[str, Any]:
     return {"x": dataset.x, "subsidence_cm": dataset.y, "source_type": dataset.source_type, "source_path": dataset.source_path}
 
 def compare_flac3d(ucg_prediction: np.ndarray, flac_data: Dict[str, np.ndarray], x_ucg: np.ndarray) -> BenchmarkResult:
-    flac_x = flac_data["x"]
-    flac_y = flac_data["subsidence_cm"]
-    from scipy.interpolate import interp1d
-    f = interp1d(x_ucg, ucg_prediction, kind='linear', fill_value='extrapolate')
-    ucg_aligned = f(flac_x)
+    flac_x = _to_1d_float_array(flac_data["x"], "flac_x")
+    flac_y = _to_1d_float_array(flac_data["subsidence_cm"], "flac_y")
+    ucg_aligned = _align_prediction_to_reference(ucg_prediction, x_ucg, flac_x, "flac_x")
     return benchmark_model(flac_y, ucg_aligned, "FLAC3D", source_type=flac_data.get("source_type", "synthetic_fallback"),
                            source_path=flac_data.get("source_path"))
 
 def compare_rs2(ucg_prediction: np.ndarray, rs2_data: Dict[str, np.ndarray], x_ucg: np.ndarray) -> BenchmarkResult:
-    rs2_x = rs2_data["x"]
-    rs2_y = rs2_data["subsidence_cm"]
-    from scipy.interpolate import interp1d
-    f = interp1d(x_ucg, ucg_prediction, kind='linear', fill_value='extrapolate')
-    ucg_aligned = f(rs2_x)
+    rs2_x = _to_1d_float_array(rs2_data["x"], "rs2_x")
+    rs2_y = _to_1d_float_array(rs2_data["subsidence_cm"], "rs2_y")
+    ucg_aligned = _align_prediction_to_reference(ucg_prediction, x_ucg, rs2_x, "rs2_x")
     return benchmark_model(rs2_y, ucg_aligned, "RS2", source_type=rs2_data.get("source_type", "synthetic_fallback"),
                            source_path=rs2_data.get("source_path"))
 
@@ -1112,7 +1188,7 @@ def patent_analysis_ui(ucg_subsidence_cm: np.ndarray, x_axis: np.ndarray):
         col2.metric("RS2 R²", f"{res_rs2.r2:.3f}")
         col2.metric("RS2 RMSE", f"{res_rs2.rmse:.3f} cm")
         
-        if st.button("Generate Patent Report (DOCX)"):
+        if st.button("Generate Patent Report (DOCX)", key="generate_patent_report_docx"):
             report_bytes = generate_patent_report(
                 df, [res_flac, res_rs2], sim_df, mean_sim
             )
@@ -1215,12 +1291,21 @@ def performance_monitor(operation_name: str):
 # ── Security and sanitization ─────────────────────────────────────────────
 # [FIX #2] Regex escape to‘g‘irlandi
 def sanitize_input(user_input: str) -> str:
-    cleaned = re.sub(r'[--;"\'\x00\n\r]', '', user_input)
-    return cleaned
+    """Foydalanuvchi kiritgan matnni xavfsiz, ixcham ko'rinishga keltiradi."""
+    if user_input is None:
+        return ""
+    cleaned = str(user_input)
+    cleaned = cleaned.replace("\x00", " ")
+    cleaned = re.sub(r"[\r\n\t]+", " ", cleaned)
+    cleaned = re.sub(r"(--|/\*|\*/|;)", " ", cleaned)
+    cleaned = re.sub(r"[<>`]", "", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned[:5000]
 
-def safe_filepath(filename: str, base_dir: str = "reports") -> str:
-    safe_name = re.sub(r'[/\\]|\.\.', '_', filename)
-    safe_name = safe_name.replace('\x00', '')
+def safe_filepath(filename: str, base_dir: str = DEFAULT_REPORT_DIR) -> str:
+    safe_name = sanitize_input(filename)
+    safe_name = re.sub(r'[/\\]|\.\.', '_', safe_name)
+    safe_name = safe_name or "report.txt"
     os.makedirs(base_dir, exist_ok=True)
     full_path = os.path.join(base_dir, safe_name)
     if not os.path.realpath(full_path).startswith(os.path.realpath(base_dir)):
@@ -2863,8 +2948,14 @@ def compute_fos_parallel(grid_x, grid_z, active_wells_tuple, well_x_tuple,
                          E, alpha, nu, K0, Hc, sigma_v_coal_MPa, ucs_coal_MPa,
                          beta_th, D_factor, s_dyn, a_dyn,
                          n_workers: int = None) -> np.ndarray:
+    """FOS hisobini parallel tarzda, tartibni saqlagan holda bajaradi."""
+    if grid_x.shape != grid_z.shape or grid_x.shape != temp_field.shape or grid_x.shape != sigma_v_field.shape:
+        raise ValueError("Parallel FOS uchun barcha 2D massivlar bir xil shape ga ega bo'lishi kerak")
+    if grid_x.size == 0:
+        return np.zeros_like(grid_x, dtype=float)
     if n_workers is None:
         n_workers = max(1, multiprocessing.cpu_count() - 1)
+    n_workers = max(1, min(int(n_workers), int(grid_x.shape[0])))
     
     if platform.system() == 'Windows':
         logger.warning("Windows platform detected. Running FOS sequentially to avoid multiprocessing issues.")
@@ -2893,13 +2984,16 @@ def compute_fos_parallel(grid_x, grid_z, active_wells_tuple, well_x_tuple,
             beta_th, D_factor, s_dyn, a_dyn
         )
     
-    fos_parts = []
-    with ProcessPoolExecutor(max_workers=n_workers) as executor:
-        futures = [executor.submit(process_chunk, cs, ce) for cs, ce in chunks]
-        for future in as_completed(futures):
-            fos_parts.append(future.result())
-    
-    return np.vstack(fos_parts)
+    fos_parts: Dict[int, np.ndarray] = {}
+    try:
+        with ProcessPoolExecutor(max_workers=n_workers) as executor:
+            future_map = {executor.submit(process_chunk, cs, ce): cs for cs, ce in chunks}
+            for future in as_completed(future_map):
+                chunk_start = future_map[future]
+                fos_parts[chunk_start] = future.result()
+        return np.vstack([fos_parts[cs] for cs, _ in chunks])
+    finally:
+        gc.collect()
 
 # ── Word hujjat yordamchi funksiyalari ────────────────────────────────────
 def set_table_border(table) -> None:
@@ -4074,16 +4168,28 @@ def phase_field_update(damage: np.ndarray, strain_energy: np.ndarray, dx: float,
     return updated
 
 # ── Dashboard ma'lumotlari caching (FIX #3) ─────────────────────────────
-@st.cache_data
+@st.cache_data(show_spinner=False, max_entries=MAX_STREAMLIT_CACHE_ENTRIES)
 def get_dash_data(time_h: float, Smax: float, c_subs: float,
                   influence_radius: float, surface_x: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    t_steps = np.arange(0, time_h + 1, max(1, time_h // 20))
-    h_disp = np.zeros((len(t_steps), len(surface_x)))
-    v_disp = np.zeros((len(t_steps), len(surface_x)))
+    """Dashboard uchun gorizontal va vertikal siljish tarixini xavfsiz hisoblaydi."""
+    surface_x_arr = _to_1d_float_array(surface_x, "surface_x")
+    safe_time_h = max(1, int(round(float(time_h))))
+    safe_smax = float(np.nan_to_num(Smax, nan=0.0, posinf=0.0, neginf=0.0))
+    safe_c_subs = max(0.0, float(np.nan_to_num(c_subs, nan=0.0, posinf=0.0, neginf=0.0)))
+    safe_radius = max(abs(float(np.nan_to_num(influence_radius, nan=0.0, posinf=0.0, neginf=0.0))), EPS_GENERAL)
+
+    step = max(1, safe_time_h // 20)
+    t_steps = np.arange(0, safe_time_h + 1, step, dtype=int)
+    if t_steps[-1] != safe_time_h:
+        t_steps = np.append(t_steps, safe_time_h)
+
+    h_disp = np.zeros((len(t_steps), len(surface_x_arr)), dtype=float)
+    v_disp = np.zeros((len(t_steps), len(surface_x_arr)), dtype=float)
+    gaussian_term = np.exp(-(surface_x_arr ** 2) / (2.0 * safe_radius ** 2))
     for ct_idx, ct_dash in enumerate(t_steps):
-        s_t = Smax * (1.0 - np.exp(-c_subs * ct_dash))
-        v_d = -s_t * np.exp(-(surface_x ** 2) / (2.0 * influence_radius ** 2)) * 100.0
-        h_d = -(surface_x / (influence_radius + EPS_GENERAL)) * v_d
+        s_t = safe_smax * (1.0 - np.exp(-safe_c_subs * float(ct_dash)))
+        v_d = -s_t * gaussian_term * 100.0
+        h_d = -(surface_x_arr / safe_radius) * v_d
         v_disp[ct_idx, :] = v_d
         h_disp[ct_idx, :] = h_d
     return t_steps, h_disp, v_disp
@@ -5343,7 +5449,7 @@ def main():
             prepared_inp = st.text_input("Prepared by", value="UCG Engineering Team")
             approved_inp = st.text_input("Approved by", value="Chief Engineer")
 
-        if st.button("📄 Generate Report", type="primary", use_container_width=True):
+        if st.button("📄 Generate Report", type="primary", use_container_width=True, key="generate_iso_report"):
             with st.spinner("Generating ISRM/ISO report..."):
                 try:
                     fig_r, ax_r = plt.subplots(figsize=(6, 4))
