@@ -641,6 +641,82 @@ class ScientificAuditTrail:
             )
 
 
+class ValidationBenchmarkDatabase:
+    def __init__(self, db_path: str = "validation_benchmarks.db"):
+        self.db_path = db_path
+        self._init_db()
+
+    def _init_db(self) -> None:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS validation_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_time TEXT NOT NULL,
+                    benchmark TEXT NOT NULL,
+                    source_type TEXT NOT NULL,
+                    source_path TEXT,
+                    validation_score REAL NOT NULL,
+                    rmse REAL NOT NULL,
+                    mae REAL NOT NULL,
+                    r2 REAL NOT NULL,
+                    nse REAL NOT NULL,
+                    kge REAL NOT NULL,
+                    input_hash TEXT,
+                    snapshot_json TEXT
+                )
+                """
+            )
+
+    def record_result(self, result: BenchmarkResult, snapshot: Optional[Dict[str, Any]] = None) -> None:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO validation_history
+                (event_time, benchmark, source_type, source_path, validation_score, rmse, mae, r2, nse, kge, input_hash, snapshot_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    result.model_name,
+                    result.source_type,
+                    result.source_path,
+                    result.validation_score,
+                    result.rmse,
+                    result.mae,
+                    result.r2,
+                    result.nse,
+                    result.kge,
+                    None if snapshot is None else snapshot.get("input_hash"),
+                    None if snapshot is None else json.dumps(snapshot, default=_json_default_serializer),
+                ),
+            )
+
+    def ranking_dataframe(self, limit: int = 20) -> pd.DataFrame:
+        with sqlite3.connect(self.db_path) as conn:
+            df = pd.read_sql_query(
+                """
+                SELECT benchmark AS "Benchmark",
+                       validation_score AS "Validation Score",
+                       rmse AS "RMSE",
+                       mae AS "MAE",
+                       r2 AS "R²",
+                       nse AS "NSE",
+                       kge AS "KGE",
+                       source_type AS "Source"
+                FROM validation_history
+                ORDER BY validation_score DESC, event_time DESC
+                LIMIT ?
+                """,
+                conn,
+                params=(limit,),
+            )
+        return df
+
+
+validation_benchmark_db = ValidationBenchmarkDatabase()
+
+
 def build_hexahedral_mesh(nx: int = 8, ny: int = 6, nz: int = 5, lengths: Tuple[float, float, float] = (100.0, 60.0, 40.0)) -> FEMMesh3D:
     lx, ly, lz = lengths
     xs = np.linspace(0.0, lx, nx)
@@ -947,6 +1023,8 @@ class BenchmarkResult:
     n_samples: int = 0
     source_type: str = "synthetic_fallback"
     source_path: Optional[str] = None
+    validation_score: float = 0.0
+    observed_span: float = 1.0
 
 def benchmark_model(experimental: np.ndarray, prediction: np.ndarray, model_name: str,
                     reference: Optional[np.ndarray] = None,
@@ -955,6 +1033,18 @@ def benchmark_model(experimental: np.ndarray, prediction: np.ndarray, model_name
     metrics = compute_validation_metrics(experimental, prediction)
     n = len(experimental)
     p_val = 1.0
+    observed_span = float(np.ptp(np.asarray(experimental, dtype=float))) + EPS_GENERAL
+    rmse_norm = float(np.clip(metrics.rmse / observed_span, 0.0, 1.0))
+    mae_norm = float(np.clip(metrics.mae / observed_span, 0.0, 1.0))
+    validation_score = float(
+        (
+            0.30 * max(metrics.r2, 0.0)
+            + 0.20 * max(metrics.nse, 0.0)
+            + 0.20 * max(metrics.kge, 0.0)
+            + 0.15 * (1.0 - rmse_norm)
+            + 0.15 * (1.0 - mae_norm)
+        ) * 100.0
+    )
     if reference is not None and len(reference) == n:
         diff = prediction - reference
         _, p_val = stats.ttest_1samp(diff, 0)
@@ -970,6 +1060,8 @@ def benchmark_model(experimental: np.ndarray, prediction: np.ndarray, model_name
         n_samples=n,
         source_type=source_type,
         source_path=source_path,
+        validation_score=validation_score,
+        observed_span=observed_span,
     )
 
 @st.cache_data(show_spinner=False, max_entries=MAX_STREAMLIT_CACHE_ENTRIES)
@@ -977,14 +1069,30 @@ def load_flac3d_benchmark_data(csv_path: Optional[str] = None) -> Dict[str, Any]
     x = np.linspace(0, 50, 100)
     subsidence_flac = -0.3 * (1 - np.exp(-0.02 * x)) * 100  # cm
     dataset = load_benchmark_dataset("FLAC3D", csv_path, fallback_x=x, fallback_y=subsidence_flac)
-    return {"x": dataset.x, "subsidence_cm": dataset.y, "source_type": dataset.source_type, "source_path": dataset.source_path}
+    return {
+        "x": dataset.x,
+        "subsidence": dataset.y,
+        "subsidence_cm": dataset.y,
+        "source_type": dataset.source_type,
+        "source_path": dataset.source_path,
+        "benchmark_name": "FLAC3D",
+        "unit_detected": "cm",
+    }
 
 @st.cache_data(show_spinner=False, max_entries=MAX_STREAMLIT_CACHE_ENTRIES)
 def load_rs2_benchmark_data(csv_path: Optional[str] = None) -> Dict[str, Any]:
     x = np.linspace(0, 50, 100)
     subsidence_rs2 = -0.28 * (1 - np.exp(-0.018 * x)) * 100
     dataset = load_benchmark_dataset("RS2", csv_path, fallback_x=x, fallback_y=subsidence_rs2)
-    return {"x": dataset.x, "subsidence_cm": dataset.y, "source_type": dataset.source_type, "source_path": dataset.source_path}
+    return {
+        "x": dataset.x,
+        "subsidence": dataset.y,
+        "subsidence_cm": dataset.y,
+        "source_type": dataset.source_type,
+        "source_path": dataset.source_path,
+        "benchmark_name": "RS2",
+        "unit_detected": "cm",
+    }
 
 def compare_flac3d(ucg_prediction: np.ndarray, flac_data: Dict[str, np.ndarray], x_ucg: np.ndarray) -> BenchmarkResult:
     flac_x = _to_1d_float_array(flac_data["x"], "flac_x")
@@ -1001,55 +1109,105 @@ def compare_rs2(ucg_prediction: np.ndarray, rs2_data: Dict[str, np.ndarray], x_u
                            source_path=rs2_data.get("source_path"))
 
 
+def _read_uploaded_table(uploaded_file: Any) -> pd.DataFrame:
+    """CSV, XLSX va TXT formatdagi benchmark faylini o'qiydi."""
+    suffix = Path(getattr(uploaded_file, "name", "uploaded.csv")).suffix.lower()
+    if suffix == ".xlsx":
+        return pd.read_excel(uploaded_file)
+    if suffix == ".txt":
+        return pd.read_csv(uploaded_file, sep=None, engine="python")
+    return pd.read_csv(uploaded_file)
+
+
+def _detect_benchmark_columns(df: pd.DataFrame) -> Tuple[str, str]:
+    """Benchmark jadvalidan x va subsidence ustunlarini topadi."""
+    aliases_x = ["x", "X", "distance", "Distance", "distance_m", "chainage"]
+    aliases_sub = [
+        "subsidence",
+        "Subsidence",
+        "subsidence_cm",
+        "subsidence_mm",
+        "subsidence_m",
+        "Vertical_Displacement",
+        "settlement",
+        "displacement_z",
+    ]
+    x_col = next((col for col in aliases_x if col in df.columns), None)
+    sub_col = next((col for col in aliases_sub if col in df.columns), None)
+    if x_col is None or sub_col is None:
+        raise KeyError("Benchmark columns not detected")
+    return x_col, sub_col
+
+
+def _detect_subsidence_unit(values: Any, column_name: str = "") -> Tuple[str, float]:
+    """Subsidence birligini aniqlaydi va cm ga o'tkazish koeffitsientini qaytaradi."""
+    arr = _to_1d_float_array(values, "subsidence_values")
+    col = column_name.lower()
+    max_abs = float(np.nanmax(np.abs(arr))) if arr.size else 0.0
+    median_abs = float(np.nanmedian(np.abs(arr))) if arr.size else 0.0
+
+    if "mm" in col or max_abs > 500.0:
+        return "mm", 0.1
+    if "cm" in col or 5.0 <= max_abs <= 500.0:
+        return "cm", 1.0
+    if "meter" in col or col.endswith("_m") or col == "m" or median_abs < 5.0:
+        return "m", 100.0
+    return "cm", 1.0
+
+
 def _normalize_benchmark_payload(
     x_values: Any,
     subsidence_values: Any,
     source_type: str = "external_csv",
     source_path: Optional[str] = None,
+    benchmark_name: str = "External",
+    original_unit: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Benchmark ma'lumotlarini yagona formatga keltiradi."""
+    """Benchmark ma'lumotlarini yagona formatga va santimetr birligiga keltiradi."""
     x_arr = _to_1d_float_array(x_values, "benchmark_x")
     subs_arr = _to_1d_float_array(subsidence_values, "benchmark_subsidence")
     if x_arr.size != subs_arr.size:
         raise ValueError("Benchmark `x` va `subsidence` uzunliklari bir xil bo'lishi kerak")
+    order = np.argsort(x_arr)
+    x_arr = x_arr[order]
+    subs_arr = subs_arr[order]
+    unit_name, to_cm = _detect_subsidence_unit(subs_arr, original_unit or "")
+    subs_cm = subs_arr * to_cm
     return {
         "x": x_arr,
-        "subsidence": subs_arr,
-        "subsidence_cm": subs_arr,
+        "subsidence": subs_cm,
+        "subsidence_cm": subs_cm,
+        "subsidence_original": subs_arr,
         "source_type": source_type,
         "source_path": source_path,
+        "benchmark_name": benchmark_name,
+        "unit_detected": unit_name,
+        "unit_to_cm_factor": to_cm,
     }
 
 
 def load_external_benchmark() -> Optional[Dict[str, Any]]:
-    """Turli ustun nomlariga ega CSV benchmark fayllarini yuklaydi."""
+    """Turli ustun nomlari va formatlarga ega benchmark fayllarini yuklaydi."""
     uploaded = st.sidebar.file_uploader(
-        "Benchmark CSV",
-        type=["csv"],
+        "Benchmark CSV/XLSX/TXT",
+        type=["csv", "xlsx", "txt"],
         key="benchmark_csv",
     )
     if uploaded is None:
         return None
 
     try:
-        df = pd.read_csv(uploaded)
-        aliases_x = ["x", "X", "distance", "Distance"]
-        aliases_sub = ["subsidence", "Subsidence", "subsidence_cm", "Vertical_Displacement"]
-
-        x_col = next((col for col in aliases_x if col in df.columns), None)
-        sub_col = next((col for col in aliases_sub if col in df.columns), None)
-
-        if x_col is None or sub_col is None:
-            st.sidebar.error("Benchmark columns not detected")
-            return None
-
+        df = _read_uploaded_table(uploaded)
+        x_col, sub_col = _detect_benchmark_columns(df)
         payload = _normalize_benchmark_payload(
             df[x_col].to_numpy(dtype=float),
             df[sub_col].to_numpy(dtype=float),
             source_type="external_csv",
             source_path=uploaded.name,
+            benchmark_name=Path(uploaded.name).stem,
+            original_unit=sub_col,
         )
-        st.sidebar.success(f"Loaded {len(payload['x'])} benchmark points")
+        st.sidebar.success(f"Loaded {len(payload['x'])} benchmark points ({payload['unit_detected']} → cm)")
         return payload
     except Exception as exc:
         st.sidebar.error(str(exc))
@@ -1057,34 +1215,233 @@ def load_external_benchmark() -> Optional[Dict[str, Any]]:
 
 
 def upload_external_benchmark() -> Optional[Dict[str, Any]]:
-    """Patent dashboard uchun tashqi benchmark CSV yuklaydi."""
+    """Patent dashboard uchun tashqi benchmark faylini yuklaydi."""
     st.sidebar.markdown("### 📂 External Benchmark")
     uploaded_file = st.sidebar.file_uploader(
-        "Upload RS2 / FLAC3D CSV",
-        type=["csv"],
+        "Upload RS2 / FLAC3D CSV/XLSX/TXT",
+        type=["csv", "xlsx", "txt"],
         key="benchmark_import",
     )
     if uploaded_file is None:
         return None
 
     try:
-        df = pd.read_csv(uploaded_file)
-        required = ["x", "subsidence_cm"]
-        if not all(col in df.columns for col in required):
-            st.sidebar.error("CSV must contain x and subsidence_cm columns")
-            return None
-
+        df = _read_uploaded_table(uploaded_file)
+        x_col, sub_col = _detect_benchmark_columns(df)
         payload = _normalize_benchmark_payload(
-            df["x"].to_numpy(dtype=float),
-            df["subsidence_cm"].to_numpy(dtype=float),
+            df[x_col].to_numpy(dtype=float),
+            df[sub_col].to_numpy(dtype=float),
             source_type="external_csv",
             source_path=uploaded_file.name,
+            benchmark_name=Path(uploaded_file.name).stem,
+            original_unit=sub_col,
         )
-        st.sidebar.success(f"Loaded {len(payload['x'])} benchmark points")
+        st.sidebar.success(f"Loaded {len(payload['x'])} benchmark points ({payload['unit_detected']} → cm)")
         return payload
     except Exception as exc:
         st.sidebar.error(str(exc))
         return None
+
+
+def validate_interpolation_domain(model_x: Any, benchmark_x: Any) -> Dict[str, Any]:
+    """Model va benchmark diapazonlarining overlap qismini tekshiradi."""
+    model_x_arr = _to_1d_float_array(model_x, "model_x")
+    benchmark_x_arr = _to_1d_float_array(benchmark_x, "benchmark_x")
+    model_min, model_max = float(np.min(model_x_arr)), float(np.max(model_x_arr))
+    bench_min, bench_max = float(np.min(benchmark_x_arr)), float(np.max(benchmark_x_arr))
+    overlap_min = max(model_min, bench_min)
+    overlap_max = min(model_max, bench_max)
+    has_overlap = overlap_max > overlap_min
+    mask = (benchmark_x_arr >= overlap_min) & (benchmark_x_arr <= overlap_max) if has_overlap else np.zeros_like(benchmark_x_arr, dtype=bool)
+    overlap_ratio = float(np.mean(mask)) if benchmark_x_arr.size else 0.0
+    return {
+        "has_overlap": has_overlap,
+        "mask": mask,
+        "model_range": (model_min, model_max),
+        "benchmark_range": (bench_min, bench_max),
+        "overlap_range": (overlap_min, overlap_max),
+        "overlap_ratio": overlap_ratio,
+        "used_extrapolation": bool(np.any(~mask)) if has_overlap else True,
+    }
+
+
+def compute_prediction_intervals(
+    prediction: np.ndarray,
+    residuals: np.ndarray,
+    confidence_levels: Tuple[float, ...] = (0.95, 0.99),
+) -> Dict[str, Tuple[np.ndarray, np.ndarray]]:
+    """95% va 99% prediction interval hisoblaydi."""
+    pred = _to_1d_float_array(prediction, "prediction")
+    err = _to_1d_float_array(residuals, "residuals")
+    std_err = float(np.std(err, ddof=1)) if err.size > 1 else 0.0
+    dof = max(err.size - 1, 1)
+    intervals: Dict[str, Tuple[np.ndarray, np.ndarray]] = {}
+    for confidence in confidence_levels:
+        t_crit = float(t_dist.ppf((1.0 + confidence) / 2.0, df=dof))
+        margin = t_crit * std_err
+        intervals[f"{int(confidence * 100)}%"] = (pred - margin, pred + margin)
+    return intervals
+
+
+def monte_carlo_uncertainty_analysis(
+    prediction: Any,
+    benchmark_y: Any,
+    n_simulations: int = 1500,
+) -> Dict[str, Any]:
+    """1000+ Monte Carlo simulyatsiya orqali prediction uncertainty hisoblaydi."""
+    pred = _to_1d_float_array(prediction, "prediction")
+    bench = _to_1d_float_array(benchmark_y, "benchmark_y")
+    residuals = pred - bench
+    noise_scale = max(float(np.std(residuals, ddof=1)) if residuals.size > 1 else 0.0, EPS_GENERAL)
+    n_sim = max(1000, int(n_simulations))
+    samples = pred[None, :] + rng_global.normal(0.0, noise_scale, size=(n_sim, pred.size))
+    error_samples = samples - bench[None, :]
+    return {
+        "n_simulations": n_sim,
+        "prediction_mean": np.mean(samples, axis=0),
+        "prediction_std": np.std(samples, axis=0),
+        "error_samples": error_samples,
+        "ci95": (np.percentile(samples, 2.5, axis=0), np.percentile(samples, 97.5, axis=0)),
+        "ci99": (np.percentile(samples, 0.5, axis=0), np.percentile(samples, 99.5, axis=0)),
+    }
+
+
+def calculate_validation_score(metrics: ExperimentalMetrics, observed_span: float) -> float:
+    """Patent-darajadagi kompozit validation score."""
+    span = max(float(observed_span), EPS_GENERAL)
+    rmse_norm = float(np.clip(metrics.rmse / span, 0.0, 1.0))
+    mae_norm = float(np.clip(metrics.mae / span, 0.0, 1.0))
+    return float(
+        (
+            0.30 * max(metrics.r2, 0.0)
+            + 0.20 * max(metrics.nse, 0.0)
+            + 0.20 * max(metrics.kge, 0.0)
+            + 0.15 * (1.0 - rmse_norm)
+            + 0.15 * (1.0 - mae_norm)
+        ) * 100.0
+    )
+
+
+def perform_validation_sensitivity_analysis(
+    model_x: Any,
+    model_y: Any,
+    benchmark_x: Any,
+    benchmark_y: Any,
+    base_params: Optional[Dict[str, float]] = None,
+) -> pd.DataFrame:
+    """Depth, panel width, strength va temperature bo'yicha lokal sensitivity ranking."""
+    base_params = base_params or {
+        "Depth": 1.0,
+        "Panel Width": 1.0,
+        "Rock Strength": 1.0,
+        "Temperature": 1.0,
+    }
+    model_x_arr = _to_1d_float_array(model_x, "model_x")
+    model_y_arr = _to_1d_float_array(model_y, "model_y")
+    benchmark_x_arr = _to_1d_float_array(benchmark_x, "benchmark_x")
+    benchmark_y_arr = _to_1d_float_array(benchmark_y, "benchmark_y")
+
+    def transform_curve(name: str, delta: float) -> np.ndarray:
+        if name == "Depth":
+            return model_y_arr * (1.0 + 0.12 * delta)
+        if name == "Panel Width":
+            x_scaled = model_x_arr * (1.0 + 0.08 * delta)
+            return _align_prediction_to_reference(model_y_arr, x_scaled, model_x_arr, "model_x")
+        if name == "Rock Strength":
+            return model_y_arr * (1.0 - 0.10 * delta)
+        if name == "Temperature":
+            return model_y_arr * (1.0 + 0.06 * delta)
+        return model_y_arr
+
+    base_metrics = calculate_comparison_metrics(model_x_arr, model_y_arr, benchmark_x_arr, benchmark_y_arr, n_simulations=1000)
+    rows = []
+    for param in base_params.keys():
+        minus_metrics = calculate_comparison_metrics(model_x_arr, transform_curve(param, -1.0), benchmark_x_arr, benchmark_y_arr, n_simulations=200)
+        plus_metrics = calculate_comparison_metrics(model_x_arr, transform_curve(param, 1.0), benchmark_x_arr, benchmark_y_arr, n_simulations=200)
+        sensitivity_score = 0.5 * (
+            abs(plus_metrics["score"] - base_metrics["score"])
+            + abs(minus_metrics["score"] - base_metrics["score"])
+        )
+        rows.append({
+            "Parameter": param,
+            "Base": base_params[param],
+            "SensitivityScore": float(sensitivity_score),
+            "PlusScore": float(plus_metrics["score"]),
+            "MinusScore": float(minus_metrics["score"]),
+        })
+    return pd.DataFrame(rows).sort_values("SensitivityScore", ascending=False)
+
+
+def create_reproducibility_snapshot(
+    model_x: Any,
+    model_y: Any,
+    benchmark_payload: Dict[str, Any],
+    metrics: Dict[str, Any],
+    context: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """JSON snapshot, model version va input hash yaratadi."""
+    snapshot = {
+        "version": __version__,
+        "git_commit": __git_commit__,
+        "timestamp_utc": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "model_hash": _array_hash(
+            _to_1d_float_array(model_x, "model_x").reshape(-1, 1),
+            _to_1d_float_array(model_y, "model_y").reshape(-1, 1),
+        ),
+        "benchmark_hash": _array_hash(
+            _to_1d_float_array(benchmark_payload["x"], "benchmark_x").reshape(-1, 1),
+            _to_1d_float_array(benchmark_payload["subsidence_cm"], "benchmark_y").reshape(-1, 1),
+        ),
+        "benchmark_name": benchmark_payload.get("benchmark_name", benchmark_payload.get("source_type", "benchmark")),
+        "source_path": benchmark_payload.get("source_path"),
+        "unit_detected": benchmark_payload.get("unit_detected", "cm"),
+        "metrics": {
+            "rmse": float(metrics["rmse"]),
+            "mae": float(metrics["mae"]),
+            "r2": float(metrics["r2"]),
+            "nse": float(metrics["nse"]),
+            "kge": float(metrics["kge"]),
+            "score": float(metrics["score"]),
+        },
+        "context": context or {},
+    }
+    snapshot["input_hash"] = hashlib.sha256(
+        json.dumps(snapshot, sort_keys=True, default=_json_default_serializer).encode("utf-8")
+    ).hexdigest()
+    return snapshot
+
+
+def save_reproducibility_snapshot(snapshot: Dict[str, Any], base_dir: str = DEFAULT_REPORT_DIR) -> str:
+    """Reproducibility snapshot faylini saqlaydi."""
+    filename = safe_filepath(f"validation_snapshot_{snapshot['input_hash'][:12]}.json", base_dir=base_dir)
+    with open(filename, "w", encoding="utf-8") as f:
+        json.dump(snapshot, f, ensure_ascii=False, indent=2, default=_json_default_serializer)
+    return filename
+
+
+def build_benchmark_ranking(results: List[BenchmarkResult], historical: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+    """Joriy va tarixiy validatsiya yozuvlari asosida ranking jadvali."""
+    rows = [
+        {
+            "Benchmark": res.model_name,
+            "Validation Score": float(res.validation_score),
+            "RMSE": float(res.rmse),
+            "MAE": float(res.mae),
+            "R²": float(res.r2),
+            "NSE": float(res.nse),
+            "KGE": float(res.kge),
+            "Source": res.source_type,
+        }
+        for res in results
+    ]
+    if historical is not None and not historical.empty:
+        rows.extend(historical.to_dict("records"))
+    ranking_df = pd.DataFrame(rows)
+    if ranking_df.empty:
+        return pd.DataFrame(columns=["Rank", "Benchmark", "Validation Score", "RMSE", "MAE", "R²", "NSE", "KGE", "Source"])
+    ranking_df = ranking_df.sort_values("Validation Score", ascending=False).drop_duplicates(subset=["Benchmark", "Source"], keep="first")
+    ranking_df.insert(0, "Rank", np.arange(1, len(ranking_df) + 1))
+    return ranking_df.reset_index(drop=True)
 
 
 def calculate_comparison_metrics(
@@ -1092,23 +1449,50 @@ def calculate_comparison_metrics(
     model_y: Any,
     benchmark_x: Any,
     benchmark_y: Any,
+    n_simulations: int = 1500,
 ) -> Dict[str, Any]:
-    """Model va benchmark egri chiziqlari uchun umumiy validatsiya metrikalarini hisoblaydi."""
+    """Scientific validation engine: overlap, interpolation, metrics, CI va Monte Carlo."""
+    model_x_arr = _to_1d_float_array(model_x, "model_x")
+    model_y_arr = _to_1d_float_array(model_y, "model_y")
     benchmark_x_arr = _to_1d_float_array(benchmark_x, "benchmark_x")
     benchmark_y_arr = _to_1d_float_array(benchmark_y, "benchmark_y")
-    pred = _align_prediction_to_reference(model_y, model_x, benchmark_x_arr, "benchmark_x")
-
-    rmse = float(np.sqrt(np.mean((pred - benchmark_y_arr) ** 2)))
-    mae = float(np.mean(np.abs(pred - benchmark_y_arr)))
-    r2 = float(r2_score(benchmark_y_arr, pred))
-    validation_score = float((0.5 * r2 + 0.5 * (1.0 / (1.0 + rmse))) * 100.0)
-
+    domain_info = validate_interpolation_domain(model_x_arr, benchmark_x_arr)
+    if not domain_info["has_overlap"]:
+        raise ValueError("Model va benchmark diapazonlari orasida overlap yo'q")
+    mask = domain_info["mask"]
+    bench_x_eval = benchmark_x_arr[mask]
+    bench_y_eval = benchmark_y_arr[mask]
+    if bench_x_eval.size < 2:
+        raise ValueError("Overlap diapazonda kamida 2 ta benchmark nuqta bo'lishi kerak")
+    pred = _align_prediction_to_reference(model_y_arr, model_x_arr, bench_x_eval, "benchmark_x")
+    errors = pred - bench_y_eval
+    metrics = compute_validation_metrics(bench_y_eval, pred)
+    observed_span = float(np.ptp(bench_y_eval)) + EPS_GENERAL
+    intervals = compute_prediction_intervals(pred, errors, confidence_levels=(0.95, 0.99))
+    monte_carlo = monte_carlo_uncertainty_analysis(pred, bench_y_eval, n_simulations=n_simulations)
+    validation_score = calculate_validation_score(metrics, observed_span)
     return {
-        "rmse": rmse,
-        "mae": mae,
-        "r2": r2,
-        "score": validation_score,
+        "rmse": float(metrics.rmse),
+        "mae": float(metrics.mae),
+        "r2": float(metrics.r2),
+        "nse": float(metrics.nse),
+        "kge": float(metrics.kge),
+        "mape": float(metrics.mape),
+        "score": float(validation_score),
         "prediction": pred,
+        "errors": errors,
+        "ci95": intervals["95%"],
+        "ci99": intervals["99%"],
+        "mc_ci95": monte_carlo["ci95"],
+        "mc_ci99": monte_carlo["ci99"],
+        "prediction_mean": monte_carlo["prediction_mean"],
+        "prediction_std": monte_carlo["prediction_std"],
+        "error_samples": monte_carlo["error_samples"],
+        "n_simulations": monte_carlo["n_simulations"],
+        "benchmark_x_eval": bench_x_eval,
+        "benchmark_y_eval": bench_y_eval,
+        "domain_info": domain_info,
+        "observed_span": observed_span,
     }
 
 class SimilarityAnalyzer:
@@ -1137,6 +1521,43 @@ class SimilarityAnalyzer:
 
     def mean_similarity(self) -> float:
         return float(np.mean(self.compute_similarities()["Cosine Similarity"]))
+
+
+def plotly_figure_to_png_bytes(fig: go.Figure, width: int = 1000, height: int = 600) -> Optional[bytes]:
+    """Plotly grafikni PNG bytes ko'rinishiga o'tkazadi."""
+    try:
+        import plotly.io as pio
+
+        buffer = io.BytesIO()
+        pio.write_image(fig, buffer, format="png", width=width, height=height)
+        buffer.seek(0)
+        return buffer.read()
+    except Exception as exc:
+        logger.warning(f"Plotly figure export error: {exc}")
+        return None
+
+
+def add_dataframe_to_doc(doc: Document, df: pd.DataFrame, title: str) -> None:
+    """DataFrame ni Word jadvaliga qo'shadi."""
+    if df.empty:
+        return
+    doc.add_heading(title, level=2)
+    table = doc.add_table(rows=df.shape[0] + 1, cols=df.shape[1])
+    table.style = "Table Grid"
+    for i, col in enumerate(df.columns):
+        table.rows[0].cells[i].text = str(col)
+    for r_idx, (_, row) in enumerate(df.iterrows()):
+        for c_idx, val in enumerate(row):
+            table.rows[r_idx + 1].cells[c_idx].text = str(val)
+
+
+def add_image_bytes_to_doc(doc: Document, image_bytes: Optional[bytes], title: str) -> None:
+    """Bytes formatdagi rasmni Word hujjatga qo'shadi."""
+    if not image_bytes:
+        return
+    doc.add_paragraph(title)
+    doc.add_picture(io.BytesIO(image_bytes), width=Inches(5.8))
+    doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
 
 def generate_patent_report(
     novelty_df: pd.DataFrame,
@@ -1180,6 +1601,11 @@ def generate_patent_report(
         benchmark_metrics=avg_metrics,
         uq=uq,
     )
+    ranking_df = report_payload.get("ranking_df", pd.DataFrame())
+    methodology_lines = report_payload.get("methodology_lines", [])
+    discussion_text = report_payload.get("discussion_text", "")
+    snapshot_path = report_payload.get("snapshot_path")
+    validation_score = report_payload.get("validation_score", 0.0)
     doc.add_heading("1. Novelty Matrix", level=1)
     t = doc.add_table(novelty_df.shape[0]+1, novelty_df.shape[1])
     t.style = 'Table Grid'
@@ -1198,12 +1624,17 @@ def generate_patent_report(
         p.add_run(
             f"RMSE={res.rmse:.3f}, MAE={res.mae:.3f}, R²={res.r2:.3f}, "
             f"MAPE={res.mape:.2f}%, NSE={res.nse:.3f}, KGE={res.kge:.3f} | "
-            f"Source={res.source_type}"
+            f"ValidationScore={res.validation_score:.2f} | Source={res.source_type}"
         )
         if res.p_value < 0.05:
             p.add_run(" (Statistically significant improvement, p<0.05)").italic = True
         if res.source_path:
             doc.add_paragraph(f"Dataset path: {res.source_path}")
+    add_image_bytes_to_doc(doc, report_payload.get("validation_graph_bytes"), "Validation graph")
+    add_image_bytes_to_doc(doc, report_payload.get("error_histogram_bytes"), "Error histogram")
+    add_image_bytes_to_doc(doc, report_payload.get("error_heatmap_bytes"), "Error heatmap")
+    add_image_bytes_to_doc(doc, report_payload.get("validation_surface_bytes"), "3D validation surface")
+    add_dataframe_to_doc(doc, ranking_df if isinstance(ranking_df, pd.DataFrame) else pd.DataFrame(), "Benchmark ranking")
 
     doc.add_heading("3. Prior-Art Similarity Analysis", level=1)
     doc.add_paragraph(f"Mean cosine similarity to prior art: {mean_similarity:.3f}")
@@ -1230,6 +1661,12 @@ def generate_patent_report(
             f"{stage.stage}: {'PASS' if stage.passed else 'REVIEW'} | "
             f"{json.dumps(stage.details, default=_json_default_serializer)}"
         )
+    doc.add_paragraph(
+        f"Monte Carlo simulations: {report_payload.get('n_simulations', 0)} | "
+        f"Validation Score: {validation_score:.2f}"
+    )
+    if report_payload.get("sensitivity_df") is not None:
+        add_dataframe_to_doc(doc, report_payload["sensitivity_df"], "Sensitivity ranking")
 
     doc.add_heading("6. Claims", level=1)
     for claim in generate_patent_claim_set(list(novelty_df["Feature"].astype(str)), lang="en"):
@@ -1247,6 +1684,8 @@ def generate_patent_report(
         f"Version: {trace_bundle.version}\n"
         f"Git commit: {trace_bundle.git_commit}"
     )
+    if snapshot_path:
+        doc.add_paragraph(f"Reproducibility snapshot: {snapshot_path}")
 
     doc.add_heading("9. Compliance", level=1)
     compliance_df = generate_compliance_matrix()
@@ -1258,7 +1697,29 @@ def generate_patent_report(
         for c_idx, val in enumerate(row):
             t3.rows[r_idx + 1].cells[c_idx].text = str(val)
 
-    doc.add_heading("10. Conclusion", level=1)
+    doc.add_heading("10. Methodology", level=1)
+    if methodology_lines:
+        for line in methodology_lines:
+            doc.add_paragraph(str(line), style="List Bullet")
+    else:
+        doc.add_paragraph("CSV/XLSX/TXT import → auto mapping → unit conversion → overlap-checked interpolation → validation metrics → uncertainty → ranking.")
+
+    doc.add_heading("11. Results", level=1)
+    doc.add_paragraph(
+        f"Composite validation score={validation_score:.2f}. "
+        f"Benchmark type={report_payload.get('benchmark_type', 'unknown')} | "
+        f"RMSE={report_payload.get('rmse', 0.0):.4f} | "
+        f"MAE={report_payload.get('mae', 0.0):.4f} | "
+        f"R²={report_payload.get('r2', 0.0):.4f}"
+    )
+
+    doc.add_heading("12. Discussion", level=1)
+    doc.add_paragraph(
+        discussion_text
+        or "Validation engine combines deterministic metrics, Monte Carlo uncertainty, confidence intervals, heatmap inspection and ranking, improving scientific defensibility for patent and SCI reporting."
+    )
+
+    doc.add_heading("13. Conclusion", level=1)
     doc.add_paragraph(
         f"The proposed invention demonstrates high novelty (Index={novelty_df.attrs['Novelty Index']:.1f}%) "
         f"and low similarity to prior art (mean similarity={mean_similarity:.3f}). "
@@ -1308,6 +1769,38 @@ def patent_analysis_ui(ucg_subsidence_cm: np.ndarray, x_axis: np.ndarray):
             rs2_data["subsidence_cm"],
         )
         benchmark_type = rs2_data.get("source_type", "synthetic_fallback")
+        benchmark_name = rs2_data.get("benchmark_name", "RS2 / External")
+        domain_info = comparison_metrics["domain_info"]
+        sensitivity_df = perform_validation_sensitivity_analysis(
+            x_axis,
+            ucg_subsidence_cm,
+            rs2_data["x"],
+            rs2_data["subsidence_cm"],
+            base_params={
+                "Depth": 1.0,
+                "Panel Width": 1.0,
+                "Rock Strength": 1.0,
+                "Temperature": 1.0,
+            },
+        )
+        snapshot = create_reproducibility_snapshot(
+            x_axis,
+            ucg_subsidence_cm,
+            rs2_data,
+            comparison_metrics,
+            context={
+                "domain_info": domain_info,
+                "benchmark_type": benchmark_type,
+                "benchmark_name": benchmark_name,
+            },
+        )
+        snapshot_path = save_reproducibility_snapshot(snapshot)
+        validation_benchmark_db.record_result(res_flac, snapshot=snapshot)
+        validation_benchmark_db.record_result(res_rs2, snapshot=snapshot)
+        ranking_df = build_benchmark_ranking(
+            [res_flac, res_rs2],
+            historical=validation_benchmark_db.ranking_dataframe(limit=10),
+        )
 
         st.write("Benchmark Results:")
         col1, col2 = st.columns(2)
@@ -1316,12 +1809,25 @@ def patent_analysis_ui(ucg_subsidence_cm: np.ndarray, x_axis: np.ndarray):
         col2.metric("RS2 R²", f"{res_rs2.r2:.3f}")
         col2.metric("RS2 RMSE", f"{res_rs2.rmse:.3f} cm")
 
-        c1, c2, c3, c4, c5 = st.columns(5)
+        c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
         c1.metric("Validation Score", f"{comparison_metrics['score']:.1f}%")
         c2.metric("Benchmark Type", benchmark_type)
         c3.metric("RMSE", f"{comparison_metrics['rmse']:.4f}")
         c4.metric("MAE", f"{comparison_metrics['mae']:.4f}")
         c5.metric("R²", f"{comparison_metrics['r2']:.4f}")
+        c6.metric("NSE", f"{comparison_metrics['nse']:.4f}")
+        c7.metric("KGE", f"{comparison_metrics['kge']:.4f}")
+
+        if domain_info["used_extrapolation"]:
+            st.warning(
+                f"Interpolation overlap only ishlatildi: overlap ratio={domain_info['overlap_ratio']:.2f}, "
+                f"model range={domain_info['model_range']}, benchmark range={domain_info['benchmark_range']}."
+            )
+        st.caption(
+            f"Detected unit: {rs2_data.get('unit_detected', 'cm')} | "
+            f"Monte Carlo simulations: {comparison_metrics['n_simulations']} | "
+            f"Snapshot: {snapshot_path}"
+        )
 
         fig_compare = go.Figure()
         fig_compare.add_trace(
@@ -1333,12 +1839,59 @@ def patent_analysis_ui(ucg_subsidence_cm: np.ndarray, x_axis: np.ndarray):
                 line=dict(width=4),
             )
         )
+        ci99_low, ci99_high = comparison_metrics["mc_ci99"]
+        ci95_low, ci95_high = comparison_metrics["mc_ci95"]
+        bench_x_eval = comparison_metrics["benchmark_x_eval"]
         fig_compare.add_trace(
             go.Scatter(
-                x=rs2_data["x"],
-                y=rs2_data["subsidence_cm"],
+                x=bench_x_eval,
+                y=ci99_low,
+                mode="lines",
+                line=dict(width=0),
+                showlegend=False,
+                hoverinfo="skip",
+                name="99% CI lower",
+            )
+        )
+        fig_compare.add_trace(
+            go.Scatter(
+                x=bench_x_eval,
+                y=ci99_high,
+                mode="lines",
+                line=dict(width=0),
+                fill="tonexty",
+                fillcolor="rgba(255,165,0,0.12)",
+                name="99% CI",
+            )
+        )
+        fig_compare.add_trace(
+            go.Scatter(
+                x=bench_x_eval,
+                y=ci95_low,
+                mode="lines",
+                line=dict(width=0),
+                showlegend=False,
+                hoverinfo="skip",
+                name="95% CI lower",
+            )
+        )
+        fig_compare.add_trace(
+            go.Scatter(
+                x=bench_x_eval,
+                y=ci95_high,
+                mode="lines",
+                line=dict(width=0),
+                fill="tonexty",
+                fillcolor="rgba(0,191,255,0.18)",
+                name="95% CI",
+            )
+        )
+        fig_compare.add_trace(
+            go.Scatter(
+                x=bench_x_eval,
+                y=comparison_metrics["benchmark_y_eval"],
                 mode="markers+lines",
-                name="RS2 / External",
+                name=benchmark_name,
             )
         )
         fig_compare.update_layout(
@@ -1350,7 +1903,7 @@ def patent_analysis_ui(ucg_subsidence_cm: np.ndarray, x_axis: np.ndarray):
         )
         st.plotly_chart(fig_compare, use_container_width=True)
 
-        errors = comparison_metrics["prediction"] - rs2_data["subsidence_cm"]
+        errors = comparison_metrics["errors"]
         fig_err = go.Figure()
         fig_err.add_trace(
             go.Histogram(
@@ -1366,8 +1919,90 @@ def patent_analysis_ui(ucg_subsidence_cm: np.ndarray, x_axis: np.ndarray):
             yaxis_title="Frequency",
         )
         st.plotly_chart(fig_err, use_container_width=True)
+
+        error_surface = comparison_metrics["error_samples"][: min(80, comparison_metrics["error_samples"].shape[0]), :]
+        heatmap_y = np.arange(error_surface.shape[0])
+        fig_heatmap = go.Figure(
+            data=[
+                go.Heatmap(
+                    x=bench_x_eval,
+                    y=heatmap_y,
+                    z=error_surface,
+                    colorscale="RdBu",
+                    colorbar=dict(title="Error (cm)"),
+                )
+            ]
+        )
+        fig_heatmap.update_layout(
+            title="Error Heatmap",
+            template="plotly_dark",
+            xaxis_title="Distance (m)",
+            yaxis_title="Monte Carlo sample",
+            height=500,
+        )
+        st.plotly_chart(fig_heatmap, use_container_width=True)
+
+        fig_surface = go.Figure(
+            data=[
+                go.Surface(
+                    x=np.tile(bench_x_eval.reshape(1, -1), (error_surface.shape[0], 1)),
+                    y=np.tile(heatmap_y.reshape(-1, 1), (1, error_surface.shape[1])),
+                    z=error_surface,
+                    colorscale="Turbo",
+                    colorbar=dict(title="Error (cm)"),
+                )
+            ]
+        )
+        fig_surface.update_layout(
+            title="3D Validation Surface",
+            template="plotly_dark",
+            scene=dict(
+                xaxis_title="Distance (m)",
+                yaxis_title="Simulation",
+                zaxis_title="Error (cm)",
+            ),
+            height=650,
+        )
+        st.plotly_chart(fig_surface, use_container_width=True)
+
+        st.subheader("Benchmark Ranking")
+        st.dataframe(ranking_df, use_container_width=True, hide_index=True)
+
+        st.subheader("Sensitivity Analysis")
+        st.dataframe(sensitivity_df, use_container_width=True, hide_index=True)
+        fig_sens = go.Figure(
+            go.Bar(
+                x=sensitivity_df["Parameter"],
+                y=sensitivity_df["SensitivityScore"],
+                marker_color="mediumpurple",
+            )
+        )
+        fig_sens.update_layout(
+            title="Sensitivity Ranking",
+            template="plotly_dark",
+            yaxis_title="Sensitivity score",
+            height=350,
+        )
+        st.plotly_chart(fig_sens, use_container_width=True)
         
         if st.button("Generate Patent Report (DOCX)", key="generate_patent_report_docx"):
+            methodology_lines = [
+                "CSV/XLSX/TXT import",
+                "Auto column mapping",
+                f"Auto unit detection ({rs2_data.get('unit_detected', 'cm')} → cm)",
+                "Interpolation overlap validation",
+                "Deterministic metrics: RMSE, MAE, R², NSE, KGE",
+                "95% and 99% confidence intervals",
+                f"Monte Carlo uncertainty ({comparison_metrics['n_simulations']} simulations)",
+                "Error heatmap and 3D validation surface",
+                "Benchmark ranking and reproducibility snapshot",
+            ]
+            discussion_text = (
+                f"{benchmark_name} benchmarki uchun overlap ratio {domain_info['overlap_ratio']:.2f} bo'ldi. "
+                f"Composite validation score {comparison_metrics['score']:.2f}% bo'lib, "
+                f"NSE={comparison_metrics['nse']:.3f} va KGE={comparison_metrics['kge']:.3f} "
+                "validatsiya sifati faqat RMSE emas, strukturaviy moslik bilan ham baholanganini ko'rsatadi."
+            )
             report_bytes = generate_patent_report(
                 df,
                 [res_flac, res_rs2],
@@ -1379,6 +2014,16 @@ def patent_analysis_ui(ucg_subsidence_cm: np.ndarray, x_axis: np.ndarray):
                     "rmse": comparison_metrics["rmse"],
                     "mae": comparison_metrics["mae"],
                     "r2": comparison_metrics["r2"],
+                    "n_simulations": comparison_metrics["n_simulations"],
+                    "ranking_df": ranking_df,
+                    "sensitivity_df": sensitivity_df,
+                    "snapshot_path": snapshot_path,
+                    "methodology_lines": methodology_lines,
+                    "discussion_text": discussion_text,
+                    "validation_graph_bytes": plotly_figure_to_png_bytes(fig_compare, width=1200, height=700),
+                    "error_histogram_bytes": plotly_figure_to_png_bytes(fig_err, width=1000, height=600),
+                    "error_heatmap_bytes": plotly_figure_to_png_bytes(fig_heatmap, width=1200, height=700),
+                    "validation_surface_bytes": plotly_figure_to_png_bytes(fig_surface, width=1200, height=800),
                     "source_path": rs2_data.get("source_path"),
                 },
             )
@@ -4798,6 +5443,8 @@ def main():
     horizontal_disp_cm = horizontal_disp_m * 100.0
     comparison_metrics: Optional[Dict[str, Any]] = None
     comparison_benchmark: Optional[Dict[str, Any]] = None
+    comparison_snapshot_path: Optional[str] = None
+    comparison_sensitivity_df: Optional[pd.DataFrame] = None
     if st.session_state.get("comparison_mode") and st.session_state.get("benchmark_data") is not None:
         try:
             comparison_benchmark = st.session_state["benchmark_data"]
@@ -4807,6 +5454,42 @@ def main():
                 comparison_benchmark["x"],
                 comparison_benchmark["subsidence"],
             )
+            comparison_sensitivity_df = perform_validation_sensitivity_analysis(
+                x_axis,
+                sub_p * 100.0,
+                comparison_benchmark["x"],
+                comparison_benchmark["subsidence"],
+            )
+            comparison_snapshot = create_reproducibility_snapshot(
+                x_axis,
+                sub_p * 100.0,
+                comparison_benchmark,
+                comparison_metrics,
+                context={"mode": "main_dashboard"},
+            )
+            if st.session_state.get("last_validation_hash") != comparison_snapshot["input_hash"]:
+                comparison_snapshot_path = save_reproducibility_snapshot(comparison_snapshot)
+                st.session_state["last_validation_hash"] = comparison_snapshot["input_hash"]
+                st.session_state["last_validation_snapshot_path"] = comparison_snapshot_path
+                validation_benchmark_db.record_result(
+                    BenchmarkResult(
+                        model_name=comparison_benchmark.get("benchmark_name", "External"),
+                        rmse=comparison_metrics["rmse"],
+                        mae=comparison_metrics["mae"],
+                        r2=comparison_metrics["r2"],
+                        mape=comparison_metrics["mape"],
+                        nse=comparison_metrics["nse"],
+                        kge=comparison_metrics["kge"],
+                        n_samples=len(comparison_metrics["benchmark_x_eval"]),
+                        source_type=comparison_benchmark.get("source_type", "external_csv"),
+                        source_path=comparison_benchmark.get("source_path"),
+                        validation_score=comparison_metrics["score"],
+                        observed_span=comparison_metrics["observed_span"],
+                    ),
+                    snapshot=comparison_snapshot,
+                )
+            else:
+                comparison_snapshot_path = st.session_state.get("last_validation_snapshot_path")
         except Exception as exc:
             st.warning(f"Benchmark comparison error: {exc}")
             comparison_metrics = None
@@ -4984,9 +5667,18 @@ def main():
 
     with col_g1:
         fig_sub = go.Figure()
+        sub_lower_99, sub_upper_99 = subsidence_confidence_interval(sub_p * 100.0, n_measurements=20, confidence=0.99)
         fig_sub.add_trace(go.Scatter(
             x=x_axis, y=sub_p * 100.0, fill='tozeroy',
             line=dict(color='magenta', width=3), name='Mean'
+        ))
+        fig_sub.add_trace(go.Scatter(
+            x=x_axis, y=sub_lower_99, fill=None,
+            line=dict(dash='dash', color='rgba(255,165,0,0.7)'), name='99% CI lower'
+        ))
+        fig_sub.add_trace(go.Scatter(
+            x=x_axis, y=sub_upper_99, fill='tonexty',
+            line=dict(dash='dash', color='rgba(255,165,0,0.7)'), name='99% CI upper'
         ))
         fig_sub.add_trace(go.Scatter(
             x=x_axis, y=sub_lower, fill=None,
@@ -4997,12 +5689,58 @@ def main():
             line=dict(dash='dot', color='gray'), name='95% CI upper'
         ))
         if comparison_metrics is not None and comparison_benchmark is not None:
+            mc_low_99, mc_high_99 = comparison_metrics["mc_ci99"]
+            mc_low_95, mc_high_95 = comparison_metrics["mc_ci95"]
             fig_sub.add_trace(
                 go.Scatter(
-                    x=comparison_benchmark["x"],
-                    y=comparison_benchmark["subsidence"],
+                    x=comparison_metrics["benchmark_x_eval"],
+                    y=mc_low_99,
+                    mode="lines",
+                    line=dict(width=0),
+                    hoverinfo="skip",
+                    showlegend=False,
+                    name="Benchmark 99% lower",
+                )
+            )
+            fig_sub.add_trace(
+                go.Scatter(
+                    x=comparison_metrics["benchmark_x_eval"],
+                    y=mc_high_99,
+                    mode="lines",
+                    line=dict(width=0),
+                    fill="tonexty",
+                    fillcolor="rgba(255,165,0,0.10)",
+                    name="Benchmark 99% CI",
+                )
+            )
+            fig_sub.add_trace(
+                go.Scatter(
+                    x=comparison_metrics["benchmark_x_eval"],
+                    y=mc_low_95,
+                    mode="lines",
+                    line=dict(width=0),
+                    hoverinfo="skip",
+                    showlegend=False,
+                    name="Benchmark 95% lower",
+                )
+            )
+            fig_sub.add_trace(
+                go.Scatter(
+                    x=comparison_metrics["benchmark_x_eval"],
+                    y=mc_high_95,
+                    mode="lines",
+                    line=dict(width=0),
+                    fill="tonexty",
+                    fillcolor="rgba(0,191,255,0.14)",
+                    name="Benchmark 95% CI",
+                )
+            )
+            fig_sub.add_trace(
+                go.Scatter(
+                    x=comparison_metrics["benchmark_x_eval"],
+                    y=comparison_metrics["benchmark_y_eval"],
                     mode="lines+markers",
-                    name="RS2 Benchmark",
+                    name=comparison_benchmark.get("benchmark_name", "RS2 Benchmark"),
                 )
             )
         fig_sub.update_layout(title=t('subsidence_title'), template="plotly_dark", height=300)
@@ -5035,17 +5773,21 @@ def main():
         st.plotly_chart(fig_hb, use_container_width=True)
 
     if comparison_metrics is not None and comparison_benchmark is not None:
-        c1_val, c2_val, c3_val, c4_val = st.columns(4)
+        c1_val, c2_val, c3_val, c4_val, c5_val, c6_val = st.columns(6)
         c1_val.metric("R²", f"{comparison_metrics['r2']:.4f}")
         c2_val.metric("RMSE", f"{comparison_metrics['rmse']:.4f}")
         c3_val.metric("MAE", f"{comparison_metrics['mae']:.4f}")
         c4_val.metric("Validation", f"{comparison_metrics['score']:.1f}%")
+        c5_val.metric("NSE", f"{comparison_metrics['nse']:.4f}")
+        c6_val.metric("KGE", f"{comparison_metrics['kge']:.4f}")
+        if comparison_snapshot_path:
+            st.caption(f"Validation snapshot: {comparison_snapshot_path}")
 
         fig_diff = go.Figure()
         fig_diff.add_trace(
             go.Scatter(
-                x=comparison_benchmark["x"],
-                y=comparison_metrics["prediction"] - comparison_benchmark["subsidence"],
+                x=comparison_metrics["benchmark_x_eval"],
+                y=comparison_metrics["errors"],
                 name="Difference",
             )
         )
@@ -5057,6 +5799,30 @@ def main():
             height=300,
         )
         st.plotly_chart(fig_diff, use_container_width=True)
+
+        error_surface_main = comparison_metrics["error_samples"][: min(60, comparison_metrics["error_samples"].shape[0]), :]
+        fig_err_heat = go.Figure(
+            data=[
+                go.Heatmap(
+                    x=comparison_metrics["benchmark_x_eval"],
+                    y=np.arange(error_surface_main.shape[0]),
+                    z=error_surface_main,
+                    colorscale="RdBu",
+                    colorbar=dict(title="Error (cm)"),
+                )
+            ]
+        )
+        fig_err_heat.update_layout(
+            title="Error Heatmap",
+            template="plotly_dark",
+            xaxis_title="Distance (m)",
+            yaxis_title="Simulation",
+            height=320,
+        )
+        st.plotly_chart(fig_err_heat, use_container_width=True)
+
+        if comparison_sensitivity_df is not None:
+            st.dataframe(comparison_sensitivity_df, use_container_width=True, hide_index=True)
 
     st.markdown("---")
 
