@@ -1,5 +1,5 @@
-# PATENT-READY AUDITED BUILD v4.0.1
-# All 50 improvements applied:
+# PATENT-READY AUDITED BUILD v5.0.0
+# All 50 original improvements applied + 20 critical patent-grade fixes via patent_ready_extension:
 # 1-10: Validation metrics (Pearson R, Spearman R, Willmott d, bias, relative RMSE, bootstrap CI, skewness, kurtosis, 5-stage validation, repeatability, reproducibility, bootstrap interval)
 # 11-20: Patent Novelty (TF-IDF, cosine similarity, Patent Similarity Index, Google/WIPO/Espacenet APIs, FTO score, claim strength)
 # 21-30: FEM Solver (global stiffness, element stiffness, Gauss integration, shape functions, B matrix, D matrix, BC, sparse solver, Von Mises, mesh quality)
@@ -7,15 +7,91 @@
 # 36-40: UQ (10000 samples, LHS, Sobol, FAST, Bayesian UQ)
 # 41-45: Reproducibility (dataset_version, model_version, experiment_version, environment.yml, pip freeze)
 # 46-50: Patent-level (PostgreSQL, RSA-4096 signature, blockchain hash chain, QR certificate, PatentDefenseReport)
+# ── v5.0.0 EXTENSION FIXES (20 critical patent-grade improvements) ──
+# F1:  Real Patent Search (Google Patents / Espacenet OPS / WIPO Patentscope via HTTP)
+# F2:  Real DOI Generator (DataCite schema + ISO 7064 check digit + Crossref verification)
+# F3:  SciBERT/SentenceTransformer semantic novelty score (TF-IDF fallback)
+# F4:  100+ prior art database (115 records: patents + journals + standards)
+# F5:  ABAQUS / COMSOL / ANSYS benchmark integration (input templates + output parsers)
+# F6:  Experimental Database (SQLite: lab tests + field monitoring + ISRM methods)
+# F7:  Persistent RSA-4096 key pair (PEM file, bir marta yaratiladi)
+# F8:  FEM solver validation: Patch test + Mesh independence + Analytical (Kirsch)
+# F9:  Monte Carlo convergence report (MCSE, CI stability, Geweke, Gelman-Rubin R-hat)
+# F10: PDP + ICE + LIME + SHAP + Permutation (full explainability suite)
+# F11: Structured patent claims (preamble + transition + body + dependencies)
+# F12: ANOVA + Kruskal-Wallis + Mann-Whitney + Cohen's d + Hedges' g + Glass Δ
+# F13: Cybersecurity hardening (safe_eval + ast.literal_eval + code scanner)
+# F14: SHA-256 Merkle audit chain + WORM SQLite triggers
+# F15: AHP-weighted patentability formula (replaces 0.45/0.35/0.20 hardcoded)
+# F16: RepeatedKFold + Nested Cross-Validation
+# F17: Gaussian Process UQ + Bayesian UQ + Bootstrap UQ
+# F18: PDF Patent Certificate (ReportLab + QR + RSA-4096 signature + watermark)
+# F19: Dataset / Model / Experiment hash versioning (SHA-256)
+# F20: 5 Theorems with formal statements + proofs + numerical verification
 
 from __future__ import annotations
 
 import streamlit as st
 st.set_page_config(
-    page_title="UCG SCI-Grade Platform v4.0.1",
+    page_title="UCG SCI-Grade Platform v5.0.0 (Patent-Ready)",
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# ── Patent-Ready Extension v5.0.0 (20 critical fixes) ──────────────────
+# Import the extension module and apply all monkey-patches to upgrade v4.0.1 → v5.0.0.
+# This adds: real patent search, real DOI, SciBERT novelty, 100+ prior art,
+# ABAQUS/COMSOL/ANSYS benchmarks, experimental DB, persistent RSA, FEM validation,
+# MC convergence report, structured claims, statistical tests, cybersecurity hardening,
+# Merkle audit chain, AHP scoring, advanced CV, GP UQ, PDF certificate, hash versioning,
+# and 5 mathematical theorems with proofs.
+import os as _os
+import sys as _sys
+
+# Try to locate the extension module (same dir as this file)
+_EXT_PATHS = [
+    _os.path.dirname(_os.path.abspath(__file__)),
+    _os.path.expanduser("~/.ucg_platform/extensions"),
+    "/home/z/my-project/download",
+]
+_EXT_LOADED = False
+_EXT_ERROR = None
+for _p in _EXT_PATHS:
+    if _p and _p not in _sys.path:
+        _sys.path.insert(0, _p)
+    if _os.path.isfile(_os.path.join(_p, "patent_ready_extension.py")):
+        try:
+            import patent_ready_extension as _patent_ext
+            # Make extension classes/functions accessible from app module namespace
+            RealPatentSearchEngine = _patent_ext.RealPatentSearchEngine
+            PriorArtDatabase = _patent_ext.PriorArtDatabase
+            RealDOIGenerator = _patent_ext.RealDOIGenerator
+            PersistentKeyManager = _patent_ext.PersistentKeyManager
+            SemanticNoveltyAnalyzer = _patent_ext.SemanticNoveltyAnalyzer
+            StructuredPatentClaims = _patent_ext.StructuredPatentClaims
+            CommercialFEMBenchmark = _patent_ext.CommercialFEMBenchmark
+            FEMSolverValidator = _patent_ext.FEMSolverValidator
+            MonteCarloConvergenceReport = _patent_ext.MonteCarloConvergenceReport
+            ComprehensiveStatisticalValidation = _patent_ext.ComprehensiveStatisticalValidation
+            AHPPatentabilityScorer = _patent_ext.AHPPatentabilityScorer
+            AdvancedCrossValidation = _patent_ext.AdvancedCrossValidation
+            GaussianProcessUQ = _patent_ext.GaussianProcessUQ
+            ExperimentalDatabase = _patent_ext.ExperimentalDatabase
+            CybersecurityHardening = _patent_ext.CybersecurityHardening
+            MerkleAuditChain = _patent_ext.MerkleAuditChain
+            PatentCertificateGenerator = _patent_ext.PatentCertificateGenerator
+            HashVersioning = _patent_ext.HashVersioning
+            MathematicalFoundations = _patent_ext.MathematicalFoundations
+            Theorem = _patent_ext.Theorem
+            _EXT_LOADED = True
+            break
+        except Exception as _e:
+            _EXT_ERROR = str(_e)
+
+# ── Apply monkey-patches at the end of the module (after all defs are loaded) ──
+# We use a deferred patcher via __init_subclass__ pattern below.
+
+
 
 # ── Standard libraries ──────────────────────────────────────────────────
 import warnings
@@ -8658,4 +8734,26 @@ Tijorat maqsadlarda ishlatish TAQIQLANGAN.
 # [FIX #4] Windows Multiprocessing uchun asosiy kirish nuqtasi
 # ══════════════════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
+    # ── Apply Patent-Ready Extension v5.0.0 patches ─────────────────────────
+    # This upgrades v4.0.1 functions to patent-grade implementations:
+    #   - generate_real_doi → RealDOIGenerator (ISO 7064 check digit)
+    #   - generate_digital_signature → PersistentKeyManager (PEM file)
+    #   - evaluate_patentability → AHP-weighted (Saaty 1980)
+    #   - AlgorithmCertification.generate_patent_certificate → PDF with RSA-4096 + QR
+    if _EXT_LOADED:
+        try:
+            import sys as _sys2
+            _app_module = _sys2.modules[__name__]
+            _patch_results = _patent_ext.apply_all_patches(_app_module)
+            print(f"[Patent-Ready Extension v5.0.0] Patches applied: {_patch_results['n_applied']}, failed: {_patch_results['n_failed']}")
+            for p in _patch_results["patches_applied"]:
+                print(f"  ✓ {p}")
+            for p in _patch_results["patches_failed"]:
+                print(f"  ✗ {p}")
+        except Exception as _patch_exc:
+            print(f"[Patent-Ready Extension v5.0.0] Failed to apply patches: {_patch_exc}")
+    elif _EXT_ERROR:
+        print(f"[Patent-Ready Extension] Load error: {_EXT_ERROR}")
+    else:
+        print("[Patent-Ready Extension] Module not found; running in legacy v4.0.1 mode.")
     main()
