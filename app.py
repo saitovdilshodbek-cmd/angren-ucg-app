@@ -1000,6 +1000,117 @@ def compare_rs2(ucg_prediction: np.ndarray, rs2_data: Dict[str, np.ndarray], x_u
     return benchmark_model(rs2_y, ucg_aligned, "RS2", source_type=rs2_data.get("source_type", "synthetic_fallback"),
                            source_path=rs2_data.get("source_path"))
 
+
+def _normalize_benchmark_payload(
+    x_values: Any,
+    subsidence_values: Any,
+    source_type: str = "external_csv",
+    source_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Benchmark ma'lumotlarini yagona formatga keltiradi."""
+    x_arr = _to_1d_float_array(x_values, "benchmark_x")
+    subs_arr = _to_1d_float_array(subsidence_values, "benchmark_subsidence")
+    if x_arr.size != subs_arr.size:
+        raise ValueError("Benchmark `x` va `subsidence` uzunliklari bir xil bo'lishi kerak")
+    return {
+        "x": x_arr,
+        "subsidence": subs_arr,
+        "subsidence_cm": subs_arr,
+        "source_type": source_type,
+        "source_path": source_path,
+    }
+
+
+def load_external_benchmark() -> Optional[Dict[str, Any]]:
+    """Turli ustun nomlariga ega CSV benchmark fayllarini yuklaydi."""
+    uploaded = st.sidebar.file_uploader(
+        "Benchmark CSV",
+        type=["csv"],
+        key="benchmark_csv",
+    )
+    if uploaded is None:
+        return None
+
+    try:
+        df = pd.read_csv(uploaded)
+        aliases_x = ["x", "X", "distance", "Distance"]
+        aliases_sub = ["subsidence", "Subsidence", "subsidence_cm", "Vertical_Displacement"]
+
+        x_col = next((col for col in aliases_x if col in df.columns), None)
+        sub_col = next((col for col in aliases_sub if col in df.columns), None)
+
+        if x_col is None or sub_col is None:
+            st.sidebar.error("Benchmark columns not detected")
+            return None
+
+        payload = _normalize_benchmark_payload(
+            df[x_col].to_numpy(dtype=float),
+            df[sub_col].to_numpy(dtype=float),
+            source_type="external_csv",
+            source_path=uploaded.name,
+        )
+        st.sidebar.success(f"Loaded {len(payload['x'])} benchmark points")
+        return payload
+    except Exception as exc:
+        st.sidebar.error(str(exc))
+        return None
+
+
+def upload_external_benchmark() -> Optional[Dict[str, Any]]:
+    """Patent dashboard uchun tashqi benchmark CSV yuklaydi."""
+    st.sidebar.markdown("### 📂 External Benchmark")
+    uploaded_file = st.sidebar.file_uploader(
+        "Upload RS2 / FLAC3D CSV",
+        type=["csv"],
+        key="benchmark_import",
+    )
+    if uploaded_file is None:
+        return None
+
+    try:
+        df = pd.read_csv(uploaded_file)
+        required = ["x", "subsidence_cm"]
+        if not all(col in df.columns for col in required):
+            st.sidebar.error("CSV must contain x and subsidence_cm columns")
+            return None
+
+        payload = _normalize_benchmark_payload(
+            df["x"].to_numpy(dtype=float),
+            df["subsidence_cm"].to_numpy(dtype=float),
+            source_type="external_csv",
+            source_path=uploaded_file.name,
+        )
+        st.sidebar.success(f"Loaded {len(payload['x'])} benchmark points")
+        return payload
+    except Exception as exc:
+        st.sidebar.error(str(exc))
+        return None
+
+
+def calculate_comparison_metrics(
+    model_x: Any,
+    model_y: Any,
+    benchmark_x: Any,
+    benchmark_y: Any,
+) -> Dict[str, Any]:
+    """Model va benchmark egri chiziqlari uchun umumiy validatsiya metrikalarini hisoblaydi."""
+    benchmark_x_arr = _to_1d_float_array(benchmark_x, "benchmark_x")
+    benchmark_y_arr = _to_1d_float_array(benchmark_y, "benchmark_y")
+    pred = _align_prediction_to_reference(model_y, model_x, benchmark_x_arr, "benchmark_x")
+
+    rmse = float(np.sqrt(np.mean((pred - benchmark_y_arr) ** 2)))
+    mae = float(np.mean(np.abs(pred - benchmark_y_arr)))
+    r2 = float(r2_score(benchmark_y_arr, pred))
+    validation_score = float((0.5 * r2 + 0.5 * (1.0 / (1.0 + rmse))) * 100.0)
+
+    return {
+        "rmse": rmse,
+        "mae": mae,
+        "r2": r2,
+        "score": validation_score,
+        "prediction": pred,
+    }
+
 class SimilarityAnalyzer:
     def __init__(self, novelty_analyzer: NoveltyAnalyzer):
         self.analyzer = novelty_analyzer
@@ -1175,22 +1286,101 @@ def patent_analysis_ui(ucg_subsidence_cm: np.ndarray, x_axis: np.ndarray):
         mean_sim = sim_analyzer.mean_similarity()
         st.metric("Mean Similarity to Prior Art", f"{mean_sim:.4f}", 
                   delta="Low (good)" if mean_sim < 0.3 else "High (caution)")
-        
-        flac_data = load_flac3d_benchmark_data()
-        rs2_data = load_rs2_benchmark_data()
+
+        external_benchmark = upload_external_benchmark()
+        if external_benchmark is None and st.session_state.get("comparison_mode") and st.session_state.get("benchmark_data"):
+            external_benchmark = st.session_state["benchmark_data"]
+
+        if external_benchmark is not None:
+            flac_data = external_benchmark
+            rs2_data = external_benchmark
+        else:
+            flac_data = load_flac3d_benchmark_data()
+            rs2_data = load_rs2_benchmark_data()
+
         res_flac = compare_flac3d(ucg_subsidence_cm, flac_data, x_axis)
         res_rs2 = compare_rs2(ucg_subsidence_cm, rs2_data, x_axis)
-        
+
+        comparison_metrics = calculate_comparison_metrics(
+            x_axis,
+            ucg_subsidence_cm,
+            rs2_data["x"],
+            rs2_data["subsidence_cm"],
+        )
+        benchmark_type = rs2_data.get("source_type", "synthetic_fallback")
+
         st.write("Benchmark Results:")
         col1, col2 = st.columns(2)
         col1.metric("FLAC3D R²", f"{res_flac.r2:.3f}")
         col1.metric("FLAC3D RMSE", f"{res_flac.rmse:.3f} cm")
         col2.metric("RS2 R²", f"{res_rs2.r2:.3f}")
         col2.metric("RS2 RMSE", f"{res_rs2.rmse:.3f} cm")
+
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("Validation Score", f"{comparison_metrics['score']:.1f}%")
+        c2.metric("Benchmark Type", benchmark_type)
+        c3.metric("RMSE", f"{comparison_metrics['rmse']:.4f}")
+        c4.metric("MAE", f"{comparison_metrics['mae']:.4f}")
+        c5.metric("R²", f"{comparison_metrics['r2']:.4f}")
+
+        fig_compare = go.Figure()
+        fig_compare.add_trace(
+            go.Scatter(
+                x=x_axis,
+                y=ucg_subsidence_cm,
+                mode="lines",
+                name="UCG Model",
+                line=dict(width=4),
+            )
+        )
+        fig_compare.add_trace(
+            go.Scatter(
+                x=rs2_data["x"],
+                y=rs2_data["subsidence_cm"],
+                mode="markers+lines",
+                name="RS2 / External",
+            )
+        )
+        fig_compare.update_layout(
+            title="Dynamic Benchmark Validation",
+            xaxis_title="Distance (m)",
+            yaxis_title="Subsidence (cm)",
+            template="plotly_dark",
+            height=600,
+        )
+        st.plotly_chart(fig_compare, use_container_width=True)
+
+        errors = comparison_metrics["prediction"] - rs2_data["subsidence_cm"]
+        fig_err = go.Figure()
+        fig_err.add_trace(
+            go.Histogram(
+                x=errors,
+                nbinsx=30,
+                name="Prediction Error",
+            )
+        )
+        fig_err.update_layout(
+            title="Error Distribution",
+            template="plotly_dark",
+            xaxis_title="Error (cm)",
+            yaxis_title="Frequency",
+        )
+        st.plotly_chart(fig_err, use_container_width=True)
         
         if st.button("Generate Patent Report (DOCX)", key="generate_patent_report_docx"):
             report_bytes = generate_patent_report(
-                df, [res_flac, res_rs2], sim_df, mean_sim
+                df,
+                [res_flac, res_rs2],
+                sim_df,
+                mean_sim,
+                report_payload={
+                    "validation_score": comparison_metrics["score"],
+                    "benchmark_type": benchmark_type,
+                    "rmse": comparison_metrics["rmse"],
+                    "mae": comparison_metrics["mae"],
+                    "r2": comparison_metrics["r2"],
+                    "source_path": rs2_data.get("source_path"),
+                },
             )
             st.download_button(
                 label="⬇️ Download Patent Report",
@@ -2452,6 +2642,8 @@ def _init_session() -> None:
         'live_data_list': [],
         'thermal_field_cached': None,
         'fos_cached': None,
+        'comparison_mode': False,
+        'benchmark_data': None,
     }
     for key, val in defaults.items():
         if key not in st.session_state:
@@ -4297,6 +4489,11 @@ def draw_interactive_dashboard(x_ax, z_ax, fos_d, disp_d, surf_x,
 # STREAMLIT UI (ASOSIY QISMI) — [FIX #4] if __name__ bilan himoyalangan
 # ════════════════════════════════════════════════════════════════════════════
 def main():
+    if "comparison_mode" not in st.session_state:
+        st.session_state["comparison_mode"] = False
+    if "benchmark_data" not in st.session_state:
+        st.session_state["benchmark_data"] = None
+
     # ── Til tanlash ─────────────────────────────────────────────────────────
     lang_col1, lang_col2, lang_col3 = st.sidebar.columns(3)
     if lang_col1.button("🇺🇿 UZ", use_container_width=True):
@@ -4314,6 +4511,20 @@ def main():
 
     st.title(f"🔬 {t('app_title')}")
     st.caption(t('app_subtitle'))
+
+    st.sidebar.markdown("---")
+    comparison_mode = st.sidebar.checkbox(
+        "Comparison Mode",
+        value=bool(st.session_state.get("comparison_mode", False)),
+        key="comparison_mode_toggle",
+    )
+    st.session_state["comparison_mode"] = comparison_mode
+    if comparison_mode:
+        benchmark = load_external_benchmark()
+        if benchmark is not None:
+            st.session_state["benchmark_data"] = benchmark
+    else:
+        st.session_state["benchmark_data"] = None
 
     st.sidebar.header(t('sidebar_header_params'))
 
@@ -4585,6 +4796,21 @@ def main():
 
     horizontal_disp_m = -(x_axis / (i_oreilly + EPS_GENERAL)) * sub_p
     horizontal_disp_cm = horizontal_disp_m * 100.0
+    comparison_metrics: Optional[Dict[str, Any]] = None
+    comparison_benchmark: Optional[Dict[str, Any]] = None
+    if st.session_state.get("comparison_mode") and st.session_state.get("benchmark_data") is not None:
+        try:
+            comparison_benchmark = st.session_state["benchmark_data"]
+            comparison_metrics = calculate_comparison_metrics(
+                x_axis,
+                sub_p * 100.0,
+                comparison_benchmark["x"],
+                comparison_benchmark["subsidence"],
+            )
+        except Exception as exc:
+            st.warning(f"Benchmark comparison error: {exc}")
+            comparison_metrics = None
+            comparison_benchmark = None
 
     avg_t_p = float(np.mean(temp_2d[idx_closest, :]))
     ucs_seam = float(layers_data[-1]['ucs'])
@@ -4770,6 +4996,15 @@ def main():
             x=x_axis, y=sub_upper, fill='tonexty',
             line=dict(dash='dot', color='gray'), name='95% CI upper'
         ))
+        if comparison_metrics is not None and comparison_benchmark is not None:
+            fig_sub.add_trace(
+                go.Scatter(
+                    x=comparison_benchmark["x"],
+                    y=comparison_benchmark["subsidence"],
+                    mode="lines+markers",
+                    name="RS2 Benchmark",
+                )
+            )
         fig_sub.update_layout(title=t('subsidence_title'), template="plotly_dark", height=300)
         st.plotly_chart(fig_sub, use_container_width=True)
 
@@ -4798,6 +5033,30 @@ def main():
             legend=dict(orientation="h", y=-0.3, x=0.5, xanchor="center")
         )
         st.plotly_chart(fig_hb, use_container_width=True)
+
+    if comparison_metrics is not None and comparison_benchmark is not None:
+        c1_val, c2_val, c3_val, c4_val = st.columns(4)
+        c1_val.metric("R²", f"{comparison_metrics['r2']:.4f}")
+        c2_val.metric("RMSE", f"{comparison_metrics['rmse']:.4f}")
+        c3_val.metric("MAE", f"{comparison_metrics['mae']:.4f}")
+        c4_val.metric("Validation", f"{comparison_metrics['score']:.1f}%")
+
+        fig_diff = go.Figure()
+        fig_diff.add_trace(
+            go.Scatter(
+                x=comparison_benchmark["x"],
+                y=comparison_metrics["prediction"] - comparison_benchmark["subsidence"],
+                name="Difference",
+            )
+        )
+        fig_diff.update_layout(
+            title="Benchmark Difference Plot",
+            template="plotly_dark",
+            xaxis_title="Distance (m)",
+            yaxis_title="Difference (cm)",
+            height=300,
+        )
+        st.plotly_chart(fig_diff, use_container_width=True)
 
     st.markdown("---")
 
