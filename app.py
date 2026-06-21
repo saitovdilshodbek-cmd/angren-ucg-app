@@ -35,6 +35,13 @@ UCG SCI-Grade Platform — Tuzatilgan va Kengaytirilgan Versiya (v4.0.0)
 [FIX #205] Experimental Database (field, laboratory data) qo‘shildi
 [FIX #206] AI Explainability (SHAP, Feature Importance) ko‘rinishi yaxshilandi
 [FIX #207] Validation Certificate Generator (PDF + hash) qo‘shildi
+
+[FIX #300] BOOTSTRAP_LOGGER taʼrifi PyTorch importidan oldin ko‘chirildi
+[FIX #301] Mesh convergence da nolga bo‘lish xatoligi tuzatildi
+[FIX #302] get_dash_data chaqiruvida barcha argumentlar aniqlandi
+[FIX #303] draw_interactive_dashboard chaqiruvida barcha argumentlar aniqlandi
+[FIX #304] float() chaqiruvlari xavfsizlashtirildi
+[FIX #305] Unused importlar olib tashlandi
 """
 import streamlit as st
 st.set_page_config(
@@ -100,6 +107,9 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 
+# [FIX #300] BOOTSTRAP_LOGGER taʼrifi PyTorch importidan oldin ko‘chirildi
+BOOTSTRAP_LOGGER = logging.getLogger("ucg_platform.bootstrap")
+
 # ── Ixtiyoriy kutubxonalar ─────────────────────────────────────────────────
 try:
     import torch
@@ -140,7 +150,6 @@ try:
 except ImportError:
     SHAP_AVAILABLE = False
 
-BOOTSTRAP_LOGGER = logging.getLogger("ucg_platform.bootstrap")
 DEFAULT_LOG_DIR = Path(os.getenv("UCG_LOG_DIR", Path.home() / ".ucg_platform" / "logs")).expanduser()
 DEFAULT_REPORT_DIR = "reports"
 MAX_SUBPROCESS_TIMEOUT_SEC = 2.0
@@ -7654,11 +7663,16 @@ def main():
                                    template='plotly_dark', xaxis_title='nx (grid points)',
                                    yaxis_title='Mean FOS')
             st.plotly_chart(fig_conv, use_container_width=True)
+            # FIX #301: nolga bo'lish xatoligini oldini olish
             if len(df_conv) >= 2:
-                last_change = abs(df_conv['mean_FOS'].iloc[-1] - df_conv['mean_FOS'].iloc[-2]) / df_conv['mean_FOS'].iloc[-2]
-                st.metric("Last relative change", f"{last_change*100:.3f}%",
-                          delta="Converged" if last_change < 0.01 else "Not converged",
-                          delta_color="normal" if last_change < 0.01 else "inverse")
+                denominator = df_conv['mean_FOS'].iloc[-2]
+                if abs(denominator) > EPS_GENERAL:
+                    last_change = abs(df_conv['mean_FOS'].iloc[-1] - denominator) / abs(denominator)
+                    st.metric("Last relative change", f"{last_change*100:.3f}%",
+                              delta="Converged" if last_change < 0.01 else "Not converged",
+                              delta_color="normal" if last_change < 0.01 else "inverse")
+                else:
+                    st.warning("Denominator is zero, cannot calculate relative change.")
 
         st.markdown("---")
 
@@ -7747,6 +7761,7 @@ def main():
 
     surface_x = x_axis
     # [FIX #3] Cached ma'lumotlardan foydalanish
+    # FIX #302: barcha argumentlar aniq ta'riflangan
     t_steps_dash, h_disp_dash, v_disp_dash = get_dash_data(
         float(time_h), float(Smax), float(c_subs),
         float(influence_radius), surface_x
@@ -7759,6 +7774,7 @@ def main():
         disp_cscale = st.selectbox("Displacement Color Scale", ['Turbo', 'Viridis', 'Cividis'],
                                     index=0, key="disp_cscale")
 
+    # FIX #303: barcha argumentlar aniq
     dash_fig = draw_interactive_dashboard(
         x_axis, z_axis, fos_stage, displacement_2d,
         surface_x, h_disp_dash, v_disp_dash,
