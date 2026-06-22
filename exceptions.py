@@ -1,130 +1,169 @@
 """
-UCG Platform — Custom Exception Hierarchy
-==========================================
+Custom exception hierarchy for UCG SCI-Grade Platform.
 
-Bu modul barcha UCG platformasi uchun structured exception hierarchy taqdim etadi.
-Generic `Exception` ishlatish o'rniga, aniq exception turlari ishlatiladi.
+Har bir exception aniq kategoriya uchun — bu exception handling ni aniq va
+debuggable qiladi. Generic `Exception` ishlatish o'rniga, aniq exception
+type larni catch qilish mumkin.
 
 Hierarchy:
     UCGException (base)
-    ├── FEMSolverError           — FEM computation errors
-    │   ├── FEMMeshError         — Invalid mesh structure
-    │   ├── FEMMaterialError     — Invalid material properties
-    │   └── FEMConvergenceError  — Solver did not converge
-    ├── PatentAnalysisError      — Patent analysis errors
-    │   ├── PatentSearchError    — Patent database search errors
-    │   └── PatentClaimError     — Claim generation/parsing errors
-    ├── ValidationError          — Data validation errors
-    ├── ConfigurationError       — Configuration errors
-    ├── SecurityError            — Security/crypto errors
-    │   ├── KeyManagementError   — RSA key management
-    │   └── AuthenticationError  — API authentication
-    ├── DatabaseError            — Database operation errors
-    └── APIClientError           — External API client errors
-        ├── RateLimitError       — Rate limiting (429)
-        └── APIConnectionError   — Network/connection errors
+    ├── FEMSolverError
+    │   ├── FEMMeshError
+    │   └── FEMConvergenceError
+    ├── PatentAnalysisError
+    │   ├── PatentSearchError
+    │   └── PatentClaimError
+    ├── ValidationError
+    ├── ConfigurationError
+    ├── SecurityError
+    │   ├── KeyManagementError
+    │   └── AuthenticationError
+    ├── DataError
+    │   ├── DatasetError
+    │   └── ModelError
+    └── APIError
+        ├── GooglePatentsAPIError
+        ├── EspacenetAPIError
+        └── CrossrefAPIError
 """
 
 from __future__ import annotations
+from typing import Optional
 
 
 class UCGException(Exception):
     """Base exception for all UCG platform errors."""
-    pass
+
+    def __init__(self, message: str, *, detail: Optional[str] = None) -> None:
+        super().__init__(message)
+        self.message = message
+        self.detail = detail
+
+    def __str__(self) -> str:
+        if self.detail:
+            return f"{self.message} (detail: {self.detail})"
+        return self.message
 
 
-# ── FEM Solver Errors ──────────────────────────────────────────────────
+# ── FEM Solver errors ──────────────────────────────────────────────────────
 class FEMSolverError(UCGException):
-    """Base exception for FEM computation errors."""
+    """FEM computation error (generic)."""
     pass
 
 
 class FEMMeshError(FEMSolverError):
-    """Raised when mesh structure is invalid (e.g., negative Jacobian, inverted elements)."""
+    """Invalid mesh structure (degenerate elements, negative Jacobian, etc.)."""
     pass
 
 
 class FEMMaterialError(FEMSolverError):
-    """Raised when material properties are invalid (e.g., E <= 0, nu not in [0, 0.5])."""
+    """Invalid material properties (E ≤ 0, nu out of [-1, 0.5], etc.)."""
     pass
 
 
 class FEMConvergenceError(FEMSolverError):
-    """Raised when FEM solver fails to converge."""
+    """FEM solver failed to converge."""
     pass
 
 
-# ── Patent Analysis Errors ─────────────────────────────────────────────
+# ── Patent analysis errors ─────────────────────────────────────────────────
 class PatentAnalysisError(UCGException):
-    """Base exception for patent analysis errors."""
+    """Patent analysis error (generic)."""
     pass
 
 
 class PatentSearchError(PatentAnalysisError):
-    """Raised when patent database search fails (Google Patents, Espacenet, WIPO)."""
+    """Patent database search error (Google Patents, Espacenet, WIPO, Crossref)."""
     pass
 
 
 class PatentClaimError(PatentAnalysisError):
-    """Raised when patent claim generation or parsing fails."""
+    """Patent claim generation/parsing error."""
     pass
 
 
-# ── Validation Errors ──────────────────────────────────────────────────
+# ── Validation errors ──────────────────────────────────────────────────────
 class ValidationError(UCGException):
-    """Raised when input data fails validation."""
+    """Data validation error (invalid input, out-of-range values, etc.)."""
     pass
 
 
 class ConfigurationError(UCGException):
-    """Raised when configuration is invalid or missing."""
+    """Configuration error (missing env vars, invalid config, etc.)."""
     pass
 
 
-# ── Security Errors ────────────────────────────────────────────────────
+# ── Security errors ────────────────────────────────────────────────────────
 class SecurityError(UCGException):
-    """Base exception for security-related errors."""
+    """Security-related error (cryptography, signing, etc.)."""
     pass
 
 
 class KeyManagementError(SecurityError):
-    """Raised when RSA key management fails (generation, loading, signing)."""
+    """RSA/PQC key management error (key generation, loading, signing)."""
     pass
 
 
 class AuthenticationError(SecurityError):
-    """Raised when API authentication fails (OAuth, API keys)."""
+    """Authentication error (API keys, OAuth tokens, etc.)."""
     pass
 
 
-# ── Database Errors ────────────────────────────────────────────────────
-class DatabaseError(UCGException):
-    """Raised when database operations fail (SQLite, PostgreSQL, IPFS)."""
+# ── Data errors ────────────────────────────────────────────────────────────
+class DataError(UCGException):
+    """Data-related error (database, file I/O, etc.)."""
     pass
 
 
-# ── API Client Errors ──────────────────────────────────────────────────
-class APIClientError(UCGException):
-    """Base exception for external API client errors."""
+class DatasetError(DataError):
+    """Dataset error (missing data, corrupt data, etc.)."""
     pass
 
 
-class RateLimitError(APIClientError):
-    """Raised when API returns 429 (rate limit exceeded)."""
+class ModelError(DataError):
+    """Model error (serialization, loading, inference)."""
     pass
 
 
-class APIConnectionError(APIClientError):
-    """Raised when network connection to API fails."""
+# ── API errors ─────────────────────────────────────────────────────────────
+class APIError(UCGException):
+    """External API error (HTTP, network, rate limit)."""
+
+    def __init__(self, message: str, *, status_code: Optional[int] = None,
+                 endpoint: Optional[str] = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.endpoint = endpoint
+
+    def __str__(self) -> str:
+        parts = [self.message]
+        if self.status_code:
+            parts.append(f"HTTP {self.status_code}")
+        if self.endpoint:
+            parts.append(f"endpoint={self.endpoint}")
+        return " | ".join(parts)
+
+
+class GooglePatentsAPIError(APIError):
+    """Google Patents API error."""
     pass
 
 
-__all__ = [
-    "UCGException",
-    "FEMSolverError", "FEMMeshError", "FEMMaterialError", "FEMConvergenceError",
-    "PatentAnalysisError", "PatentSearchError", "PatentClaimError",
-    "ValidationError", "ConfigurationError",
-    "SecurityError", "KeyManagementError", "AuthenticationError",
-    "DatabaseError",
-    "APIClientError", "RateLimitError", "APIConnectionError",
-]
+class EspacenetAPIError(APIError):
+    """Espacenet OPS API error."""
+    pass
+
+
+class WIPOAPIError(APIError):
+    """WIPO Patentscope API error."""
+    pass
+
+
+class CrossrefAPIError(APIError):
+    """Crossref API error."""
+    pass
+
+
+class DataCiteAPIError(APIError):
+    """DataCite REST API error."""
+    pass
