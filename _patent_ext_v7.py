@@ -1936,8 +1936,7 @@ def run_v7_self_tests() -> Dict[str, Any]:
     return results
 
 
-if __name__ == "__main__":
-    print(f"Patent-Ready Extension v{EXT_V7_VERSION}")
-    print("=" * 60)
-    test_results = run_v7_self_tests()
-    print(json.dumps(test_results, indent=2, default=str))
+# ============================================================================
+# ITEM 45 — SECURE KEY VAULT
+# ============================================================================
+class SecureK
