@@ -7736,6 +7736,20 @@ def main():
 
     st.sidebar.markdown("---")
 
+    # ── System Integrity Monitor (YUQORIDA — sahifa boshida ko'rinadi) ─────
+    # Bu panellar main() ning oxirida ham chaqiriladi (line ~10150),
+    # lekin foydalanuvchilar ko'rishi uchun yuqorida ham ko'rsatamiz.
+    # FAQAT SIDEBAR panelarini yuqorida ko'rsatamiz — main area panelari
+    # sahifa oxirida qoladi (pastda aylantirib ko'riladi).
+    try:
+        import _system_monitor as _monitor_top
+        _monitor_top.show_system_status()
+        _monitor_top.show_help()
+    except ImportError:
+        pass  # fallback allaqachim main() oxirida bor
+    except (ValueError, KeyError, TypeError, AttributeError, RuntimeError):
+        pass  # xato bersa, asosiy sahifa ishlayveradi
+
     st.title(f"🔬 {t('app_title')}")
     st.caption(t('app_subtitle'))
 
