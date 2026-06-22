@@ -54,90 +54,25 @@ try:
 except ImportError:
     pass  # python-dotenv not installed; env vars must be set manually
 
-# ── UCG Platform Core Modules (top-level) ──────────────────────────────
-# Modular: exceptions.py, config.py, logger.py, version.py
-# These are top-level modules (same dir as app.py).
+# ── UCG Platform Core Package ──────────────────────────────────────────
+# Modular package: exceptions, config, logger, constants, version, key_manager
 try:
-    # Version (mandatory)
-    from version import (
+    from ucg_platform import (
         __version__ as _pkg_version,
-        version_info as _version_info,
-        get_version_info as _get_version_info,
+        get_config as _get_pkg_config,
+        get_logger as _get_pkg_logger,
+        setup_logging as _setup_pkg_logging,
     )
-    # Exceptions (mandatory)
-    from exceptions import (
+    from ucg_platform.exceptions import (
         UCGException, FEMMeshError, FEMMaterialError, FEMConvergenceError,
         ValidationError as UCGValidationError,
         ConfigurationError as UCGConfigurationError,
         KeyManagementError,
-        PatentSearchError, PatentAnalysisError, PatentClaimError,
-        SecurityError, AuthenticationError,
-        DataError, DatasetError, ModelError,
-        APIError, GooglePatentsAPIError, EspacenetAPIError,
-        WIPOAPIError, CrossrefAPIError, DataCiteAPIError,
-    )
-    # Config (mandatory, but lazy — only validate when accessed)
-    from config import (
-        Config as _ConfigClass,
-        get_config as _get_pkg_config,
-    )
-    # Logger (mandatory)
-    from logger import (
-        setup_logging as _setup_pkg_logging,
-        get_logger as _get_pkg_logger,
     )
     _PKG_AVAILABLE = True
-except ImportError as _pkg_import_err:
+except ImportError:
     _PKG_AVAILABLE = False
-    _PKG_IMPORT_ERROR = str(_pkg_import_err)
-    # Fallback: define minimal placeholders so app.py still loads
-    # (full functionality requires the modules to be present)
-    import sys as _sys_pkg
-    print(f"[bootstrap] WARNING: Core modules not found: {_pkg_import_err}", file=_sys_pkg.stderr)
-    print("[bootstrap] Please ensure version.py, exceptions.py, config.py, logger.py are in the same directory.", file=_sys_pkg.stderr)
-
-    # Minimal placeholders
-    class UCGException(Exception):
-        def __init__(self, message: str, *, detail=None):
-            super().__init__(message)
-            self.message = message
-            self.detail = detail
-
-    class FEMSolverError(UCGException): pass
-    class FEMMeshError(FEMSolverError): pass
-    class FEMMaterialError(FEMSolverError): pass
-    class FEMConvergenceError(FEMSolverError): pass
-    class PatentAnalysisError(UCGException): pass
-    class PatentSearchError(PatentAnalysisError): pass
-    class PatentClaimError(PatentAnalysisError): pass
-    class ValidationError(UCGException): pass
-    UCGValidationError = ValidationError
-    class ConfigurationError(UCGException): pass
-    UCGConfigurationError = ConfigurationError
-    class SecurityError(UCGException): pass
-    class KeyManagementError(SecurityError): pass
-    class AuthenticationError(SecurityError): pass
-    class DataError(UCGException): pass
-    class DatasetError(DataError): pass
-    class ModelError(DataError): pass
-    class APIError(UCGException):
-        def __init__(self, message, *, status_code=None, endpoint=None):
-            super().__init__(message)
-            self.status_code = status_code
-            self.endpoint = endpoint
-    class GooglePatentsAPIError(APIError): pass
-    class EspacenetAPIError(APIError): pass
-    class WIPOAPIError(APIError): pass
-    class CrossrefAPIError(APIError): pass
-    class DataCiteAPIError(APIError): pass
-    _pkg_version = "6.0.0-patent"
-    def _get_pkg_config(reload=False):
-        return None
-    def _get_pkg_logger(name):
-        import logging
-        return logging.getLogger(name)
-    def _setup_pkg_logging(**kwargs):
-        pass
+    _pkg_version = "6.0.0-inline"  # Fallback version
 
 
 # ── Standard libraries ──────────────────────────────────────────────────
@@ -210,7 +145,7 @@ except ImportError:
     PT_AVAILABLE = False
     device = "cpu"
     BOOTSTRAP_LOGGER.warning("PyTorch not available. CPU fallback activated.")
-except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as e:
+except Exception as e:
     PT_AVAILABLE = False
     device = "cpu"
     BOOTSTRAP_LOGGER.error(f"PyTorch initialization error: {type(e).__name__}: {e}")
@@ -423,7 +358,7 @@ class VersionInfo:
     def get_git_commit(self) -> str:
         try:
             return run_safe_subprocess(["git", "rev-parse", "--short", "HEAD"], cwd=os.getcwd())
-        except (ValueError, KeyError, TypeError, RuntimeError, AttributeError):
+        except Exception:
             return "unknown"
 
 version_info = VersionInfo()
@@ -645,7 +580,7 @@ def verify_digital_signature(data: bytes, signature: bytes, public_key_pem: byte
             hashes.SHA256()
         )
         return True
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError):
+    except Exception:
         return False
 
 
@@ -847,46 +782,27 @@ class PriorArtSearchEngine:
     @staticmethod
     def search_prior_art_api(title: str, keywords: List[str], source: str = "google") -> List[Dict[str, Any]]:
         """
-        FIX 15-17: Google Patents, WIPO Patentscope, Espacenet API.
-        Uses v6 extension's real API classes (GooglePatentsJSONAPI, EspacenetOPSAPI,
-        WIPOPatentscopeAPI) with retry, rate limiting, and cache.
-        Falls back to local PriorArtDatabase if network unavailable.
+        FIX 15-17: Google Patents, WIPO Patentscope, Espacenet API simulation.
+        In production, replace with actual API calls using requests library.
         """
-        query = f"{title} {' '.join(keywords)}"
-        logger.info(f"Searching prior art for '{title}' via {source}")
-        # Try real API via v6 extension
-        try:
-            if source == "google":
-                from _patent_ext_v6 import GooglePatentsJSONAPI
-                api = GooglePatentsJSONAPI()
-                result = api.search(query, max_results=25)
-                if result.get("success"):
-                    return result.get("results", [])
-            elif source == "espacenet":
-                from _patent_ext_v6 import EspacenetOPSAPI
-                api = EspacenetOPSAPI()
-                result = api.search(query, max_results=25)
-                if result.get("success"):
-                    return result.get("results", [])
-            elif source == "wipo":
-                from _patent_ext_v6 import WIPOPatentscopeAPI
-                api = WIPOPatentscopeAPI()
-                result = api.search(query, max_results=25)
-                if result.get("success"):
-                    return result.get("results", [])
-        except (ImportError, ConnectionError, TimeoutError, RuntimeError) as exc:
-            logger.warning(f"Real {source} API unavailable ({exc}), using local fallback")
-        # Fallback: local PriorArtDatabase (offline)
-        all_records = PriorArtDatabase.build_extended_prior_art()
-        q_lower = query.lower()
-        scored = []
-        for rec in all_records:
-            text = f"{rec.get('title','')} {rec.get('abstract','')} {rec.get('author','')} {rec.get('source','')}".lower()
-            score = sum(1 for kw in q_lower.split() if kw in text)
-            if score > 0:
-                scored.append((score, rec))
-        scored.sort(key=lambda x: -x[0])
-        return [rec for _, rec in scored[:25]]
+        logger.info(f"Searching prior art for '{title}' with keywords {keywords} via {source}")
+        # Simulated results - in production, these would come from real API calls
+        results = {
+            "google": [
+                {"title": "Biot consolidation", "author": "Biot", "year": 1941, "source": "Google Patents"},
+                {"title": "UCG stability", "author": "Yang", "year": 2010, "source": "Google Patents"},
+                {"title": "Cavity growth in UCG", "author": "Perkins", "year": 2018, "source": "Google Patents"},
+            ],
+            "wipo": [
+                {"title": "Thermal degradation of coal", "author": "Shao", "year": 2003, "source": "WIPO"},
+                {"title": "Pillar stability in UCG", "author": "Bieniawski", "year": 1992, "source": "WIPO"},
+            ],
+            "espacenet": [
+                {"title": "Gas flow in coal seams", "author": "Liu", "year": 2011, "source": "Espacenet"},
+                {"title": "Hoek-Brown failure criterion", "author": "Hoek & Brown", "year": 2018, "source": "Espacenet"},
+            ]
+        }
+        return results.get(source, results["google"])
 
     @staticmethod
     def load_records_from_csv(csv_path: Optional[str]) -> List[Dict[str, Any]]:
@@ -983,31 +899,11 @@ def generate_patent_claim_set(core_features: List[str], lang: str = "uz") -> Dic
 
 
 # ── FIX 18-19: evaluate_patentability with FTO and claim strength ──
-# Uses AHP-weighted formula (Saaty 1980) from v6 extension instead of
-# hardcoded 0.45/0.35/0.20 weights. Falls back to AHP default weights
-# if v6 extension not available.
 def evaluate_patentability(novelty_index: float, mean_similarity: float, validation_metrics: ExperimentalMetrics,
                            fto_score: Optional[float] = None, claim_strength: Optional[float] = None) -> PatentabilityScore:
     inventive_step = float(np.clip((1.0 - mean_similarity) * 100.0, 0.0, 100.0))
     industrial = float(np.clip((validation_metrics.r2 + validation_metrics.nse + max(validation_metrics.kge, 0.0)) / 3.0 * 100.0, 0.0, 100.0))
-    # AHP-weighted patentability (Saaty 1980) — replaces hardcoded 0.45/0.35/0.20
-    try:
-        from _patent_ext_v6 import AHPCalibration
-        ahp = AHPCalibration.compute_weights()
-        w = ahp["weights"]
-        patentability_index = float(np.clip(
-            w["novelty"] * novelty_index +
-            w["inventive_step"] * inventive_step +
-            w["industrial_applicability"] * industrial,
-            0.0, 100.0
-        ))
-    except (ImportError, KeyError, RuntimeError):
-        # Fallback: AHP default weights (novelty=0.637, inventive=0.258, industrial=0.105)
-        # These are derived from expert pairwise matrix, NOT arbitrary 0.45/0.35/0.20
-        patentability_index = float(np.clip(
-            0.637 * novelty_index + 0.258 * inventive_step + 0.105 * industrial,
-            0.0, 100.0
-        ))
+    patentability_index = float(np.clip(0.45 * novelty_index + 0.35 * inventive_step + 0.20 * industrial, 0.0, 100.0))
     return PatentabilityScore(
         novelty_index=float(novelty_index),
         inventive_step=inventive_step,
@@ -1222,7 +1118,7 @@ def calculate_comparison_metrics(
                 boot_metrics = compute_validation_metrics(bench_y_eval[idx], pred[idx])
                 boot_score = calculate_validation_score(boot_metrics, observed_span)
                 bootstrap_scores.append(boot_score)
-            except (ValueError, KeyError, TypeError, RuntimeError, AttributeError):
+            except Exception:
                 pass
     if bootstrap_scores:
         bootstrap_scores = np.array(bootstrap_scores)
@@ -1497,7 +1393,7 @@ def load_external_benchmark() -> Optional[Dict[str, Any]]:
         )
         st.sidebar.success(f"Loaded {len(payload['x'])} benchmark points ({payload['unit_detected']} → cm)")
         return payload
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+    except Exception as exc:
         st.sidebar.error(str(exc))
         return None
 
@@ -1528,7 +1424,7 @@ def upload_external_benchmark() -> Optional[Dict[str, Any]]:
         )
         st.sidebar.success(f"Loaded {len(payload['x'])} benchmark points ({payload['unit_detected']} → cm)")
         return payload
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+    except Exception as exc:
         st.sidebar.error(str(exc))
         return None
 
@@ -1794,7 +1690,7 @@ def export_environment_yml(base_dir: str = DEFAULT_REPORT_DIR) -> str:
         with open(env_path, "w") as f:
             f.write(result.stdout)
         return str(env_path)
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as e:
+    except Exception as e:
         logger.warning(f"Could not export environment: {e}")
         return ""
 
@@ -1806,7 +1702,7 @@ def get_pip_freeze_hash() -> str:
         import subprocess as sp
         result = sp.run(["pip", "freeze"], capture_output=True, text=True)
         return hashlib.sha256(result.stdout.encode()).hexdigest()
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError):
+    except Exception:
         return "unknown"
 
 
@@ -2015,7 +1911,7 @@ def plotly_figure_to_png_bytes(fig: go.Figure, width: int = 1000, height: int = 
         pio.write_image(fig, buffer, format="png", width=width, height=height)
         buffer.seek(0)
         return buffer.read()
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+    except Exception as exc:
         logger.warning(f"Plotly figure export error: {exc}")
         return None
 
@@ -2062,7 +1958,7 @@ def compute_mandatory_explainability_report(model: Any, X: np.ndarray, feature_n
             fi = dict(zip(feature_names, mean_abs.astype(float)))
             summary_df = pd.DataFrame({"feature": feature_names, "mean_abs_shap": mean_abs}).sort_values("mean_abs_shap", ascending=False)
             return ExplainabilityArtifact(feature_importance=fi, shap_summary=summary_df, backend="shap")
-        except (ValueError, KeyError, TypeError, RuntimeError, AttributeError):
+        except Exception:
             logger.warning("SHAP failed, falling back to permutation importance")
     
     if PERM_IMP_AVAILABLE:
@@ -2398,7 +2294,7 @@ def solve_fem_3d_linear_elastic_real(mesh: FEMMesh3D, young_modulus: float, pois
     K_csr = csr_matrix(K)
     try:
         u = spsolve(K_csr, F)
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as e:
+    except Exception as e:
         logger.error(f"Sparse solver failed: {e}")
         # Fallback: use dense solver for small problems
         K_dense = K.toarray()
@@ -2778,7 +2674,7 @@ class ScientificAuditTrail:
                 conn.close()
                 logger.info("PostgreSQL audit log initialized")
                 return
-            except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as e:
+            except Exception as e:
                 logger.warning(f"PostgreSQL init failed: {e}, falling back to SQLite")
                 self.use_postgres = False
         
@@ -2831,7 +2727,7 @@ class ScientificAuditTrail:
                 conn.commit()
                 conn.close()
                 return
-            except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as e:
+            except Exception as e:
                 logger.warning(f"PostgreSQL insert failed: {e}, falling back to SQLite")
                 self.use_postgres = False
         
@@ -3204,7 +3100,7 @@ def load_experimental_dataset(csv_path: str, dataset_type: str = "field") -> Opt
             source_path=str(csv_path),
             metadata={"rows": len(df), "columns": list(df.columns)},
         )
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as e:
+    except Exception as e:
         st.error(f"Error loading experimental data: {e}")
         return None
 
@@ -3868,7 +3764,7 @@ def performance_monitor(operation_name: str):
                     logger.warning(f"⚠️ {operation_name} juda uzoq ({elapsed_time:.1f}s)")
                 if memory_used > 500:
                     logger.warning(f"⚠️ {operation_name} juda ko'p xotira ishlatdi ({memory_used:.1f} MB)")
-            except (ValueError, KeyError, TypeError, RuntimeError, AttributeError):
+            except Exception:
                 logger.info(f"✓ {operation_name}: {elapsed_time:.3f}s")
         else:
             logger.info(f"✓ {operation_name}: {elapsed_time:.3f}s")
@@ -3952,7 +3848,7 @@ def validate_sensor_data_full(data: Dict[str, Any], db_path: str = "ucg_sensors.
     except sqlite3.DatabaseError as e:
         logger.error(f"Database Error: {e}")
         return False
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as e:
+    except Exception as e:
         logger.error(f"Unexpected Error: {type(e).__name__}: {e}")
         return False
 
@@ -4125,7 +4021,7 @@ class ThermalDegradationModel:
         except (ValueError, RuntimeError) as e:
             logger.error(f"solve_ivp error: {type(e).__name__}: {e}, using fallback")
             return self._gsi_euler_fallback(temp_profile, time_hours)
-        except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as e:
+        except Exception as e:
             logger.error(f"Unexpected error in gsi_at_time: {type(e).__name__}: {e}")
             return self._gsi_euler_fallback(temp_profile, time_hours)
 
@@ -5424,7 +5320,7 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
                 doc.add_paragraph("References:", style='Intense Quote')
                 for ref in t.references:
                     doc.add_paragraph(f"• {ref}", style='List Bullet')
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+    except Exception as exc:
         doc.add_paragraph(f"[Theorem generation error: {exc}]")
 
     # ─────────────────────────────────────────────────────────────────────
@@ -5462,7 +5358,7 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         ]
         for s in sources:
             doc.add_paragraph(f"• {s}", style='List Bullet')
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+    except Exception as exc:
         doc.add_paragraph(f"[Patent search error: {exc}]")
 
     # ─────────────────────────────────────────────────────────────────────
@@ -5493,7 +5389,7 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         p.add_run(f"{doi_result['suffix']}\n")
         p.add_run(f"Generated At: ").bold = True
         p.add_run(f"{doi_result['generated_at']}")
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+    except Exception as exc:
         doc.add_paragraph(f"[DOI generation error: {exc}]")
 
     # ─────────────────────────────────────────────────────────────────────
@@ -5531,7 +5427,7 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         p.add_run(f"{score['p95_similarity']:.4f}\n")
         p.add_run(f"N Prior Art Compared: ").bold = True
         p.add_run(f"{score['n_prior_art']}")
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+    except Exception as exc:
         doc.add_paragraph(f"[Novelty analysis error: {exc}]")
 
     # ─────────────────────────────────────────────────────────────────────
@@ -5550,7 +5446,7 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
             "Comparison metrics: RMSE, MAE, Max Abs Diff, Relative RMSE, R². "
             "Validation threshold: R² > 0.95 AND Relative RMSE < 0.10."
         )
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+    except Exception as exc:
         doc.add_paragraph(f"[FEM benchmark error: {exc}]")
 
     # ─────────────────────────────────────────────────────────────────────
@@ -5582,7 +5478,7 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         if summary.get('field_by_country'):
             field_df = pd.DataFrame(summary['field_by_country'])
             add_dataframe_to_doc(doc, field_df, "Field Sites by Country")
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+    except Exception as exc:
         doc.add_paragraph(f"[Experimental DB error: {exc}]")
 
     # ─────────────────────────────────────────────────────────────────────
@@ -5611,7 +5507,7 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         p.add_run(f"{sig_result['signed_at']}\n")
         p.add_run(f"Signature (first 64 chars): ").bold = True
         p.add_run(f"{sig_result['signature'][:64]}...")
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+    except Exception as exc:
         doc.add_paragraph(f"[RSA signature error: {exc}]")
 
     # ─────────────────────────────────────────────────────────────────────
@@ -5666,7 +5562,7 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         p.add_run(f"{av['max_hoop_stress']:.2f} MPa\n")
         p.add_run(f"Analytical Verification Passed: ").bold = True
         p.add_run(f"{'✓ YES' if av['analytical_verification_passed'] else '✗ NO'}")
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+    except Exception as exc:
         doc.add_paragraph(f"[FEM validation error: {exc}]")
 
     # ─────────────────────────────────────────────────────────────────────
@@ -5706,7 +5602,7 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         p.add_run(f"95% CI: [{mc['ci_low']:.4f}, {mc['ci_high']:.4f}]\n")
         p.add_run(f"Convergence Achieved: ").bold = True
         p.add_run(f"{'✓ YES' if mc['convergence_achieved'] else '✗ NO'}")
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+    except Exception as exc:
         doc.add_paragraph(f"[MC convergence error: {exc}]")
 
     # ─────────────────────────────────────────────────────────────────────
@@ -5775,7 +5671,7 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
             p.add_run(f"{claim['preamble']} {claim['transition']} ")
             for body_item in claim['body']:
                 p.add_run(body_item + " ")
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+    except Exception as exc:
         doc.add_paragraph(f"[Claims generation error: {exc}]")
 
     # ─────────────────────────────────────────────────────────────────────
@@ -5831,7 +5727,7 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         p = doc.add_paragraph()
         p.add_run(f"Recommendation: ").bold = True
         p.add_run(stats_val.get('summary_recommendation', 'N/A'))
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+    except Exception as exc:
         doc.add_paragraph(f"[Statistical validation error: {exc}]")
 
     # ─────────────────────────────────────────────────────────────────────
@@ -5859,7 +5755,7 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         doc.add_paragraph("Dangerous Patterns Detected:", style='Intense Quote')
         for pat, msg in CybersecurityHardening.DANGEROUS_PATTERNS:
             doc.add_paragraph(f"• {pat} — {msg}", style='List Bullet')
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+    except Exception as exc:
         doc.add_paragraph(f"[Cybersecurity error: {exc}]")
 
     # ─────────────────────────────────────────────────────────────────────
@@ -5890,7 +5786,7 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         p.add_run(f"RSA-4096 (RSASSA-PSS-SHA256)\n")
         p.add_run(f"WORM Protection: ").bold = True
         p.add_run(f"✓ SQLite triggers (prevent_audit_update, prevent_audit_delete)")
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+    except Exception as exc:
         doc.add_paragraph(f"[Merkle chain error: {exc}]")
 
     # ─────────────────────────────────────────────────────────────────────
@@ -5929,7 +5825,7 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         p.add_run(f"{ahp['method']}\n")
         p.add_run(f"Scientific Basis: ").bold = True
         p.add_run(f"{ahp['scientific_basis']}")
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+    except Exception as exc:
         doc.add_paragraph(f"[AHP scoring error: {exc}]")
 
     # ─────────────────────────────────────────────────────────────────────
@@ -5967,7 +5863,7 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         p.add_run(f"95% CI: [{rkf['ci95_low']:.4f}, {rkf['ci95_high']:.4f}]\n")
         p.add_run(f"Stability CV: ").bold = True
         p.add_run(f"{rkf['stability_cv']:.4f}")
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+    except Exception as exc:
         doc.add_paragraph(f"[Cross-validation error: {exc}]")
 
     # ─────────────────────────────────────────────────────────────────────
@@ -5998,7 +5894,7 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         p.add_run(f"{gp['n_test_points']}\n")
         p.add_run(f"Converged: ").bold = True
         p.add_run(f"{'✓ YES' if gp['converged'] else '✗ NO'}")
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+    except Exception as exc:
         doc.add_paragraph(f"[GP UQ error: {exc}]")
 
     # ─────────────────────────────────────────────────────────────────────
@@ -6062,7 +5958,7 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         p.add_run(f"{hashes['experiment']['git_commit']}\n")
         p.add_run(f"All Hashes Computed: ").bold = True
         p.add_run(f"{'✓ YES' if hashes['all_hashes_computed'] else '✗ NO'}")
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+    except Exception as exc:
         doc.add_paragraph(f"[Hash versioning error: {exc}]")
 
     # ─────────────────────────────────────────────────────────────────────
@@ -6131,7 +6027,7 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         p.add_run(f"{score['novelty_index']:.2f}/100\n")
         p.add_run(f"Device: ").bold = True
         p.add_run(f"{score.get('device', 'cpu')}")
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+    except Exception as exc:
         doc.add_paragraph(f"[SciBERT error: {exc}]")
         doc.add_paragraph(
             "Install: pip install transformers torch — then SciBERT will load automatically."
@@ -6177,7 +6073,7 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         p.add_run(f"{arr['mass_balance_check']:.6f} (should be 1.0)")
         for ref in arr['references']:
             doc.add_paragraph(f"• {ref}", style='List Bullet')
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+    except Exception as exc:
         doc.add_paragraph(f"[Arrhenius error: {exc}]")
 
     # C8: Mark-Bieniawski rectangular pillar
@@ -6214,7 +6110,7 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         p.add_run(ps['advantage_over_bieniawski'])
         for ref in ps['references']:
             doc.add_paragraph(f"• {ref}", style='List Bullet')
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+    except Exception as exc:
         doc.add_paragraph(f"[Mark-Bieniawski error: {exc}]")
 
     # C9: Richardson extrapolation
@@ -6251,7 +6147,7 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         p.add_run(f"{re['safety_factor_Fs']}")
         for ref in re['references']:
             doc.add_paragraph(f"• {ref}", style='List Bullet')
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+    except Exception as exc:
         doc.add_paragraph(f"[Richardson error: {exc}]")
 
     # C11: AHP calibration
@@ -6288,7 +6184,7 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         cal_df['predicted'] = cal['predicted_scores']
         cal_df.columns = ['App', 'Novelty', 'Inventive', 'Industrial', 'Expert Score', 'Predicted']
         add_dataframe_to_doc(doc, cal_df, "AHP Calibration: Predicted vs Expert Scores")
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+    except Exception as exc:
         doc.add_paragraph(f"[AHP calibration error: {exc}]")
 
     # C12: Real syngas properties
@@ -6336,7 +6232,7 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         doc.add_paragraph("References:", style='Intense Quote')
         for ref in syngas['references']:
             doc.add_paragraph(f"• {ref}", style='List Bullet')
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+    except Exception as exc:
         doc.add_paragraph(f"[Syngas error: {exc}]")
 
     # C13: IPFS distributed ledger
@@ -6379,7 +6275,7 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         ]
         for inst in instructions:
             doc.add_paragraph(f"• {inst}", style='List Bullet')
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+    except Exception as exc:
         doc.add_paragraph(f"[IPFS error: {exc}]")
 
     # C14: Post-quantum cryptography
@@ -6413,7 +6309,7 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         doc.add_paragraph("References:", style='Intense Quote')
         for ref in info['references']:
             doc.add_paragraph(f"• {ref}", style='List Bullet')
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+    except Exception as exc:
         doc.add_paragraph(f"[PQC error: {exc}]")
 
     # C15: LaTeX formal proofs
@@ -6451,7 +6347,7 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         # Show first theorem preview
         doc.add_paragraph("LaTeX Preview (first 500 chars):", style='Intense Quote')
         doc.add_paragraph(latex_src[:500] + "...", style='Quote')
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+    except Exception as exc:
         doc.add_paragraph(f"[LaTeX error: {exc}]")
 
     # C16: UzPatent filing + PCT timeline
@@ -6534,7 +6430,7 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
                   f"({costs['total_estimated_budget_5_countries']['low_estimate_USD']}-${costs['total_estimated_budget_5_countries']['high_estimate_USD']:,})\n")
         p.add_run(f"Countries: ").bold = True
         p.add_run(costs['total_estimated_budget_5_countries']['countries'])
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+    except Exception as exc:
         doc.add_paragraph(f"[UzPatent error: {exc}]")
 
     # v6 Summary
@@ -7438,7 +7334,7 @@ def save_models_to_disk(model, rf, scaler, obj_name: str, metadata: dict) -> Opt
         with open(paths["metadata"], "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=2, default=str)
         return "models/"
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+    except Exception as exc:
         logger.warning(f"Model serialization error: {exc}")
         return None
 
@@ -7476,7 +7372,7 @@ def compute_confusion_roc_f1(y_true: np.ndarray, y_pred_proba: np.ndarray,
         tpr_arr = np.array(tpr_list)
         fpr_arr = np.array(fpr_list)
         auc = float(np.trapz(tpr_arr, fpr_arr))
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError):
+    except Exception:
         auc = 0.5
     accuracy = (TP + TN) / max(TP + TN + FP + FN, 1)
     return {
@@ -7510,7 +7406,7 @@ def isolation_forest_anomaly(X: np.ndarray, contamination: float = 0.1,
         )
         labels = clf.fit_predict(X)
         return labels == -1
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+    except Exception as exc:
         logger.warning(f"IsolationForest xato: {exc}")
         z_scores = np.abs((X - np.mean(X, axis=0)) / (np.std(X, axis=0) + EPS_GENERAL))
         return np.any(z_scores > 3.0, axis=1)
@@ -7925,7 +7821,7 @@ def main():
             st.error(e)
             try:
                 st.toast(f"⚠️ {e}", icon="🚨")
-            except (ValueError, KeyError, TypeError, RuntimeError, AttributeError):
+            except Exception:
                 pass
         st.stop()
 
@@ -8117,7 +8013,7 @@ def main():
                 )
             else:
                 comparison_snapshot_path = st.session_state.get("last_validation_snapshot_path")
-        except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+        except Exception as exc:
             st.warning(f"Benchmark comparison error: {exc}")
             comparison_metrics = None
             comparison_benchmark = None
@@ -8607,7 +8503,7 @@ def main():
         collapse_pred_flat = predict_collapse(hybrid_model, rf_model, scaler, feat_pred)
         if collapse_pred_flat.size == temp_2d.size:
             collapse_pred = collapse_pred_flat.reshape(temp_2d.shape)
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as e:
+    except Exception as e:
         logger.error(f"Collapse prediction error: {e}")
         collapse_pred = np.zeros_like(temp_2d)
 
@@ -8768,7 +8664,7 @@ def main():
                 ))
                 fig_imp.update_layout(title="Mean Absolute SHAP Values", template="plotly_dark", height=400)
                 st.plotly_chart(fig_imp, use_container_width=True)
-            except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as e:
+            except Exception as e:
                 st.error(f"Majburiy SHAP explainability ishga tushmadi: {e}")
 
     # FIX #202: Cross Validation for RF model
@@ -8894,7 +8790,7 @@ def main():
                     st.warning("⚠️ Medium risk. Increase monitoring frequency.")
                 else:
                     st.success("✅ Low risk. System currently safe.")
-            except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as e:
+            except Exception as e:
                 st.error(f"Error reading file: {e}")
 
     # ── Live Monitoring ────────────────────────────────────────────────────────
@@ -9120,7 +9016,7 @@ def main():
                     vc6.metric("KGE", f"{exp_metrics.kge:.3f}")
                 else:
                     st.error("CSV must contain 'x' and 'subsidence_cm' columns.")
-            except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as e:
+            except Exception as e:
                 st.error(f"Error: {e}")
 
     # ── ISO Hisobot ─────────────────────────────────────────────────────────────
@@ -9293,7 +9189,7 @@ def main():
                         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                         use_container_width=True
                     )
-                except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as e:
+                except Exception as e:
                     st.error(f"Report generation error: {e}")
 
     # ── Live 3D Monitoring ─────────────────────────────────────────────────────
@@ -9413,7 +9309,7 @@ def main():
                             st.markdown("### 🟢 All systems normal")
                     time.sleep(0.05)
                     steps_done += 1
-                except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as e:
+                except Exception as e:
                     logger.error(f"Live step error: {e}")
                     st.warning(f"Step {steps_done+1} error, continuing...")
                     steps_done += 1
@@ -9576,7 +9472,7 @@ def main():
                                 st.success(f"✅ Normal — Eff. σ: {eff:.2f} MPa")
                             st.progress((step_ai + 1) / int(ai_steps_1))
                         time.sleep(0.1)
-                    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as e:
+                    except Exception as e:
                         logger.error(f"AI step error: {e}")
                         st.warning(f"Step {step_ai+1} error, continuing...")
                 st.success(f"✅ Done. Total anomalies: {sum(1 for a in anomalies_eff if a is not None)}")
@@ -9694,7 +9590,7 @@ def main():
                             st.plotly_chart(fig_fos_t2, use_container_width=True)
                             st.progress((i_tab2 + 1) / int(ai_steps_2))
                         time.sleep(0.05)
-                    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as e:
+                    except Exception as e:
                         logger.error(f"FOS training step error: {e}")
                         st.warning(f"Step {i_tab2+1} error, continuing...")
                 st.success(f"✅ Done. Final FOS: {preds_tab2[-1]:.2f}" if preds_tab2 else "No data.")
@@ -9740,7 +9636,7 @@ def main():
                         cm_cols[1].metric("F1-Score", f"{cm_res.get('f1', 0):.3f}")
                         cm_cols[2].metric("Precision", f"{cm_res.get('precision', 0):.3f}")
                         cm_cols[3].metric("Recall", f"{cm_res.get('recall', 0):.3f}")
-                    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError):
+                    except Exception:
                         pass
 
     with tab_advanced:
@@ -10146,37 +10042,6 @@ Tijorat maqsadlarda ishlatish TAQIQLANGAN.
 © Saitov D., TTU 2026
 """
     st.sidebar.warning(LICENSE_SIDEBAR)
-
-    # ── System Integrity Monitor (v1.0) ─────────────────────────────────────
-    # 10 ta yangi funksiya: License, Citation, Runtime Diagnostics,
-    # Data Integrity, Audit Statistics, Dynamic Patent Readiness,
-    # Export Configuration, Validation Dashboard, Reproducibility Certificate,
-    # About Authors
-    try:
-        import _system_monitor as _monitor
-        _monitor.show_system_status()
-        _monitor.show_help()
-        # Main area panels (rendered after main content)
-        # These are called here so they appear at the bottom of the page
-        st.markdown("---")
-        st.header("🛡️ System Integrity & Patent Readiness")
-        _monitor.show_patent_readiness()
-        _monitor.show_validation_dashboard()
-        _monitor.show_audit_statistics()
-        _monitor.show_runtime_diagnostics()
-        _monitor.show_data_integrity()
-        _monitor.export_configuration()
-        _monitor.show_license_info()
-        _monitor.show_citation()
-        _monitor.show_authors()
-        _monitor.generate_reproducibility_certificate()
-        _monitor.show_compliance_status()
-        _monitor.show_build_information()
-        _monitor.show_info()
-    except ImportError as _monitor_err:
-        st.warning(f"System Monitor not loaded: {_monitor_err}")
-    except Exception as _monitor_exc:
-        st.warning(f"System Monitor error: {_monitor_exc}")
 
     # ── Asosiy footer ──────────────────────────────────────────────────────────
     st.markdown("---")
@@ -10744,7 +10609,7 @@ class MathematicalFoundations:
                 "loss_strongly_convex_assumption_holds": True,
                 "verification_passed": bool(np.max(diffs) < 0.5),
             }
-        except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+        except Exception as exc:
             return {"error": str(exc), "verification_passed": False}
 
     # ------------------------------------------------------------------
@@ -10862,7 +10727,7 @@ class MathematicalFoundations:
                 "expected_rate_p": 1.0,
                 "verification_passed": bool(is_spd and patch_test_error < 1e-12 and 0.8 < np.mean(rates) < 1.2),
             }
-        except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+        except Exception as exc:
             return {"error": str(exc), "verification_passed": False}
 
     @staticmethod
@@ -11202,7 +11067,7 @@ class RealPatentSearchEngine:
             self._eps_token = token
             self._eps_token_expiry = time.time() + expires_in
             return token
-        except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+        except Exception as exc:
             logger.warning(f"Espacenet OAuth failed: {exc}")
             return None
 
@@ -11236,7 +11101,7 @@ class RealPatentSearchEngine:
                     "abstract": "See full text on Google Patents",
                 })
             return results if results else self._offline_fallback("google_patents", query, max_results)
-        except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+        except Exception as exc:
             logger.warning(f"Google Patents search failed: {exc}; using offline fallback")
             return self._offline_fallback("google_patents", query, max_results)
 
@@ -11271,7 +11136,7 @@ class RealPatentSearchEngine:
                     "abstract": "See Espacenet for full text",
                 })
             return results if results else self._offline_fallback("espacenet", query, max_results)
-        except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+        except Exception as exc:
             logger.warning(f"Espacenet search failed: {exc}; using offline fallback")
             return self._offline_fallback("espacenet", query, max_results)
 
@@ -11304,7 +11169,7 @@ class RealPatentSearchEngine:
                     "abstract": "See WIPO for full text",
                 })
             return results if results else self._offline_fallback("wipo", query, max_results)
-        except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+        except Exception as exc:
             logger.warning(f"WIPO search failed: {exc}; using offline fallback")
             return self._offline_fallback("wipo", query, max_results)
 
@@ -11336,7 +11201,7 @@ class RealPatentSearchEngine:
                     "abstract": str(it.get("abstract", "") or "")[:500],
                 })
             return results
-        except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+        except Exception as exc:
             logger.warning(f"Crossref search failed: {exc}")
             return []
 
@@ -11497,7 +11362,7 @@ class RealDOIGenerator:
                 return {"success": True, "doi": doi_payload["doi"], "datacite_response": resp.json()}
             return {"success": False, "error": f"DataCite HTTP {resp.status_code}: {resp.text[:300]}",
                     "doi": doi_payload["doi"]}
-        except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+        except Exception as exc:
             return {"success": False, "error": str(exc), "doi": doi_payload["doi"]}
 
     @classmethod
@@ -11511,7 +11376,7 @@ class RealDOIGenerator:
             if resp.status_code == 200:
                 return {"exists": True, "checked": True, "metadata": resp.json().get("message", {})}
             return {"exists": False, "checked": True, "status": resp.status_code}
-        except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+        except Exception as exc:
             return {"exists": False, "checked": False, "error": str(exc)}
 
 
@@ -11630,7 +11495,7 @@ class PersistentKeyManager:
                 hashes.SHA256(),
             )
             return True
-        except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+        except Exception as exc:
             logger.warning(f"Signature verification failed: {exc}")
             return False
 
@@ -11660,7 +11525,7 @@ class SemanticNoveltyAnalyzer:
                     self.backend = name
                     logger.info(f"SemanticNoveltyAnalyzer: loaded {name}")
                     break
-                except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+                except Exception as exc:
                     logger.warning(f"Failed to load {name}: {exc}")
                     continue
         if self.model is None:
@@ -12464,7 +12329,7 @@ class ComprehensiveStatisticalValidation:
                     })
                 else:
                     shapiro_results.append({"group": group_labels[i], "note": "n < 3, skipped"})
-            except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+            except Exception as exc:
                 shapiro_results.append({"group": group_labels[i], "error": str(exc)})
 
         # === Homoscedasticity ===
@@ -12472,7 +12337,7 @@ class ComprehensiveStatisticalValidation:
             lev_stat, lev_p = levene(*groups)
             levene_result = {"statistic": float(lev_stat), "p_value": float(lev_p),
                               "equal_variances": bool(lev_p > alpha)}
-        except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+        except Exception as exc:
             levene_result = {"error": str(exc)}
 
         # === ANOVA (parametric) ===
@@ -12488,7 +12353,7 @@ class ComprehensiveStatisticalValidation:
                     "homoscedasticity": levene_result.get("equal_variances", False),
                 },
             }
-        except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+        except Exception as exc:
             anova_result = {"error": str(exc)}
 
         # === Kruskal-Wallis (non-parametric ANOVA alternative) ===
@@ -12500,7 +12365,7 @@ class ComprehensiveStatisticalValidation:
                 "significant_difference": bool(kw_p < alpha),
                 "test": "Kruskal-Wallis H",
             }
-        except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+        except Exception as exc:
             kruskal_result = {"error": str(exc)}
 
         # === Pairwise Mann-Whitney U tests ===
@@ -12515,7 +12380,7 @@ class ComprehensiveStatisticalValidation:
                         "p_value": float(mw_p),
                         "significant": bool(mw_p < alpha),
                     })
-                except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+                except Exception as exc:
                     pairwise_mw.append({"comparison": f"{group_labels[i]} vs {group_labels[j]}",
                                         "error": str(exc)})
 
@@ -12742,7 +12607,7 @@ class AdvancedCrossValidation:
                 grid.fit(X_train, y_train)
                 best_model = grid.best_estimator_
                 best_params_per_fold.append(grid.best_params_)
-            except (ValueError, KeyError, TypeError, RuntimeError, AttributeError):
+            except Exception:
                 best_model = model.fit(X_train, y_train)
                 best_params_per_fold.append({})
             y_pred = best_model.predict(X_test)
@@ -13171,7 +13036,7 @@ class MerkleAuditChain:
             try:
                 sig_result = PersistentKeyManager.sign_with_persistent_key(block_data.encode("utf-8"))
                 signature = sig_result["signature"]
-            except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+            except Exception as exc:
                 logger.warning(f"Signing failed: {exc}")
             cursor.execute("""
                 INSERT INTO audit_chain (previous_hash, block_hash, merkle_root, payload, timestamp, actor, signature)
@@ -13379,7 +13244,7 @@ class PatentCertificateGenerator:
             finally:
                 try:
                     os.remove(tmp_qr_path)
-                except (ValueError, KeyError, TypeError, RuntimeError, AttributeError):
+                except Exception:
                     pass
             c.setFont("Helvetica-Oblique", 7)
             c.drawCentredString(width - 35 * mm, 25 * mm, "Scan to verify")
@@ -13407,7 +13272,7 @@ class PatentCertificateGenerator:
             # Hash of certificate payload
             cert_hash = _sha256_str(cert_str)
             c.drawString(25 * mm, y, f"Certificate Payload SHA-256: {cert_hash[:32]}...")
-        except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+        except Exception as exc:
             c.setFont("Helvetica", 8)
             c.drawString(25 * mm, y, f"Signature error: {exc}")
 
@@ -13494,7 +13359,7 @@ class HashVersioning:
                 "architecture_meta": architecture_meta or {},
                 "computed_at": _utc_now_iso(),
             }
-        except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as exc:
+        except Exception as exc:
             return {"error": str(exc), "model_hash": None}
 
     @staticmethod
@@ -13560,7 +13425,7 @@ def apply_all_patches(app_module: Any) -> Dict[str, Any]:
         patched_generate_real_doi._patched_by = "patent_ready_extension v5.0"
         app_module.generate_real_doi = patched_generate_real_doi
         patches_applied.append("FIX 2: generate_real_doi → RealDOIGenerator with ISO 7064 check digit")
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as e:
+    except Exception as e:
         patches_failed.append(f"FIX 2: {e}")
 
     # FIX 7: Persistent RSA signature
@@ -13572,12 +13437,12 @@ def apply_all_patches(app_module: Any) -> Dict[str, Any]:
             try:
                 result = PersistentKeyManager.sign_with_persistent_key(data)
                 return base64.b64decode(result["signature"])
-            except (ValueError, KeyError, TypeError, RuntimeError, AttributeError):
+            except Exception:
                 return original_generate_digital_signature(data, private_key_pem)
         patched_generate_digital_signature._original = original_generate_digital_signature
         app_module.generate_digital_signature = patched_generate_digital_signature
         patches_applied.append("FIX 7: generate_digital_signature → PersistentKeyManager (PEM file)")
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as e:
+    except Exception as e:
         patches_failed.append(f"FIX 7: {e}")
 
     # FIX 15: AHP patentability
@@ -13602,7 +13467,7 @@ def apply_all_patches(app_module: Any) -> Dict[str, Any]:
         patched_evaluate_patentability._original = original_evaluate_patentability
         app_module.evaluate_patentability = patched_evaluate_patentability
         patches_applied.append("FIX 15: evaluate_patentability → AHP-weighted (Saaty 1980)")
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as e:
+    except Exception as e:
         patches_failed.append(f"FIX 15: {e}")
 
     # FIX 18: PDF patent certificate
@@ -13631,7 +13496,7 @@ def apply_all_patches(app_module: Any) -> Dict[str, Any]:
                 return gen.generate(cert_data)
             app_module.AlgorithmCertification.generate_patent_certificate = patched_patent_certificate
             patches_applied.append("FIX 18: generate_patent_certificate → PDF with RSA-4096 + QR")
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as e:
+    except Exception as e:
         patches_failed.append(f"FIX 18: {e}")
 
     return {
@@ -13646,18 +13511,10 @@ def apply_all_patches(app_module: Any) -> Dict[str, Any]:
 
 
 # ============================================================================
-# SELF-TEST (only when DEBUG mode or run directly with --test flag)
+# SELF-TEST (when run directly)
 # ============================================================================
 def run_self_tests() -> Dict[str, Any]:
-    """Run all extension self-tests to verify functionality.
-
-    NOTE: This function should ONLY be called in DEBUG mode or via CLI:
-      python app.py --test
-
-    In production (Streamlit), self-tests are NOT run automatically.
-    """
-    if not os.getenv("DEBUG", "False").lower() == "true":
-        return {"skipped": True, "reason": "Self-tests only run in DEBUG mode"}
+    """Run all extension self-tests to verify functionality."""
     results = {
         "extension_version": EXTENSION_VERSION,
         "started_at": _utc_now_iso(),
@@ -13671,21 +13528,21 @@ def run_self_tests() -> Dict[str, Any]:
             "all_verified": all(t.numerical_verification.get("verification_passed", False) for t in theorems),
             "names": [t.name for t in theorems],
         }
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as e:
+    except Exception as e:
         results["tests"]["theorems"] = {"error": str(e)}
 
     # Test 2: RealDOI
     try:
         doi_result = RealDOIGenerator.generate({"title": "Test", "year": 2026, "author": "Test"})
         results["tests"]["doi"] = {"doi": doi_result["doi"], "check_digit": doi_result["check_digit"]}
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as e:
+    except Exception as e:
         results["tests"]["doi"] = {"error": str(e)}
 
     # Test 3: Prior Art DB
     try:
         db = PriorArtDatabase.build_extended_prior_art()
         results["tests"]["prior_art_db"] = {"n_records": len(db)}
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as e:
+    except Exception as e:
         results["tests"]["prior_art_db"] = {"error": str(e)}
 
     # Test 4: Semantic Novelty (with fallback)
@@ -13700,7 +13557,7 @@ def run_self_tests() -> Dict[str, Any]:
             "novelty_index": score["novelty_index"],
             "mean_similarity": score["mean_similarity"],
         }
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as e:
+    except Exception as e:
         results["tests"]["semantic_novelty"] = {"error": str(e)}
 
     # Test 5: Structured Claims
@@ -13713,7 +13570,7 @@ def run_self_tests() -> Dict[str, Any]:
             "independent_claims": len(claims["independent_claims"]),
             "dependent_claims": len(claims["dependent_claims"]),
         }
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as e:
+    except Exception as e:
         results["tests"]["structured_claims"] = {"error": str(e)}
 
     # Test 6: FEM Validation
@@ -13724,7 +13581,7 @@ def run_self_tests() -> Dict[str, Any]:
             "mesh_independence_achieved": fem_val["mesh_independence"]["mesh_independence_achieved"],
             "kirsch_passed": fem_val["analytical_verification"]["analytical_verification_passed"],
         }
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as e:
+    except Exception as e:
         results["tests"]["fem_validation"] = {"error": str(e)}
 
     # Test 7: MC Convergence
@@ -13738,7 +13595,7 @@ def run_self_tests() -> Dict[str, Any]:
             "geweke_converged": mc_report["geweke_converged"],
             "convergence_achieved": mc_report["convergence_achieved"],
         }
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as e:
+    except Exception as e:
         results["tests"]["mc_convergence"] = {"error": str(e)}
 
     # Test 8: AHP Scoring
@@ -13749,7 +13606,7 @@ def run_self_tests() -> Dict[str, Any]:
             "consistent": ahp["ahp_consistency"]["consistent"],
             "weights": ahp["weights"],
         }
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as e:
+    except Exception as e:
         results["tests"]["ahp_scoring"] = {"error": str(e)}
 
     # Test 9: Cybersecurity scan (run on this file)
@@ -13762,7 +13619,7 @@ def run_self_tests() -> Dict[str, Any]:
             "safe": scan["safe"],
             "scanned_lines": scan["scanned_lines"],
         }
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as e:
+    except Exception as e:
         results["tests"]["cybersecurity_scan"] = {"error": str(e)}
 
     # Test 10: Experimental DB
@@ -13770,7 +13627,7 @@ def run_self_tests() -> Dict[str, Any]:
         ExperimentalDatabase.populate_default()
         summary = ExperimentalDatabase.database_summary()
         results["tests"]["experimental_db"] = summary
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as e:
+    except Exception as e:
         results["tests"]["experimental_db"] = {"error": str(e)}
 
     # Test 11: Merkle Audit Chain
@@ -13779,7 +13636,7 @@ def run_self_tests() -> Dict[str, Any]:
         chain.append({"event": "test", "user": "system"}, actor="test")
         verify = chain.verify_chain()
         results["tests"]["merkle_chain"] = verify
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as e:
+    except Exception as e:
         results["tests"]["merkle_chain"] = {"error": str(e)}
 
     # Test 12: Hash Versioning
@@ -13792,7 +13649,7 @@ def run_self_tests() -> Dict[str, Any]:
             "dataset_hash": hashes["dataset"]["dataset_hash"][:16] + "...",
             "experiment_hash": hashes["experiment"]["experiment_hash"][:16] + "...",
         }
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as e:
+    except Exception as e:
         results["tests"]["hash_versioning"] = {"error": str(e)}
 
     # Test 13: Statistical Validation
@@ -13806,7 +13663,7 @@ def run_self_tests() -> Dict[str, Any]:
             "kw_p": stats.get("kruskal_wallis", {}).get("p_value"),
             "n_pairwise": len(stats.get("pairwise_mann_whitney_u", [])),
         }
-    except (ValueError, KeyError, TypeError, RuntimeError, AttributeError) as e:
+    except Exception as e:
         results["tests"]["statistical_validation"] = {"error": str(e)}
 
     results["finished_at"] = _utc_now_iso()
@@ -13861,54 +13718,6 @@ except Exception as _v6_err:
     _V6_ERROR = str(_v6_err)
     import logging as _v6_log
     _v6_log.getLogger("ucg_platform").warning(f"Patent-Ready Extension v6.0 not loaded: {_v6_err}")
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# PATENT-READY EXTENSION v7.0.0 — 50 CRITICAL FIXES (7 BLOCKS)
-# ══════════════════════════════════════════════════════════════════════════════
-# v6.0 ning 50 ta batafsil talabini to'liq bartaraf etadi:
-#   BLOK A (1-10): Patent Novelty — similarity matrix, heatmap, landscape,
-#                   CPC/IPC classification, FTO analyzer, claim overlap, defense report
-#   BLOK B (11-20): Claim Engine — tree, PCT/USPTO/EPO formats, Graphviz DOT
-#   BLOK C (21-30): FEM Validation — Cantilever, Terzaghi, Biot, Infinite Plate,
-#                   Distortion Index, Verification Score
-#   BLOK D (31-35): AI Explainability — SHAP stability, drift detector, score
-#   BLOK E (36-40): UQ — Sobol first/total, FAST, Bayesian, GP
-#   BLOK F (41-45): Reproducibility — environment.yml, requirements.txt export
-#   BLOK G (46-50): Security — AES-256, Merkle, WORM, Ethereum anchoring
-# ══════════════════════════════════════════════════════════════════════════════
-try:
-    import _patent_ext_v7 as _v7
-    # Make v7 classes accessible from app namespace
-    PatentSimilarityMatrix = _v7.PatentSimilarityMatrix
-    NoveltyHeatmap = _v7.NoveltyHeatmap
-    PatentLandscape = _v7.PatentLandscape
-    PatentClassification = _v7.PatentClassification
-    FTOAnalyzer = _v7.FTOAnalyzer
-    ClaimOverlapDetector = _v7.ClaimOverlapDetector
-    PatentDefenseReportDOCX = _v7.PatentDefenseReportDOCX
-    ClaimDependencyTree = _v7.ClaimDependencyTree
-    MultiFormatClaims = _v7.MultiFormatClaims
-    FEMBenchmarks = _v7.FEMBenchmarks
-    ElementDistortionIndex = _v7.ElementDistortionIndex
-    FEMVerificationScore = _v7.FEMVerificationScore
-    SHAPStabilityTest = _v7.SHAPStabilityTest
-    SHAPDriftDetector = _v7.SHAPDriftDetector
-    ExplainabilityScore = _v7.ExplainabilityScore
-    UQSuite = _v7.UQSuite
-    ReproducibilityExporter = _v7.ReproducibilityExporter
-    AES256Encryption = _v7.AES256Encryption
-    EthereumAnchoring = _v7.EthereumAnchoring
-    SecureKeyVault = _v7.SecureKeyVault
-    TechnologyReadinessLevel = _v7.TechnologyReadinessLevel
-    ScientificEvidencePack = _v7.ScientificEvidencePack
-    WIPOSubmissionPackage = _v7.WIPOSubmissionPackage
-    _V7_AVAILABLE = True
-except Exception as _v7_err:
-    _V7_AVAILABLE = False
-    _V7_ERROR = str(_v7_err)
-    import logging as _v7_log
-    _v7_log.getLogger("ucg_platform").warning(f"Patent-Ready Extension v7.0 not loaded: {_v7_err}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
