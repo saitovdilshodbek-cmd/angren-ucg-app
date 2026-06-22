@@ -1,0 +1,52 @@
+# ════════════════════════════════════════════════════════════════════════════
+# UCG SCI-Grade Platform v6.0.1 — Optional Requirements
+# ════════════════════════════════════════════════════════════════════════════
+# Install: pip install -r requirements-optional.txt
+# These are OPTIONAL — install only if you need advanced features.
+# ════════════════════════════════════════════════════════════════════════════
+
+# ── AI / DEEP LEARNING (PINN, SciBERT) ─────────────────────────────────────
+# Required for: SciBERT novelty score, PINN training, neural network models
+torch>=2.0.0
+transformers>=4.30.0
+sentence-transformers>=2.2.0
+shap>=0.43.0
+lime>=0.2.0
+
+# ── ASYNC DATABASE (for concurrent Streamlit users) ────────────────────────
+# Required for: async SQLite operations (production deployments)
+aiosqlite>=0.19.0
+asyncpg>=0.29.0              # Async PostgreSQL
+
+# ── ASYNC HTTP ──────────────────────────────────────────────────────────────
+aiohttp>=3.9.0
+httpx>=0.24.0
+
+# ── 3D VISUALIZATION ────────────────────────────────────────────────────────
+pyvista>=0.42.0              # FEM mesh 3D viz
+
+# ── DISTRIBUTED LEDGER (IPFS audit chain) ───────────────────────────────────
+ipfshttpclient>=0.8.0a2      # Real IPFS-based audit trail
+
+# ── POST-QUANTUM CRYPTOGRAPHY ───────────────────────────────────────────────
+# Requires liboqs system library: https://github.com/open-quantum-safe/liboqs
+oqs-python>=0.10.0           # CRYSTALS-Kyber (FIPS 203)
+
+# ── BLOCKCHAIN ANCHORING ────────────────────────────────────────────────────
+web3>=6.0.0                  # Ethereum blockchain anchoring
+
+# ── GRAPH VISUALIZATION ─────────────────────────────────────────────────────
+graphviz>=0.20.0             # Claim dependency graphs
+
+# ── DATA VALIDATION ─────────────────────────────────────────────────────────
+pydantic>=2.0.0              # Schema validation
+
+# ── LOGGING (alternative) ───────────────────────────────────────────────────
+loguru>=0.7.0                # Structured logging (alternative to stdlib)
+
+# ── PROGRESS BARS ───────────────────────────────────────────────────────────
+tqdm>=4.65.0                 # Progress bars for long operations
+
+# ── TESTING (additional) ────────────────────────────────────────────────────
+pytest-asyncio>=0.21.0       # Async test support
+pre-commit>=3.3.0            # Git pre-commit hooks
