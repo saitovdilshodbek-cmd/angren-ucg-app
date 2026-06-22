@@ -10108,6 +10108,37 @@ Tijorat maqsadlarda ishlatish TAQIQLANGAN.
 """
     st.sidebar.warning(LICENSE_SIDEBAR)
 
+    # ── System Integrity Monitor (v1.0) ─────────────────────────────────────
+    # 10 ta yangi funksiya: License, Citation, Runtime Diagnostics,
+    # Data Integrity, Audit Statistics, Dynamic Patent Readiness,
+    # Export Configuration, Validation Dashboard, Reproducibility Certificate,
+    # About Authors
+    try:
+        import _system_monitor as _monitor
+        _monitor.show_system_status()
+        _monitor.show_help()
+        # Main area panels (rendered after main content)
+        # These are called here so they appear at the bottom of the page
+        st.markdown("---")
+        st.header("🛡️ System Integrity & Patent Readiness")
+        _monitor.show_patent_readiness()
+        _monitor.show_validation_dashboard()
+        _monitor.show_audit_statistics()
+        _monitor.show_runtime_diagnostics()
+        _monitor.show_data_integrity()
+        _monitor.export_configuration()
+        _monitor.show_license_info()
+        _monitor.show_citation()
+        _monitor.show_authors()
+        _monitor.generate_reproducibility_certificate()
+        _monitor.show_compliance_status()
+        _monitor.show_build_information()
+        _monitor.show_info()
+    except ImportError as _monitor_err:
+        st.warning(f"System Monitor not loaded: {_monitor_err}")
+    except Exception as _monitor_exc:
+        st.warning(f"System Monitor error: {_monitor_exc}")
+
     # ── Asosiy footer ──────────────────────────────────────────────────────────
     st.markdown("---")
     st.caption(
