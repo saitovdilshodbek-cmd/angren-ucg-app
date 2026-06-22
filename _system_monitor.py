@@ -84,6 +84,264 @@ except ImportError:
 # ============================================================================
 MONITOR_VERSION = "1.0.0"
 
+# ============================================================================
+# i18n — Internationalization (UZ / EN / RU)
+# ============================================================================
+# Professional approach: technical terms stay in English (international standard),
+# but menu/UI labels are translated.
+# Source: https://www.wipo.int/standards/en/
+I18N = {
+    "uz": {
+        "system_monitor": "🛡️ Tizim holati monitoringi",
+        "help": "❓ Foydalanuvchi qo'llanmasi",
+        "info": "ℹ️ Platforma texnik spetsifikatsiyasi",
+        "compliance": "📋 Muvofiqlik va standartlar",
+        "build_info": "⚙️ Build ma'lumotlari",
+        "patent_readiness": "🏆 Patent tayyorgarlik baholash",
+        "license_info": "📜 Litsenziya ma'lumotlari",
+        "citation": "📚 Iqtibos",
+        "authors": "👥 Mualliflar haqida",
+        "runtime_diag": "📈 Runtime diagnostikasi",
+        "data_integrity": "🔐 Ma'lumotlar yaxlitligi (SHA-256)",
+        "audit_stats": "📊 Audit trail statistikasi",
+        "export_config": "⚙️ Konfiguratsiyani eksport qilish",
+        "validation_dash": "✅ Validatsiya dashboardi",
+        "repro_cert": "🎓 Reproduktivlik sertifikati",
+        "workflow": "Tavsiya etilgan ish jarayoni",
+        "configure": "Kirish parametrlarini sozlash",
+        "run_sim": "Sonli simulyatsiyani ishga tushirish",
+        "validate": "Natijalarni validatsiya qilish",
+        "analyze_ai": "AI natijalarini tahlil qilish",
+        "patent_analysis": "Patent tahlilini bajarish",
+        "generate_reports": "Hisobotlarni generatsiya qilish",
+        "export_docs": "Hujjatlarni eksport qilish",
+        "platform_status": "Platforma holati",
+        "patent_ready": "Patent tayyor",
+        "license_type": "Litsenziya turi",
+        "copyright": "Mualliflik huquqi",
+        "patent_status": "Patent holati",
+        "software_reg": "Dasturiy ta'minot registratsiyasi",
+        "permitted_use": "Ruxsat etilgan foydalanish",
+        "prohibited_use": "Taqiqlangan foydalanish",
+        "scientific_research": "Ilmiy tadqiqot va akademik foydalanish",
+        "educational": "Ta'lim maqsadlari",
+        "personal_eval": "Shaxsiy baholash va testlash",
+        "commercial_use": "Tijorat maqsadida foydalanish",
+        "redistribution": "Tijorat maqsadida tarqatish",
+        "modification": "Boshqa litsenziya ostida o'zgartirish",
+        "build": "Build",
+        "commit": "Commit",
+        "python_runtime": "Python runtime",
+        "platform_os": "Platforma",
+        "monitor_version": "Monitor versiyasi",
+        "score": "Ball",
+        "grade": "Baho",
+        "recommendation": "Tavsiya",
+        "breakdown": "Ball tahlili",
+        "computed_at": "Hisoblangan vaqt",
+        "cpu_usage": "CPU foydalanish %",
+        "memory_usage": "Xotira foydalanish %",
+        "disk_usage": "Disk foydalanish %",
+        "process_info": "Jarayon ma'lumotlari",
+        "total_entries": "Jami audit yozuvlari",
+        "unique_actors": "Noyob aktyorlar",
+        "last_audit_time": "Oxirgi audit vaqti",
+        "last_actor": "Oxirgi aktyor",
+        "recent_entries": "So'nggi audit yozuvlari (oxirgi 5)",
+        "no_audit_db": "Audit chain DB topilmadi",
+        "file_hashes": "Kritik fayl hashlari",
+        "hash_any_file": "Boshqa faylni hash qilish",
+        "upload_file": "Hash uchun fayl yuklash",
+        "export_format": "Eksport formati",
+        "config_preview": "Konfiguratsiya preview",
+        "download_config": "Konfiguratsiyani yuklab olish",
+        "generate_certificate": "Reproducibility sertifikatini generatsiya qilish",
+        "acknowledgments": "Minnatdorchilik",
+        "contact": "Aloqa",
+        "role": "Rol",
+        "affiliation": "Tashkilot",
+        "laboratory": "Laboratoriya",
+        "email": "Email",
+        "orcid": "ORCID",
+        "year": "Yil",
+        "supported_frameworks": "Qo'llab-quvvatlanadigan frameworklar",
+        "notes": "Izohlar",
+    },
+    "en": {
+        "system_monitor": "🛡️ System Integrity Monitor",
+        "help": "❓ User Manual & Workflow",
+        "info": "ℹ️ Platform Technical Specification",
+        "compliance": "📋 Compliance & Standards",
+        "build_info": "⚙️ Build Information",
+        "patent_readiness": "🏆 Patent Readiness Assessment",
+        "license_info": "📜 License Information",
+        "citation": "📚 Citation",
+        "authors": "👥 About Authors",
+        "runtime_diag": "📈 Runtime Diagnostics",
+        "data_integrity": "🔐 Data Integrity Check (SHA-256)",
+        "audit_stats": "📊 Audit Trail Statistics",
+        "export_config": "⚙️ Export Configuration",
+        "validation_dash": "✅ Validation Dashboard",
+        "repro_cert": "🎓 Reproducibility Certificate",
+        "workflow": "Recommended Workflow",
+        "configure": "Configure Input Parameters",
+        "run_sim": "Run Numerical Simulation",
+        "validate": "Validate Results",
+        "analyze_ai": "Analyze AI Outputs",
+        "patent_analysis": "Perform Patent Analysis",
+        "generate_reports": "Generate Reports",
+        "export_docs": "Export Documentation",
+        "platform_status": "Platform Status",
+        "patent_ready": "Patent-Ready",
+        "license_type": "License Type",
+        "copyright": "Copyright",
+        "patent_status": "Patent Status",
+        "software_reg": "Software Registration",
+        "permitted_use": "Permitted Use",
+        "prohibited_use": "Prohibited Use",
+        "scientific_research": "Scientific research and academic use",
+        "educational": "Educational purposes",
+        "personal_eval": "Personal evaluation and testing",
+        "commercial_use": "Commercial use without license",
+        "redistribution": "Redistribution for commercial gain",
+        "modification": "Modification under different license",
+        "build": "Build",
+        "commit": "Commit",
+        "python_runtime": "Python Runtime",
+        "platform_os": "Platform",
+        "monitor_version": "Monitor Version",
+        "score": "Score",
+        "grade": "Grade",
+        "recommendation": "Recommendation",
+        "breakdown": "Score Breakdown",
+        "computed_at": "Computed at",
+        "cpu_usage": "CPU Usage %",
+        "memory_usage": "Memory Usage %",
+        "disk_usage": "Disk Usage %",
+        "process_info": "Process Information",
+        "total_entries": "Total Audit Entries",
+        "unique_actors": "Unique Actors",
+        "last_audit_time": "Last Audit Time",
+        "last_actor": "Last Actor",
+        "recent_entries": "Recent Audit Entries (last 5)",
+        "no_audit_db": "Audit chain DB not found",
+        "file_hashes": "Critical File Hashes",
+        "hash_any_file": "Hash Any File",
+        "upload_file": "Upload a file to hash",
+        "export_format": "Export format",
+        "config_preview": "Configuration preview",
+        "download_config": "Download configuration",
+        "generate_certificate": "Generate Reproducibility Certificate",
+        "acknowledgments": "Acknowledgments",
+        "contact": "Contact",
+        "role": "Role",
+        "affiliation": "Affiliation",
+        "laboratory": "Laboratory",
+        "email": "Email",
+        "orcid": "ORCID",
+        "year": "Year",
+        "supported_frameworks": "Supported Frameworks",
+        "notes": "Notes",
+    },
+    "ru": {
+        "system_monitor": "🛡️ Монитор состояния системы",
+        "help": "❓ Руководство пользователя",
+        "info": "ℹ️ Техническая спецификация платформы",
+        "compliance": "📋 Соответствие и стандарты",
+        "build_info": "⚙️ Информация о сборке",
+        "patent_readiness": "🏆 Оценка готовности к патенту",
+        "license_info": "📜 Информация о лицензии",
+        "citation": "📚 Цитирование",
+        "authors": "👥 Об авторах",
+        "runtime_diag": "📈 Диагностика выполнения",
+        "data_integrity": "🔐 Целостность данных (SHA-256)",
+        "audit_stats": "📊 Статистика журнала аудита",
+        "export_config": "⚙️ Экспорт конфигурации",
+        "validation_dash": "✅ Панель валидации",
+        "repro_cert": "🎓 Сертификат воспроизводимости",
+        "workflow": "Рекомендуемый рабочий процесс",
+        "configure": "Настройка входных параметров",
+        "run_sim": "Запуск численного моделирования",
+        "validate": "Валидация результатов",
+        "analyze_ai": "Анализ результатов ИИ",
+        "patent_analysis": "Выполнение патентного анализа",
+        "generate_reports": "Генерация отчётов",
+        "export_docs": "Экспорт документации",
+        "platform_status": "Статус платформы",
+        "patent_ready": "Готов к патентованию",
+        "license_type": "Тип лицензии",
+        "copyright": "Авторское право",
+        "patent_status": "Статус патента",
+        "software_reg": "Регистрация ПО",
+        "permitted_use": "Разрешённое использование",
+        "prohibited_use": "Запрещённое использование",
+        "scientific_research": "Научные исследования и академическое использование",
+        "educational": "Образовательные цели",
+        "personal_eval": "Личная оценка и тестирование",
+        "commercial_use": "Коммерческое использование без лицензии",
+        "redistribution": "Распространение в коммерческих целях",
+        "modification": "Изменение под другой лицензией",
+        "build": "Сборка",
+        "commit": "Коммит",
+        "python_runtime": "Среда Python",
+        "platform_os": "Платформа",
+        "monitor_version": "Версия монитора",
+        "score": "Балл",
+        "grade": "Оценка",
+        "recommendation": "Рекомендация",
+        "breakdown": "Разбивка баллов",
+        "computed_at": "Вычислено в",
+        "cpu_usage": "Использование CPU %",
+        "memory_usage": "Использование памяти %",
+        "disk_usage": "Использование диска %",
+        "process_info": "Информация о процессе",
+        "total_entries": "Всего записей аудита",
+        "unique_actors": "Уникальные акторы",
+        "last_audit_time": "Время последнего аудита",
+        "last_actor": "Последний актор",
+        "recent_entries": "Последние записи аудита (5)",
+        "no_audit_db": "БД журнала аудита не найдена",
+        "file_hashes": "Хэши критических файлов",
+        "hash_any_file": "Хэшировать любой файл",
+        "upload_file": "Загрузите файл для хэширования",
+        "export_format": "Формат экспорта",
+        "config_preview": "Предпросмотр конфигурации",
+        "download_config": "Скачать конфигурацию",
+        "generate_certificate": "Сгенерировать сертификат воспроизводимости",
+        "acknowledgments": "Благодарности",
+        "contact": "Контакт",
+        "role": "Роль",
+        "affiliation": "Организация",
+        "laboratory": "Лаборатория",
+        "email": "Email",
+        "orcid": "ORCID",
+        "year": "Год",
+        "supported_frameworks": "Поддерживаемые фреймворки",
+        "notes": "Примечания",
+    },
+}
+
+
+def _t(key: str, lang: Optional[str] = None) -> str:
+    """Translate a key to the current language.
+
+    Args:
+        key: Translation key (e.g., 'system_monitor')
+        lang: Language code ('uz', 'en', 'ru'). If None, reads from
+              st.session_state.language or defaults to 'en'.
+
+    Returns:
+        Translated string (falls back to English, then to the key itself).
+    """
+    if lang is None:
+        try:
+            lang = st.session_state.get("language", "en")
+        except Exception:
+            lang = "en"
+    return I18N.get(lang, I18N["en"]).get(key, I18N["en"].get(key, key))
+
+
+
 # Default key paths (must match PersistentKeyManager in app.py)
 KEY_DIR = Path(os.getenv("UCG_KEY_DIR", Path.home() / ".ucg_platform" / "keys"))
 PRIVATE_KEY_PATH = KEY_DIR / "ucg_patent_private.pem"
@@ -255,13 +513,13 @@ def get_git_commit() -> str:
 # ============================================================================
 def show_license_info() -> None:
     """Item 1: License Information panel."""
-    with st.expander("📜 License Information", expanded=True):
-        st.write("**License Type:**", "Research Use Only")
-        st.write("**Copyright:**", "© 2026 Saitov Dilshodbek")
-        st.write("**Patent Status:**", "Application Preparation Stage (not yet filed)")
+    with st.expander(_t("license_info"), expanded=True):
+        st.write(f"**{_t('license_type')}:**", "Research Use Only")
+        st.write(f"**{_t('copyright')}:**", "© 2026 Saitov Dilshodbek")
+        st.write(f"**{_t('patent_status')}:**", "Application Preparation Stage (not yet filed)")
         st.write("**Patent Application:**", "UzPatent DP 2026/00XXX (pending)")
         st.write("**PCT Application:**", "PCT/IB2026/00XXXX (pending)")
-        st.write("**Software Registration:**", "Available upon request")
+        st.write(f"**{_t('software_reg')}:**", "Available upon request")
         st.markdown("---")
         st.markdown("""
 **Permitted Use:**
@@ -283,7 +541,7 @@ def show_license_info() -> None:
 # ============================================================================
 def show_citation() -> None:
     """Item 2: Citation generator (BibTeX + APA + plain text)."""
-    with st.expander("📚 Citation", expanded=True):
+    with st.expander(_t("citation"), expanded=True):
         # BibTeX format
         bibtex = f"""@software{{saitov2026ucg,
   title  = {{{CITATION_INFO['title']}}},
@@ -325,29 +583,29 @@ URL: {CITATION_INFO['url']}"""
 # ============================================================================
 def show_runtime_diagnostics() -> None:
     """Item 3: Real-time CPU/Memory/Disk usage."""
-    with st.expander("📈 Runtime Diagnostics", expanded=False):
+    with st.expander(_t("runtime_diag"), expanded=False):
         if not PSUTIL_AVAILABLE:
             st.warning("psutil not installed. Install: `pip install psutil`")
             return
         col1, col2, col3 = st.columns(3)
         with col1:
             cpu = psutil.cpu_percent(interval=0.5)
-            st.metric("CPU Usage %", f"{cpu:.1f}")
+            st.metric(_t("cpu_usage"), f"{cpu:.1f}")
             st.progress(cpu / 100)
         with col2:
             mem = psutil.virtual_memory()
-            st.metric("Memory Usage %", f"{mem.percent:.1f}")
+            st.metric(_t("memory_usage"), f"{mem.percent:.1f}")
             st.progress(mem.percent / 100)
             st.caption(f"{mem.used / 1e9:.1f} / {mem.total / 1e9:.1f} GB")
         with col3:
             disk = psutil.disk_usage("/")
             disk_pct = disk.percent
-            st.metric("Disk Usage %", f"{disk_pct:.1f}")
+            st.metric(_t("disk_usage"), f"{disk_pct:.1f}")
             st.progress(disk_pct / 100)
             st.caption(f"{disk.used / 1e9:.1f} / {disk.total / 1e9:.1f} GB")
         # Process info
         st.markdown("---")
-        st.markdown("**Process Information:**")
+        st.markdown(f"**{_t('process_info')}:**")
         try:
             process = psutil.Process()
             st.write(f"PID: {process.pid}")
@@ -376,7 +634,7 @@ def calculate_file_hash(path: str | Path) -> str:
 
 def show_data_integrity() -> None:
     """Data integrity check panel — show hashes of critical files."""
-    with st.expander("🔐 Data Integrity Check (SHA-256)", expanded=False):
+    with st.expander(_t("data_integrity"), expanded=False):
         # Critical files to hash
         critical_files = [
             ("app.py", "Main application"),
@@ -389,7 +647,7 @@ def show_data_integrity() -> None:
             (str(PRIVATE_KEY_PATH), "RSA Private Key"),
             (str(PUBLIC_KEY_PATH), "RSA Public Key"),
         ]
-        st.markdown("**Critical File Hashes:**")
+        st.markdown(f"**{_t("file_hashes")}:**")
         results = []
         for path, desc in critical_files:
             file_hash = calculate_file_hash(path)
@@ -403,7 +661,7 @@ def show_data_integrity() -> None:
         st.dataframe(results, use_container_width=True)
         # File upload for hashing
         st.markdown("---")
-        st.markdown("**Hash Any File:**")
+        st.markdown(f"**{_t("hash_any_file")}:**")
         uploaded = st.file_uploader("Upload a file to hash", key="integrity_upload")
         if uploaded is not None:
             content = uploaded.read()
@@ -417,7 +675,7 @@ def show_data_integrity() -> None:
 # ============================================================================
 def show_audit_statistics() -> None:
     """Item 5: Audit trail statistics from SQLite."""
-    with st.expander("📊 Audit Trail Statistics", expanded=True):
+    with st.expander(_t("audit_stats"), expanded=True):
         if not AUDIT_CHAIN_DB.exists():
             st.warning(f"Audit chain DB not found: {AUDIT_CHAIN_DB}")
             st.info("Run the app and generate a report to create audit entries.")
@@ -443,19 +701,19 @@ def show_audit_statistics() -> None:
                 unique_actors = cursor.fetchone()[0]
             col1, col2 = st.columns(2)
             with col1:
-                st.metric("Total Audit Entries", total)
-                st.metric("Unique Actors", unique_actors)
+                st.metric(_t("total_entries"), total)
+                st.metric(_t("unique_actors"), unique_actors)
             with col2:
                 if latest:
-                    st.metric("Last Audit Time", latest[0])
-                    st.metric("Last Actor", latest[1])
+                    st.metric(_t("last_audit_time"), latest[0])
+                    st.metric(_t("last_actor"), latest[1])
                 else:
                     st.metric("Last Audit Time", "N/A")
             if first and latest:
                 st.markdown("---")
                 st.write(f"**Chain Span:** {first[0]} → {latest[0]}")
             # Show recent entries
-            st.markdown("**Recent Audit Entries (last 5):**")
+            f'st.markdown(f"**{_t("recent_entries")}:**")'
             with sqlite3.connect(str(AUDIT_CHAIN_DB)) as conn:
                 df = pd.read_sql_query(
                     "SELECT id, timestamp, actor, action, "
@@ -582,15 +840,15 @@ def compute_patent_readiness() -> Dict[str, Any]:
 
 def show_patent_readiness() -> None:
     """Item 6: Patent Readiness Assessment (DYNAMIC)."""
-    with st.expander("🏆 Patent Readiness Assessment", expanded=True):
+    with st.expander(_t("patent_readiness"), expanded=True):
         result = compute_patent_readiness()
         score = result["score"]
         st.progress(score / 100)
         col1, col2 = st.columns(2)
         with col1:
-            st.metric("Patent Readiness Score", f"{score}/100")
+            st.metric(_t("score"), f"{score}/100")
         with col2:
-            st.metric("Grade", result["grade"])
+            st.metric(_t("grade"), result["grade"])
         st.info(f"**Recommendation:** {result['recommendation']}")
         # Breakdown
         st.markdown("---")
@@ -608,7 +866,7 @@ def show_patent_readiness() -> None:
 # ============================================================================
 def export_configuration() -> None:
     """Item 7: Export current configuration as JSON/YAML."""
-    with st.expander("⚙️ Export Configuration", expanded=False):
+    with st.expander(_t("export_config"), expanded=False):
         # Build config dict
         config = {
             "platform": {
@@ -674,7 +932,7 @@ def export_configuration() -> None:
 # ============================================================================
 def show_validation_dashboard() -> None:
     """Item 8: Validation metrics dashboard (RMSE, MAE, R², Accuracy)."""
-    with st.expander("✅ Validation Dashboard", expanded=True):
+    with st.expander(_t("validation_dash"), expanded=True):
         st.markdown("**Model Validation Metrics:**")
         # Try to get actual metrics from app
         try:
@@ -720,7 +978,7 @@ def show_validation_dashboard() -> None:
 # ============================================================================
 def generate_reproducibility_certificate() -> None:
     """Item 9: Generate reproducibility certificate (DOCX)."""
-    with st.expander("🎓 Reproducibility Certificate", expanded=False):
+    with st.expander(_t("repro_cert"), expanded=False):
         st.markdown("""
 **Reproducibility Certificate** includes:
 - Software version + git commit
@@ -799,295 +1057,4 @@ def generate_reproducibility_certificate() -> None:
                         doc.add_paragraph(f"ORCID: {author['orcid']}")
                     # 6. License
                     doc.add_heading("6. License", level=1)
-                    doc.add_paragraph(
-                        "Patent Application Preparation Stage — UzPatent + WIPO PCT filing planned. "
-                        "Research use only. Commercial use prohibited until patent grant."
-                    )
-                    # 7. Verification
-                    doc.add_heading("7. Verification", level=1)
-                    doc.add_paragraph(
-                        "This certificate confirms that the software environment, "
-                        "configuration, and file integrity have been recorded for "
-                        "reproducibility purposes. Any modification to the listed files "
-                        "will invalidate this certificate."
-                    )
-                    # Save
-                    buf = io.BytesIO()
-                    doc.save(buf)
-                    buf.seek(0)
-                    docx_bytes = buf.read()
-                    fname = f"reproducibility_certificate_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx"
-                    st.download_button(
-                        label=f"⬇️ Download {fname}",
-                        data=docx_bytes,
-                        file_name=fname,
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    )
-                    st.success(f"Certificate generated! ({len(docx_bytes):,} bytes)")
-                except (ValueError, KeyError, TypeError, AttributeError, RuntimeError) as exc:
-                    st.error(f"Certificate generation failed: {exc}")
-
-
-# ============================================================================
-# 10. ABOUT AUTHORS
-# ============================================================================
-def show_authors() -> None:
-    """Item 10: About Authors panel."""
-    with st.expander("👥 About Authors", expanded=True):
-        for author in AUTHORS:
-            st.markdown(f"### {author['name']}")
-            col1, col2 = st.columns(2)
-            with col1:
-                st.write(f"**Role:** {author['role']}")
-                st.write(f"**Affiliation:** {author['affiliation']}")
-                st.write(f"**Laboratory:** {author['laboratory']}")
-            with col2:
-                st.write(f"**Email:** {author['email']}")
-                st.write(f"**ORCID:** {author['orcid']}")
-                st.write(f"**Year:** {CITATION_INFO['year']}")
-            st.markdown("---")
-        st.markdown("""
-**Acknowledgments:**
-- Tashkent State Technical University
-- ZAI Geomechanics Laboratory
-- UzPatent (Intellectual Property Agency of Uzbekistan)
-- WIPO (World Intellectual Property Organization)
-
-**Contact:** saitov@example.com
-""")
-
-
-# ============================================================================
-# COMPLIANCE STATUS
-# ============================================================================
-def show_compliance_status() -> None:
-    """Compliance & Standards panel."""
-    with st.expander("📋 Compliance & Standards", expanded=True):
-        st.markdown("""
-### Supported Frameworks
-
-✅ ISRM Suggested Methods (1978-2014)
-✅ ISO 9001:2015 Aligned Design
-✅ ISO 27001:2022 Aligned Security
-✅ ISO 31000:2018 Risk Management
-✅ ISO/IEC 17025:2017 Testing Laboratory
-✅ IEC 61508 Functional Safety
-✅ Reproducible Research Principles
-✅ FAIR Data Principles (Findable, Accessible, Interoperable, Reusable)
-✅ Digital Signature Workflow (RSA-4096, FIPS 186-4)
-✅ Traceability Framework (SHA-256 Merkle Chain)
-✅ JCGM 100:2008 (GUM) Uncertainty Quantification
-✅ NIST FIPS 203 (Post-Quantum Cryptography, CRYSTALS-Kyber)
-
-### Notes
-
-The platform architecture is designed to support compliance-oriented
-workflows for scientific and engineering applications. Full certification
-requires independent audit.
-""")
-
-
-# ============================================================================
-# BUILD INFORMATION
-# ============================================================================
-def show_build_information() -> None:
-    """Build Information panel."""
-    with st.expander("⚙️ Build Information", expanded=True):
-        st.write("**Version:**", "6.0.0")
-        st.write("**Build Date:**", datetime.now().strftime("%Y-%m-%d"))
-        st.write("**Git Commit:**", get_git_commit())
-        st.write("**Python Runtime:**", os.sys.version)
-        st.write("**Platform:**", os.sys.platform)
-        st.write("**Monitor Version:**", MONITOR_VERSION)
-        st.write("**Extension v6:**", "Loaded" if check_patent_engine() != "Unknown" else "Unknown")
-        st.write("**Extension v7:**", "Loaded" if "v7" in check_patent_engine() else "Not loaded")
-
-
-# ============================================================================
-# PLATFORM INFORMATION
-# ============================================================================
-def show_info() -> None:
-    """Platform Technical Specification panel."""
-    with st.expander("ℹ️ Platform Technical Specification", expanded=True):
-        st.markdown("""
-# UCG Patent-Ready Scientific Platform v6.0.0
-
-Underground Coal Gasification (UCG) processes are modeled using
-scientific and engineering workflows.
-
-## Core Modules
-
-- **FEM Solver** (3D hexahedral, patch test verified)
-- **AI Prediction Engine** (PINN + RandomForest + SHAP)
-- **Monte Carlo Simulation** (≥10,000 samples, Geweke convergence)
-- **Sobol Sensitivity Analysis** (first-order + total-order)
-- **SHAP Explainability** (stability + drift detection)
-- **Patent Novelty Assessment** (SciBERT semantic similarity)
-- **Audit Trail Framework** (SHA-256 Merkle + WORM)
-- **RSA-4096 Digital Signature** (persistent PEM)
-- **Validation Framework** (RMSE, MAE, R², NSE, KGE, Willmott d)
-- **Reproducibility Manager** (seed=42, deterministic)
-
-## Technology Stack
-
-### Numerical
-- FEM (3D hexahedral, 8-node linear)
-- Monte Carlo (with Gelman-Rubin R-hat)
-- Sobol + FAST sensitivity
-- Bayesian UQ + Gaussian Process
-
-### Artificial Intelligence
-- PyTorch (PINN with PDE residuals)
-- scikit-learn (RandomForest, GP)
-- SHAP + LIME + PDP + ICE
-
-### Security
-- RSA-4096 (PEM persistent)
-- AES-256-GCM encryption
-- SHA-256 Merkle audit chain
-- CRYSTALS-Kyber (post-quantum, FIPS 203)
-- Ethereum blockchain anchoring
-
-### Patent Engine
-- Real Google Patents JSON API
-- Espacenet OPS API (OAuth 2.0)
-- WIPO Patentscope API
-- DataCite DOI registration
-- Crossref DOI verification
-- CPC/IPC classification
-- FTO (Freedom-to-Operate) analyzer
-- Multi-format claims (PCT/USPTO/EPO)
-- LaTeX formal proofs (5 theorems)
-
-## Intended Applications
-
-- Scientific Research (PhD dissertation)
-- Patent Preparation (UzPatent + WIPO PCT)
-- Engineering Assessment
-- Risk Analysis
-- Industrial UCG Monitoring
-""")
-        st.success("Platform Status: Patent-Ready ✅")
-
-
-# ============================================================================
-# HELP CENTER
-# ============================================================================
-def show_help() -> None:
-    """User Manual & Workflow panel."""
-    with st.sidebar.expander("❓ User Manual & Workflow", expanded=True):
-        st.markdown("""
-### Recommended Workflow
-
-1. **Configure** Input Parameters (sidebar)
-2. **Run** Numerical Simulation (FEM + Monte Carlo)
-3. **Validate** Results (benchmarks + analytical)
-4. **Analyze** AI Outputs (SHAP + LIME + PDP)
-5. **Perform** Patent Analysis (novelty + FTO)
-6. **Generate** Reports (DOCX + PDF certificate)
-7. **Export** Documentation (reproducibility cert)
-""")
-        st.info(
-            "Workflow: Input → Simulation → Validation → "
-            "Patent Analysis → Report Export"
-        )
-        if st.button("📘 Download Technical Manual", key="download_manual"):
-            st.warning("Technical manual generation module is under development.")
-
-
-# ============================================================================
-# SYSTEM STATUS (sidebar)
-# ============================================================================
-def show_system_status() -> None:
-    """Sidebar System Integrity Monitor."""
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("🛡️ System Integrity Monitor")
-    status_data = {
-        "RSA Signature": check_rsa_status(),
-        "Audit Chain": check_blockchain_status(),
-        "Patent Engine": check_patent_engine(),
-        "FEM Solver": check_fem_solver(),
-        "AI Module": check_ai_module(),
-        "Database": check_database(),
-        "DOI Engine": check_doi_engine(),
-        "Prior-Art Search": check_prior_art(),
-        "Validation Framework": check_validation(),
-        "Reproducibility": check_reproducibility(),
-    }
-    for name, status in status_data.items():
-        if status in ["Active", "Connected"] or "Active" in status:
-            st.sidebar.success(f"{name}: {status}")
-        else:
-            st.sidebar.error(f"{name}: {status}")
-    commit_id = get_git_commit()
-    readiness = compute_patent_readiness()
-    st.sidebar.caption(
-        f"Build: v6.0.0 | Commit: {commit_id} | "
-        f"Readiness: {readiness['score']}/100 ({readiness['grade']})"
-    )
-
-
-# ============================================================================
-# MAIN RENDER — call all panels
-# ============================================================================
-def render_all_monitor_panels() -> None:
-    """Call all system monitor panels in sidebar and main area.
-
-    Usage in app.py:
-        from _system_monitor import render_all_monitor_panels
-        render_all_monitor_panels()
-    """
-    # Sidebar panels
-    show_system_status()
-    show_help()
-    # Main area panels
-    show_info()
-    show_compliance_status()
-    show_build_information()
-    show_patent_readiness()
-    # New items (1-10)
-    show_license_info()
-    show_citation()
-    show_runtime_diagnostics()
-    show_data_integrity()
-    show_audit_statistics()
-    export_configuration()
-    show_validation_dashboard()
-    generate_reproducibility_certificate()
-    show_authors()
-
-
-# ============================================================================
-# SELF-TEST
-# ============================================================================
-def run_self_tests() -> Dict[str, Any]:
-    """Run self-tests for system monitor."""
-    results = {"version": MONITOR_VERSION, "tests": {}}
-    # Test health checks
-    results["tests"]["check_database"] = check_database()
-    results["tests"]["check_rsa_status"] = check_rsa_status()
-    results["tests"]["check_blockchain_status"] = check_blockchain_status()
-    results["tests"]["check_patent_engine"] = check_patent_engine()
-    results["tests"]["check_fem_solver"] = check_fem_solver()
-    results["tests"]["check_ai_module"] = check_ai_module()
-    # Test file hash
-    results["tests"]["calculate_file_hash_app"] = calculate_file_hash("app.py")[:16]
-    # Test patent readiness
-    readiness = compute_patent_readiness()
-    results["tests"]["patent_readiness_score"] = readiness["score"]
-    results["tests"]["patent_readiness_grade"] = readiness["grade"]
-    # Test git commit
-    results["tests"]["git_commit"] = get_git_commit()
-    # Test citation
-    results["tests"]["citation_doi"] = CITATION_INFO["doi"]
-    # Test authors
-    results["tests"]["n_authors"] = len(AUTHORS)
-    results["all_passed"] = True
-    return results
-
-
-if __name__ == "__main__":
-    import sys
-    print(f"System Integrity Monitor v{MONITOR_VERSION}")
-    print("=" * 60)
-    print(json.dumps(run_self_tests(), indent=2, default=str))
+    
