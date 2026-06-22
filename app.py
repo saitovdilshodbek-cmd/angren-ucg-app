@@ -13786,6 +13786,50 @@ except Exception as _v6_err:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# PATENT-READY EXTENSION v7.0.0 — 50 CRITICAL FIXES (7 BLOCKS)
+# ══════════════════════════════════════════════════════════════════════════════
+# v6.0 ning 50 ta batafsil talabini to'liq bartaraf etadi:
+#   BLOK A (1-10): Patent Novelty — similarity matrix, heatmap, landscape,
+#                   CPC/IPC classification, FTO analyzer, claim overlap, defense report
+#   BLOK B (11-20): Claim Engine — tree, PCT/USPTO/EPO formats, Graphviz DOT
+#   BLOK C (21-30): FEM Validation — Cantilever, Terzaghi, Biot, Infinite Plate,
+#                   Distortion Index, Verification Score
+#   BLOK D (31-35): AI Explainability — SHAP stability, drift detector, score
+#   BLOK E (36-40): UQ — Sobol first/total, FAST, Bayesian, GP
+#   BLOK F (41-45): Reproducibility — environment.yml, requirements.txt export
+#   BLOK G (46-50): Security — AES-256, Merkle, WORM, Ethereum anchoring
+# ══════════════════════════════════════════════════════════════════════════════
+try:
+    import _patent_ext_v7 as _v7
+    # Make v7 classes accessible from app namespace
+    PatentSimilarityMatrix = _v7.PatentSimilarityMatrix
+    NoveltyHeatmap = _v7.NoveltyHeatmap
+    PatentLandscape = _v7.PatentLandscape
+    PatentClassification = _v7.PatentClassification
+    FTOAnalyzer = _v7.FTOAnalyzer
+    ClaimOverlapDetector = _v7.ClaimOverlapDetector
+    PatentDefenseReportDOCX = _v7.PatentDefenseReportDOCX
+    ClaimDependencyTree = _v7.ClaimDependencyTree
+    MultiFormatClaims = _v7.MultiFormatClaims
+    FEMBenchmarks = _v7.FEMBenchmarks
+    ElementDistortionIndex = _v7.ElementDistortionIndex
+    FEMVerificationScore = _v7.FEMVerificationScore
+    SHAPStabilityTest = _v7.SHAPStabilityTest
+    SHAPDriftDetector = _v7.SHAPDriftDetector
+    ExplainabilityScore = _v7.ExplainabilityScore
+    UQSuite = _v7.UQSuite
+    ReproducibilityExporter = _v7.ReproducibilityExporter
+    AES256Encryption = _v7.AES256Encryption
+    EthereumAnchoring = _v7.EthereumAnchoring
+    _V7_AVAILABLE = True
+except Exception as _v7_err:
+    _V7_AVAILABLE = False
+    _V7_ERROR = str(_v7_err)
+    import logging as _v7_log
+    _v7_log.getLogger("ucg_platform").warning(f"Patent-Ready Extension v7.0 not loaded: {_v7_err}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # [FIX #4] Windows Multiprocessing uchun asosiy kirish nuqtasi
 # ══════════════════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
