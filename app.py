@@ -54,25 +54,90 @@ try:
 except ImportError:
     pass  # python-dotenv not installed; env vars must be set manually
 
-# ── UCG Platform Core Package ──────────────────────────────────────────
-# Modular package: exceptions, config, logger, constants, version, key_manager
+# ── UCG Platform Core Modules (top-level) ──────────────────────────────
+# Modular: exceptions.py, config.py, logger.py, version.py
+# These are top-level modules (same dir as app.py).
 try:
-    from ucg_platform import (
+    # Version (mandatory)
+    from version import (
         __version__ as _pkg_version,
-        get_config as _get_pkg_config,
-        get_logger as _get_pkg_logger,
-        setup_logging as _setup_pkg_logging,
+        version_info as _version_info,
+        get_version_info as _get_version_info,
     )
-    from ucg_platform.exceptions import (
+    # Exceptions (mandatory)
+    from exceptions import (
         UCGException, FEMMeshError, FEMMaterialError, FEMConvergenceError,
         ValidationError as UCGValidationError,
         ConfigurationError as UCGConfigurationError,
         KeyManagementError,
+        PatentSearchError, PatentAnalysisError, PatentClaimError,
+        SecurityError, AuthenticationError,
+        DataError, DatasetError, ModelError,
+        APIError, GooglePatentsAPIError, EspacenetAPIError,
+        WIPOAPIError, CrossrefAPIError, DataCiteAPIError,
+    )
+    # Config (mandatory, but lazy — only validate when accessed)
+    from config import (
+        Config as _ConfigClass,
+        get_config as _get_pkg_config,
+    )
+    # Logger (mandatory)
+    from logger import (
+        setup_logging as _setup_pkg_logging,
+        get_logger as _get_pkg_logger,
     )
     _PKG_AVAILABLE = True
-except ImportError:
+except ImportError as _pkg_import_err:
     _PKG_AVAILABLE = False
-    _pkg_version = "6.0.0-inline"  # Fallback version
+    _PKG_IMPORT_ERROR = str(_pkg_import_err)
+    # Fallback: define minimal placeholders so app.py still loads
+    # (full functionality requires the modules to be present)
+    import sys as _sys_pkg
+    print(f"[bootstrap] WARNING: Core modules not found: {_pkg_import_err}", file=_sys_pkg.stderr)
+    print("[bootstrap] Please ensure version.py, exceptions.py, config.py, logger.py are in the same directory.", file=_sys_pkg.stderr)
+
+    # Minimal placeholders
+    class UCGException(Exception):
+        def __init__(self, message: str, *, detail=None):
+            super().__init__(message)
+            self.message = message
+            self.detail = detail
+
+    class FEMSolverError(UCGException): pass
+    class FEMMeshError(FEMSolverError): pass
+    class FEMMaterialError(FEMSolverError): pass
+    class FEMConvergenceError(FEMSolverError): pass
+    class PatentAnalysisError(UCGException): pass
+    class PatentSearchError(PatentAnalysisError): pass
+    class PatentClaimError(PatentAnalysisError): pass
+    class ValidationError(UCGException): pass
+    UCGValidationError = ValidationError
+    class ConfigurationError(UCGException): pass
+    UCGConfigurationError = ConfigurationError
+    class SecurityError(UCGException): pass
+    class KeyManagementError(SecurityError): pass
+    class AuthenticationError(SecurityError): pass
+    class DataError(UCGException): pass
+    class DatasetError(DataError): pass
+    class ModelError(DataError): pass
+    class APIError(UCGException):
+        def __init__(self, message, *, status_code=None, endpoint=None):
+            super().__init__(message)
+            self.status_code = status_code
+            self.endpoint = endpoint
+    class GooglePatentsAPIError(APIError): pass
+    class EspacenetAPIError(APIError): pass
+    class WIPOAPIError(APIError): pass
+    class CrossrefAPIError(APIError): pass
+    class DataCiteAPIError(APIError): pass
+    _pkg_version = "6.0.0-patent"
+    def _get_pkg_config(reload=False):
+        return None
+    def _get_pkg_logger(name):
+        import logging
+        return logging.getLogger(name)
+    def _setup_pkg_logging(**kwargs):
+        pass
 
 
 # ── Standard libraries ──────────────────────────────────────────────────
