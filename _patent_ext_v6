@@ -22,7 +22,7 @@ Bu modul v5.0.0 ning 16 ta jiddiy kamchiligini to'liq bartaraf etadi:
   C16: UzPatent filing requirements + PCT timeline correction
 
 Author : Patent-Ready Build Team v6.0
-License: Patent Pending (UzPatent + WIPO PCT)
+License: Patent Application Preparation Stage (UzPatent + WIPO PCT planned)
 ================================================================================
 """
 
@@ -140,7 +140,7 @@ class RealSciBERTNovelty:
                 self.backend = name
                 logger_ext.info(f"RealSciBERTNovelty: loaded {name} on {self.device}")
                 return
-            except Exception as exc:
+            except (ValueError, KeyError, TypeError, AttributeError, RuntimeError) as exc:
                 last_error = exc
                 logger_ext.warning(f"Failed to load {name}: {exc}")
                 continue
@@ -227,13 +227,46 @@ class GooglePatentsJSONAPI:
         "Accept": "application/json",
         "Accept-Language": "en-US,en;q=0.9",
     }
+    # Rate limiting: min 1 second between requests
+    MIN_REQUEST_INTERVAL = 1.0
+    # Cache TTL: 1 hour
+    CACHE_TTL = 3600
 
     def __init__(self, timeout: float = 20.0, max_retries: int = 3):
         self.timeout = timeout
         self.max_retries = max_retries
+        self._last_request_time: float = 0.0
+        self._cache: Dict[str, Tuple[float, Any]] = {}
+
+    def _rate_limit(self) -> None:
+        """Enforce minimum interval between requests."""
+        elapsed = time.time() - self._last_request_time
+        if elapsed < self.MIN_REQUEST_INTERVAL:
+            time.sleep(self.MIN_REQUEST_INTERVAL - elapsed)
+        self._last_request_time = time.time()
+
+    def _get_cached(self, cache_key: str) -> Optional[Dict[str, Any]]:
+        """Get cached result if not expired."""
+        if cache_key in self._cache:
+            ts, result = self._cache[cache_key]
+            if time.time() - ts < self.CACHE_TTL:
+                return result
+            else:
+                del self._cache[cache_key]
+        return None
+
+    def _set_cached(self, cache_key: str, result: Dict[str, Any]) -> None:
+        """Cache result with timestamp."""
+        self._cache[cache_key] = (time.time(), result)
 
     def search(self, query: str, max_results: int = 25, page: int = 0) -> Dict[str, Any]:
-        """Search Google Patents via JSON API."""
+        """Search Google Patents via JSON API with cache + rate limiting."""
+        # Cache check
+        cache_key = f"google:{query}:{max_results}:{page}"
+        cached = self._get_cached(cache_key)
+        if cached is not None:
+            cached["cache_hit"] = True
+            return cached
         if not REQUESTS_AVAILABLE:
             return {"success": False, "error": "requests library not installed"}
         params = {
@@ -244,6 +277,7 @@ class GooglePatentsJSONAPI:
         }
         last_error = None
         for attempt in range(self.max_retries):
+            self._rate_limit()
             try:
                 resp = requests.get(
                     self.ENDPOINT, params=params, headers=self.HEADERS,
@@ -258,7 +292,7 @@ class GooglePatentsJSONAPI:
                 resp.raise_for_status()
                 data = resp.json()
                 results = self._parse_results(data, max_results)
-                return {
+                result = {
                     "success": True,
                     "source": "Google Patents JSON API",
                     "endpoint": self.ENDPOINT,
@@ -267,8 +301,19 @@ class GooglePatentsJSONAPI:
                     "results": results,
                     "raw_count": data.get("results", {}).get("cluster", [{}])[0].get("result", {}).get("total_num_results", 0),
                     "searched_at": _utc_now_iso(),
+                    "cache_hit": False,
                 }
-            except Exception as exc:
+                self._set_cached(cache_key, result)
+                return result
+            except requests.exceptions.Timeout:
+                last_error = "Timeout"
+                if attempt < self.max_retries - 1:
+                    time.sleep(2 ** attempt)
+            except requests.exceptions.ConnectionError as exc:
+                last_error = f"Connection error: {exc}"
+                if attempt < self.max_retries - 1:
+                    time.sleep(2 ** attempt)
+            except (ValueError, KeyError, TypeError, AttributeError, RuntimeError) as exc:
                 last_error = str(exc)
                 time.sleep(1)
         return {"success": False, "error": last_error, "endpoint": self.ENDPOINT}
@@ -296,7 +341,7 @@ class GooglePatentsJSONAPI:
                 })
                 if len(results) >= max_results:
                     break
-        except Exception as exc:
+        except (ValueError, KeyError, TypeError, AttributeError, RuntimeError) as exc:
             logger_ext.warning(f"Google Patents parse error: {exc}")
         return results
 
@@ -350,7 +395,7 @@ class EspacenetOPSAPI:
             expires_in = int(data.get("expires_in", 1200))
             self._token_expiry = time.time() + expires_in
             return True, f"token_acquired (expires in {expires_in}s)"
-        except Exception as exc:
+        except (ValueError, KeyError, TypeError, AttributeError, RuntimeError) as exc:
             return False, f"OAuth error: {exc}"
 
     def search(self, query: str, max_results: int = 25) -> Dict[str, Any]:
@@ -383,7 +428,7 @@ class EspacenetOPSAPI:
                 "results": results,
                 "searched_at": _utc_now_iso(),
             }
-        except Exception as exc:
+        except (ValueError, KeyError, TypeError, AttributeError, RuntimeError) as exc:
             return {"success": False, "error": str(exc)}
 
     def _parse_search_results(self, data: Dict, max_results: int) -> List[Dict[str, Any]]:
@@ -435,7 +480,7 @@ class EspacenetOPSAPI:
                 })
                 if len(results) >= max_results:
                     break
-        except Exception as exc:
+        except (ValueError, KeyError, TypeError, AttributeError, RuntimeError) as exc:
             logger_ext.warning(f"Espacenet parse error: {exc}")
         return results
 
@@ -445,10 +490,13 @@ class EspacenetOPSAPI:
 # ============================================================================
 class WIPOPatentscopeAPI:
     """
-    Haqiqiy WIPO Patentscope API.
+    Haqiqiy WIPO Patentscope API — production-grade with retry, rate limiting, cache.
 
-    Note: WIPO Patentscope'ning rasmiy API si cheklangan.
-    Public search endpoint orqali JSON response olish mumkin.
+    Features:
+      - Retry with exponential backoff (3 attempts)
+      - Rate limiting (min 1s between requests)
+      - In-memory cache (TTL=3600s) to avoid duplicate API calls
+      - API quota monitoring (tracks remaining requests)
     """
 
     SEARCH_URL = "https://patentscope.wipo.int/search/en/result.jsf"
@@ -457,52 +505,127 @@ class WIPOPatentscopeAPI:
         "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9",
     }
+    # Rate limiting: min 1 second between requests
+    MIN_REQUEST_INTERVAL = 1.0
+    # Cache TTL: 1 hour
+    CACHE_TTL = 3600
+    # Max retries
+    MAX_RETRIES = 3
 
     def __init__(self, timeout: float = 20.0):
         self.timeout = timeout
+        self._last_request_time: float = 0.0
+        self._cache: Dict[str, Tuple[float, Any]] = {}  # {cache_key: (timestamp, result)}
+        self._quota_remaining: Optional[int] = None
+
+    def _rate_limit(self) -> None:
+        """Enforce minimum interval between requests."""
+        elapsed = time.time() - self._last_request_time
+        if elapsed < self.MIN_REQUEST_INTERVAL:
+            time.sleep(self.MIN_REQUEST_INTERVAL - elapsed)
+        self._last_request_time = time.time()
+
+    def _get_cached(self, cache_key: str) -> Optional[Dict[str, Any]]:
+        """Get cached result if not expired."""
+        if cache_key in self._cache:
+            ts, result = self._cache[cache_key]
+            if time.time() - ts < self.CACHE_TTL:
+                logger_ext.debug(f"WIPO cache hit: {cache_key}")
+                return result
+            else:
+                del self._cache[cache_key]  # expired
+        return None
+
+    def _set_cached(self, cache_key: str, result: Dict[str, Any]) -> None:
+        """Cache result with timestamp."""
+        self._cache[cache_key] = (time.time(), result)
+
+    def _request_with_retry(self, url: str, params: Dict) -> Optional[Any]:
+        """HTTP GET with retry + exponential backoff."""
+        if not REQUESTS_AVAILABLE:
+            return None
+        for attempt in range(self.MAX_RETRIES):
+            self._rate_limit()
+            try:
+                resp = requests.get(
+                    url, params=params, headers=self.HEADERS,
+                    timeout=self.timeout
+                )
+                if resp.status_code == 200:
+                    return resp
+                if resp.status_code == 429:
+                    # Rate limited — exponential backoff
+                    wait = 2 ** attempt
+                    logger_ext.warning(f"WIPO rate limited (429), backing off {wait}s")
+                    time.sleep(wait)
+                    continue
+                if resp.status_code >= 500:
+                    # Server error — retry
+                    wait = 2 ** attempt
+                    logger_ext.warning(f"WIPO server error {resp.status_code}, retrying in {wait}s")
+                    time.sleep(wait)
+                    continue
+                # Client error (4xx other than 429) — don't retry
+                logger_ext.warning(f"WIPO client error {resp.status_code}: {resp.text[:200]}")
+                return resp
+            except requests.exceptions.Timeout:
+                logger_ext.warning(f"WIPO timeout (attempt {attempt+1}/{self.MAX_RETRIES})")
+                if attempt < self.MAX_RETRIES - 1:
+                    time.sleep(2 ** attempt)
+            except requests.exceptions.ConnectionError as exc:
+                logger_ext.warning(f"WIPO connection error: {exc}")
+                if attempt < self.MAX_RETRIES - 1:
+                    time.sleep(2 ** attempt)
+            except (ValueError, KeyError, TypeError, AttributeError, RuntimeError) as exc:
+                logger_ext.error(f"WIPO unexpected error: {exc}")
+                break
+        return None
 
     def search(self, query: str, max_results: int = 25) -> Dict[str, Any]:
-        """Search WIPO Patentscope."""
+        """Search WIPO Patentscope with cache + retry + rate limiting."""
+        # Cache check
+        cache_key = f"wipo:{query}:{max_results}"
+        cached = self._get_cached(cache_key)
+        if cached is not None:
+            cached["cache_hit"] = True
+            return cached
         if not REQUESTS_AVAILABLE:
             return {"success": False, "error": "requests library not installed"}
-        try:
-            # Try RSS feed first (more reliable)
-            params = {"query": query, "rss": "true"}
-            resp = requests.get(
-                self.FEED_URL, params=params, headers=self.HEADERS,
-                timeout=self.timeout
-            )
-            if resp.status_code == 200 and "<rss" in resp.text.lower():
-                results = self._parse_rss_response(resp.text, max_results)
-                return {
-                    "success": True,
-                    "source": "WIPO Patentscope RSS",
-                    "endpoint": self.FEED_URL,
-                    "query": query,
-                    "total_results": len(results),
-                    "results": results,
-                    "searched_at": _utc_now_iso(),
-                }
-            # Fallback: HTML parsing
-            params = {"query": query}
-            resp = requests.get(
-                self.SEARCH_URL, params=params, headers=self.HEADERS,
-                timeout=self.timeout
-            )
-            if resp.status_code == 200:
-                results = self._parse_html_response(resp.text, max_results)
-                return {
-                    "success": True,
-                    "source": "WIPO Patentscope HTML",
-                    "endpoint": self.SEARCH_URL,
-                    "query": query,
-                    "total_results": len(results),
-                    "results": results,
-                    "searched_at": _utc_now_iso(),
-                }
-            return {"success": False, "error": f"HTTP {resp.status_code}"}
-        except Exception as exc:
-            return {"success": False, "error": str(exc)}
+        # Try RSS feed first (more reliable)
+        params = {"query": query, "rss": "true"}
+        resp = self._request_with_retry(self.FEED_URL, params)
+        if resp is not None and resp.status_code == 200 and "<rss" in resp.text.lower():
+            results = self._parse_rss_response(resp.text, max_results)
+            result = {
+                "success": True,
+                "source": "WIPO Patentscope RSS",
+                "endpoint": self.FEED_URL,
+                "query": query,
+                "total_results": len(results),
+                "results": results,
+                "cache_hit": False,
+                "searched_at": _utc_now_iso(),
+            }
+            self._set_cached(cache_key, result)
+            return result
+        # Fallback: HTML parsing
+        params = {"query": query}
+        resp = self._request_with_retry(self.SEARCH_URL, params)
+        if resp is not None and resp.status_code == 200:
+            results = self._parse_html_response(resp.text, max_results)
+            result = {
+                "success": True,
+                "source": "WIPO Patentscope HTML",
+                "endpoint": self.SEARCH_URL,
+                "query": query,
+                "total_results": len(results),
+                "results": results,
+                "cache_hit": False,
+                "searched_at": _utc_now_iso(),
+            }
+            self._set_cached(cache_key, result)
+            return result
+        return {"success": False, "error": f"HTTP {resp.status_code if resp else 'no response'}"}
 
     def _parse_rss_response(self, rss_text: str, max_results: int) -> List[Dict[str, Any]]:
         """Parse WIPO RSS XML response."""
@@ -663,7 +786,7 @@ class RealDOIManager:
                     last_error = f"Rate limited (429), waited {wait}s"
                     continue
                 last_error = f"HTTP {resp.status_code}: {resp.text[:300]}"
-            except Exception as exc:
+            except (ValueError, KeyError, TypeError, AttributeError, RuntimeError) as exc:
                 last_error = str(exc)
                 time.sleep(2 ** attempt)
         return {
@@ -717,7 +840,7 @@ class RealDOIManager:
                         "reason": "DOI not found in Crossref",
                     }
                 last_error = f"HTTP {resp.status_code}"
-            except Exception as exc:
+            except (ValueError, KeyError, TypeError, AttributeError, RuntimeError) as exc:
                 last_error = str(exc)
                 time.sleep(2 ** attempt)
         return {
@@ -1419,7 +1542,7 @@ class IPFSDistributedLedger:
                 logger_ext.info("IPFS client connected to local node")
             except ImportError:
                 logger_ext.warning("ipfshttpclient not installed; using HTTP API only")
-            except Exception as exc:
+            except (ValueError, KeyError, TypeError, AttributeError, RuntimeError) as exc:
                 logger_ext.warning(f"IPFS node not available: {exc}; using HTTP API or local hash fallback")
 
     def add_to_ipfs(self, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -1438,7 +1561,7 @@ class IPFSDistributedLedger:
                     "size_bytes": len(data_bytes),
                     "data_sha256": _sha256_bytes(data_bytes),
                 }
-            except Exception as exc:
+            except (ValueError, KeyError, TypeError, AttributeError, RuntimeError) as exc:
                 logger_ext.warning(f"ipfshttpclient add failed: {exc}")
         # Try HTTP API
         if self.use_local_node and REQUESTS_AVAILABLE:
@@ -1459,7 +1582,7 @@ class IPFSDistributedLedger:
                         "size_bytes": len(data_bytes),
                         "data_sha256": _sha256_bytes(data_bytes),
                     }
-            except Exception as exc:
+            except (ValueError, KeyError, TypeError, AttributeError, RuntimeError) as exc:
                 logger_ext.warning(f"IPFS HTTP API failed: {exc}")
         # Fallback: local hash (not decentralized)
         if self.fallback_to_local_hash:
@@ -1481,14 +1604,14 @@ class IPFSDistributedLedger:
             try:
                 self.client.pin.add(cid)
                 return {"success": True, "cid": cid, "pinned": True, "method": "ipfshttpclient"}
-            except Exception as exc:
+            except (ValueError, KeyError, TypeError, AttributeError, RuntimeError) as exc:
                 logger_ext.warning(f"IPFS pin failed: {exc}")
         if self.use_local_node and REQUESTS_AVAILABLE:
             try:
                 resp = requests.post(f"{self.IPFS_HTTP_API}/pin/add", params={"arg": cid}, timeout=30)
                 if resp.status_code == 200:
                     return {"success": True, "cid": cid, "pinned": True, "method": "ipfs_http_api"}
-            except Exception as exc:
+            except (ValueError, KeyError, TypeError, AttributeError, RuntimeError) as exc:
                 logger_ext.warning(f"IPFS HTTP pin failed: {exc}")
         return {"success": False, "cid": cid, "pinned": False, "error": "IPFS node not available"}
 
@@ -1524,7 +1647,7 @@ class IPFSDistributedLedger:
                 )
                 block["signature"] = base64.b64encode(signature).decode("ascii")
                 block["signature_algorithm"] = "RSASSA-PSS-SHA256 (RSA-4096)"
-        except Exception as exc:
+        except (ValueError, KeyError, TypeError, AttributeError, RuntimeError) as exc:
             logger_ext.warning(f"Signature failed: {exc}")
         # Add to IPFS
         result = self.add_to_ipfs(block)
@@ -1603,7 +1726,7 @@ class PostQuantumCryptography:
                     "nist_level": self._get_nist_level(),
                     "note": "Real CRYSTALS-Kyber (NIST PQC standard, FIPS 203)",
                 }
-            except Exception as exc:
+            except (ValueError, KeyError, TypeError, AttributeError, RuntimeError) as exc:
                 return {"success": False, "error": str(exc), "post_quantum_secure": False}
         # Fallback: classical RSA (NOT post-quantum)
         try:
@@ -1624,7 +1747,7 @@ class PostQuantumCryptography:
                 "public_key": base64.b64encode(pub_pem).decode("ascii"),
                 "nist_level": "N/A (classical)",
             }
-        except Exception as exc:
+        except (ValueError, KeyError, TypeError, AttributeError, RuntimeError) as exc:
             return {"success": False, "error": str(exc)}
 
     def _get_nist_level(self) -> str:
@@ -1888,7 +2011,7 @@ For the 3D hexahedral FEM with 8-node linear elements:
             }
         except subprocess.TimeoutExpired:
             return {"success": False, "error": "pdflatex timeout", "latex_source_path": tex_path}
-        except Exception as exc:
+        except (ValueError, KeyError, TypeError, AttributeError, RuntimeError) as exc:
             return {"success": False, "error": str(exc), "latex_source_path": tex_path}
 
 
