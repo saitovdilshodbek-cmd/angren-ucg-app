@@ -8991,7 +8991,928 @@ def draw_interactive_dashboard(x_ax, z_ax, fos_d, disp_d, surf_x,
 # ════════════════════════════════════════════════════════════════════════════
 # STREAMLIT UI (ASOSIY QISMI)
 # ════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════════
+# UCG PLATFORM v7.0 — REACTOR / KINETICS / MONTE CARLO MODULE
+# ══════════════════════════════════════════════════════════════════════════════
+# This block was merged from ucg_v7_streamlit_app.py into app.py.
+# It defines all the v7.0 symbols referenced by the v7 Streamlit UI:
+#   - CoalType dataclass + COAL_DATABASE (predefined coal types)
+#   - UCGReaction dataclass + UCGConfig (Arrhenius kinetics + thermodynamics)
+#   - GibbsEnergyCalculator (ΔG = ΔH - T·ΔS for all reactions)
+#   - UCGEngine (time-stepping reactor simulator producing a DataFrame)
+#   - run_simulation() helper used by the Streamlit UI
+#   - run_monte_carlo() helper for uncertainty quantification (95% CI)
+#   - All v7 plotting functions (coal conversion, gas composition, T, P, etc.)
+#   - run_v7_app() — the v7 sidebar menu + page dispatcher
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+@dataclass
+class CoalType:
+    """Ko'mir turi fizik-kimyoviy xususiyatlari."""
+    name: str
+    carbon_frac: float        # Uglerod ulushi (0..1)
+    hydrogen_frac: float      # Vodorod ulushi
+    oxygen_frac: float        # Kislorod ulushi
+    nitrogen_frac: float      # Azot ulushi
+    sulfur_frac: float        # Oltingugurt ulushi
+    moisture: float           # Namlik
+    ash: float                # Kul
+    volatile_matter: float    # Uchuvchi moddalar
+    fixed_carbon: float       # Qattiq uglerod
+    hhv_mj_kg: float          # Yuqori issiqlik qiymati (MJ/kg)
+    reactivity_coeff: float = 1.0  # Reaktivlik koeffitsienti
+
+
+# 5 turdagi ko'mir uchun standart ma'lumotlar bazasi
+COAL_DATABASE: Dict[str, CoalType] = {
+    "Angren Lignite (O'zbekiston)": CoalType(
+        name="Angren Lignite", carbon_frac=0.55, hydrogen_frac=0.04,
+        oxygen_frac=0.18, nitrogen_frac=0.01, sulfur_frac=0.03,
+        moisture=0.15, ash=0.20, volatile_matter=0.45, fixed_carbon=0.20,
+        hhv_mj_kg=18.5, reactivity_coeff=1.4
+    ),
+    "Shurtong Subbituminous": CoalType(
+        name="Shurtong Subbituminous", carbon_frac=0.65, hydrogen_frac=0.05,
+        oxygen_frac=0.12, nitrogen_frac=0.012, sulfur_frac=0.02,
+        moisture=0.10, ash=0.15, volatile_matter=0.38, fixed_carbon=0.37,
+        hhv_mj_kg=24.0, reactivity_coeff=1.2
+    ),
+    "Bituminous (Standard)": CoalType(
+        name="Bituminous", carbon_frac=0.75, hydrogen_frac=0.05,
+        oxygen_frac=0.08, nitrogen_frac=0.015, sulfur_frac=0.015,
+        moisture=0.05, ash=0.10, volatile_matter=0.30, fixed_carbon=0.55,
+        hhv_mj_kg=29.5, reactivity_coeff=1.0
+    ),
+    "Anthracite (High Rank)": CoalType(
+        name="Anthracite", carbon_frac=0.90, hydrogen_frac=0.03,
+        oxygen_frac=0.03, nitrogen_frac=0.01, sulfur_frac=0.005,
+        moisture=0.03, ash=0.06, volatile_matter=0.08, fixed_carbon=0.83,
+        hhv_mj_kg=33.0, reactivity_coeff=0.6
+    ),
+    "Petroleum Coke (Industrial)": CoalType(
+        name="Petroleum Coke", carbon_frac=0.88, hydrogen_frac=0.035,
+        oxygen_frac=0.02, nitrogen_frac=0.015, sulfur_frac=0.05,
+        moisture=0.02, ash=0.005, volatile_matter=0.10, fixed_carbon=0.875,
+        hhv_mj_kg=35.5, reactivity_coeff=0.85
+    ),
+}
+
+
+@dataclass
+class UCGReaction:
+    """Arrhenius kinetikasi + termodinamik parametrlar bilan bitta UCG reaksiyasi."""
+    name: str
+    A: float            # Pre-exponential factor (1/s)
+    Ea: float           # Activation energy (J/mol)
+    dH: float           # Reaction enthalpy (J/mol) — negative = exothermic
+    dS: float           # Reaction entropy (J/(mol·K))
+    dG_ref: float = 0.0 # Reference Gibbs free energy at T_ref=298.15 K (J/mol)
+
+    def rate(self, T: float, reactivity: float = 1.0) -> float:
+        """Arrhenius tezlik konstantasi: k = A·exp(-Ea/RT) · reactivity."""
+        R = 8.314  # J/(mol·K)
+        # safe_exp to avoid overflow at very high T
+        exponent = -self.Ea / (R * max(T, 1.0))
+        exponent = max(min(exponent, 0.0), -700.0)
+        return self.A * np.exp(exponent) * reactivity
+
+
+class UCGConfig:
+    """UCG simulyatsiyasi uchun konfiguratsiya: reaksiyalar va fizik konstantalar."""
+
+    R_GAS = 8.314  # J/(mol·K)
+    T_REF = 298.15  # K
+    P_REF = 101325.0  # Pa
+
+    # 6 ta asosiy UCG reaksiyasi
+    REACTIONS: Dict[str, UCGReaction] = {
+        "Oxidation":     UCGReaction("C + O2 -> CO2",       A=1.5e6,  Ea=120_000, dH=-393_500.0, dS=2.9,    dG_ref=-394_400.0),
+        "Boudouard":     UCGReaction("C + CO2 -> 2CO",      A=3.6e6,  Ea=248_000, dH=+172_000.0, dS=176.0,  dG_ref=+120_100.0),
+        "Steam Gasif.":  UCGReaction("C + H2O -> CO + H2",  A=1.5e7,  Ea=228_000, dH=+131_000.0, dS=133.8,  dG_ref=+91_300.0),
+        "Methanation":   UCGReaction("CO + 3H2 -> CH4 + H2O",A=2.1e4, Ea=125_000, dH=-75_000.0,  dS=-232.5, dG_ref=-55_600.0),
+        "WGS":           UCGReaction("CO + H2O -> CO2 + H2",A=4.4e5,  Ea=83_000,  dH=-41_200.0,  dS=-42.4,  dG_ref=-28_600.0),
+        "Devolatiliz.":  UCGReaction("C -> H2 + CH4 + CO",  A=8.0e3,  Ea=145_000, dH=+95_000.0,  dS=85.0,   dG_ref=+69_700.0),
+    }
+
+    def __init__(self, coal: Optional[CoalType] = None, T0: float = 1200.0, P0: float = 10.0e6):
+        self.coal = coal or COAL_DATABASE["Bituminous (Standard)"]
+        self.T0 = T0
+        self.P0 = P0  # Pa
+
+
+class GibbsEnergyCalculator:
+    """Reaksiyalar uchun Gibbs energiyasini hisoblash: ΔG = ΔH - T·ΔS."""
+
+    @staticmethod
+    def compute_all(config: UCGConfig, T: float) -> Dict[str, float]:
+        """Barcha reaksiyalar uchun ΔG (J/mol) ni berilgan haroratda hisoblaydi."""
+        result: Dict[str, float] = {}
+        for name, rxn in config.REACTIONS.items():
+            # ΔG(T) = ΔH - T·ΔS  (approximation, ignoring ΔCp correction)
+            dG = rxn.dH - T * rxn.dS
+            result[name] = dG
+        return result
+
+
+class UCGEngine:
+    """
+    Soddalashtirilgan UCG reaktor simulyatsiyasi.
+    Vaqt bo'yicha qadam-baqadam Arrhenius kinetikasi bilan konversiya, gaz tarkibi,
+    harorat, bosim, porozlik va o'tkazuvchanlikni hisoblaydi.
+    """
+
+    def __init__(self, config: UCGConfig, n_steps: int = 200, dt: float = 1.0):
+        self.config = config
+        self.n_steps = int(n_steps)
+        self.dt = float(dt)
+        self.t = 0.0
+        self.T = config.T0
+        self.P = config.P0
+        # Initial composition (mass fractions normalized)
+        self.char_conversion = 0.0
+        self.gas = {"CO": 0.0, "H2": 0.0, "CO2": 0.0, "CH4": 0.0}
+        # Initial porosity and permeability
+        self.phi0 = 0.05 + 0.30 * (config.coal.volatile_matter + config.coal.moisture)
+        self.phi = self.phi0
+        self.k0 = 1.0e-15  # m^2 (initial Darcy permeability)
+        self.k = self.k0
+        self.heat_exo = 0.0
+        self.heat_endo = 0.0
+        self.reactivity = config.coal.reactivity_coeff
+        # Initial carbon mass (per 1 kg of coal)
+        self.m_C0 = 1000.0 * config.coal.fixed_carbon
+        self.m_C = self.m_C0
+
+    def step(self) -> Dict[str, float]:
+        """Bitta vaqt qadami."""
+        cfg = self.config
+        # Compute reaction rates (mol-based, simplified)
+        rates = {}
+        for name, rxn in cfg.REACTIONS.items():
+            rates[name] = rxn.rate(self.T, self.reactivity)
+
+        # Effective conversion rate: weighted by reaction rates and char availability
+        conv_rate = (rates["Oxidation"] + rates["Boudouard"] +
+                     rates["Steam Gasif."] + rates["Devolatiliz."]) * 1.0e-3
+        conv_rate *= (1.0 - self.char_conversion) ** 0.5  # shrinking-core
+        d_conv = conv_rate * self.dt
+        self.char_conversion = min(1.0, self.char_conversion + d_conv)
+
+        # Gas composition (mole-fraction-like, simplified)
+        # Higher T favors CO/H2; lower T favors CO2/CH4
+        T_norm = (self.T - 600.0) / 1200.0
+        # Molar generation rates per reaction (arbitrary scaling for display)
+        gen_CO  = rates["Boudouard"] * 2.0 + rates["Steam Gasif."] - rates["WGS"] - rates["Methanation"]
+        gen_H2  = rates["Steam Gasif."] + rates["Devolatiliz."] + rates["WGS"] - 3 * rates["Methanation"]
+        gen_CO2 = rates["Oxidation"] + rates["WGS"]
+        gen_CH4 = rates["Methanation"] + 0.3 * rates["Devolatiliz."]
+        total_gen = max(1e-9, abs(gen_CO) + abs(gen_H2) + abs(gen_CO2) + abs(gen_CH4))
+        # Smooth update of gas composition (low-pass)
+        alpha = 0.05
+        new_CO  = max(0.0, gen_CO) / total_gen
+        new_H2  = max(0.0, gen_H2) / total_gen
+        new_CO2 = max(0.0, gen_CO2) / total_gen
+        new_CH4 = max(0.0, gen_CH4) / total_gen
+        s = new_CO + new_H2 + new_CO2 + new_CH4 + 1e-9
+        new_CO, new_H2, new_CO2, new_CH4 = new_CO/s, new_H2/s, new_CO2/s, new_CH4/s
+        self.gas["CO"]  = (1 - alpha) * self.gas["CO"]  + alpha * new_CO
+        self.gas["H2"]  = (1 - alpha) * self.gas["H2"]  + alpha * new_H2
+        self.gas["CO2"] = (1 - alpha) * self.gas["CO2"] + alpha * new_CO2
+        self.gas["CH4"] = (1 - alpha) * self.gas["CH4"] + alpha * new_CH4
+
+        # Heat balance
+        dQ_exo = rates["Oxidation"] * abs(cfg.REACTIONS["Oxidation"].dH) + \
+                 rates["Methanation"] * abs(cfg.REACTIONS["Methanation"].dH) + \
+                 rates["WGS"] * abs(cfg.REACTIONS["WGS"].dH)
+        dQ_endo = rates["Boudouard"] * abs(cfg.REACTIONS["Boudouard"].dH) + \
+                  rates["Steam Gasif."] * abs(cfg.REACTIONS["Steam Gasif."].dH) + \
+                  rates["Devolatiliz."] * abs(cfg.REACTIONS["Devolatiliz."].dH)
+        self.heat_exo += dQ_exo * self.dt
+        self.heat_endo += dQ_endo * self.dt
+        dQ_net = (dQ_exo - dQ_endo) * 1.0e-3  # scaled
+
+        # Temperature update (simplified lumped-capacity)
+        rho_cp = 1.5e6  # effective rho*cp (J/(m^3·K))
+        dT = dQ_net / rho_cp * 1.0e3
+        # Mild cooling toward ambient (heat loss)
+        T_amb = 600.0
+        cooling = 0.002 * (self.T - T_amb)
+        self.T = max(400.0, self.T + dT - cooling * self.dt)
+
+        # Porosity evolution (char consumption creates void)
+        d_phi = 0.6 * d_conv * (self.phi0 + 0.1)
+        self.phi = min(0.85, self.phi + d_phi)
+
+        # Permeability: Kozeny-Carman-like, k ~ phi^3 / (1-phi)^2
+        phi_eff = max(self.phi, 1e-3)
+        self.k = self.k0 * (phi_eff / max(self.phi0, 1e-3)) ** 3 * \
+                 ((1.0 - self.phi0) / max(1.0 - phi_eff, 1e-3)) ** 2
+
+        # Pressure: ideal gas P = nRT/V; V grows with porosity
+        n_mol = sum(self.gas.values()) + 1e-6
+        V = 1.0 * (1.0 + self.phi)
+        # P in Pa, then convert to MPa
+        self.P = max(0.1e6, n_mol * UCGConfig.R_GAS * self.T / V)
+
+        # Novelty index (heuristic: how different from typical UCG profile)
+        # Typical UCG: T~1200K, conv~0.5, phi~0.3
+        typical_match = 1.0 - (
+            0.3 * abs(self.T - 1200.0) / 1200.0 +
+            0.4 * abs(self.char_conversion - 0.5) +
+            0.3 * abs(self.phi - 0.3) / 0.3
+        )
+        novelty = max(0.0, min(100.0, (1.0 - typical_match) * 100.0))
+
+        # Advance time
+        self.t += self.dt
+
+        return {
+            "time_elapsed": self.t,
+            "char_conversion": self.char_conversion,
+            "temperature": self.T,
+            "pressure": self.P / 1.0e6,  # MPa
+            "porosity": self.phi,
+            "permeability": self.k,
+            "CO": self.gas["CO"],
+            "H2": self.gas["H2"],
+            "CO2": self.gas["CO2"],
+            "CH4": self.gas["CH4"],
+            "heat_exo": self.heat_exo,
+            "heat_endo": self.heat_endo,
+            "rate_oxidation": rates["Oxidation"],
+            "rate_boudouard": rates["Boudouard"],
+            "rate_steam": rates["Steam Gasif."],
+            "rate_methanation": rates["Methanation"],
+            "rate_wgs": rates["WGS"],
+            "rate_devol": rates["Devolatiliz."],
+            "novelty_index": novelty,
+        }
+
+    def run(self) -> pd.DataFrame:
+        """n_steps qadamni bajarib, DataFrame qaytaradi."""
+        rows = []
+        for _ in range(self.n_steps):
+            rows.append(self.step())
+        return pd.DataFrame(rows)
+
+
+def run_simulation(coal_name: str, n_steps: int, dt: float, T0: float, P0: float) -> Tuple[pd.DataFrame, UCGEngine, CoalType]:
+    """Streamlit UI uchun simulyatsiya yordamchisi."""
+    coal = COAL_DATABASE[coal_name]
+    config = UCGConfig(coal=coal, T0=T0, P0=P0 * 1.0e6)  # P0 MPa -> Pa
+    engine = UCGEngine(config=config, n_steps=n_steps, dt=dt)
+    df = engine.run()
+    return df, engine, coal
+
+
+def run_monte_carlo(T0: float, P0: float, coal_name: str,
+                    n_sim: int = 1000, n_steps: int = 100,
+                    dt: float = 1.0, uncertainty: float = 0.10
+                    ) -> Tuple[Dict[str, Dict[str, np.ndarray]], int]:
+    """
+    Monte Carlo noaniqlik tahlili:
+      - n_sim ta simulyatsiya, har birida T0/P0/kinetika parametrlariga
+        normal shovqin qo'shiladi (sigma=uncertainty).
+      - 95% ishonchli oraliq (CI) hisoblanadi.
+    Qaytaradi: (mc_summary, n_sim_actual)
+      mc_summary[key] = {"mean": arr, "std": arr, "ci95_low": arr, "ci95_high": arr}
+    """
+    n_sim = int(n_sim)
+    n_steps = int(n_steps)
+    # Storage arrays: shape (n_sim, n_steps)
+    keys = ["temperature", "char_conversion", "porosity", "novelty_index"]
+    storage = {k: np.zeros((n_sim, n_steps)) for k in keys}
+
+    rng = np.random.default_rng(seed=42)
+
+    for i in range(n_sim):
+        # Perturbed initial conditions
+        T0_i = T0 * (1.0 + rng.normal(0, uncertainty))
+        P0_i = P0 * (1.0 + rng.normal(0, uncertainty))
+        coal = COAL_DATABASE[coal_name]
+        config = UCGConfig(coal=coal, T0=T0_i, P0=P0_i * 1.0e6)
+        # Perturb activation energies to reflect kinetic uncertainty
+        for rxn in config.REACTIONS.values():
+            rxn.Ea = rxn.Ea * (1.0 + rng.normal(0, uncertainty))
+        engine = UCGEngine(config=config, n_steps=n_steps, dt=dt)
+        df_i = engine.run()
+        for k in keys:
+            if k in df_i.columns:
+                storage[k][i, :] = df_i[k].values[:n_steps]
+
+    mc_summary: Dict[str, Dict[str, np.ndarray]] = {}
+    for k in keys:
+        arr = storage[k]
+        mean = arr.mean(axis=0)
+        std = arr.std(axis=0, ddof=1)
+        ci_low = mean - 1.96 * std / np.sqrt(max(n_sim, 1))
+        ci_high = mean + 1.96 * std / np.sqrt(max(n_sim, 1))
+        mc_summary[k] = {
+            "mean": mean,
+            "std": std,
+            "ci95_low": ci_low,
+            "ci95_high": ci_high,
+        }
+    return mc_summary, n_sim
+
+
+# ============================================================================
+# v7.0 PLOTTING FUNCTIONS
+# ============================================================================
+
+def plot_coal_conversion(df: pd.DataFrame):
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.plot(df['time_elapsed'], df['char_conversion'] * 100, color='#2C3E50', linewidth=2.5)
+    ax.fill_between(df['time_elapsed'], 0, df['char_conversion'] * 100, alpha=0.15, color='#2C3E50')
+    ax.set_title('Ko\'mir Konversiyasi', fontsize=14, fontweight='bold')
+    ax.set_xlabel('Vaqt (s)'); ax.set_ylabel('Konversiya (%)')
+    ax.set_ylim(0, 105); ax.grid(True, linestyle=':')
+    plt.tight_layout()
+    st.pyplot(fig)
+
+
+def plot_gas_composition(df: pd.DataFrame):
+    fig, ax = plt.subplots(figsize=(10, 5))
+    for col, color, lbl in [('CO', '#E74C3C', 'CO'),
+                            ('H2', '#3498DB', 'H₂'),
+                            ('CO2', '#27AE60', 'CO₂'),
+                            ('CH4', '#9B59B6', 'CH₄')]:
+        if col in df.columns:
+            ax.plot(df['time_elapsed'], df[col], color=color, linewidth=2, label=lbl)
+    ax.set_title('Gaz Tarkibi', fontsize=14, fontweight='bold')
+    ax.set_xlabel('Vaqt (s)'); ax.set_ylabel('Mole ulushi')
+    ax.legend(fontsize=10); ax.grid(True, linestyle=':')
+    plt.tight_layout()
+    st.pyplot(fig)
+
+
+def plot_temperature(df: pd.DataFrame):
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.plot(df['time_elapsed'], df['temperature'], color='#E74C3C', linewidth=2.5)
+    ax.fill_between(df['time_elapsed'], df['temperature'], alpha=0.15, color='#E74C3C')
+    ax.set_title('Harorat Evolyutsiyasi', fontsize=14, fontweight='bold')
+    ax.set_xlabel('Vaqt (s)'); ax.set_ylabel('Harorat (K)')
+    ax.grid(True, linestyle=':')
+    plt.tight_layout()
+    st.pyplot(fig)
+
+
+def plot_heat_source(df: pd.DataFrame):
+    fig, ax = plt.subplots(figsize=(10, 5))
+    if 'heat_exo' in df.columns and 'heat_endo' in df.columns:
+        ax.plot(df['time_elapsed'], df['heat_exo'], color='#E74C3C', linewidth=2, label='Ekzotermik')
+        ax.plot(df['time_elapsed'], df['heat_endo'], color='#3498DB', linewidth=2, label='Endotermik')
+    ax.set_title('Issiqlik Manbalari', fontsize=14, fontweight='bold')
+    ax.set_xlabel('Vaqt (s)'); ax.set_ylabel('Yig\'ilgan issiqlik (J)')
+    ax.legend(fontsize=10); ax.grid(True, linestyle=':')
+    plt.tight_layout()
+    st.pyplot(fig)
+
+
+def plot_porosity(df: pd.DataFrame):
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.plot(df['time_elapsed'], df['porosity'], color='#27AE60', linewidth=2.5)
+    ax.fill_between(df['time_elapsed'], df['porosity'], alpha=0.15, color='#27AE60')
+    ax.set_title('Porozlik O\'zgarishi', fontsize=14, fontweight='bold')
+    ax.set_xlabel('Vaqt (s)'); ax.set_ylabel('Porozlik')
+    ax.grid(True, linestyle=':')
+    plt.tight_layout()
+    st.pyplot(fig)
+
+
+def plot_pressure(df: pd.DataFrame):
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.plot(df['time_elapsed'], df['pressure'], color='#9B59B6', linewidth=2.5)
+    ax.fill_between(df['time_elapsed'], df['pressure'], alpha=0.15, color='#9B59B6')
+    ax.set_title('Bosim Evolyutsiyasi', fontsize=14, fontweight='bold')
+    ax.set_xlabel('Vaqt (s)'); ax.set_ylabel('Bosim (MPa)')
+    ax.grid(True, linestyle=':')
+    plt.tight_layout()
+    st.pyplot(fig)
+
+
+def plot_reaction_rates(df: pd.DataFrame):
+    fig, ax = plt.subplots(figsize=(10, 5))
+    rate_cols = [('rate_oxidation', '#E74C3C', 'Oksidlash'),
+                 ('rate_boudouard', '#3498DB', 'Buduar'),
+                 ('rate_steam', '#27AE60', 'Bug\''),
+                 ('rate_methanation', '#9B59B6', 'Metanlash'),
+                 ('rate_wgs', '#F39C12', 'WGS'),
+                 ('rate_devol', '#1ABC9C', 'Devolatiliz.')]
+    for col, color, lbl in rate_cols:
+        if col in df.columns:
+            ax.plot(df['time_elapsed'], df[col], color=color, linewidth=1.8, label=lbl)
+    ax.set_title('Reaksiya Tezliklari', fontsize=14, fontweight='bold')
+    ax.set_xlabel('Vaqt (s)'); ax.set_ylabel('k (1/s)')
+    ax.set_yscale('log'); ax.legend(fontsize=9, loc='best'); ax.grid(True, linestyle=':')
+    plt.tight_layout()
+    st.pyplot(fig)
+
+
+def plot_delta_H_bar():
+    """Reaksiya entalpiyalari bar chart."""
+    fig, ax = plt.subplots(figsize=(10, 5))
+    names = list(UCGConfig.REACTIONS.keys())
+    dHs = [UCGConfig.REACTIONS[n].dH / 1000.0 for n in names]  # kJ/mol
+    colors = ['#E74C3C' if h < 0 else '#3498DB' for h in dHs]
+    bars = ax.bar(names, dHs, color=colors, edgecolor='black', linewidth=0.6)
+    ax.axhline(0, color='black', linewidth=0.8)
+    ax.set_title('Reaksiya Entalpiyalari (ΔH)', fontsize=14, fontweight='bold')
+    ax.set_ylabel('ΔH (kJ/mol)')
+    ax.grid(True, axis='y', linestyle=':')
+    for bar, h in zip(bars, dHs):
+        ax.text(bar.get_x() + bar.get_width() / 2, h + (5 if h > 0 else -10),
+                f'{h:.0f}', ha='center', fontsize=9, fontweight='bold')
+    plt.xticks(rotation=20, ha='right')
+    plt.tight_layout()
+    st.pyplot(fig)
+
+
+def plot_permeability(df: pd.DataFrame):
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.semilogy(df['time_elapsed'], df['permeability'], color='#16A085', linewidth=2.5)
+    ax.fill_between(df['time_elapsed'], df['permeability'], alpha=0.15, color='#16A085')
+    ax.set_title('Permeability O\'zgarishi', fontsize=14, fontweight='bold')
+    ax.set_xlabel('Vaqt (s)'); ax.set_ylabel('k (m²)')
+    ax.grid(True, linestyle=':')
+    plt.tight_layout()
+    st.pyplot(fig)
+
+
+def plot_heat_share_pie(df: pd.DataFrame):
+    """Ekzotermik va endotermik issiqlik ulushi pie chart."""
+    exo = float(df['heat_exo'].iloc[-1]) if 'heat_exo' in df.columns else 0.0
+    endo = float(df['heat_endo'].iloc[-1]) if 'heat_endo' in df.columns else 0.0
+    total = exo + endo + 1e-9
+    fig, ax = plt.subplots(figsize=(7, 5))
+    ax.pie([exo / total * 100, endo / total * 100], labels=['Ekzotermik', 'Endotermik'],
+           colors=['#E74C3C', '#3498DB'], autopct='%1.1f%%', startangle=90,
+           textprops={'fontsize': 12})
+    ax.set_title('Issiqlik Ulushi', fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    st.pyplot(fig)
+
+
+def plot_ucg_zones(df: pd.DataFrame):
+    fig, ax = plt.subplots(figsize=(10, 5))
+    x, conv = df['time_elapsed'], df['char_conversion']
+    ax.fill_between(x, 0, 1, where=conv < 0.3, color='lightcoral', alpha=0.3, label="Boshlang'ich")
+    ax.fill_between(x, 0, 1, where=(conv >= 0.3) & (conv < 0.7), color='khaki', alpha=0.3, label='Faol')
+    ax.fill_between(x, 0, 1, where=conv >= 0.7, color='lightgreen', alpha=0.3, label="To'liq")
+    ax.plot(x, conv, color='darkred', linewidth=2.5)
+    ax.set_title('UCG Jarayon Zonalari', fontsize=14, fontweight='bold')
+    ax.set_xlabel('Vaqt (s)'); ax.set_ylabel('Konversiya')
+    ax.set_ylim(0, 1.05); ax.legend(fontsize=9, loc='center right'); ax.grid(True, linestyle=':')
+    plt.tight_layout()
+    st.pyplot(fig)
+
+
+def plot_3d_surface(df: pd.DataFrame):
+    fig = plt.figure(figsize=(12, 8))
+    ax = fig.add_subplot(111, projection='3d')
+    t = df['time_elapsed'].values
+    conv = df['char_conversion'].values
+    temp = df['temperature'].values
+    from scipy.interpolate import griddata
+    T_grid, C_grid = np.meshgrid(np.linspace(t.min(), t.max(), 50),
+                                 np.linspace(conv.min(), conv.max(), 50))
+    Temp_grid = griddata(np.column_stack([t, conv]), temp, (T_grid, C_grid), method='linear')
+    surf = ax.plot_surface(T_grid, C_grid, Temp_grid, cmap='hot', alpha=0.85, edgecolor='none')
+    ax.set_xlabel('Vaqt (s)'); ax.set_ylabel('Konversiya'); ax.set_zlabel('Harorat (K)')
+    ax.set_title('3D: Harorat × Vaqt × Konversiya', fontsize=14, fontweight='bold')
+    fig.colorbar(surf, ax=ax, shrink=0.5, aspect=10, label='Harorat (K)')
+    plt.tight_layout()
+    st.pyplot(fig)
+
+
+def plot_novelty_index(df: pd.DataFrame):
+    fig, ax = plt.subplots(figsize=(10, 5))
+    if 'novelty_index' in df.columns:
+        ax.plot(df['time_elapsed'], df['novelty_index'], color='#2C3E50', linewidth=2.5)
+        ax.fill_between(df['time_elapsed'], df['novelty_index'], alpha=0.15, color='#2C3E50')
+    ax.set_title('UCG Novelty Index', fontsize=14, fontweight='bold')
+    ax.set_xlabel('Vaqt (s)'); ax.set_ylabel('Novelty (%)')
+    ax.grid(True, linestyle=':')
+    plt.tight_layout()
+    st.pyplot(fig)
+
+
+def plot_monte_carlo(mc_summary: Dict[str, Dict[str, np.ndarray]], n_sim: int):
+    fig, axs = plt.subplots(2, 2, figsize=(16, 10))
+    fig.suptitle(f'Monte Carlo Noaniqlik Tahlili ({n_sim} simulyatsiya)',
+                 fontsize=16, fontweight='bold')
+    x_mc = np.arange(mc_summary['temperature']['mean'].shape[0])
+    items = [(axs[0, 0], 'temperature', 'Harorat (K)', 'red'),
+             (axs[0, 1], 'char_conversion', 'Konversiya', 'darkred'),
+             (axs[1, 0], 'porosity', 'Porozlik', 'blue'),
+             (axs[1, 1], 'novelty_index', 'Novelty (%)', '#2C3E50')]
+    for ax, key, ylabel, color in items:
+        s = mc_summary[key]
+        ax.plot(x_mc, s['mean'], color=color, linewidth=2, label="O'rtacha")
+        ax.fill_between(x_mc, s['ci95_low'], s['ci95_high'], alpha=0.25, color=color, label='95% CI')
+        ax.set_title(f'MC: {ylabel}', fontsize=12, fontweight='bold')
+        ax.set_ylabel(ylabel); ax.legend(fontsize=9); ax.grid(True, linestyle=':')
+    plt.tight_layout(rect=[0, 0, 1, 0.95])
+    st.pyplot(fig)
+
+
+# ============================================================================
+# v7.0 STREAMLIT UI DISPATCHER
+# ============================================================================
+
+def run_v7_app():
+    """UCG Platform v7.0 Streamlit UI — sidebar menu + page dispatcher."""
+    st.sidebar.title("🏭 UCG Platform v7.0")
+    st.sidebar.markdown("---")
+
+    menu = st.sidebar.selectbox(
+        "📂 Menu",
+        ["Dashboard", "Simulation", "Monte Carlo UQ", "Info", "Help", "About",
+         "Patent Report", "ISO Report"]
+    )
+
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("⚙️ Parametrlar")
+
+    coal_name = st.sidebar.selectbox("Ko'mir turi", list(COAL_DATABASE.keys()), index=0)
+    n_steps = st.sidebar.slider("Simulyatsiya qadamlari", 50, 500, 200, 10)
+    dt = st.sidebar.slider("Vaqt qadami (dt)", 0.1, 5.0, 1.0, 0.1)
+    T0 = st.sidebar.slider("Boshlang'ich harorat (K)", 600, 1800, 1200, 50)
+    P0 = st.sidebar.slider("Boshlang'ich bosim (MPa)", 0.5, 30.0, 10.0, 0.5)
+
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("**Versiya:** 7.0.0")
+    st.sidebar.markdown(f"**Sana:** {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    st.sidebar.markdown("**Status:** Patent Pending")
+
+    # ─── Dashboard ─────────────────────────────────────────────────────────
+    if menu == "Dashboard":
+        st.title("📊 UCG Digital Twin — Dashboard")
+        st.markdown("---")
+
+        with st.spinner("Simulyatsiya hisoblanmoqda..."):
+            df, engine, coal = run_simulation(coal_name, n_steps, dt, T0, P0)
+
+        final = df.iloc[-1]
+        k1, k2, k3, k4, k5, k6 = st.columns(6)
+        k1.metric("Konversiya (%)", f"{final['char_conversion']*100:.2f}")
+        k2.metric("Harorat (K)", f"{final['temperature']:.1f}")
+        k3.metric("Porozlik", f"{final['porosity']:.4f}")
+        k4.metric("Novelty", f"{final.get('novelty_index', 0):.1f}%")
+        k5.metric("Bosim (MPa)", f"{final['pressure']:.2f}")
+        k6.metric("O'tkaz. (m²)", f"{final['permeability']:.2e}")
+
+        st.markdown("---")
+        st.subheader("📈 Asosiy Grafiklar")
+        col1, col2 = st.columns(2)
+        with col1:
+            plot_coal_conversion(df)
+            plot_gas_composition(df)
+            plot_temperature(df)
+        with col2:
+            plot_heat_source(df)
+            plot_porosity(df)
+            plot_pressure(df)
+
+        st.markdown("---")
+        st.subheader("🔬 Qo'shimcha Tahlil")
+        col3, col4 = st.columns(2)
+        with col3:
+            plot_reaction_rates(df)
+            plot_delta_H_bar()
+            plot_ucg_zones(df)
+        with col4:
+            plot_permeability(df)
+            plot_heat_share_pie(df)
+            plot_novelty_index(df)
+
+        st.markdown("---")
+        st.subheader("🌐 3D Surface Grafik")
+        plot_3d_surface(df)
+
+    # ─── Simulation ────────────────────────────────────────────────────────
+    elif menu == "Simulation":
+        st.title("🔬 Simulyatsiya Parametrlari")
+
+        st.subheader("Ko'mir turi ma'lumotlari")
+        coal = COAL_DATABASE[coal_name]
+        info_col1, info_col2 = st.columns(2)
+        with info_col1:
+            st.write(f"**Nomi:** {coal.name}")
+            st.write(f"**C:** {coal.carbon_frac*100:.1f}%  |  **H:** {coal.hydrogen_frac*100:.1f}%  |  **O:** {coal.oxygen_frac*100:.1f}%")
+            st.write(f"**N:** {coal.nitrogen_frac*100:.2f}%  |  **S:** {coal.sulfur_frac*100:.2f}%")
+        with info_col2:
+            st.write(f"**Namlik:** {coal.moisture*100:.1f}%  |  **Kul:** {coal.ash*100:.1f}%")
+            st.write(f"**Uchuvchi:** {coal.volatile_matter*100:.1f}%  |  **Qattiq C:** {coal.fixed_carbon*100:.1f}%")
+            st.write(f"**HHV:** {coal.hhv_mj_kg:.1f} MJ/kg  |  **Reaktivlik:** {coal.reactivity_coeff}")
+
+        st.markdown("---")
+        st.subheader("Reaksiya Kinetikasi")
+        rxn_data = []
+        for name, rxn in UCGConfig.REACTIONS.items():
+            rxn_data.append({
+                "Reaksiya": name, "A": f"{rxn.A:.1e}",
+                "Ea (kJ/mol)": f"{rxn.Ea/1000:.0f}",
+                "ΔH (kJ/mol)": f"{rxn.dH/1000:.1f}",
+                "ΔS (J/mol·K)": f"{rxn.dS:.1f}",
+                "ΔG_ref (kJ/mol)": f"{rxn.dG_ref/1000:.1f}",
+            })
+        st.dataframe(pd.DataFrame(rxn_data), use_container_width=True)
+
+        st.markdown("---")
+        st.subheader("Simulyatsiyani Ishga Tushirish")
+        if st.button("▶️ Simulyatsiyani Boshlash", type="primary"):
+            with st.spinner("Hisoblanmoqda..."):
+                df, engine, coal = run_simulation(coal_name, n_steps, dt, T0, P0)
+
+            st.success(f"Simulyatsiya yakunlandi! {n_steps} qadam, dt={dt}")
+
+            tab1, tab2, tab3 = st.tabs(["Konversiya", "Gaz Tarkibi", "Harorat"])
+            with tab1:
+                plot_coal_conversion(df)
+            with tab2:
+                plot_gas_composition(df)
+            with tab3:
+                plot_temperature(df)
+
+            st.subheader("📋 Natijalar Jadvali")
+            st.dataframe(df.tail(10), use_container_width=True)
+
+    # ─── Monte Carlo UQ ────────────────────────────────────────────────────
+    elif menu == "Monte Carlo UQ":
+        st.title("🎲 Monte Carlo Noaniqlikni Baholash")
+        st.markdown("Simulyatsiya parametrlariga noaniqlik kiritib, ishonchli oraliqlarni (95% CI) hisoblash.")
+
+        mc_col1, mc_col2, mc_col3 = st.columns(3)
+        with mc_col1:
+            n_sim = st.number_input("Simulyatsiya soni", min_value=100, max_value=5000, value=1000, step=100)
+        with mc_col2:
+            mc_steps = st.number_input("Qadamlar soni", min_value=20, max_value=200, value=100, step=10)
+        with mc_col3:
+            uncertainty = st.slider("Noaniqlik (σ)", 0.01, 0.30, 0.10, 0.01)
+
+        if st.button("▶️ Monte Carlo ni Ishga Tushirish", type="primary"):
+            with st.spinner(f"{n_sim} ta simulyatsiya ishga tushmoqda... Bu biroz vaqt olishi mumkin."):
+                mc_summary, n_sim_actual = run_monte_carlo(T0, P0, coal_name, n_sim, mc_steps, dt, uncertainty)
+
+            st.success(f"Monte Carlo yakunlandi! {n_sim_actual} ta simulyatsiya")
+
+            plot_monte_carlo(mc_summary, n_sim_actual)
+
+            st.subheader("📊 Yakuniy Noaniqlik Natijalari")
+            final_idx = mc_steps - 1
+            mc_table = []
+            for key in ['temperature', 'char_conversion', 'porosity', 'novelty_index']:
+                s = mc_summary[key]
+                mc_table.append({
+                    "Parametr": key,
+                    "O'rtacha": f"{s['mean'][final_idx]:.4f}",
+                    "Std": f"{s['std'][final_idx]:.4f}",
+                    "95% CI Low": f"{s['ci95_low'][final_idx]:.4f}",
+                    "95% CI High": f"{s['ci95_high'][final_idx]:.4f}",
+                })
+            st.dataframe(pd.DataFrame(mc_table), use_container_width=True)
+
+    # ─── Info ──────────────────────────────────────────────────────────────
+    elif menu == "Info":
+        st.title("ℹ️ UCG Platform haqida ma'lumot")
+        st.header("UCG — Underground Coal Gasification")
+        st.markdown("""
+        **Yer osti ko'mir gazifikatsiyasi (UCG)** — bu ko'mirni yer ostida gazga aylantirish texnologiyasi.
+        Ko'mir qatlami ichida maxsus chuqurlar orqali havo/kislorod/bug' yuborilib, ko'mir
+        kimyoviy reaksiyalar natijasida gazga (CO, H₂, CH₄) aylanadi.
+
+        ### Asosiy reaksiyalar:
+        - **Oksidlash:** C + O₂ → CO₂ (ekzotermik, ΔH = -393.5 kJ/mol)
+        - **Buduar:** C + CO₂ → 2CO (endotermik, ΔH = +172.0 kJ/mol)
+        - **Bug' gazifikatsiyasi:** C + H₂O → CO + H₂ (endotermik, ΔH = +131.0 kJ/mol)
+        - **Metanlash:** CO + 3H₂ → CH₄ + H₂O (ekzotermik, ΔH = -75.0 kJ/mol)
+        - **WGS:** CO + H₂O → CO₂ + H₂ (ekzotermik, ΔH = -41.2 kJ/mol)
+        - **Devolatilizatsiya:** C → H₂ + CH₄ + CO (endotermik)
+
+        ### Platform imkoniyatlari:
+        - 6 ta kimyoviy reaksiya moduli (Arrhenius kinetikasi)
+        - Gibbs Free Energy hisoblash
+        - Species Mass Balance (massa saqlanish qonuni)
+        - Harorat va bosim evolyutsiyasi
+        - Monte Carlo noaniqlik tahlili
+        - KPI Dashboard
+        - Patent hisobotlari eksport
+        """)
+        st.header("Ilmiy Adabiyotlar")
+        refs = [
+            "Biot, M.A. (1941). General theory of 3D consolidation. J. Appl. Phys., 12(2), 155-164.",
+            "Hoek, E., & Brown, E.T. (2018). The Hoek-Brown failure criterion – 2018 edition. JRMGE.",
+            "Yang, D. (2010). Stability of UCG. PhD Thesis, TU Delft.",
+            "Perkins, G. (2018). Underground coal gasification – Part I. Progress in Energy and Combustion Science.",
+            "JCGM 100:2008 (GUM). Evaluation of measurement data.",
+        ]
+        for r in refs:
+            st.markdown(f"- {r}")
+
+    # ─── Help ──────────────────────────────────────────────────────────────
+    elif menu == "Help":
+        st.title("❓ Yordam")
+        st.markdown("""
+        ### Qanday ishlatish?
+
+        1. **Chap paneldan** ko'mir turini tanlang
+        2. **Simulyatsiya parametrlarini** sozlang (qadamlar, dt, harorat, bosim)
+        3. **Dashboard** sahifasida natijalarni ko'ring
+        4. **Monte Carlo** sahifasida noaniqlik tahlilini o'tkazing
+        5. **Patent Report** sahifasida hisobotlarni yuklab oling
+
+        ### Grafiklar haqida
+
+        | Rang | Ma'no |
+        |------|-------|
+        | 🔴 Qizil | Yuqori harorat / Ekzotermik / CO |
+        | 🔵 Ko'k | Past harorat / Endotermik / H₂ |
+        | 🟢 Yashil | Xavfsiz zona / CO₂ |
+        | 🟡 Sariq | O'rta zona / Diqqat |
+        | 🟣 Binafsha | CH₄ / Bosim |
+
+        ### Zona ranglari
+
+        - 🔴 **Past** — Boshlang'ich bosqich, kam konversiya
+        - 🟡 **O'rta** — Faol gazifikatsiya, diqqat talab qilinadi
+        - 🟢 **Yuqori** — To'liq gazifikatsiya, barqaror holat
+        """)
+
+    # ─── About ─────────────────────────────────────────────────────────────
+    elif menu == "About":
+        st.title("📌 About")
+        st.markdown("""
+        ## UCG SCI-Grade Platform v7.0.0
+
+        **Muallif:** Saitov Dilshodbek
+        **Status:** Patent Pending (UzPatent + WIPO PCT)
+        **Litsenziya:** Patent Pending — O'zbekiston 00XXXX + WIPO
+
+        ### Texnologiyalar:
+        - Python 3.12
+        - Streamlit
+        - NumPy / SciPy / Matplotlib
+        - Arrhenius Kinetikasi
+        - Monte Carlo UQ
+        - Gibbs Free Energy
+        - Species Mass Balance
+
+        ### Versiya tarixi:
+        | Versiya | Sana | O'zgarishlar |
+        |---------|------|-------------|
+        | v4.0.1 | 2026-06-21 | Patent-ready core |
+        | v5.0.0 | 2026-06-21 | 20 critical fixes |
+        | v6.1.0 | 2026-06-22 | 20 patent-grade fixes |
+        | v7.0.0 | 2026-06-23 | Streamlit + 12 grafik + Monte Carlo + Gibbs |
+        """)
+
+    # ─── Patent Report ─────────────────────────────────────────────────────
+    elif menu == "Patent Report":
+        st.title("📄 Patent Hisoboti")
+
+        with st.spinner("Simulyatsiya hisoblanmoqda..."):
+            df, engine, coal = run_simulation(coal_name, n_steps, dt, T0, P0)
+
+        final = df.iloc[-1]
+
+        st.subheader("Patentability Natijalari")
+        p1, p2, p3, p4 = st.columns(4)
+        p1.metric("Novelty Index", f"{final.get('novelty_index', 0):.1f}%")
+        p2.metric("Konversiya", f"{final['char_conversion']*100:.2f}%")
+        p3.metric("Porozlik", f"{final['porosity']:.4f}")
+        p4.metric("Harorat (K)", f"{final['temperature']:.1f}")
+
+        st.markdown("---")
+        st.subheader("Gibbs Free Energy (Yakuniy)")
+        gibbs_data = GibbsEnergyCalculator.compute_all(UCGConfig(), final['temperature'])
+        gibbs_df = pd.DataFrame([
+            {"Reaksiya": k, "ΔG (kJ/mol)": f"{v/1000:.1f}",
+             "Spontan": "✅ Ha" if v < 0 else "❌ Yo'q"}
+            for k, v in gibbs_data.items()
+        ])
+        st.dataframe(gibbs_df, use_container_width=True)
+
+        st.markdown("---")
+        st.subheader("Grafiklar")
+        tab_a, tab_b, tab_c = st.tabs(["Konversiya + Issiqlik", "Gaz + Porozlik", "3D Surface"])
+        with tab_a:
+            plot_coal_conversion(df)
+            plot_heat_source(df)
+        with tab_b:
+            plot_gas_composition(df)
+            plot_porosity(df)
+        with tab_c:
+            plot_3d_surface(df)
+
+        st.markdown("---")
+        st.subheader("📥 Eksport")
+        export_col1, export_col2 = st.columns(2)
+
+        if export_col1.button("📄 DOCX Hisobotni Yuklash"):
+            try:
+                doc = Document()
+                doc.add_heading('UCG Platform v7.0 — Patent Hisoboti', level=0)
+                doc.add_paragraph(f'Sana: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
+                doc.add_paragraph(f"Ko'mir turi: {coal.name}")
+                doc.add_heading('KPI Natijalari', level=1)
+                for kpi in ['char_conversion', 'temperature', 'porosity', 'novelty_index']:
+                    if kpi in df.columns:
+                        doc.add_paragraph(f'{kpi}: {final[kpi]}', style='List Bullet')
+                doc.add_heading('Gibbs Free Energy', level=1)
+                for k, v in gibbs_data.items():
+                    doc.add_paragraph(f'{k}: ΔG = {v/1000:.1f} kJ/mol', style='List Bullet')
+                buf = io.BytesIO()
+                doc.save(buf)
+                buf.seek(0)
+                st.download_button(
+                    "⬇️ DOCX yuklab olish", buf.getvalue(),
+                    file_name="ucg_v7_patent_report.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                )
+            except ImportError:
+                st.error("python-docx o'rnatilmagan!")
+
+        if export_col2.button("📋 JSON Hisobotni Yuklash"):
+            report = {
+                "version": "7.0.0",
+                "timestamp": datetime.now().isoformat(),
+                "coal_type": coal.name,
+                "final_state": {k: float(v) for k, v in final.items() if not isinstance(v, dict)},
+                "gibbs": {k: float(v) for k, v in gibbs_data.items()},
+            }
+            json_str = json.dumps(report, ensure_ascii=False, indent=2, default=str)
+            st.download_button(
+                "⬇️ JSON yuklab olish", json_str,
+                file_name="ucg_v7_report.json", mime="application/json",
+            )
+
+    # ─── ISO Report ────────────────────────────────────────────────────────
+    elif menu == "ISO Report":
+        st.title("📋 ISO/ISRM Muvofiqlik Hisoboti")
+
+        st.subheader("ISO Muvofiqlik Matritsasi")
+        iso_data = pd.DataFrame([
+            {"Standart": "ISO 9001", "Soxa": "Sifat boshqaruvi", "Status": "Mapped",
+             "Dalil": "Versioned report workflow, verification, audit trail"},
+            {"Standart": "ISO 31000", "Soxa": "Xavf boshqaruvi", "Status": "Mapped",
+             "Dalil": "Monte Carlo UQ, risk index, sensitivity analysis"},
+            {"Standart": "ISO 27001", "Soxa": "Axborot xavfsizligi", "Status": "Mapped",
+             "Dalil": "SHA-256 hash chain, RSA-4096 signature, WORM storage"},
+            {"Standart": "IEC 61508", "Soxa": "Funksional xavfsizlik", "Status": "Partial",
+             "Dalil": "Alarm logic, monitoring architecture"},
+            {"Standart": "ISRM", "Soxa": "Tosh mexanikasi", "Status": "Mapped",
+             "Dalil": "Hoek-Brown, UCS/GSI, verification workflow"},
+        ])
+        st.dataframe(iso_data, use_container_width=True)
+
+        st.markdown("---")
+        st.subheader("ISO 9001 — Sifat Boshqaruvi Tahlili")
+        st.markdown("""
+        - ✅ **Hujjat boshqaruvi:** Versiyalangan hisobotlar, SHA-256 traceability
+        - ✅ **Sifat siyosati:** Ilmiy tasdiqlash bosqichlari (5-stage validation)
+        - ✅ **Xavf asosida fikrlash:** Monte Carlo noaniqlik tahlili
+        - ⚠️ **Ichki audit:** Avtomatik audit trail mavjud, lekin mustaqil audit rejalashtirish yo'q
+        """)
+
+        st.subheader("ISO 31000 — Xavf Boshqaruvi Tahlili")
+        st.markdown("""
+        - ✅ **Xavf identifikatsiyasi:** FOS < 1.0 aniqlash, Monte Carlo PF hisoblash
+        - ✅ **Xavf baholash:** 95% CI, sensitivity analysis (Sobol/Morris)
+        - ✅ **Xavf davolash:** Tavsiyalar avtomatik generatsiya
+        - ⚠️ **Xavf ishtahashi:** Xavf ishtahashi bayonoti mavjud emas
+        """)
+
+        st.subheader("ISO 27001 — Axborot Xavfsizligi Tahlili")
+        st.markdown("""
+        - ✅ **Axborot xavfsizligi siyosati:** SHA-256 + RSA-4096 imzolash
+        - ✅ **Kirish nazorati:** .env fayl, credential vault (HashiCorp/Azure Key Vault)
+        - ✅ **Inssident boshqaruvi:** Blockchain audit trail (immutable hash chain)
+        - ⚠️ **Inssident javob rejasini:** Hujjatlashtirilmagan
+        """)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# END OF v7.0 REACTOR MODULE
+# ══════════════════════════════════════════════════════════════════════════════
+
+
 def main():
+    # ════════════════════════════════════════════════════════════════════════
+    # [MERGE] Top-level mode selector: v6 Geomechanical vs v7 UCG Reactor
+    # ════════════════════════════════════════════════════════════════════════
+    _app_mode = st.sidebar.selectbox(
+        "🎛️ App Mode",
+        ["v6 — Geomechanical Twin", "v7 — UCG Reactor / Kinetics"],
+        index=0,
+        help="v6: yer osti geomekanik model (PhD). v7: reaktor kinetikasi + Monte Carlo UQ.",
+    )
+    if _app_mode == "v7 — UCG Reactor / Kinetics":
+        # Run the v7 Streamlit UI and return early — skip the v6 geomechanical flow.
+        run_v7_app()
+        return
+
+    # ── v6 Geomechanical flow continues below ────────────────────────────────
     if "comparison_mode" not in st.session_state:
         st.session_state["comparison_mode"] = False
     if "benchmark_data" not in st.session_state:
