@@ -135,6 +135,12 @@ from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 
 BOOTSTRAP_LOGGER = logging.getLogger("ucg_platform.bootstrap")
+# Define `logger` early so the hardening patch (which runs at module load time
+# via db_backend / worm_storage_backend / secrets_manager global instantiation)
+# can use it. Without this, DatabaseBackend.__init__ raises NameError on `logger`.
+# `logging.getLogger(name)` is idempotent — the later `logger = ...` at line ~997
+# just rebinds the same logger object.
+logger = logging.getLogger("ucg_platform")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # PATENT-GRADE HARDFENING PATCH (v7.1)
