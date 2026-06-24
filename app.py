@@ -1,35 +1,3 @@
-# ══════════════════════════════════════════════════════════════════════════════
-# PATENT-READY AUDITED BUILD v6.2.0 — APPLIED USER-REPORTED FIXES
-# ══════════════════════════════════════════════════════════════════════════════
-# All issues from the user review report have been addressed:
-#   ✓ Missing imports (ast, shlex, textwrap, getpass, socket, base64) moved to top
-#   ✓ Early-defined globals (REQUESTS_AVAILABLE, SKLEARN_AVAILABLE, CRYPTO_AVAILABLE,
-#     REPORTLAB_AVAILABLE, SBERT_AVAILABLE, QRCODE_AVAILABLE, AIOHTTP_AVAILABLE,
-#     TENACITY_AVAILABLE, PROMETHEUS_AVAILABLE, CUPY_AVAILABLE)
-#   ✓ Early-defined helpers (_utc_now_iso, _safe_json_dumps, _sha256_str,
-#     _sha256_bytes, _sha256_file)
-#   ✓ PersistentKeyManager early stub (None placeholder, real class at line ~17501)
-#   ✓ SQLiteConnectionPool — replaces raw sqlite3.connect (26 sites now use pool)
-#   ✓ SecretsRotator — automatic rotation stub (24h interval)
-#   ✓ verify_all_logs() — audit log integrity verification
-#   ✓ daily_blockchain_verification() — daily cron job
-#   ✓ permutation_importance_fallback() — SHAP/LIME fallback
-#   ✓ gpu_solve_linear_system() — CuPy-based FEM solver
-#   ✓ get_prometheus_metrics() — Prometheus endpoint
-#   ✓ memory_safe_mc_samples() — psutil-based RAM guard
-#   ✓ api_retry decorator — tenacity-based rate-limit/retry
-#   ✓ call_external_api_async() — aiohttp-based async API
-#   ✓ @st.cache_data wrappers — added in UI sections (see patent_analysis_ui)
-#   ✓ Docker / docker-compose / CI files — created as separate sidecar files
-#   ✓ Alembic migration scaffold — created as separate sidecar files
-#   ✓ pytest test suite — created as separate sidecar files
-#
-# See /home/z/my-project/download/ for:
-#   Dockerfile, docker-compose.yml, .github/workflows/ci.yml,
-#   requirements.txt, pyproject.toml, alembic.ini,
-#   alembic/versions/0001_initial.py, tests/test_*.py
-# ══════════════════════════════════════════════════════════════════════════════
-
 # PATENT-READY AUDITED BUILD v6.1.0 — 20 Critical Fixes Applied
 # All 50 original improvements applied + 20 critical patent-grade fixes via patent_ready_extension:
 # 1-10: Validation metrics (Pearson R, Spearman R, Willmott d, bias, relative RMSE, bootstrap CI, skewness, kurtosis, 5-stage validation, repeatability, reproducibility, bootstrap interval)
@@ -136,471 +104,6 @@ from contextlib import contextmanager
 from enum import Enum
 from pathlib import Path
 from urllib.parse import quote_plus
-
-# ── Patch v6.2: extra imports (ast, shlex, textwrap, etc.) defined EARLY ────
-import ast
-import shlex
-import textwrap
-import getpass
-import socket
-import base64
-import pickle as _pickle_module  # only imported; never used for untrusted loads
-import tempfile
-from datetime import timezone
-
-# ── Patch v6.2: optional heavy deps with EARLY defaults ─────────────────────
-# These are re-defined later in the file (lines ~16220+); we define them here
-# as False/None so that any function called BEFORE that block runs without
-# raising NameError. The later try/except blocks will overwrite them with True
-# if the dependency is actually available.
-REQUESTS_AVAILABLE: bool = False
-SCIPY_AVAILABLE: bool = True  # scipy imported unconditionally at top
-SKLEARN_AVAILABLE: bool = False
-CRYPTO_AVAILABLE: bool = False
-QRCODE_AVAILABLE: bool = False
-REPORTLAB_AVAILABLE: bool = False
-SBERT_AVAILABLE: bool = False
-AIOHTTP_AVAILABLE: bool = False
-TENACITY_AVAILABLE: bool = False
-PROMETHEUS_AVAILABLE: bool = False
-CUPY_AVAILABLE: bool = False
-
-# Try to import optional deps NOW (so the flags reflect reality from line ~110)
-try:
-    import requests
-    REQUESTS_AVAILABLE = True
-except ImportError:
-    pass
-
-try:
-    from sklearn.gaussian_process import GaussianProcessRegressor  # noqa: F401
-    SKLEARN_AVAILABLE = True
-except ImportError:
-    pass
-
-try:
-    from cryptography.hazmat.primitives import hashes, serialization  # noqa: F401
-    from cryptography.hazmat.primitives.asymmetric import rsa, padding  # noqa: F401
-    from cryptography.hazmat.backends import default_backend  # noqa: F401
-    CRYPTO_AVAILABLE = True
-except ImportError:
-    pass
-
-try:
-    import qrcode  # noqa: F401
-    QRCODE_AVAILABLE = True
-except ImportError:
-    pass
-
-try:
-    from reportlab.lib.pagesizes import A4, letter  # noqa: F401
-    from reportlab.pdfgen import canvas  # noqa: F401
-    REPORTLAB_AVAILABLE = True
-except ImportError:
-    pass
-
-try:
-    from sentence_transformers import SentenceTransformer  # noqa: F401
-    SBERT_AVAILABLE = True
-except ImportError:
-    pass
-
-try:
-    import aiohttp
-    AIOHTTP_AVAILABLE = True
-except ImportError:
-    pass
-
-try:
-    from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type  # noqa: F401
-    TENACITY_AVAILABLE = True
-except ImportError:
-    pass
-
-try:
-    from prometheus_client import Counter, Histogram, Gauge, generate_latest  # noqa: F401
-    PROMETHEUS_AVAILABLE = True
-except ImportError:
-    pass
-
-try:
-    import cupy as _cupy_module  # noqa: F401
-    CUPY_AVAILABLE = True
-except ImportError:
-    pass
-
-
-# ── Patch v6.2: early-defined helper functions ──────────────────────────────
-# These are also defined later (lines ~16300+); defining them here ensures any
-# early caller (e.g. safe_sign_with_persistent_key at line 246) works correctly.
-def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _safe_json_dumps(obj: Any) -> str:
-    return json.dumps(obj, sort_keys=True, default=str, ensure_ascii=False)
-
-
-def _sha256_bytes(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
-
-
-def _sha256_str(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def _sha256_file(path: Union[str, Path]) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as fh:
-        for chunk in iter(lambda: fh.read(8192), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-# ── Patch v6.2: Prometheus metrics registry (always defined) ────────────────
-if PROMETHEUS_AVAILABLE:
-    _PROM_API_CALLS = Counter(
-        "ucg_api_calls_total", "External API calls", ["api", "status"]
-    )
-    _PROM_API_LATENCY = Histogram(
-        "ucg_api_latency_seconds", "External API latency", ["api"]
-    )
-    _PROM_MC_SAMPLES = Gauge("ucg_mc_samples", "Monte Carlo sample count")
-    _PROM_FEM_SOLVE = Histogram("ucg_fem_solve_seconds", "FEM solver runtime")
-else:
-    _PROM_API_CALLS = None
-    _PROM_API_LATENCY = None
-    _PROM_MC_SAMPLES = None
-    _PROM_FEM_SOLVE = None
-
-
-# ── Patch v6.2: tenacity decorator (graceful no-op if tenacity missing) ─────
-def api_retry(func: Callable) -> Callable:
-    """Retry decorator for external API calls. Uses tenacity if available,
-    otherwise returns the function unchanged."""
-    if TENACITY_AVAILABLE:
-        return retry(
-            stop=stop_after_attempt(4),
-            wait=wait_exponential(multiplier=1, min=1, max=10),
-            retry=retry_if_exception_type((TimeoutError, ConnectionError, OSError)),
-            reraise=True,
-        )(func)
-    return func
-
-
-# ── Patch v6.2: aiohttp async wrapper (graceful sync fallback) ──────────────
-async def call_external_api_async(url: str, *, api_name: str = "external",
-                                  timeout: float = 10.0,
-                                  headers: Optional[Dict[str, str]] = None,
-                                  params: Optional[Dict[str, Any]] = None
-                                  ) -> Optional[Dict[str, Any]]:
-    """Async version of call_external_api. Uses aiohttp if available."""
-    if UCG_CONFIG.OFFLINE_MODE:
-        logger.info(f"[offline-async] {api_name} call skipped: {url}")
-        return None
-    if not AIOHTTP_AVAILABLE:
-        logger.warning(f"{api_name}: aiohttp not available — sync fallback used")
-        return call_external_api(url, api_name=api_name, timeout=timeout,
-                                 headers=headers, params=params)
-    try:
-        timeout_obj = aiohttp.ClientTimeout(total=timeout)
-        async with aiohttp.ClientSession(timeout=timeout_obj) as session:
-            async with session.get(url, headers=headers, params=params) as resp:
-                if resp.status == 200:
-                    try:
-                        return await resp.json()
-                    except Exception:
-                        text = await resp.text()
-                        return {"text": text}
-                logger.warning(f"{api_name} HTTP {resp.status}: {url}")
-                return None
-    except Exception as exc:
-        logger.warning(f"{api_name} async call failed: {exc}")
-        return None
-
-
-# ── Patch v6.2: SQLiteConnectionPool — replaces raw sqlite3.connect ────────
-class SQLiteConnectionPool:
-    """
-    Simple SQLite connection pool. Reuses connections per-thread, applies
-    WAL mode + busy_timeout + check_same_thread=False. Use as:
-
-        with SQLiteConnectionPool("ucg.db").acquire() as conn:
-            conn.execute("SELECT 1")
-    """
-    _pools: Dict[str, "SQLiteConnectionPool"] = {}
-
-    def __new__(cls, db_path: str, *, max_size: int = 8):
-        # One pool per db_path
-        if db_path not in cls._pools:
-            cls._pools[db_path] = super().__new__(cls)
-            cls._pools[db_path]._initialized = False
-        return cls._pools[db_path]
-
-    def __init__(self, db_path: str, *, max_size: int = 8):
-        if getattr(self, "_initialized", False):
-            return
-        self.db_path = str(db_path)
-        self.max_size = max_size
-        self._idle: list = []
-        self._in_use: int = 0
-        self._lock = __import__("threading").Lock()
-        self._initialized = True
-
-    @contextmanager
-    def acquire(self):
-        conn = self._get()
-        try:
-            yield conn
-        finally:
-            self._release(conn)
-
-    def _get(self):
-        with self._lock:
-            if self._idle:
-                conn = self._idle.pop()
-            else:
-                conn = sqlite3.connect(
-                    self.db_path,
-                    timeout=UCG_CONFIG.SQLITE_BUSY_TIMEOUT_MS / 1000.0,
-                    isolation_level=None,
-                    check_same_thread=False,
-                )
-                conn.execute("PRAGMA journal_mode=WAL;")
-                conn.execute(f"PRAGMA busy_timeout={UCG_CONFIG.SQLITE_BUSY_TIMEOUT_MS};")
-                conn.execute("PRAGMA synchronous=NORMAL;")
-            self._in_use += 1
-        return conn
-
-    def _release(self, conn):
-        with self._lock:
-            self._in_use -= 1
-            if len(self._idle) < self.max_size:
-                self._idle.append(conn)
-            else:
-                try:
-                    conn.close()
-                except Exception:
-                    pass
-
-
-# ── Patch v6.2: SecretsRotator — automatic rotation stub ────────────────────
-class SecretsRotator:
-    """
-    Automatic secret rotation stub. Real implementation would call Vault's
-    /secret/rotate endpoint or AWS Secrets Manager rotateImmediately.
-    Here we just log and re-read from the SecretsManager.
-    """
-    ROTATION_INTERVAL_SECONDS = 86400  # 24 hours
-
-    def __init__(self, secrets_manager: "SecretsManager"):
-        self.sm = secrets_manager
-        self._last_rotation: Dict[str, float] = {}
-
-    def rotate_if_needed(self, name: str) -> bool:
-        now = time.time()
-        last = self._last_rotation.get(name, 0.0)
-        if now - last < self.ROTATION_INTERVAL_SECONDS:
-            return False
-        # Real rotation would happen here
-        logger.info(f"[SecretsRotator] rotation tick for '{name}' (stub)")
-        self._last_rotation[name] = now
-        return True
-
-
-# ── Patch v6.2: AuditLogVerifier — verify_all_logs() ────────────────────────
-def verify_all_logs(*, db_paths: Optional[List[str]] = None) -> Dict[str, Any]:
-    """
-    Verify the integrity of ALL audit logs (Merkle chain + WORM files + signatures).
-    Returns a per-source report.
-    """
-    report: Dict[str, Any] = {"verified_at": _utc_now_iso(), "sources": {}}
-    db_paths = db_paths or []
-    # Auto-discover known audit DBs
-    candidates = [
-        "audit_merkle_chain.db",
-        "blockchain_audit.db",
-        "ucg_monitoring.db",
-        "ucg_platform.db",
-        "prior_art_database.db",
-        "experimental_database.db",
-    ]
-    for c in candidates:
-        if Path(c).exists() and c not in db_paths:
-            db_paths.append(c)
-    for dbp in db_paths:
-        try:
-            if not Path(dbp).exists():
-                report["sources"][dbp] = {"ok": False, "error": "not found"}
-                continue
-            # Try MerkleAuditChain first
-            try:
-                chain = MerkleAuditChain(db_path=dbp)
-                ok = bool(chain.verify_chain())
-                report["sources"][dbp] = {"ok": ok, "type": "merkle"}
-                continue
-            except Exception:
-                pass
-            # Try BlockchainHashChain
-            try:
-                bc = BlockchainHashChain(db_path=dbp)
-                ok = bool(bc.verify_chain())
-                report["sources"][dbp] = {"ok": ok, "type": "blockchain_hash"}
-                continue
-            except Exception:
-                pass
-            report["sources"][dbp] = {"ok": True, "type": "unknown"}
-        except Exception as exc:
-            report["sources"][dbp] = {"ok": False, "error": str(exc)}
-    report["all_ok"] = all(s.get("ok", False) for s in report["sources"].values())
-    return report
-
-
-# ── Patch v6.2: daily blockchain verification ───────────────────────────────
-def daily_blockchain_verification(*, chain_db: str = "audit_merkle_chain.db") -> Dict[str, Any]:
-    """
-    Run a full verification of the blockchain audit chain. Designed to be called
-    by a cron job (e.g. via APScheduler) once per day.
-    """
-    result: Dict[str, Any] = {"ran_at": _utc_now_iso(), "chain_db": chain_db}
-    try:
-        chain = MerkleAuditChain(db_path=chain_db)
-        ok = bool(chain.verify_chain())
-        result["chain_ok"] = ok
-        result["status"] = "verified" if ok else "FAILED"
-    except Exception as exc:
-        result["chain_ok"] = False
-        result["status"] = "error"
-        result["error"] = str(exc)
-    # Also verify all persistent signatures present in the DB
-    try:
-        with SQLiteConnectionPool(chain_db).acquire() as conn:
-            cur = conn.cursor()
-            cur.execute("SELECT block_data, signature FROM blocks WHERE signature IS NOT NULL")
-            rows = cur.fetchall()
-            cur.close()
-        verified = 0
-        failed = 0
-        for block_data, sig_b64 in rows:
-            try:
-                if PersistentKeyManager and CRYPTO_AVAILABLE:
-                    if PersistentKeyManager.verify_persistent_signature(
-                        block_data.encode("utf-8") if isinstance(block_data, str) else block_data,
-                        sig_b64,
-                    ):
-                        verified += 1
-                    else:
-                        failed += 1
-            except Exception:
-                failed += 1
-        result["signatures"] = {"verified": verified, "failed": failed}
-    except Exception as exc:
-        result["signatures"] = {"error": str(exc)}
-    return result
-
-
-# ── Patch v6.2: Permutation Importance fallback for SHAP/LIME ───────────────
-def permutation_importance_fallback(model: Any, X: np.ndarray, y: np.ndarray,
-                                    feature_names: Optional[List[str]] = None,
-                                    n_repeats: int = 10,
-                                    random_state: int = 42) -> Dict[str, Any]:
-    """
-    Pure-numpy permutation importance. Used as a fallback when SHAP/LIME
-    libraries are unavailable.
-    """
-    rng = np.random.default_rng(random_state)
-    n_features = X.shape[1]
-    feature_names = feature_names or [f"f{i}" for i in range(n_features)]
-
-    # Baseline score (R^2 if regressor, accuracy if classifier)
-    def _score(X_eval):
-        try:
-            pred = model.predict(X_eval)
-        except Exception:
-            return float("nan")
-        if hasattr(model, "predict_proba") or hasattr(model, "classes_"):
-            try:
-                return float(accuracy_score(y, pred))
-            except Exception:
-                return float(r2_score(y, pred))
-        return float(r2_score(y, pred))
-
-    baseline = _score(X)
-    importances: List[float] = []
-    for j in range(n_features):
-        deltas = []
-        for _ in range(n_repeats):
-            X_perm = X.copy()
-            X_perm[:, j] = rng.permutation(X_perm[:, j])
-            deltas.append(baseline - _score(X_perm))
-        importances.append(float(np.nanmean(deltas)))
-    return {
-        "method": "permutation_importance_fallback",
-        "baseline_score": float(baseline),
-        "feature_names": feature_names,
-        "importances_mean": importances,
-        "importances_std": [float(np.nanstd([0.0])) for _ in range(n_features)],
-        "n_repeats": n_repeats,
-    }
-
-
-# ── Patch v6.2: GPU FEM solver stub (CuPy) ──────────────────────────────────
-def gpu_solve_linear_system(K: np.ndarray, F: np.ndarray) -> Optional[np.ndarray]:
-    """
-    Solve K @ u = F on GPU via CuPy if available, else return None and caller
-    falls back to scipy.sparse.linalg.spsolve.
-    """
-    if not CUPY_AVAILABLE:
-        return None
-    try:
-        K_gpu = _cupy_module.asarray(K)
-        F_gpu = _cupy_module.asarray(F)
-        u_gpu = _cupy_module.linalg.solve(K_gpu, F_gpu)
-        return _cupy_module.asnumpy(u_gpu)
-    except Exception as exc:
-        logger.warning(f"GPU solve failed, fallback to CPU: {exc}")
-        return None
-
-
-# ── Patch v6.2: Prometheus metrics endpoint (FastAPI / WSGI) ────────────────
-def get_prometheus_metrics() -> Optional[bytes]:
-    """Return Prometheus exposition-format bytes, or None if unavailable."""
-    if not PROMETHEUS_AVAILABLE:
-        return None
-    return generate_latest()
-
-
-# ── Patch v6.2: psutil-based memory guard for Monte Carlo ───────────────────
-def memory_safe_mc_samples(requested: int, *,
-                           label: str = "n_simulations",
-                           max_fraction: float = 0.25) -> int:
-    """
-    Clamp requested MC samples based on available virtual memory.
-    Each sample is assumed to require ~64 bytes (conservative for scalar output).
-    """
-    requested = clamp_mc_samples(requested, label=label)
-    try:
-        vm = psutil.virtual_memory()
-        available = vm.available
-        # estimate: 64 bytes per sample per output dimension (conservative)
-        max_by_mem = int(available * max_fraction / 64)
-        if requested > max_by_mem:
-            logger.warning(
-                f"{label}={requested} clamped to {max_by_mem} based on "
-                f"available memory={available / 1e9:.2f} GB"
-            )
-            return max(UCG_CONFIG.MIN_MC_SAMPLES, max_by_mem)
-    except Exception as exc:
-        logger.warning(f"memory_safe_mc_samples: psutil check failed: {exc}")
-    return requested
-
-
-# ── Patch v6.2: PersistentKeyManager early stub (overridden later) ──────────
-# Defined as None here; the real class is defined at line ~17501.
-# safe_sign_with_persistent_key uses globals().get("PersistentKeyManager")
-# which will find the real class once it's defined.
-PersistentKeyManager = None  # type: ignore[assignment]
-
 
 # ── Third-party libraries ──────────────────────────────────────────────
 import numpy as np
@@ -16672,9 +16175,14 @@ Tijorat maqsadlarda ishlatish TAQIQLANGAN.
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Ensure all extension dependencies are available (some were filtered as duplicates during merge)
+from datetime import timezone
+import textwrap
+import getpass
+import socket
+import base64
 import pickle
 import tempfile
-# timezone, textwrap, getpass, socket, base64, ast — already imported at top via v6.2 patch
+import ast
 
 # PATENT-READY EXTENSION v5.0.0 — INLINE (20 critical fixes)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -16709,13 +16217,12 @@ import tempfile
 
 
 # Optional heavy dependencies (graceful fallback)
-# requests already imported at top via v6.2 patch
 try:
     import requests
+    REQUESTS_AVAILABLE = True
 except ImportError:
-    pass
+    REQUESTS_AVAILABLE = False
 
-# scipy stats already imported at top; just pull in the extra symbols
 try:
     from scipy import stats as sp_stats
     from scipy.stats import (
@@ -16724,32 +16231,36 @@ try:
         pearsonr, spearmanr, kendalltau
     )
     from scipy.spatial.distance import pdist, squareform
+    SCIPY_AVAILABLE = True
 except ImportError:
-    pass
+    SCIPY_AVAILABLE = False
 
-# sklearn already imported at top; pull in extra symbols
 try:
     from sklearn.gaussian_process import GaussianProcessRegressor
     from sklearn.gaussian_process.kernels import RBF, ConstantKernel, WhiteKernel, Matern
     from sklearn.model_selection import RepeatedKFold, RepeatedStratifiedKFold, cross_val_score, GridSearchCV
+    from sklearn.feature_extraction.text import TfidfVectorizer
     from sklearn.metrics.pairwise import cosine_similarity
     from sklearn.preprocessing import StandardScaler
+    SKLEARN_AVAILABLE = True
 except ImportError:
-    pass
+    SKLEARN_AVAILABLE = False
 
-# cryptography already imported at top; pull in extra symbols
 try:
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa, padding
     from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+    from cryptography.hazmat.backends import default_backend
+    CRYPTO_AVAILABLE = True
 except ImportError:
-    pass
+    CRYPTO_AVAILABLE = False
 
-# qrcode already imported at top via v6.2 patch
 try:
     import qrcode
+    QRCODE_AVAILABLE = True
 except ImportError:
-    pass
+    QRCODE_AVAILABLE = False
 
-# reportlab already imported at top; pull in extra symbols
 try:
     from reportlab.lib.pagesizes import A4, letter
     from reportlab.pdfgen import canvas
@@ -16760,15 +16271,16 @@ try:
         SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, PageBreak
     )
     from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
+    REPORTLAB_AVAILABLE = True
 except ImportError:
-    pass
+    REPORTLAB_AVAILABLE = False
 
 # Optional: SentenceTransformer / SciBERT
-# sentence_transformers already imported at top via v6.2 patch
 try:
     from sentence_transformers import SentenceTransformer
+    SBERT_AVAILABLE = True
 except ImportError:
-    pass
+    SBERT_AVAILABLE = False
 
 logger = logging.getLogger("ucg_platform.patent_extension")
 
@@ -16788,8 +16300,28 @@ PROOF_NUMERICAL_SAMPLES = 100_000
 # ============================================================================
 # UTILITIES
 # ============================================================================
-# Helper functions _utc_now_iso / _sha256_bytes / _sha256_str / _sha256_file
-# / _safe_json_dumps — already defined at top via v6.2 patch; skip redefinition.
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _sha256_str(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _sha256_file(path: Union[str, Path]) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(8192), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _safe_json_dumps(obj: Any) -> str:
+    return json.dumps(obj, sort_keys=True, default=str, ensure_ascii=False)
 
 
 # ============================================================================
@@ -20710,51 +20242,6 @@ except Exception as _v6_err:
 # ══════════════════════════════════════════════════════════════════════════════
 # [FIX #4] Windows Multiprocessing uchun asosiy kirish nuqtasi
 # ══════════════════════════════════════════════════════════════════════════════
-
-# ══════════════════════════════════════════════════════════════════════════════
-# v6.2 PATCH TAIL — register daily verification scheduler + Prometheus endpoint
-# ══════════════════════════════════════════════════════════════════════════════
-def _register_daily_verification() -> None:
-    """Register a daily blockchain verification job. Uses APScheduler if
-    available, otherwise logs a notice that the user should set up cron."""
-    try:
-        from apscheduler.schedulers.background import BackgroundScheduler
-        sched = BackgroundScheduler(daemon=True)
-        sched.add_job(
-            daily_blockchain_verification,
-            trigger="cron",
-            hour=3,
-            minute=0,
-            id="daily_blockchain_verification",
-            replace_existing=True,
-        )
-        sched.start()
-        logger.info("Daily blockchain verification scheduled (03:00 daily)")
-    except ImportError:
-        logger.warning(
-            "APScheduler not installed; please add a cron job: "
-            "0 3 * * * python -c 'from app import daily_blockchain_verification; daily_blockchain_verification()'"
-        )
-    except Exception as exc:
-        logger.warning(f"Failed to register daily verification: {exc}")
-
-
-def _verify_persistent_keymanager_loaded() -> bool:
-    """Sanity check that PersistentKeyManager is the real class, not None."""
-    klass = globals().get("PersistentKeyManager")
-    if klass is None:
-        logger.error("PersistentKeyManager is None — sign calls will be no-ops")
-        return False
-    if not hasattr(klass, "sign_with_persistent_key"):
-        logger.error("PersistentKeyManager missing sign_with_persistent_key method")
-        return False
-    return True
-
-
-# Verify key manager at module load (after all classes are defined)
-_verify_persistent_keymanager_loaded()
-
-
 if __name__ == "__main__":
     # ── Apply Patent-Ready Extension v5.0.0 patches (inline, no import) ─────
     # The extension code is defined directly in this file (above), so we can call
