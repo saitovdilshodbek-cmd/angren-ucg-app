@@ -17192,65 +17192,77 @@ class DelphiPatentabilityScorer:
 
 # ─── ENTERPRISE MODULES REGISTRY ─────────────────────────────────────────────
 
+def _safe_module_info(factory: Callable, name: str = "") -> Dict[str, Any]:
+    """Safely call .info() on a module, returning an error dict on failure."""
+    try:
+        return factory().info()
+    except Exception as exc:
+        logger.warning(f"Module {name} info() failed: {exc}")
+        return {"available": False, "error": str(exc), "name": name}
+
+
 def enterprise_modules_registry() -> Dict[str, Dict[str, Any]]:
-    """Return status info for all 50+ enterprise modules + 10 patent-priority modules."""
+    """Return status info for all 50+ enterprise modules + 10 patent-priority modules.
+    FIX: every module is wrapped in _safe_module_info() so that a single failing
+    module doesn't crash the entire Streamlit app.
+    """
     registry = {}
     # Block 1: Architecture
-    registry["M01_ServiceContainer"] = ServiceContainer.instance().info()
-    registry["M02_GlobalRegistry"] = ServiceContainer.instance().registry.info()
-    registry["M03_EventBus"] = ServiceContainer.instance().event_bus.info()
-    registry["M04_PluginManager"] = ServiceContainer.instance().plugins.info()
-    registry["M05_FastAPI"] = FastAPIIntegration().info()
-    registry["M06_CLI"] = CLIDispatcher().info()
-    registry["M07_Celery"] = CeleryTaskQueue().info()
+    registry["M01_ServiceContainer"] = _safe_module_info(ServiceContainer.instance, "M01")
+    registry["M02_GlobalRegistry"] = _safe_module_info(ServiceContainer.instance, "M02")
+    registry["M03_EventBus"] = _safe_module_info(ServiceContainer.instance, "M03")
+    registry["M04_PluginManager"] = _safe_module_info(ServiceContainer.instance, "M04")
+    registry["M05_FastAPI"] = _safe_module_info(FastAPIIntegration, "M05")
+    registry["M06_CLI"] = _safe_module_info(CLIDispatcher, "M06")
+    registry["M07_Celery"] = _safe_module_info(CeleryTaskQueue, "M07")
     # Block 2: FEM
-    registry["M11_AdaptiveMeshRefinement"] = AdaptiveMeshRefinement().info()
-    registry["M12_DynamicFEMSolver"] = DynamicFEMSolver().info()
-    registry["M13_VonMisesPlasticity"] = VonMisesPlasticity().info()
-    registry["M14_ContactSolver"] = ContactSolver().info()
-    registry["M15_XFEMSolver"] = XFEMSolver().info()
-    registry["M16_ParallelFEMAssembly"] = ParallelFEMAssembly().info()
-    registry["M17_GPUFEMSolver"] = GPUFEMSolver().info()
-    registry["M18_FEMBenchmarkDB"] = FEMBenchmarkDB().info()
-    registry["M19_MeshOptimizer"] = MeshOptimizer().info()
-    registry["M20_AdaptiveTimeIntegrator"] = AdaptiveTimeIntegrator().info()
+    registry["M11_AdaptiveMeshRefinement"] = _safe_module_info(AdaptiveMeshRefinement, "M11")
+    registry["M12_DynamicFEMSolver"] = _safe_module_info(DynamicFEMSolver, "M12")
+    registry["M13_VonMisesPlasticity"] = _safe_module_info(VonMisesPlasticity, "M13")
+    registry["M14_ContactSolver"] = _safe_module_info(ContactSolver, "M14")
+    registry["M15_XFEMSolver"] = _safe_module_info(XFEMSolver, "M15")
+    registry["M16_ParallelFEMAssembly"] = _safe_module_info(ParallelFEMAssembly, "M16")
+    registry["M17_GPUFEMSolver"] = _safe_module_info(GPUFEMSolver, "M17")
+    registry["M18_FEMBenchmarkDB"] = _safe_module_info(FEMBenchmarkDB, "M18")
+    registry["M19_MeshOptimizer"] = _safe_module_info(MeshOptimizer, "M19")
+    registry["M20_AdaptiveTimeIntegrator"] = _safe_module_info(AdaptiveTimeIntegrator, "M20")
     # Block 3: AI
-    registry["M21_MLflowTracker"] = MLflowTracker().info()
-    registry["M22_ModelRegistry"] = ModelRegistry().info()
-    registry["M23_PINN"] = PINNModule().info()
-    registry["M24_HyperparameterOpt"] = HyperparameterOptimizer().info()
-    registry["M26_DriftDetector"] = DriftDetector().info()
-    registry["M27_EnsembleModel"] = EnsembleModel().info()
-    registry["M28_BayesianNN"] = BayesianNeuralNetwork().info()
-    registry["M29_AIBenchmark"] = AIBenchmark().info()
-    registry["M30_ExplainabilityDashboard"] = ExplainabilityDashboard().info()
+    registry["M21_MLflowTracker"] = _safe_module_info(MLflowTracker, "M21")
+    registry["M22_ModelRegistry"] = _safe_module_info(ModelRegistry, "M22")
+    registry["M23_PINN"] = _safe_module_info(PINNModule, "M23")
+    registry["M24_HyperparameterOpt"] = _safe_module_info(HyperparameterOptimizer, "M24")
+    registry["M26_DriftDetector"] = _safe_module_info(DriftDetector, "M26")
+    registry["M27_EnsembleModel"] = _safe_module_info(EnsembleModel, "M27")
+    registry["M28_BayesianNN"] = _safe_module_info(BayesianNeuralNetwork, "M28")
+    registry["M29_AIBenchmark"] = _safe_module_info(AIBenchmark, "M29")
+    registry["M30_ExplainabilityDashboard"] = _safe_module_info(ExplainabilityDashboard, "M30")
     # Block 4: Patent
-    registry["M31_PatentClaimGenerator"] = PatentClaimGenerator().info()
-    registry["M32_PriorArtAISearch"] = PriorArtAISearch().info()
-    registry["M33_SemanticPatentSearch"] = SemanticPatentSearch().info()
-    registry["M34_PatentRiskAnalyzer"] = PatentRiskAnalyzer().info()
-    registry["M35_NoveltyMatrix"] = NoveltyMatrix().info()
-    registry["M36_FTOAnalyzer"] = FTOAnalyzer().info()
-    registry["M37_PatentCitationGraph"] = PatentCitationGraph().info()
-    registry["M38_PatentRanker"] = PatentRanker().info()
-    registry["M39_AutoPatentReport"] = AutoPatentReport().info()
-    registry["M40_WIPOExporter"] = WIPOExporter().info()
+    registry["M31_PatentClaimGenerator"] = _safe_module_info(PatentClaimGenerator, "M31")
+    registry["M32_PriorArtAISearch"] = _safe_module_info(PriorArtAISearch, "M32")
+    registry["M33_SemanticPatentSearch"] = _safe_module_info(SemanticPatentSearch, "M33")
+    registry["M34_PatentRiskAnalyzer"] = _safe_module_info(PatentRiskAnalyzer, "M34")
+    registry["M35_NoveltyMatrix"] = _safe_module_info(NoveltyMatrix, "M35")
+    registry["M36_FTOAnalyzer"] = _safe_module_info(FTOAnalyzer, "M36")
+    registry["M37_PatentCitationGraph"] = _safe_module_info(PatentCitationGraph, "M37")
+    registry["M38_PatentRanker"] = _safe_module_info(PatentRanker, "M38")
+    registry["M39_AutoPatentReport"] = _safe_module_info(AutoPatentReport, "M39")
+    registry["M40_WIPOExporter"] = _safe_module_info(WIPOExporter, "M40")
     # Block 5: Security
-    registry["M41_AES256Encryption"] = AES256Encryption().info()
-    registry["M42_JWTAuth"] = JWTAuth().info()
-    registry["M43_MFALogin"] = MFALogin().info()
-    registry["M44_RBACManager"] = RBACManager().info()
-    registry["M45_AuditDashboard"] = AuditDashboard().info()
-    registry["M46_SQLInjectionScanner"] = SQLInjectionScanner().info()
-    registry["M47_XSSScanner"] = XSSScanner().info()
-    registry["M48_SecretRotator"] = SecretRotator().info()
-    registry["M49_DockerSecurityScanner"] = DockerSecurityScanner().info()
-    registry["M50_CICDSecurityPipeline"] = CICDSecurityPipeline().info()
+    registry["M41_AES256Encryption"] = _safe_module_info(AES256Encryption, "M41")
+    registry["M42_JWTAuth"] = _safe_module_info(JWTAuth, "M42")
+    registry["M43_MFALogin"] = _safe_module_info(MFALogin, "M43")
+    registry["M44_RBACManager"] = _safe_module_info(RBACManager, "M44")
+    registry["M45_AuditDashboard"] = _safe_module_info(AuditDashboard, "M45")
+    registry["M46_SQLInjectionScanner"] = _safe_module_info(SQLInjectionScanner, "M46")
+    registry["M47_XSSScanner"] = _safe_module_info(XSSScanner, "M47")
+    registry["M48_SecretRotator"] = _safe_module_info(SecretRotator, "M48")
+    registry["M49_DockerSecurityScanner"] = _safe_module_info(DockerSecurityScanner, "M49")
+    registry["M50_CICDSecurityPipeline"] = _safe_module_info(CICDSecurityPipeline, "M50")
     # Patent priority (unique ones)
-    registry["P05_DigitalTwinRealTime"] = DigitalTwinRealTimeEngine().info()
-    registry["P08_BlockchainPatentRegistry"] = BlockchainPatentRegistry().info()
-    registry["P09_ExplainableAISuite"] = ExplainableAISuite().info()
-    registry["DelphiPatentabilityScorer"] = DelphiPatentabilityScorer().info()
+    registry["P05_DigitalTwinRealTime"] = _safe_module_info(DigitalTwinRealTimeEngine, "P05")
+    registry["P08_BlockchainPatentRegistry"] = _safe_module_info(BlockchainPatentRegistry, "P08")
+    registry["P09_ExplainableAISuite"] = _safe_module_info(ExplainableAISuite, "P09")
+    registry["DelphiPatentabilityScorer"] = _safe_module_info(DelphiPatentabilityScorer, "Delphi")
     return registry
 
 
