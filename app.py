@@ -10227,7 +10227,29 @@ def generate_full_iso_report(
             'warning': "⚠️ MARGINAL HOLAT: 1.0 ≤ FOS < 1.5. Monitoring va qo'shimcha mahkamlash tavsiya etiladi.",
             'danger': "🚨 XAVFLI: FOS < 1.0. O'pirilish xavfi yuqori! Selek kengligini oshirish SHART.",
             'risk_ident': "Aniqlangan xavf omillari: termal degradatsiya, yuqori bo'shliq hajmi, FOS < 1.3.",
-            'mitigation': "Muhandislik choralari: selek eni oshirish, gaz bosimini kamaytirish, real-vaqt monitoring."
+            'mitigation': "Muhandislik choralari: selek eni oshirish, gaz bosimini kamaytirish, real-vaqt monitoring.",
+            'doc_no': "Hujjat №:",
+            'revision': "Revizya:",
+            'prepared': "Tayyorladi:",
+            'approved': "Tasdiqladi:",
+            'project_label': "Ob'ekt: ",
+            'max_temp_label': "Maks. harorat: ",
+            'burn_dur_label': "Yonish muddati: ",
+            'hours': " soat",
+            'table_headers': ["Qatlam", "Qalinlik (m)", "UCS (MPa)", "GSI", "mi"],
+            'mean_risk': "O'rtacha risk indeksi:",
+            'fos_min': "FOS min:",
+            'void_vol': "Bo'shliq hajmi:",
+            'rec_pillar': "Tavsiya etilgan selek eni:",
+            'visual_analysis': "Vizual tahlil (Risk xaritasi)",
+            'risk_level': "Risk darajasi:",
+            'risk_low': "PAST",
+            'risk_medium': "O'RTA",
+            'risk_critical': "KRITIK",
+            'fig_2d': "14. 2D Grafiklar Xulosasi",
+            'fig_3d': "15. 3D Grafiklar Xulosasi",
+            'figure_label': "Rasm",
+            'references_title': "Manbalar",
         },
         'en': {
             'h1': "ISRM SUGGESTED METHODS (2012) COMPLIANCE REPORT\nISO 9001:2015 Quality Management",
@@ -10244,7 +10266,29 @@ def generate_full_iso_report(
             'warning': "⚠️ MARGINAL: 1.0 ≤ FOS < 1.5. Increased monitoring recommended.",
             'danger': "🚨 DANGEROUS: FOS < 1.0. High risk of collapse! Increase pillar width.",
             'risk_ident': "Identified hazards: thermal degradation, large void volume, FOS < 1.3.",
-            'mitigation': "Mitigation: increase pillar width, reduce gas pressure, real-time monitoring."
+            'mitigation': "Mitigation: increase pillar width, reduce gas pressure, real-time monitoring.",
+            'doc_no': "Doc No:",
+            'revision': "Revision:",
+            'prepared': "Prepared:",
+            'approved': "Approved:",
+            'project_label': "Project: ",
+            'max_temp_label': "Max Temperature: ",
+            'burn_dur_label': "Burn Duration: ",
+            'hours': " h",
+            'table_headers': ["Layer", "Thick (m)", "UCS (MPa)", "GSI", "mi"],
+            'mean_risk': "Mean risk index:",
+            'fos_min': "FOS min:",
+            'void_vol': "Void volume:",
+            'rec_pillar': "Recommended pillar width:",
+            'visual_analysis': "Visual Analysis (Risk Map)",
+            'risk_level': "Risk Level:",
+            'risk_low': "LOW",
+            'risk_medium': "MEDIUM",
+            'risk_critical': "CRITICAL",
+            'fig_2d': "14. 2D Graphics Summary",
+            'fig_3d': "15. 3D Graphics Summary",
+            'figure_label': "Figure",
+            'references_title': "References",
         },
         'ru': {
             'h1': "ОТЧЁТ О СООТВЕТСТВИИ ISRM SUGGESTED METHODS (2012)\nISO 9001:2015 Управление качеством",
@@ -10261,7 +10305,29 @@ def generate_full_iso_report(
             'warning': "⚠️ ПРЕДЕЛЬНАЯ УСТОЙЧИВОСТЬ: 1.0 ≤ FOS < 1.5.",
             'danger': "🚨 ОПАСНО: FOS < 1.0. Высокий риск обрушения!",
             'risk_ident': "Риски: термическая деградация, большой объём пустот, FOS < 1.3.",
-            'mitigation': "Меры: увеличить ширину целика, снизить давление газа, мониторинг в реальном времени."
+            'mitigation': "Меры: увеличить ширину целика, снизить давление газа, мониторинг в реальном времени.",
+            'doc_no': "Документ №:",
+            'revision': "Ревизия:",
+            'prepared': "Подготовил:",
+            'approved': "Утвердил:",
+            'project_label': "Объект: ",
+            'max_temp_label': "Макс. температура: ",
+            'burn_dur_label': "Время горения: ",
+            'hours': " ч",
+            'table_headers': ["Слой", "Толщ. (м)", "UCS (МПа)", "GSI", "mi"],
+            'mean_risk': "Средний индекс риска:",
+            'fos_min': "FOS мин:",
+            'void_vol': "Объём пустот:",
+            'rec_pillar': "Рекомендуемая ширина целика:",
+            'visual_analysis': "Визуальный анализ (Карта рисков)",
+            'risk_level': "Уровень риска:",
+            'risk_low': "НИЗКИЙ",
+            'risk_medium': "СРЕДНИЙ",
+            'risk_critical': "КРИТИЧЕСКИЙ",
+            'fig_2d': "14. Сводка 2D графиков",
+            'fig_3d': "15. Сводка 3D графиков",
+            'figure_label': "Рисунок",
+            'references_title': "Список литературы",
         }
     }
 
@@ -10275,26 +10341,26 @@ def generate_full_iso_report(
     meta = doc.add_table(rows=2, cols=2)
     meta.style = 'Table Grid'
     set_table_border(meta)
-    meta.cell(0, 0).text = f"Doc No: {doc_number}"
-    meta.cell(0, 1).text = f"Revision: {revision}"
-    meta.cell(1, 0).text = f"Prepared: {prepared_by}"
-    meta.cell(1, 1).text = f"Approved: {approved_by}"
+    meta.cell(0, 0).text = f"{tt['doc_no']} {doc_number}"
+    meta.cell(0, 1).text = f"{tt['revision']} {revision}"
+    meta.cell(1, 0).text = f"{tt['prepared']} {prepared_by}"
+    meta.cell(1, 1).text = f"{tt['approved']} {approved_by}"
     doc.add_paragraph()
 
     doc.add_heading(tt['sec1'], level=2)
     p = doc.add_paragraph()
-    p.add_run("Project / Ob'ekt: ").bold = True
+    p.add_run(tt['project_label']).bold = True
     p.add_run(f"{obj_name}\n")
-    p.add_run("Max Temperature / Maks. harorat: ").bold = True
+    p.add_run(tt['max_temp_label']).bold = True
     p.add_run(f"{T_source_max} °C\n")
-    p.add_run("Burn Duration / Yonish muddati: ").bold = True
-    p.add_run(f"{burn_duration} h")
+    p.add_run(tt['burn_dur_label']).bold = True
+    p.add_run(f"{burn_duration}{tt['hours']}")
 
     doc.add_heading(tt['sec2'], level=2)
     tbl = doc.add_table(rows=1, cols=5)
     tbl.style = 'Table Grid'
     set_table_border(tbl)
-    for i, hdr in enumerate(["Layer / Qatlam", "Thick (m)", "UCS (MPa)", "GSI", "mi"]):
+    for i, hdr in enumerate(tt['table_headers']):
         tbl.rows[0].cells[i].text = hdr
     for layer in layers_data:
         row = tbl.add_row().cells
@@ -10309,29 +10375,29 @@ def generate_full_iso_report(
     avg_risk = float(np.nanmean(risk_map))
     fos_min_val = float(np.nanmin(fos_2d))
     doc.add_paragraph(
-        f"Mean risk index: {avg_risk:.3f} | "
-        f"FOS min: {fos_min_val:.2f} | "
-        f"Void volume: {void_volume:.1f} m²"
+        f"{tt['mean_risk']} {avg_risk:.3f} | "
+        f"{tt['fos_min']} {fos_min_val:.2f} | "
+        f"{tt['void_vol']} {void_volume:.1f} m²"
     )
 
     doc.add_heading(tt['sec4'], level=2)
     doc.add_paragraph(tt['mitigation'])
-    doc.add_paragraph(f"Recommended pillar width: {analytical_width:.1f} m")
+    doc.add_paragraph(f"{tt['rec_pillar']} {analytical_width:.1f} m")
 
     if fig_bytes:
-        doc.add_heading("Visual Analysis (Risk Map)", level=2)
+        doc.add_heading(tt['visual_analysis'], level=2)
         image_stream = io.BytesIO(fig_bytes)
         doc.add_picture(image_stream, width=Inches(5.5))
         doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
 
     doc.add_heading(tt['sec5'], level=2)
     fos_val = float(np.nanmean(fos_2d))
-    risk_level = "LOW"
+    risk_level = tt['risk_low']
     if float(np.nanmax(risk_map)) > 0.75:
-        risk_level = "CRITICAL"
+        risk_level = tt['risk_critical']
     elif float(np.nanmax(risk_map)) > 0.5:
-        risk_level = "MEDIUM"
-    doc.add_paragraph(f"Risk Level: {risk_level}")
+        risk_level = tt['risk_medium']
+    doc.add_paragraph(f"{tt['risk_level']} {risk_level}")
 
     color = RGBColor(0, 128, 0)
     if fos_val < 1.1:
@@ -10364,17 +10430,17 @@ def generate_full_iso_report(
         doc.add_paragraph(f"[Patent-Ready Extension sections error: {ext_exc}]")
 
     if figure_list_2d:
-        doc.add_heading("14. 2D Graphics Summary", level=2)
+        doc.add_heading(tt['fig_2d'], level=2)
         for i, img_bytes in enumerate(figure_list_2d, 1):
-            doc.add_paragraph(f"Figure 2D-{i}")
+            doc.add_paragraph(f"{tt['figure_label']} 2D-{i}")
             image_stream = io.BytesIO(img_bytes)
             doc.add_picture(image_stream, width=Inches(5.5))
             doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
 
     if figure_list_3d:
-        doc.add_heading("15. 3D Graphics Summary", level=2)
+        doc.add_heading(tt['fig_3d'], level=2)
         for i, img_bytes in enumerate(figure_list_3d, 1):
-            doc.add_paragraph(f"Figure 3D-{i}")
+            doc.add_paragraph(f"{tt['figure_label']} 3D-{i}")
             image_stream = io.BytesIO(img_bytes)
             doc.add_picture(image_stream, width=Inches(5.5))
             doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -10418,7 +10484,7 @@ def generate_full_iso_report(
         p_title.add_run(title).bold = True
         doc.add_paragraph(formula, style='Quote')
 
-    doc.add_heading("References / Manbalar", level=2)
+    doc.add_heading(tt['references_title'], level=2)
     refs = [
         "Hoek, E., & Brown, E.T. (2018). The Hoek-Brown failure criterion and GSI – 2018 edition. J. Rock Mech. Geotech. Eng., 11(3), 445-463.",
         "Yang, D. (2010). Stability of Underground Coal Gasification. PhD Thesis, TU Delft.",
@@ -18036,13 +18102,96 @@ def main():
                         figure_list_2d=figure_list_2d,
                         figure_list_3d=figure_list_3d
                     )
-                    fname = f"{doc_num_input}_Rev{revision_inp}_{pd.Timestamp.now().strftime('%Y%m%d')}.docx"
+                    fname = f"{doc_num_input}_Rev{revision_inp}_{pd.Timestamp.now().strftime('%Y%m%d')}_{iso_lang}.docx"
                     st.download_button(
-                        label=f"⬇️ {fname}", data=docx_bytes,
+                        label=f"⬇️ Download ({iso_lang.upper()}) — {fname}",
+                        data=docx_bytes,
                         file_name=fname,
                         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                         use_container_width=True
                     )
+
+                    # ── FIX: 3-language download buttons (uz/en/ru) ──
+                    # Generate the same report in all 3 languages so the user
+                    # can download whichever they need without re-running the
+                    # simulation.
+                    st.markdown("**📥 3-tilde yuklab olish / Download in 3 languages / Скачать на 3 языках:**")
+                    col_dl1, col_dl2, col_dl3 = st.columns(3)
+                    with col_dl1:
+                        try:
+                            docx_uz = generate_full_iso_report(
+                                obj_name=obj_name, lang='uz', layers_data=layers_data,
+                                T_source_max=T_source_max, burn_duration=float(burn_duration),
+                                pillar_strength=pillar_strength_creep,
+                                analytical_width=analytical_width,
+                                fos_2d=fos_worst_case, risk_map=risk_index_var,
+                                void_volume=void_volume,
+                                prepared_by=prepared_inp, approved_by=approved_inp,
+                                doc_number=doc_num_input, revision=revision_inp,
+                                fig_bytes=fig_bytes_report,
+                                results=results,
+                                figure_list_2d=figure_list_2d,
+                                figure_list_3d=figure_list_3d
+                            )
+                            st.download_button(
+                                label="🇺🇿 O'zbek",
+                                data=docx_uz,
+                                file_name=f"{doc_num_input}_Rev{revision_inp}_{pd.Timestamp.now().strftime('%Y%m%d')}_uz.docx",
+                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                use_container_width=True
+                            )
+                        except Exception as e:
+                            st.error(f"UZ: {e}")
+                    with col_dl2:
+                        try:
+                            docx_en = generate_full_iso_report(
+                                obj_name=obj_name, lang='en', layers_data=layers_data,
+                                T_source_max=T_source_max, burn_duration=float(burn_duration),
+                                pillar_strength=pillar_strength_creep,
+                                analytical_width=analytical_width,
+                                fos_2d=fos_worst_case, risk_map=risk_index_var,
+                                void_volume=void_volume,
+                                prepared_by=prepared_inp, approved_by=approved_inp,
+                                doc_number=doc_num_input, revision=revision_inp,
+                                fig_bytes=fig_bytes_report,
+                                results=results,
+                                figure_list_2d=figure_list_2d,
+                                figure_list_3d=figure_list_3d
+                            )
+                            st.download_button(
+                                label="🇬🇧 English",
+                                data=docx_en,
+                                file_name=f"{doc_num_input}_Rev{revision_inp}_{pd.Timestamp.now().strftime('%Y%m%d')}_en.docx",
+                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                use_container_width=True
+                            )
+                        except Exception as e:
+                            st.error(f"EN: {e}")
+                    with col_dl3:
+                        try:
+                            docx_ru = generate_full_iso_report(
+                                obj_name=obj_name, lang='ru', layers_data=layers_data,
+                                T_source_max=T_source_max, burn_duration=float(burn_duration),
+                                pillar_strength=pillar_strength_creep,
+                                analytical_width=analytical_width,
+                                fos_2d=fos_worst_case, risk_map=risk_index_var,
+                                void_volume=void_volume,
+                                prepared_by=prepared_inp, approved_by=approved_inp,
+                                doc_number=doc_num_input, revision=revision_inp,
+                                fig_bytes=fig_bytes_report,
+                                results=results,
+                                figure_list_2d=figure_list_2d,
+                                figure_list_3d=figure_list_3d
+                            )
+                            st.download_button(
+                                label="🇷🇺 Русский",
+                                data=docx_ru,
+                                file_name=f"{doc_num_input}_Rev{revision_inp}_{pd.Timestamp.now().strftime('%Y%m%d')}_ru.docx",
+                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                use_container_width=True
+                            )
+                        except Exception as e:
+                            st.error(f"RU: {e}")
                 except Exception as e:
                     st.error(f"Report generation error: {e}")
 
