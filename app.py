@@ -329,7 +329,7 @@ def safe_sign_with_persistent_key(data: bytes) -> Dict[str, Any]:
     # Lazy lookup so we don't trigger NameError at import time
     klass = globals().get("PersistentKeyManager")
     if klass is None:
-        logger.warning("PersistentKeyManager not available — returning unsigned record")
+        logger.warning(tr("log.persistent_key_unavailable"))
         return {
             "signature": "",
             "signature_algorithm": "none",
@@ -341,7 +341,7 @@ def safe_sign_with_persistent_key(data: bytes) -> Dict[str, Any]:
     try:
         return klass.sign_with_persistent_key(data)
     except Exception as exc:
-        logger.error(f"PersistentKeyManager.sign_with_persistent_key failed: {exc}")
+        logger.error(tr("log.signing_failed", exc=exc))
         return {
             "signature": "",
             "signature_algorithm": "none",
@@ -541,7 +541,7 @@ class WORMStorageBackend:
                 import boto3
                 self._s3_client = boto3.client("s3")
             except ImportError:
-                logger.warning("boto3 not available — WORM backend falling back to local")
+                logger.warning(tr("log.boto3_unavailable"))
                 self.backend = "local"
         elif self.backend == "azure":
             try:
@@ -550,7 +550,7 @@ class WORMStorageBackend:
                     os.getenv("AZURE_STORAGE_CONNECTION_STRING", "")
                 )
             except ImportError:
-                logger.warning("azure-storage-blob not available — WORM backend falling back to local")
+                logger.warning(tr("log.azure_unavailable"))
                 self.backend = "local"
 
     def write_record(self, record: Dict[str, Any]) -> Dict[str, Any]:
@@ -665,7 +665,7 @@ def safe_eval_literal(expr: str, allowed_names: Optional[Dict[str, Any]] = None)
         try:
             return _cs.safe_eval(expr, allowed_names)
         except Exception as exc:
-            logger.warning(f"CybersecurityHardening.safe_eval failed ({exc}); falling back to ast.literal_eval")
+            logger.warning(tr("log.cybersec_safe_eval_failed", exc=exc))
     # ast is guaranteed to be importable here (top-of-file import).
     return ast.literal_eval(expr)
 
@@ -680,7 +680,7 @@ def safe_loads(payload: Union[bytes, str]) -> Any:
         try:
             payload = payload.decode("utf-8")
         except UnicodeDecodeError:
-            raise ValueError("safe_loads: payload is binary and not UTF-8 — refusing to deserialize")
+            raise ValueError(tr("err.binary_payload"))
     try:
         return json.loads(payload)
     except (ValueError, TypeError):
@@ -688,7 +688,7 @@ def safe_loads(payload: Union[bytes, str]) -> Any:
     try:
         return ast.literal_eval(payload)
     except (ValueError, SyntaxError) as exc:
-        raise ValueError(f"safe_loads: cannot deserialize payload safely: {exc}")
+        raise ValueError(tr("err.cannot_deserialize", exc=exc))
 
 
 def safe_run_command(args: Union[List[str], str],
@@ -706,7 +706,7 @@ def safe_run_command(args: Union[List[str], str],
         # Use shlex.split — NEVER shell=True
         args = shlex.split(args)
     if not args:
-        raise ValueError("safe_run_command: empty command")
+        raise ValueError(tr("err.empty_command"))
     return subprocess.run(
         args, cwd=cwd, env=env, timeout=timeout, check=check,
         capture_output=True, text=True, shell=False,
@@ -760,11 +760,11 @@ class SecretsManager:
                 import hvac
                 self._vault = hvac.Client(url=UCG_CONFIG.VAULT_ADDR, token=UCG_CONFIG.VAULT_TOKEN)
                 if not self._vault.is_authenticated():
-                    logger.warning("Vault auth failed — falling back to env")
+                    logger.warning(tr("log.vault_auth_failed"))
                     self.backend = "env"
                     self._vault = None
             except ImportError:
-                logger.warning("hvac not installed — secrets backend falling back to env")
+                logger.warning(tr("log.hvac_not_installed"))
                 self.backend = "env"
         elif self.backend == "azure_kv":
             try:
@@ -773,14 +773,14 @@ class SecretsManager:
                 cred = DefaultAzureCredential()
                 self._azure_kv = SecretClient(vault_url=UCG_CONFIG.AZURE_KV_URL, credential=cred)
             except ImportError:
-                logger.warning("azure-identity / azure-keyvault-secrets not installed — falling back to env")
+                logger.warning(tr("log.azure_kv_not_installed"))
                 self.backend = "env"
         elif self.backend == "aws_sm":
             try:
                 import boto3
                 self._aws_sm = boto3.client("secretsmanager", region_name=UCG_CONFIG.AWS_REGION)
             except ImportError:
-                logger.warning("boto3 not installed — secrets backend falling back to env")
+                logger.warning(tr("log.boto3_not_installed"))
                 self.backend = "env"
         # env backend: nothing to init (python-dotenv loaded at bootstrap)
         # FIX #50: warn user that .env-based secrets are dev-grade and must
@@ -1046,7 +1046,7 @@ def run_safe_subprocess(
 ) -> str:
     normalized = tuple(str(part) for part in command)
     if normalized not in SAFE_SUBPROCESS_COMMANDS:
-        raise ValueError(f"Unsupported subprocess command: {normalized}")
+        raise ValueError(tr("err.unsupported_subprocess", normalized=normalized))
     resolved_cwd = Path(cwd or os.getcwd()).resolve()
     return subprocess.check_output(
         list(normalized),
@@ -1060,9 +1060,9 @@ def run_safe_subprocess(
 def _to_1d_float_array(values: Any, name: str) -> np.ndarray:
     array = np.asarray(values, dtype=float).reshape(-1)
     if array.size == 0:
-        raise ValueError(f"`{name}` bo'sh bo'lmasligi kerak")
+        raise ValueError(tr("err.name_not_empty", name=name))
     if not np.all(np.isfinite(array)):
-        raise ValueError(f"`{name}` ichida faqat chekli sonlar bo'lishi kerak")
+        raise ValueError(tr("err.name_numbers_only", name=name))
     return array
 
 
@@ -1076,9 +1076,9 @@ def _align_prediction_to_reference(
     x_pred = _to_1d_float_array(x_prediction, "x_prediction")
     x_ref = _to_1d_float_array(x_reference, reference_name)
     if pred.size != x_pred.size:
-        raise ValueError("`prediction` va `x_prediction` uzunliklari bir xil bo'lishi kerak")
+        raise ValueError(tr("err.pred_x_lengths"))
     if x_pred.size < 2 or x_ref.size < 2:
-        raise ValueError("Interpolatsiya uchun kamida 2 ta nuqta kerak")
+        raise ValueError(tr("err.interpolation_min_points"))
     order = np.argsort(x_pred)
     x_pred = x_pred[order]
     pred = pred[order]
@@ -1086,7 +1086,7 @@ def _align_prediction_to_reference(
     x_pred = x_pred[unique_mask]
     pred = pred[unique_mask]
     if x_pred.size < 2:
-        raise ValueError("`x_prediction` ichida takrorlanmagan kamida 2 ta nuqta bo'lishi kerak")
+        raise ValueError(tr("err.x_pred_unique_points"))
     from scipy.interpolate import interp1d
     interpolator = interp1d(x_pred, pred, kind="linear", fill_value="extrapolate", assume_sorted=True)
     return np.asarray(interpolator(x_ref), dtype=float).reshape(-1)
@@ -1519,7 +1519,7 @@ def generate_digital_signature(data: bytes, private_key_pem: Optional[bytes] = N
     one-time RSA key when the persistent manager is unavailable.
     """
     if not CRYPTO_AVAILABLE:
-        logger.warning("cryptography not available, using SHA256 as fallback")
+        logger.warning(tr("log.cryptography_unavailable"))
         return hashlib.sha256(data).digest()
     _pkm = globals().get("PersistentKeyManager")
     if _pkm is not None:
@@ -1527,7 +1527,7 @@ def generate_digital_signature(data: bytes, private_key_pem: Optional[bytes] = N
             result = _pkm.sign_with_persistent_key(data)
             return base64.b64decode(result["signature"])
         except Exception as exc:
-            logger.warning(f"PersistentKeyManager failed ({exc}), falling back to one-time key")
+            logger.warning(tr("log.persistent_key_failed", exc=exc))
     # Fallback: one-time RSA-4096 key
     if private_key_pem is None:
         private_key = rsa.generate_private_key(public_exponent=65537, key_size=4096)
@@ -1830,7 +1830,7 @@ class WORMFilesystemStorage:
                 except Exception:
                     pass  # Not all Windows builds expose SetFileAttributesW
         except Exception as chmod_exc:
-            logger.warning(f"WORM: chmod 444 failed on {data_path}: {chmod_exc}")
+            logger.warning(tr("log.worm_chmod_failed", path=data_path, exc=chmod_exc))
 
         # Update manifest (append-only)
         manifest_entry = {
@@ -1856,7 +1856,7 @@ class WORMFilesystemStorage:
         expected_hash = data.get("hash", "")
         actual_hash = hashlib.sha256(json.dumps(record, sort_keys=True, default=_json_default_serializer).encode()).hexdigest()
         if actual_hash != expected_hash:
-            logger.error(f"WORM integrity violation: {filename}")
+            logger.error(tr("log.worm_integrity_violation", filename=filename))
             return None
         return data
 
@@ -1896,7 +1896,7 @@ def compute_validation_metrics(observed: np.ndarray, predicted: np.ndarray) -> E
     obs = np.asarray(observed, dtype=float).reshape(-1)
     pred = np.asarray(predicted, dtype=float).reshape(-1)
     if obs.size != pred.size or obs.size == 0:
-        raise ValueError("Observed va predicted massivlar bir xil uzunlikda va bo'sh bo'lmasligi kerak")
+        raise ValueError(tr("err.obs_pred_same_length"))
     rmse = float(np.sqrt(mean_squared_error(obs, pred)))
     mae = float(mean_absolute_error(obs, pred))
     r2 = float(r2_score(obs, pred))
@@ -1924,7 +1924,7 @@ def compute_validation_metrics_extended(observed: np.ndarray, predicted: np.ndar
     obs = _to_1d_float_array(observed, "observed")
     pred = _to_1d_float_array(predicted, "predicted")
     if obs.size != pred.size:
-        raise ValueError("Observed and predicted must have same length")
+        raise ValueError(tr("err.obs_pred_same_length"))
     
     # Basic metrics
     rmse = float(np.sqrt(mean_squared_error(obs, pred)))
@@ -1986,7 +1986,7 @@ def load_benchmark_dataset(
     if csv_path and Path(csv_path).exists():
         df = pd.read_csv(csv_path)
         if x_col not in df.columns or y_col not in df.columns:
-            raise KeyError(f"{dataset_name} datasetida `{x_col}` va `{y_col}` ustunlari bo'lishi kerak")
+            raise KeyError(tr("err.dataset_columns_missing", name=dataset_name, x=x_col, y=y_col))
         return BenchmarkDataset(
             name=dataset_name,
             x=df[x_col].to_numpy(dtype=float),
@@ -1996,12 +1996,9 @@ def load_benchmark_dataset(
             metadata={"rows": len(df), "columns": list(df.columns)},
         )
     if not ALLOW_SYNTHETIC_BENCHMARK:
-        raise FileNotFoundError(
-            f"{dataset_name} uchun real benchmark fayli kerak. "
-            "ALLOW_SYNTHETIC_BENCHMARK = False, shuning uchun sun'iy ma'lumot ishlatilmaydi."
-        )
+        raise FileNotFoundError(tr("err.benchmark_file_required", name=dataset_name))
     if fallback_x is None or fallback_y is None:
-        raise FileNotFoundError(f"{dataset_name} uchun real eksport berilmadi va fallback ma'lumot ham mavjud emas")
+        raise FileNotFoundError(tr("err.benchmark_export_missing", name=dataset_name))
     return BenchmarkDataset(
         name=dataset_name,
         x=np.asarray(fallback_x, dtype=float),
@@ -2593,12 +2590,12 @@ def calculate_comparison_metrics(
     benchmark_y_arr = _to_1d_float_array(benchmark_y, "benchmark_y")
     domain_info = validate_interpolation_domain(model_x_arr, benchmark_x_arr)
     if not domain_info["has_overlap"]:
-        raise ValueError("Model va benchmark diapazonlari orasida overlap yo'q")
+        raise ValueError(tr("err.no_overlap"))
     mask = domain_info["mask"]
     bench_x_eval = benchmark_x_arr[mask]
     bench_y_eval = benchmark_y_arr[mask]
     if bench_x_eval.size < 2:
-        raise ValueError("Overlap diapazonda kamida 2 ta benchmark nuqta bo'lishi kerak")
+        raise ValueError(tr("err.overlap_min_points"))
     pred = _align_prediction_to_reference(model_y_arr, model_x_arr, bench_x_eval, "benchmark_x")
     errors = pred - bench_y_eval
     
@@ -2751,7 +2748,7 @@ def load_flac3d_benchmark_data(csv_path: Optional[str] = None) -> Dict[str, Any]
     if csv_path is None or not Path(csv_path).exists():
         if not ALLOW_SYNTHETIC_BENCHMARK:
             st.error("FLAC3D benchmark uchun real CSV fayl talab qilinadi. Iltimos, 'Benchmark CSV' yuklang.")
-            raise FileNotFoundError("FLAC3D real benchmark fayli kerak.")
+            raise FileNotFoundError(tr("err.flac3d_file_required"))
         x = np.linspace(0, 50, 100)
         subsidence_flac = -0.3 * (1 - np.exp(-0.02 * x)) * 100
         dataset = load_benchmark_dataset("FLAC3D", csv_path, fallback_x=x, fallback_y=subsidence_flac)
@@ -2773,7 +2770,7 @@ def load_rs2_benchmark_data(csv_path: Optional[str] = None) -> Dict[str, Any]:
     if csv_path is None or not Path(csv_path).exists():
         if not ALLOW_SYNTHETIC_BENCHMARK:
             st.error("RS2 benchmark uchun real CSV fayl talab qilinadi. Iltimos, 'Benchmark CSV' yuklang.")
-            raise FileNotFoundError("RS2 real benchmark fayli kerak.")
+            raise FileNotFoundError(tr("err.rs2_file_required"))
         x = np.linspace(0, 50, 100)
         subsidence_rs2 = -0.28 * (1 - np.exp(-0.018 * x)) * 100
         dataset = load_benchmark_dataset("RS2", csv_path, fallback_x=x, fallback_y=subsidence_rs2)
@@ -2828,7 +2825,7 @@ def _detect_benchmark_columns(df: pd.DataFrame) -> Tuple[str, str]:
     x_col = next((col for col in aliases_x if col in df.columns), None)
     sub_col = next((col for col in aliases_sub if col in df.columns), None)
     if x_col is None or sub_col is None:
-        raise KeyError("Benchmark columns not detected")
+        raise KeyError(tr("err.benchmark_columns_not_detected"))
     return x_col, sub_col
 
 
@@ -2859,7 +2856,7 @@ def _normalize_benchmark_payload(
     x_arr = _to_1d_float_array(x_values, "benchmark_x")
     subs_arr = _to_1d_float_array(subsidence_values, "benchmark_subsidence")
     if x_arr.size != subs_arr.size:
-        raise ValueError("Benchmark `x` va `subsidence` uzunliklari bir xil bo'lishi kerak")
+        raise ValueError(tr("err.benchmark_x_subsidence_length"))
     order = np.argsort(x_arr)
     x_arr = x_arr[order]
     subs_arr = subs_arr[order]
@@ -3111,7 +3108,7 @@ def latin_hypercube_sampling(problem: Dict, n_samples: int = 10000) -> np.ndarra
 def sobol_analysis(problem: Dict, func: Callable, n_samples: int = 10000) -> Dict[str, Any]:
     """Sobol sensitivity analysis (FIX 38)"""
     if not SALIB_AVAILABLE:
-        raise ImportError("SALib not installed. pip install SALib")
+        raise ImportError(tr("err.salib_not_installed"))
     param_values = saltelli.sample(problem, n_samples, calc_second_order=True)
     Y = np.array([func(p) for p in param_values])
     Si = sobol.analyze(problem, Y, calc_second_order=True)
@@ -3130,7 +3127,7 @@ def sobol_analysis(problem: Dict, func: Callable, n_samples: int = 10000) -> Dic
 def fast_analysis(problem: Dict, func: Callable, n_samples: int = 10000) -> Dict[str, Any]:
     """FAST (Fourier Amplitude Sensitivity Test) analysis (FIX 39)"""
     if not SALIB_AVAILABLE:
-        raise ImportError("SALib not installed. pip install SALib")
+        raise ImportError(tr("err.salib_not_installed"))
     param_values = fast.sample(problem, n_samples)
     Y = np.array([func(p) for p in param_values])
     Si = fast.analyze(problem, Y)
@@ -3684,7 +3681,7 @@ def add_image_bytes_to_doc(doc: Document, image_bytes: Optional[bytes], title: s
 def compute_mandatory_explainability_report(model: Any, X: np.ndarray, feature_names: List[str]) -> ExplainabilityArtifact:
     X_arr = np.asarray(X, dtype=float)
     if X_arr.ndim != 2:
-        raise ValueError("Explainability uchun X ikki o'lchamli bo'lishi kerak")
+        raise ValueError(tr("err.explainability_2d"))
     
     # FIX 31: Permutation Importance as fallback
     if SHAP_AVAILABLE:
@@ -3715,7 +3712,7 @@ def compute_mandatory_explainability_report(model: Any, X: np.ndarray, feature_n
         summary_df = pd.DataFrame({"feature": feature_names, "mean_abs_shap": model.feature_importances_}).sort_values("mean_abs_shap", ascending=False)
         return ExplainabilityArtifact(feature_importance=fi, shap_summary=summary_df, backend="feature_importances")
     
-    raise RuntimeError("No explainability method available")
+    raise RuntimeError(tr("err.no_explainability_method"))
 
 
 def compute_shap_with_sampling(model: Any, X: np.ndarray, feature_names: Optional[List[str]] = None,
@@ -3729,7 +3726,7 @@ def compute_shap_with_sampling(model: Any, X: np.ndarray, feature_names: Optiona
     """
     X_arr = np.asarray(X, dtype=float)
     if X_arr.ndim != 2:
-        raise ValueError("X must be 2D")
+        raise ValueError(tr("err.explainability_2d"))
 
     n_samples_orig = X_arr.shape[0]
     feature_names = feature_names or [f"feature_{i}" for i in range(X_arr.shape[1])]
@@ -3739,7 +3736,7 @@ def compute_shap_with_sampling(model: Any, X: np.ndarray, feature_names: Optiona
         rng = np.random.default_rng(seed=RANDOM_SEED)
         idx = rng.choice(n_samples_orig, size=max_samples, replace=False)
         X_sample = X_arr[idx]
-        logger.info(f"SHAP: Sampled {max_samples} from {n_samples_orig} rows to limit RAM")
+        logger.info(tr("log.shap_sampled", sampled=max_samples, total=n_samples_orig))
     else:
         X_sample = X_arr
 
@@ -3795,7 +3792,7 @@ def compute_shap_with_sampling(model: Any, X: np.ndarray, feature_names: Optiona
                 summary_df = pd.DataFrame({"feature": feature_names, "mean_abs_shap": mean_abs}).sort_values("mean_abs_shap", ascending=False)
                 return {"feature_importance": fi, "shap_summary": summary_df, "backend": "shap_sampled", "n_samples_used": n_used}
         except Exception as exc:
-            logger.warning(f"SHAP failed even with sampling: {exc}")
+            logger.warning(tr("log.shap_failed", exc=exc))
 
     # Fallback: permutation importance
     if PERM_IMP_AVAILABLE:
@@ -3810,7 +3807,7 @@ def compute_shap_with_sampling(model: Any, X: np.ndarray, feature_names: Optiona
         summary_df = pd.DataFrame({"feature": feature_names, "mean_abs_shap": model.feature_importances_}).sort_values("mean_abs_shap", ascending=False)
         return {"feature_importance": fi, "shap_summary": summary_df, "backend": "feature_importances_sampled", "n_samples_used": n_used}
 
-    raise RuntimeError("No explainability method available")
+    raise RuntimeError(tr("err.no_explainability_method"))
 
 
 
@@ -3819,11 +3816,11 @@ def lime_explain(model, X: np.ndarray, feature_names: List[str], class_names: Li
                  n_samples: int = 1000) -> Dict[str, Any]:
     """LIME explainability (FIX 32)"""
     if not LIME_AVAILABLE:
-        raise ImportError("LIME not installed. pip install lime")
+        raise ImportError(tr("err.lime_not_installed"))
     
     X_arr = np.asarray(X, dtype=float)
     if X_arr.ndim != 2:
-        raise ValueError("X must be 2D")
+        raise ValueError(tr("err.explainability_2d"))
     
     explainer = lime.lime_tabular.LimeTabularExplainer(
         X_arr, feature_names=feature_names, class_names=class_names or ["target"],
@@ -3846,7 +3843,7 @@ def partial_dependence_plot(model, X: np.ndarray, feature_idx: int, feature_name
     """Partial Dependence Plot (FIX 33)"""
     X_arr = np.asarray(X, dtype=float)
     if X_arr.ndim != 2:
-        raise ValueError("X must be 2D")
+        raise ValueError(tr("err.explainability_2d"))
     
     feature_values = np.linspace(np.min(X_arr[:, feature_idx]), np.max(X_arr[:, feature_idx]), grid_resolution)
     X_modified = X_arr.copy()
@@ -3868,7 +3865,7 @@ def ice_curves(model, X: np.ndarray, feature_idx: int, feature_name: str,
     """ICE (Individual Conditional Expectation) Curves (FIX 34)"""
     X_arr = np.asarray(X, dtype=float)
     if X_arr.ndim != 2:
-        raise ValueError("X must be 2D")
+        raise ValueError(tr("err.explainability_2d"))
     
     # Select random subset
     idx = np.random.choice(len(X_arr), size=min(n_samples, len(X_arr)), replace=False)
@@ -3948,15 +3945,15 @@ def element_stiffness_3d(
     """
     # ── Input validation (proper exception handling) ──────────────────
     if not isinstance(node_coords, np.ndarray):
-        raise FEMMeshError(f"node_coords must be np.ndarray, got {type(node_coords).__name__}")
+        raise FEMMeshError(tr("err.fem_node_coords_type", type=type(node_coords).__name__))
     if node_coords.shape != (8, 3):
         raise FEMMeshError(
             f"node_coords must have shape (8, 3), got {node_coords.shape}"
         )
     if not np.all(np.isfinite(node_coords)):
-        raise FEMMeshError("node_coords contains non-finite values (NaN/Inf)")
+        raise FEMMeshError(tr("err.fem_node_coords_finite"))
     if E <= 0:
-        raise FEMMaterialError(f"Young's modulus E must be > 0, got E={E}")
+        raise FEMMaterialError(tr("err.fem_E_positive", E=E))
     if not (-1.0 <= nu <= 0.5):
         raise FEMMaterialError(
             f"Poisson's ratio nu must be in [-1, 0.5], got nu={nu}"
@@ -5004,9 +5001,9 @@ class DatabaseMigrationManager:
                     )
                     conn_provider.commit()
                     applied.append(mig["version"])
-                    logger.info(f"Migration {mig['version']} ({mig['name']}) applied")
+                    logger.info(tr("log.migration_applied", version=mig['version'], name=mig['name']))
         except Exception as exc:
-            logger.error(f"Migration failed: {exc}")
+            logger.error(tr("log.migration_failed", exc=exc))
             if conn_provider:
                 conn_provider.rollback()
         finally:
@@ -5294,7 +5291,7 @@ def compute_statistical_significance(observed: np.ndarray, predicted: np.ndarray
     obs = _to_1d_float_array(observed, "observed")
     pred = _to_1d_float_array(predicted, "predicted")
     if obs.size != pred.size:
-        raise ValueError("Observed and predicted must have same length")
+        raise ValueError(tr("err.obs_pred_same_length"))
     diff = obs - pred
     t_stat, p_val = ttest_rel(obs, pred)
     n = len(diff)
@@ -5323,7 +5320,7 @@ def cross_validate_model(X: np.ndarray, y: np.ndarray, model_type: str = "rf", c
     X_arr = np.asarray(X)
     y_arr = np.asarray(y)
     if len(X_arr) < cv:
-        raise ValueError(f"Too few samples ({len(X_arr)}) for {cv}-fold CV")
+        raise ValueError(tr("err.too_few_samples_cv", n=len(X_arr), cv=cv))
     if model_type == "rf_classifier":
         from sklearn.ensemble import RandomForestClassifier
         model = RandomForestClassifier(n_estimators=100, random_state=RANDOM_SEED, n_jobs=-1)
@@ -5335,7 +5332,7 @@ def cross_validate_model(X: np.ndarray, y: np.ndarray, model_type: str = "rf", c
         kf = KFold(n_splits=cv, shuffle=True, random_state=RANDOM_SEED)
         scores = cross_val_score(model, X_arr, y_arr, cv=kf, scoring=scoring)
     else:
-        raise ValueError("model_type must be 'rf_classifier' or 'rf_regressor'")
+        raise ValueError(tr("err.invalid_model_type"))
     return {
         "mean": float(np.mean(scores)),
         "std": float(np.std(scores)),
@@ -5347,7 +5344,7 @@ def cross_validate_model(X: np.ndarray, y: np.ndarray, model_type: str = "rf", c
 
 def global_sensitivity_analysis(problem: Dict, func: Callable, method: str = "sobol", N: int = 10000) -> Dict[str, Any]:
     if not SALIB_AVAILABLE:
-        raise ImportError("SALib not installed. pip install SALib")
+        raise ImportError(tr("err.salib_not_installed"))
     if method == "sobol":
         param_values = saltelli.sample(problem, N, calc_second_order=True)
         Y = np.array([func(p) for p in param_values])
@@ -5380,7 +5377,7 @@ def global_sensitivity_analysis(problem: Dict, func: Callable, method: str = "so
             "S1": {name: float(val) for name, val in zip(problem["names"], Si["S1"])},
         }
     else:
-        raise ValueError("method must be 'sobol', 'morris', or 'fast'")
+        raise ValueError(tr("err.invalid_sensitivity_method"))
 
 
 def load_experimental_dataset(csv_path: str, dataset_type: str = "field") -> Optional[BenchmarkDataset]:
@@ -5673,7 +5670,7 @@ def patent_analysis_ui(ucg_subsidence_cm: np.ndarray, x_axis: np.ndarray):
             flac_data = external_benchmark
             rs2_data = external_benchmark
         else:
-            st.error("Real benchmark CSV is required. Please upload a file.")
+            st.error(tr("msg.benchmark_data_required"))
             return
 
         soft_version = external_benchmark.get("software_version")
@@ -5987,7 +5984,7 @@ class InputValidator:
     @staticmethod
     def validate_temperature(value: Union[int, float], level: ValidationLevel = ValidationLevel.NORMAL) -> float:
         if not isinstance(value, (int, float)):
-            raise TypeError(f"Temperature float bo'lishi kerak, {type(value)} berildi")
+            raise TypeError(tr("err.temperature_float", type=type(value).__name__))
         ranges = {
             ValidationLevel.LENIENT: (-100, 2000),
             ValidationLevel.NORMAL: (-50, 1500),
@@ -5995,13 +5992,13 @@ class InputValidator:
         }
         min_t, max_t = ranges[level]
         if not (min_t <= value <= max_t):
-            raise ValueError(f"Temperature [{min_t}, {max_t}]°C diapazonida bo'lishi kerak")
+            raise ValueError(tr("err.temperature_range", min_t=min_t, max_t=max_t))
         return float(value)
     
     @staticmethod
     def validate_pressure(value: Union[int, float], level: ValidationLevel = ValidationLevel.NORMAL) -> float:
         if not isinstance(value, (int, float)):
-            raise TypeError(f"Pressure float bo'lishi kerak, {type(value)} berildi")
+            raise TypeError(tr("err.pressure_float", type=type(value).__name__))
         ranges = {
             ValidationLevel.LENIENT: (-1, 150),
             ValidationLevel.NORMAL: (0, 100),
@@ -6009,15 +6006,15 @@ class InputValidator:
         }
         min_p, max_p = ranges[level]
         if not (min_p <= value <= max_p):
-            raise ValueError(f"Pressure [{min_p}, {max_p}] bar diapazonida bo'lishi kerak")
+            raise ValueError(tr("err.pressure_range", min_p=min_p, max_p=max_p))
         return float(value)
     
     @staticmethod
     def validate_gas_concentration(value: Union[int, float], gas_name: str = "CO") -> float:
         if not isinstance(value, (int, float)):
-            raise TypeError(f"{gas_name} concentration float bo'lishi kerak, {type(value)} berildi")
+            raise TypeError(tr("err.gas_concentration_float", gas_name=gas_name, type=type(value).__name__))
         if not (0 <= value <= 100):
-            raise ValueError(f"{gas_name} concentration [0, 100]% oralig'ida bo'lishi kerak")
+            raise ValueError(tr("err.gas_concentration_range", gas_name=gas_name))
         return float(value)
 
 
@@ -6056,17 +6053,17 @@ def performance_monitor(operation_name: str):
                 process = psutil.Process()
                 end_memory = process.memory_info().rss / (1024**2)
                 memory_used = end_memory - start_memory
-                logger.info(f"✓ {operation_name}: {elapsed_time:.3f}s | Memory: {memory_used:+.1f} MB")
+                logger.info(tr("log.op_completed", operation_name=operation_name, elapsed_time=elapsed_time, memory_used=memory_used))
                 if elapsed_time > 30:
-                    logger.warning(f"⚠️ {operation_name} juda uzoq ({elapsed_time:.1f}s)")
+                    logger.warning(tr("log.slow_operation", operation_name=operation_name, elapsed_time=elapsed_time))
                 if memory_used > 500:
-                    logger.warning(f"⚠️ {operation_name} juda ko'p xotira ishlatdi ({memory_used:.1f} MB)")
+                    logger.warning(tr("log.high_memory_usage", operation_name=operation_name, memory_used=memory_used))
             except Exception:
-                logger.info(f"✓ {operation_name}: {elapsed_time:.3f}s")
+                logger.info(tr("log.op_completed_no_mem", operation_name=operation_name, elapsed_time=elapsed_time))
         else:
-            logger.info(f"✓ {operation_name}: {elapsed_time:.3f}s")
+            logger.info(tr("log.op_completed_no_mem", operation_name=operation_name, elapsed_time=elapsed_time))
             if elapsed_time > 30:
-                logger.warning(f"⚠️ {operation_name} juda uzoq ({elapsed_time:.1f}s)")
+                logger.warning(tr("log.slow_operation", operation_name=operation_name, elapsed_time=elapsed_time))
 
 
 # ── Security and sanitization ─────────────────────────────────────────────
@@ -6088,7 +6085,7 @@ def safe_filepath(filename: str, base_dir: str = DEFAULT_REPORT_DIR) -> str:
     os.makedirs(base_dir, exist_ok=True)
     full_path = os.path.join(base_dir, safe_name)
     if not os.path.realpath(full_path).startswith(os.path.realpath(base_dir)):
-        raise ValueError("Insecure path detected")
+        raise ValueError(tr("err.insecure_path"))
     return full_path
 
 def validate_db_input(value: Any, datatype: str) -> Any:
@@ -6110,22 +6107,22 @@ def validate_sensor_data(temperature: float, pressure: float, gas_co: float) -> 
     validated['pressure'] = InputValidator.validate_pressure(pressure, ValidationLevel.NORMAL)
     validated['gas_co'] = InputValidator.validate_gas_concentration(gas_co, "CO")
     if validated['gas_co'] > 30:
-        raise ValueError(f"CO konsentratsiyasi juda yuqori: {validated['gas_co']}%")
+        raise ValueError(tr("err.co_concentration_high", value=validated['gas_co']))
     return validated
 
 def validate_sensor_data_full(data: Dict[str, Any], db_path: str = "ucg_sensors.db") -> bool:
     required_fields = ['sensor_id', 'temperature', 'pressure', 'timestamp']
     for field in required_fields:
         if field not in data:
-            raise ValueError(f"Majburiy maydon yo'q: {field}")
+            raise ValueError(tr("err.missing_field", field=field))
     if not isinstance(data['temperature'], (int, float)):
-        raise TypeError(f"Temperature float bo'lishi kerak, {type(data['temperature'])} berildi")
+        raise TypeError(tr("err.temperature_float", type=type(data['temperature']).__name__))
     if not isinstance(data['pressure'], (int, float)):
-        raise TypeError(f"Pressure float bo'lishi kerak, {type(data['pressure'])} berildi")
+        raise TypeError(tr("err.pressure_float", type=type(data['pressure']).__name__))
     if not (-50 <= data['temperature'] <= 1500):
-        raise ValueError(f"Temperature [-50, 1500]°C oralig'ida bo'lishi kerak")
+        raise ValueError(tr("err.temperature_range", min_t=-50, max_t=1500))
     if not (0 <= data['pressure'] <= 100):
-        raise ValueError(f"Pressure [0, 100] bar oralig'ida bo'lishi kerak")
+        raise ValueError(tr("err.pressure_range", min_p=0, max_p=100))
     safe_sensor_id = sanitize_input(str(data['sensor_id']))
     try:
         conn = sqlite3.connect(db_path)
@@ -6231,11 +6228,11 @@ class SoilWaterState:
     
     def __post_init__(self):
         if not (0 <= self.saturation_ratio <= 1):
-            raise ValueError("Saturation must be 0-1")
+            raise ValueError(tr("err.saturation_range"))
         if not (0 <= self.porosity <= 1):
-            raise ValueError("Porosity must be 0-1")
+            raise ValueError(tr("err.porosity_range"))
         if not (0 <= self.degree_consolidation <= 1):
-            raise ValueError("Degree consolidation must be 0-1")
+            raise ValueError(tr("err.consolidation_range"))
 
 def compute_biot_coefficient_adaptive(state: SoilWaterState) -> float:
     Sr = state.saturation_ratio
@@ -6785,6 +6782,486 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
     }
 }
 
+# ============================================================================
+# PATENT-GRADE I18N INFRASTRUCTURE — MESSAGE_STRINGS + tr() helper
+# ============================================================================
+# FIX (language mixing): the codebase previously had hardcoded messages in
+# three languages (English, Uzbek, Russian) sprinkled throughout raise
+# statements, logger calls, and st.* UI methods. This module centralizes all
+# translatable message strings into MESSAGE_STRINGS and exposes a single
+# `tr(key, **kwargs)` function that:
+#   1. Resolves the active language from Streamlit session_state when running
+#      inside the UI (so the user's selected language drives every message).
+#   2. Falls back to the UCG_LANG environment variable (default "en") for
+#      non-UI contexts: unit tests, library use, CLI sub-commands, headless
+#      servers. English is the international standard for code/library
+#      messages per ISO/IEC 25010 (Maintainability — Localizability).
+#   3. Falls back to the key itself if no translation is registered — so the
+#      function never raises and is safe to call from any context.
+#
+# Naming convention for keys:
+#   err.*    — exception messages raised by raise ValueError(...) etc.
+#   log.*    — logger.info/warning/error(...) messages
+#   msg.*    — st.success/info/warning/error(...) UI status messages
+#   ui.*     — UI labels not in the existing TRANSLATIONS dict
+#
+# Usage:
+#   raise ValueError(tr("err.obs_pred_same_length"))
+#   logger.warning(tr("log.persistent_key_unavailable"))
+#   st.error(tr("msg.high_risk"))
+#   raise FEMMeshError(tr("err.fem_node_coords_shape", shape=node_coords.shape))
+# ============================================================================
+
+MESSAGE_STRINGS: Dict[str, Dict[str, str]] = {
+    # ════════════════════════════════════════════════════════════════════════
+    # ENGLISH (default for non-UI / library contexts)
+    # ════════════════════════════════════════════════════════════════════════
+    'en': {
+        # ── raise / exception messages ────────────────────────────────────
+        'err.empty_command': "safe_run_command: empty command",
+        'err.binary_payload': "safe_loads: payload is binary and not UTF-8 — refusing to deserialize",
+        'err.cannot_deserialize': "safe_loads: cannot deserialize payload safely: {exc}",
+        'err.unsupported_subprocess': "Unsupported subprocess command: {normalized}",
+        'err.name_not_empty': "`{name}` must not be empty",
+        'err.name_numbers_only': "`{name}` must contain only finite numbers",
+        'err.pred_x_lengths': "`prediction` and `x_prediction` must have the same length",
+        'err.interpolation_min_points': "At least 2 points required for interpolation",
+        'err.x_pred_unique_points': "`x_prediction` must contain at least 2 unique non-duplicate points",
+        'err.obs_pred_same_length': "Observed and predicted must have the same length and must not be empty",
+        'err.dataset_columns_missing': "Dataset `{name}` must contain `{x}` and `{y}` columns",
+        'err.benchmark_file_required': "Real benchmark file required for `{name}`. ALLOW_SYNTHETIC_BENCHMARK = False, so synthetic data is not used.",
+        'err.benchmark_export_missing': "No real export provided for `{name}` and no fallback data available",
+        'err.no_overlap': "No overlap between model and benchmark domains",
+        'err.overlap_min_points': "Overlap range must contain at least 2 benchmark points",
+        'err.flac3d_file_required': "FLAC3D real benchmark file required.",
+        'err.rs2_file_required': "RS2 real benchmark file required.",
+        'err.benchmark_columns_not_detected': "Benchmark columns could not be detected",
+        'err.benchmark_x_subsidence_length': "Benchmark `x` and `subsidence` must have the same length",
+        'err.explainability_2d': "X must be 2D for explainability",
+        'err.no_explainability_method': "No explainability method available",
+        'err.lime_not_installed': "LIME not installed. Install with: pip install lime",
+        'err.salib_not_installed': "SALib not installed. Install with: pip install SALib",
+        'err.too_few_samples_cv': "Too few samples ({n}) for {cv}-fold cross-validation",
+        'err.invalid_model_type': "model_type must be 'rf_classifier' or 'rf_regressor'",
+        'err.invalid_sensitivity_method': "method must be 'sobol', 'morris', or 'fast'",
+        'err.temperature_float': "Temperature must be a float, got {type}",
+        'err.temperature_range': "Temperature must be in [{min_t}, {max_t}] °C range",
+        'err.pressure_float': "Pressure must be a float, got {type}",
+        'err.pressure_range': "Pressure must be in [{min_p}, {max_p}] bar range",
+        'err.gas_concentration_float': "{gas_name} concentration must be a float, got {type}",
+        'err.gas_concentration_range': "{gas_name} concentration must be in [0, 100] % range",
+        'err.insecure_path': "Insecure path detected",
+        'err.co_concentration_high': "CO concentration too high: {value}%",
+        'err.missing_field': "Missing required field: {field}",
+        'err.saturation_range': "Saturation must be in [0, 1]",
+        'err.porosity_range': "Porosity must be in [0, 1]",
+        'err.consolidation_range': "Degree of consolidation must be in [0, 1]",
+        'err.parallel_fos_shape': "All 2D arrays must have the same shape for parallel FOS",
+        'err.composition_positive': "Composition must have a positive total",
+        'err.expected_7_features': "Expected 7 features, got {n}",
+        'err.file_too_large': "File {file_size_mb:.1f} MB exceeds {max_size_mb} MB limit",
+        'err.columns_missing': "Missing columns: {missing}",
+        'err.cryptography_required': "cryptography library required for RSA key management",
+        'err.unsupported_solver': "Unsupported solver: {solver}. Use 'abaqus', 'comsol', or 'ansys'.",
+        'err.min_1000_samples': "Need ≥1000 samples, got {n}",
+        'err.invalid_expression': "Invalid expression: {e}",
+        'err.forbidden_node_type': "Forbidden node type: {type}",
+        'err.variable_not_allowed': "Variable not allowed: {name}",
+        'err.fem_node_coords_type': "node_coords must be np.ndarray, got {type}",
+        'err.fem_node_coords_shape': "node_coords must have shape (8, 3), got {shape}",
+        'err.fem_node_coords_finite': "node_coords contains non-finite values (NaN/Inf)",
+        'err.fem_E_positive': "Young's modulus E must be > 0, got E={E}",
+        'err.fem_nu_range': "Poisson's ratio nu must be in [-1, 0.5], got nu={nu}",
+
+        # ── logger messages ────────────────────────────────────────────────
+        'log.persistent_key_unavailable': "PersistentKeyManager not available — returning unsigned record",
+        'log.signing_failed': "PersistentKeyManager.sign_with_persistent_key failed: {exc}",
+        'log.boto3_unavailable': "boto3 not available — WORM backend falling back to local",
+        'log.azure_unavailable': "azure-storage-blob not available — WORM backend falling back to local",
+        'log.vault_auth_failed': "Vault auth failed — falling back to env",
+        'log.hvac_not_installed': "hvac not installed — secrets backend falling back to env",
+        'log.azure_kv_not_installed': "azure-identity / azure-keyvault-secrets not installed — falling back to env",
+        'log.boto3_not_installed': "boto3 not installed — secrets backend falling back to env",
+        'log.torch_unavailable': "PyTorch not available. CPU fallback activated.",
+        'log.pymc_unavailable': "PyMC not available. Using improved Metropolis-Hastings with adaptive step size.",
+        'log.shap_unavailable': "SHAP not available. Using permutation importance fallback.",
+        'log.shap_failed': "SHAP failed even with sampling: {exc}",
+        'log.shap_sampled': "SHAP: Sampled {sampled} from {total} rows to limit RAM",
+        'log.web3_unavailable': "web3.py not installed. Blockchain connector in offline mode (SQLite fallback).",
+        'log.sentence_transformer_unavailable': "SentenceTransformer not available; using TF-IDF fallback",
+        'log.cryptography_unavailable': "cryptography not available, using SHA256 as fallback",
+        'log.vault_connected': "HashiCorp Vault connected",
+        'log.db_backend_fallback_pg': "UCG_DB_BACKEND=postgresql but psycopg2 not installed — falling back to SQLite. Install with: pip install psycopg2-binary",
+        'log.db_backend_fallback_dsn': "UCG_DB_BACKEND=postgresql but UCG_POSTGRES_DSN is empty — falling back to SQLite. Set UCG_POSTGRES_DSN env var or use UCG_DB_BACKEND=sqlite.",
+        'log.blockchain_key_from_env': "BlockchainConnectorV2: loaded BLOCKCHAIN_PRIVATE_KEY from env var. For better security, install `keyring` and store the key with: python -c \"import keyring; keyring.set_password('ucg_platform', 'blockchain_private_key', '0x...')\"",
+        'log.secrets_env_gitignore': "SecretsManager: .env file exists in CWD but .gitignore does not list '.env'. ADD '.env' TO .gitignore IMMEDIATELY — secrets in .env must NEVER be committed.",
+        'log.secrets_env_dev_grade': "SecretsManager: using 'env' backend (dev-grade). For production, install hvac + set UCG_SECRETS_BACKEND=vault, or use azure_kv / aws_sm.",
+        'log.worm_chmod_failed': "WORM: chmod 444 failed on {path}: {exc}",
+        'log.persistent_key_failed': "PersistentKeyManager failed ({exc}), falling back to one-time key",
+        'log.migration_failed': "Migration failed: {exc}",
+        'log.migration_applied': "Migration {version} ({name}) applied",
+        'log.real_scibert_failed': "RealSciBERTNovelty: failed to load SciBERT ({exc}); using TF-IDF fallback",
+        'log.cybersec_safe_eval_failed': "CybersecurityHardening.safe_eval failed ({exc}); falling back to ast.literal_eval",
+        'log.worm_integrity_violation': "WORM integrity violation: {filename}",
+        'log.db_backup_created': "Database backup created: {path}",
+        'log.parallel_mc': "Parallel MC: {n} simulations with {workers} workers",
+        'log.shap_tree_failed': "SHAP TreeExplainer failed; retrying without background data",
+        'log.external_api_offline': "[offline] {api} call skipped: {url}",
+        'log.external_api_skipped': "{api}: requests library not available — call skipped",
+        'log.external_api_http': "{api} HTTP {status}: {url}",
+        'log.external_api_failed': "{api} call failed: {exc}",
+
+        # ── UI status messages (st.success / st.warning / st.error / st.info) ──
+        'msg.high_risk': "⚠️ High risk! Immediate action required.",
+        'msg.medium_risk': "⚠️ Medium risk. Increase monitoring frequency.",
+        'msg.low_risk': "✅ Low risk. System currently safe.",
+        'msg.monitoring_stopped': "Monitoring stopped.",
+        'msg.denominator_zero': "Denominator is zero, cannot calculate relative change.",
+        'msg.rdflib_not_installed': "rdflib not installed — install with: pip install rdflib",
+        'msg.benchmark_data_required': "Real benchmark CSV is required. Please upload a file.",
+        'msg.pytorch_warning': "⚠️ PyTorch not installed. RandomForestClassifier will be used.",
+        'msg.min_one_layer': "❌ Enter at least 1 layer!",
+        'log.high_memory_usage': "⚠️ {operation_name} is using too much memory ({memory_used:.1f} MB)",
+        'log.slow_operation': "⚠️ {operation_name} is taking too long ({elapsed_time:.1f}s)",
+        'log.op_completed': "✓ {operation_name}: {elapsed_time:.3f}s | Memory: {memory_used:+.1f} MB",
+        'log.op_completed_no_mem': "✓ {operation_name}: {elapsed_time:.3f}s",
+        'msg.csv_rows_dropped': "⚠️ {n_dropped} rows could not be converted to numbers and were dropped (validate_sensor_csv).",
+        'msg.python_docx_not_installed': "python-docx is not installed!",
+        'msg.preset_configure_manually': "Preset: {selected_preset} — configure settings manually in the layers section.",
+    },
+
+    # ════════════════════════════════════════════════════════════════════════
+    # UZBEK (Latin script)
+    # ════════════════════════════════════════════════════════════════════════
+    'uz': {
+        # ── raise / exception messages ────────────────────────────────────
+        'err.empty_command': "safe_run_command: bo'sh buyruq",
+        'err.binary_payload': "safe_loads: payload ikkilik (binary) va UTF-8 emas — deserializatsiyadan bosh tortildi",
+        'err.cannot_deserialize': "safe_loads: payloadni xavfsiz deserializatsiya qilib bo'lmadi: {exc}",
+        'err.unsupported_subprocess': "Qo'llab-quvvatlanmaydigan subprocess buyrug'i: {normalized}",
+        'err.name_not_empty': "`{name}` bo'sh bo'lmasligi kerak",
+        'err.name_numbers_only': "`{name}` ichida faqat chekli sonlar bo'lishi kerak",
+        'err.pred_x_lengths': "`prediction` va `x_prediction` uzunliklari bir xil bo'lishi kerak",
+        'err.interpolation_min_points': "Interpolatsiya uchun kamida 2 ta nuqta kerak",
+        'err.x_pred_unique_points': "`x_prediction` ichida takrorlanmagan kamida 2 ta nuqta bo'lishi kerak",
+        'err.obs_pred_same_length': "Observed va predicted massivlar bir xil uzunlikda va bo'sh bo'lmasligi kerak",
+        'err.dataset_columns_missing': "{name} datasetida `{x}` va `{y}` ustunlari bo'lishi kerak",
+        'err.benchmark_file_required': "{name} uchun real benchmark fayli kerak. ALLOW_SYNTHETIC_BENCHMARK = False, shuning uchun sun'iy ma'lumot ishlatilmaydi.",
+        'err.benchmark_export_missing': "{name} uchun real eksport berilmadi va fallback ma'lumot ham mavjud emas",
+        'err.no_overlap': "Model va benchmark diapazonlari orasida overlap yo'q",
+        'err.overlap_min_points': "Overlap diapazonda kamida 2 ta benchmark nuqta bo'lishi kerak",
+        'err.flac3d_file_required': "FLAC3D real benchmark fayli kerak.",
+        'err.rs2_file_required': "RS2 real benchmark fayli kerak.",
+        'err.benchmark_columns_not_detected': "Benchmark ustunlari aniqlanmadi",
+        'err.benchmark_x_subsidence_length': "Benchmark `x` va `subsidence` uzunliklari bir xil bo'lishi kerak",
+        'err.explainability_2d': "Explainability uchun X ikki o'lchamli bo'lishi kerak",
+        'err.no_explainability_method': "Hech qanday explainability usuli mavjud emas",
+        'err.lime_not_installed': "LIME o'rnatilmagan. O'rnatish: pip install lime",
+        'err.salib_not_installed': "SALib o'rnatilmagan. O'rnatish: pip install SALib",
+        'err.too_few_samples_cv': "Namunalar juda oz ({n}) — {cv}-fold CV uchun yetarli emas",
+        'err.invalid_model_type': "model_type 'rf_classifier' yoki 'rf_regressor' bo'lishi kerak",
+        'err.invalid_sensitivity_method': "method 'sobol', 'morris' yoki 'fast' bo'lishi kerak",
+        'err.temperature_float': "Temperature float bo'lishi kerak, {type} berildi",
+        'err.temperature_range': "Temperature [{min_t}, {max_t}]°C diapazonida bo'lishi kerak",
+        'err.pressure_float': "Pressure float bo'lishi kerak, {type} berildi",
+        'err.pressure_range': "Pressure [{min_p}, {max_p}] bar diapazonida bo'lishi kerak",
+        'err.gas_concentration_float': "{gas_name} konsentratsiyasi float bo'lishi kerak, {type} berildi",
+        'err.gas_concentration_range': "{gas_name} konsentratsiyasi [0, 100]% oralig'ida bo'lishi kerak",
+        'err.insecure_path': "Xavfsiz bo'lmagan yo'l aniqlandi",
+        'err.co_concentration_high': "CO konsentratsiyasi juda yuqori: {value}%",
+        'err.missing_field': "Majburiy maydon yo'q: {field}",
+        'err.saturation_range': "Saturation 0-1 oralig'ida bo'lishi kerak",
+        'err.porosity_range': "Porosity 0-1 oralig'ida bo'lishi kerak",
+        'err.consolidation_range': "Consolidation darajasi 0-1 oralig'ida bo'lishi kerak",
+        'err.parallel_fos_shape': "Parallel FOS uchun barcha 2D massivlar bir xil shape ga ega bo'lishi kerak",
+        'err.composition_positive': "Kompozitsiyaning umumiy qiymati musbat bo'lishi kerak",
+        'err.expected_7_features': "7 ta feature kutilgan, {n} ta berildi",
+        'err.file_too_large': "Fayl {file_size_mb:.1f} MB — {max_size_mb} MB dan katta!",
+        'err.columns_missing': "Ustunlar yo'q: {missing}",
+        'err.cryptography_required': "RSA kalit boshqaruvi uchun cryptography kutubxonasi kerak",
+        'err.unsupported_solver': "Qo'llab-quvvatlanmaydigan solver: {solver}. 'abaqus', 'comsol' yoki 'ansys' ishlating.",
+        'err.min_1000_samples': "Kamida 1000 namuna kerak, {n} ta berildi",
+        'err.invalid_expression': "Yaroqsiz ifoda: {e}",
+        'err.forbidden_node_type': "Taqiqlangan node turi: {type}",
+        'err.variable_not_allowed': "Ruxsat etilmagan o'zgaruvchi: {name}",
+        'err.fem_node_coords_type': "node_coords np.ndarray bo'lishi kerak, {type} berildi",
+        'err.fem_node_coords_shape': "node_coords shakli (8, 3) bo'lishi kerak, {shape} berildi",
+        'err.fem_node_coords_finite': "node_coords chekli bo'lmagan qiymatlar (NaN/Inf) ni o'z ichiga olmoqda",
+        'err.fem_E_positive': "Young moduli E > 0 bo'lishi kerak, E={E} berildi",
+        'err.fem_nu_range': "Poisson koeffitsiyenti nu [-1, 0.5] oralig'ida bo'lishi kerak, nu={nu} berildi",
+
+        # ── logger messages ────────────────────────────────────────────────
+        'log.persistent_key_unavailable': "PersistentKeyManager mavjud emas — imzolanmagan yozuv qaytarilmoqda",
+        'log.signing_failed': "PersistentKeyManager.sign_with_persistent_key ishlamadi: {exc}",
+        'log.boto3_unavailable': "boto3 mavjud emas — WORM backend local ga qaytmoqda",
+        'log.azure_unavailable': "azure-storage-blob mavjud emas — WORM backend local ga qaytmoqda",
+        'log.vault_auth_failed': "Vault autentifikatsiya ishlamadi — env ga qaytmoqda",
+        'log.hvac_not_installed': "hvac o'rnatilmagan — secrets backend env ga qaytmoqda",
+        'log.azure_kv_not_installed': "azure-identity / azure-keyvault-secrets o'rnatilmagan — env ga qaytmoqda",
+        'log.boto3_not_installed': "boto3 o'rnatilmagan — secrets backend env ga qaytmoqda",
+        'log.torch_unavailable': "PyTorch mavjud emas. CPU fallback faollashtirildi.",
+        'log.pymc_unavailable': "PyMC mavjud emas. Adaptive step size bilan Metropolis-Hastings ishlatilmoqda.",
+        'log.shap_unavailable': "SHAP mavjud emas. Permutation importance fallback ishlatilmoqda.",
+        'log.shap_failed': "SHAP sampling bilan ham ishlamadi: {exc}",
+        'log.shap_sampled': "SHAP: RAMni cheklash uchun {total} qatordan {sampled} tasi tanlandi",
+        'log.web3_unavailable': "web3.py o'rnatilmagan. Blockchain ulagich offline rejimda (SQLite fallback).",
+        'log.sentence_transformer_unavailable': "SentenceTransformer mavjud emas; TF-IDF fallback ishlatilmoqda",
+        'log.cryptography_unavailable': "cryptography mavjud emas, SHA256 fallback sifatida ishlatilmoqda",
+        'log.vault_connected': "HashiCorp Vault ulandi",
+        'log.db_backend_fallback_pg': "UCG_DB_BACKEND=postgresql lekin psycopg2 o'rnatilmagan — SQLite ga qaytilmoqda. O'rnatish: pip install psycopg2-binary",
+        'log.db_backend_fallback_dsn': "UCG_DB_BACKEND=postgresql lekin UCG_POSTGRES_DSN bo'sh — SQLite ga qaytilmoqda. UCG_POSTGRES_DSN env o'zgaruvchisini o'rnating yoki UCG_DB_BACKEND=sqlite ishlating.",
+        'log.blockchain_key_from_env': "BlockchainConnectorV2: BLOCKCHAIN_PRIVATE_KEY env o'zgaruvchisidan o'qildi. Xavfsizlikni oshirish uchun `keyring` ni o'rnating va kalitni saqlang: python -c \"import keyring; keyring.set_password('ucg_platform', 'blockchain_private_key', '0x...')\"",
+        'log.secrets_env_gitignore': "SecretsManager: .env fayli CWD da mavjud lekin .gitignore da '.env' yo'q. '.env' ni .gitignore ga QO'SHING — .env dagi sirler HECH QACHON commit qilinmasligi kerak.",
+        'log.secrets_env_dev_grade': "SecretsManager: 'env' backend ishlatilmoqda (dev-darajasi). Production uchun hvac ni o'rnating + UCG_SECRETS_BACKEND=vault qiling, yoki azure_kv / aws_sm ishlating.",
+        'log.worm_chmod_failed': "WORM: {path} da chmod 444 ishlamadi: {exc}",
+        'log.persistent_key_failed': "PersistentKeyManager ishlamadi ({exc}), bir martalik kalitga qaytilmoqda",
+        'log.migration_failed': "Migration ishlamadi: {exc}",
+        'log.migration_applied': "Migration {version} ({name}) qo'llandi",
+        'log.real_scibert_failed': "RealSciBERTNovelty: SciBERT yuklanmadi ({exc}); TF-IDF fallback ishlatilmoqda",
+        'log.cybersec_safe_eval_failed': "CybersecurityHardening.safe_eval ishlamadi ({exc}); ast.literal_eval ga qaytilmoqda",
+        'log.worm_integrity_violation': "WORM integrity buzilishi: {filename}",
+        'log.db_backup_created': "Ma'lumotlar bazasi zaxira nusxasi yaratildi: {path}",
+        'log.parallel_mc': "Parallel MC: {workers} ta worker bilan {n} ta simulyatsiya",
+        'log.shap_tree_failed': "SHAP TreeExplainer ishlamadi; background datasiz qayta urinilmoqda",
+        'log.external_api_offline': "[offline] {api} chaqiruvi o'tkazib yuborildi: {url}",
+        'log.external_api_skipped': "{api}: requests kutubxonasi mavjud emas — chaqiruv o'tkazib yuborildi",
+        'log.external_api_http': "{api} HTTP {status}: {url}",
+        'log.external_api_failed': "{api} chaqiruvi ishlamadi: {exc}",
+
+        # ── UI status messages ─────────────────────────────────────────────
+        'msg.high_risk': "⚠️ Yuqori xavf! Darhol choralar ko'ring.",
+        'msg.medium_risk': "⚠️ O'rtacha xavf. Monitoring chastotasini oshiring.",
+        'msg.low_risk': "✅ Past xavf. Tizim hozircha xavfsiz.",
+        'msg.monitoring_stopped': "Monitoring to'xtatildi.",
+        'msg.denominator_zero': "Maxraj nolga teng, nisbiy o'zgarishni hisoblab bo'lmadi.",
+        'msg.rdflib_not_installed': "rdflib o'rnatilmagan — o'rnatish: pip install rdflib",
+        'msg.benchmark_data_required': "Real benchmark CSV kerak. Iltimos, fayl yuklang.",
+        'msg.pytorch_warning': "⚠️ PyTorch o'rnatilmagan. RandomForestClassifier ishlatiladi.",
+        'msg.min_one_layer': "❌ Kamida 1 ta qatlam kiriting!",
+        'log.high_memory_usage': "⚠️ {operation_name} juda ko'p xotira ishlatmoqda ({memory_used:.1f} MB)",
+        'log.slow_operation': "⚠️ {operation_name} juda uzoq ({elapsed_time:.1f}s)",
+        'log.op_completed': "✓ {operation_name}: {elapsed_time:.3f}s | Memory: {memory_used:+.1f} MB",
+        'log.op_completed_no_mem': "✓ {operation_name}: {elapsed_time:.3f}s",
+        'msg.csv_rows_dropped': "⚠️ {n_dropped} ta satr raqamga aylantirilmadi va o'chirildi (validate_sensor_csv).",
+        'msg.python_docx_not_installed': "python-docx o'rnatilmagan!",
+        'msg.preset_configure_manually': "Preset: {selected_preset} — sozlamalarni qo'lda qatlamlar bo'limida o'rnating.",
+    },
+
+    # ════════════════════════════════════════════════════════════════════════
+    # RUSSIAN (Cyrillic)
+    # ════════════════════════════════════════════════════════════════════════
+    'ru': {
+        # ── raise / exception messages ────────────────────────────────────
+        'err.empty_command': "safe_run_command: пустая команда",
+        'err.binary_payload': "safe_loads: данные бинарные и не UTF-8 — десериализация отклонена",
+        'err.cannot_deserialize': "safe_loads: невозможно безопасно десериализовать данные: {exc}",
+        'err.unsupported_subprocess': "Неподдерживаемая команда subprocess: {normalized}",
+        'err.name_not_empty': "`{name}` не должно быть пустым",
+        'err.name_numbers_only': "`{name}` должно содержать только конечные числа",
+        'err.pred_x_lengths': "`prediction` и `x_prediction` должны иметь одинаковую длину",
+        'err.interpolation_min_points': "Для интерполяции требуется минимум 2 точки",
+        'err.x_pred_unique_points': "`x_prediction` должен содержать минимум 2 уникальные точки",
+        'err.obs_pred_same_length': "Наблюдаемые и предсказанные массивы должны иметь одинаковую длину и не быть пустыми",
+        'err.dataset_columns_missing': "В наборе данных `{name}` должны быть столбцы `{x}` и `{y}`",
+        'err.benchmark_file_required': "Требуется реальный файл эталонного теста для `{name}`. ALLOW_SYNTHETIC_BENCHMARK = False, поэтому синтетические данные не используются.",
+        'err.benchmark_export_missing': "Для `{name}` не предоставлен реальный экспорт и нет данных для отката",
+        'err.no_overlap': "Нет пересечения между доменами модели и эталона",
+        'err.overlap_min_points': "В диапазоне пересечения должно быть минимум 2 точки эталона",
+        'err.flac3d_file_required': "Требуется реальный файл эталонного теста FLAC3D.",
+        'err.rs2_file_required': "Требуется реальный файл эталонного теста RS2.",
+        'err.benchmark_columns_not_detected': "Столбцы эталона не обнаружены",
+        'err.benchmark_x_subsidence_length': "Эталонные `x` и `subsidence` должны иметь одинаковую длину",
+        'err.explainability_2d': "Для объяснимости X должен быть двумерным",
+        'err.no_explainability_method': "Метод объяснимости недоступен",
+        'err.lime_not_installed': "LIME не установлен. Установите: pip install lime",
+        'err.salib_not_installed': "SALib не установлен. Установите: pip install SALib",
+        'err.too_few_samples_cv': "Слишком мало образцов ({n}) для {cv}-кратной перекрёстной проверки",
+        'err.invalid_model_type': "model_type должен быть 'rf_classifier' или 'rf_regressor'",
+        'err.invalid_sensitivity_method': "method должен быть 'sobol', 'morris' или 'fast'",
+        'err.temperature_float': "Temperature должно быть числом с плавающей точкой, получен {type}",
+        'err.temperature_range': "Temperature должно быть в диапазоне [{min_t}, {max_t}] °C",
+        'err.pressure_float': "Pressure должно быть числом с плавающей точкой, получен {type}",
+        'err.pressure_range': "Pressure должно быть в диапазоне [{min_p}, {max_p}] бар",
+        'err.gas_concentration_float': "Концентрация {gas_name} должна быть числом с плавающей точкой, получен {type}",
+        'err.gas_concentration_range': "Концентрация {gas_name} должна быть в диапазоне [0, 100] %",
+        'err.insecure_path': "Обнаружен небезопасный путь",
+        'err.co_concentration_high': "Концентрация CO слишком высока: {value}%",
+        'err.missing_field': "Отсутствует обязательное поле: {field}",
+        'err.saturation_range': "Saturation должна быть в диапазоне 0-1",
+        'err.porosity_range': "Porosity должна быть в диапазоне 0-1",
+        'err.consolidation_range': "Степень консолидации должна быть в диапазоне 0-1",
+        'err.parallel_fos_shape': "Все двумерные массивы должны иметь одинаковую форму для параллельного FOS",
+        'err.composition_positive': "Сумма композиции должна быть положительной",
+        'err.expected_7_features': "Ожидалось 7 признаков, получено {n}",
+        'err.file_too_large': "Файл {file_size_mb:.1f} МБ превышает лимит {max_size_mb} МБ!",
+        'err.columns_missing': "Отсутствуют столбцы: {missing}",
+        'err.cryptography_required': "Для управления RSA-ключами требуется библиотека cryptography",
+        'err.unsupported_solver': "Неподдерживаемый решатель: {solver}. Используйте 'abaqus', 'comsol' или 'ansys'.",
+        'err.min_1000_samples': "Требуется ≥1000 образцов, получено {n}",
+        'err.invalid_expression': "Недопустимое выражение: {e}",
+        'err.forbidden_node_type': "Запрещённый тип узла: {type}",
+        'err.variable_not_allowed': "Переменная не разрешена: {name}",
+        'err.fem_node_coords_type': "node_coords должен быть np.ndarray, получен {type}",
+        'err.fem_node_coords_shape': "node_coords должен иметь форму (8, 3), получена {shape}",
+        'err.fem_node_coords_finite': "node_coords содержит неконечные значения (NaN/Inf)",
+        'err.fem_E_positive': "Модуль Юнга E должен быть > 0, получено E={E}",
+        'err.fem_nu_range': "Коэффициент Пуассона nu должен быть в диапазоне [-1, 0.5], получено nu={nu}",
+
+        # ── logger messages ────────────────────────────────────────────────
+        'log.persistent_key_unavailable': "PersistentKeyManager недоступен — возвращается неподписанная запись",
+        'log.signing_failed': "PersistentKeyManager.sign_with_persistent_key не сработал: {exc}",
+        'log.boto3_unavailable': "boto3 недоступен — WORM-сервер переключается на локальный",
+        'log.azure_unavailable': "azure-storage-blob недоступен — WORM-сервер переключается на локальный",
+        'log.vault_auth_failed': "Ошибка аутентификации Vault — переключение на env",
+        'log.hvac_not_installed': "hvac не установлен — secrets-сервер переключается на env",
+        'log.azure_kv_not_installed': "azure-identity / azure-keyvault-secrets не установлены — переключение на env",
+        'log.boto3_not_installed': "boto3 не установлен — secrets-сервер переключается на env",
+        'log.torch_unavailable': "PyTorch недоступен. Активирован резервный CPU-режим.",
+        'log.pymc_unavailable': "PyMC недоступен. Используется улучшенный Metropolis-Hastings с адаптивным шагом.",
+        'log.shap_unavailable': "SHAP недоступен. Используется резерв permutation importance.",
+        'log.shap_failed': "SHAP не сработал даже с выборкой: {exc}",
+        'log.shap_sampled': "SHAP: выбрано {sampled} из {total} строк для ограничения ОЗУ",
+        'log.web3_unavailable': "web3.py не установлен. Подключатель блокчейна в офлайн-режиме (резерв SQLite).",
+        'log.sentence_transformer_unavailable': "SentenceTransformer недоступен; используется резерв TF-IDF",
+        'log.cryptography_unavailable': "cryptography недоступен, SHA256 используется как резерв",
+        'log.vault_connected': "HashiCorp Vault подключён",
+        'log.db_backend_fallback_pg': "UCG_DB_BACKEND=postgresql, но psycopg2 не установлен — переключение на SQLite. Установите: pip install psycopg2-binary",
+        'log.db_backend_fallback_dsn': "UCG_DB_BACKEND=postgresql, но UCG_POSTGRES_DSN пуст — переключение на SQLite. Установите переменную окружения UCG_POSTGRES_DSN или используйте UCG_DB_BACKEND=sqlite.",
+        'log.blockchain_key_from_env': "BlockchainConnectorV2: BLOCKCHAIN_PRIVATE_KEY загружен из переменной окружения. Для повышения безопасности установите `keyring` и сохраните ключ: python -c \"import keyring; keyring.set_password('ucg_platform', 'blockchain_private_key', '0x...')\"",
+        'log.secrets_env_gitignore': "SecretsManager: файл .env существует в CWD, но .gitignore не содержит '.env'. НЕМЕДЛЕННО ДОБАВЬТЕ '.env' В .gitignore — секреты в .env НИКОГДА не должны попадать в коммит.",
+        'log.secrets_env_dev_grade': "SecretsManager: используется сервер 'env' (dev-уровень). Для production установите hvac + задайте UCG_SECRETS_BACKEND=vault, либо используйте azure_kv / aws_sm.",
+        'log.worm_chmod_failed': "WORM: chmod 444 не сработал для {path}: {exc}",
+        'log.persistent_key_failed': "PersistentKeyManager не сработал ({exc}), переключение на одноразовый ключ",
+        'log.migration_failed': "Миграция не удалась: {exc}",
+        'log.migration_applied': "Миграция {version} ({name}) применена",
+        'log.real_scibert_failed': "RealSciBERTNovelty: не удалось загрузить SciBERT ({exc}); используется резерв TF-IDF",
+        'log.cybersec_safe_eval_failed': "CybersecurityHardening.safe_eval не сработал ({exc}); переключение на ast.literal_eval",
+        'log.worm_integrity_violation': "Нарушение целостности WORM: {filename}",
+        'log.db_backup_created': "Создана резервная копия базы данных: {path}",
+        'log.parallel_mc': "Параллельный MC: {n} симуляций с {workers} исполнителями",
+        'log.shap_tree_failed': "SHAP TreeExplainer не сработал; повтор без фоновых данных",
+        'log.external_api_offline': "[офлайн] вызов {api} пропущен: {url}",
+        'log.external_api_skipped': "{api}: библиотека requests недоступна — вызов пропущен",
+        'log.external_api_http': "{api} HTTP {status}: {url}",
+        'log.external_api_failed': "Вызов {api} не удался: {exc}",
+
+        # ── UI status messages ─────────────────────────────────────────────
+        'msg.high_risk': "⚠️ Высокий риск! Требуются немедленные действия.",
+        'msg.medium_risk': "⚠️ Средний риск. Увеличьте частоту мониторинга.",
+        'msg.low_risk': "✅ Низкий риск. Система в настоящее время безопасна.",
+        'msg.monitoring_stopped': "Мониторинг остановлен.",
+        'msg.denominator_zero': "Знаменатель равен нулю, невозможно вычислить относительное изменение.",
+        'msg.rdflib_not_installed': "rdflib не установлен — установите: pip install rdflib",
+        'msg.benchmark_data_required': "Требуется реальный CSV-файл эталона. Пожалуйста, загрузите файл.",
+        'msg.pytorch_warning': "⚠️ PyTorch не установлен. Будет использован RandomForestClassifier.",
+        'msg.min_one_layer': "❌ Введите как минимум 1 слой!",
+        'log.high_memory_usage': "⚠️ {operation_name} использует слишком много памяти ({memory_used:.1f} МБ)",
+        'log.slow_operation': "⚠️ {operation_name} выполняется слишком долго ({elapsed_time:.1f}s)",
+        'log.op_completed': "✓ {operation_name}: {elapsed_time:.3f}s | Память: {memory_used:+.1f} МБ",
+        'log.op_completed_no_mem': "✓ {operation_name}: {elapsed_time:.3f}s",
+        'msg.csv_rows_dropped': "⚠️ {n_dropped} строк не удалось преобразовать в числа и они были удалены (validate_sensor_csv).",
+        'msg.python_docx_not_installed': "python-docx не установлен!",
+        'msg.preset_configure_manually': "Пресет: {selected_preset} — настройте параметры вручную в разделе слоёв.",
+    },
+}
+
+
+def _resolve_active_language() -> str:
+    """
+    Determine the active UI language for message translation.
+
+    Priority:
+      1. Environment variable UCG_LANG (always wins — explicit override)
+      2. Streamlit session_state['language'] (when running inside a real
+         Streamlit ScriptRunContext — i.e. via `streamlit run app.py`)
+      3. Default 'en' (international standard for code/library messages
+         per ISO/IEC 25010 — Localizability)
+
+    Why env var beats session_state:
+      When `streamlit` is merely imported (not running), `st.session_state`
+      still works as a proxy and returns the default values set by
+      `_init_session()` — which would lock the language to 'uz' even for
+      CLI/library use. The env var is the only reliable signal that the
+      user explicitly chose a language for the current process.
+    """
+    # 1. Environment variable (explicit override — always wins)
+    _env_lang = os.getenv("UCG_LANG", "").strip().lower()
+    if _env_lang in ("uz", "en", "ru"):
+        return _env_lang
+
+    # 2. Streamlit session state — but ONLY when we are actually inside a
+    #    Streamlit ScriptRunContext (i.e. `streamlit run` is executing us).
+    #    We detect this via streamlit.runtime.scriptrunner, which exposes
+    #    a ScriptRunContext that is None when not in a real Streamlit run.
+    try:
+        import streamlit as _st
+        from streamlit.runtime.scriptrunner_utils.script_run_context import (
+            get_script_run_ctx as _get_ctx,
+        )
+        # If there is no script run context, we are NOT inside a real
+        # Streamlit run — fall through to default.
+        if _get_ctx() is not None:
+            _lang = _st.session_state.get("language")
+            if _lang in ("uz", "en", "ru"):
+                return str(_lang)
+    except Exception:
+        pass
+
+    # 3. Default — international standard for code/library messages
+    return "en"
+
+
+def tr(key: str, **kwargs) -> str:
+    """
+    Translate a message key into the active language.
+
+    Works in both Streamlit UI context (uses session_state['language']) and
+    non-UI contexts (CLI, library, tests — uses UCG_LANG env var, default 'en').
+
+    If the key is not found in the active language, falls back to English.
+    If not found in English either, returns the key as-is (never raises).
+
+    Parameters
+    ----------
+    key : str
+        Message key in the form 'namespace.message_name'
+        (e.g. 'err.obs_pred_same_length', 'log.torch_unavailable').
+    **kwargs
+        Format-string arguments to substitute into the translated message
+        (e.g. tr('err.fem_E_positive', E=0.0) substitutes {E} → '0.0').
+
+    Returns
+    -------
+    str
+        Translated message, with any kwargs substituted. If translation is
+        missing, returns the key unchanged (no exception).
+
+    Examples
+    --------
+    >>> tr('err.obs_pred_same_length')
+    'Observed and predicted must have the same length and must not be empty'
+    >>> tr('err.fem_E_positive', E=0.0)
+    "Young's modulus E must be > 0, got E=0.0"
+    """
+    lang = _resolve_active_language()
+    table = MESSAGE_STRINGS.get(lang, MESSAGE_STRINGS["en"])
+    text = table.get(key)
+    if text is None:
+        # Fall back to English
+        text = MESSAGE_STRINGS["en"].get(key, key)
+    if kwargs:
+        try:
+            return text.format(**kwargs)
+        except (KeyError, ValueError, IndexError):
+            return text
+    return text
+
+
+# Convenience alias — short name for use in tight contexts (raise statements,
+# logger calls) where `tr(...)` reads cleaner than `translate(...)`.
+# NOTE: `tr()` is for backend/error/log messages; `translate()` (defined
+# below) is for UI labels in the TRANSLATIONS dict.
+
 FORMULA_OPTIONS = {
     'uz': ["Yopish", "1. Hoek-Brown Failure (2018)", "2. Thermal Damage & Permeability",
            "3. Thermal Stress & Tension", "4. Pillar & Subsidence"],
@@ -6819,11 +7296,21 @@ def _init_session() -> None:
 _init_session()
 
 def translate(key: str, **kwargs) -> str:
-    lang = st.session_state.get('language', 'uz')
-    text = TRANSLATIONS.get(lang, TRANSLATIONS['uz']).get(key, key)
+    """
+    Translate a UI label key using the TRANSLATIONS dict.
+
+    FIX (language consistency): previously this hardcoded the default to
+    'uz'. Now it reuses `_resolve_active_language()` so the UI language
+    always agrees with `tr()` for backend messages — both respect the
+    UCG_LANG env var (explicit override) and Streamlit session_state when
+    running inside a real ScriptRunContext.
+    """
+    lang = _resolve_active_language()
+    table = TRANSLATIONS.get(lang, TRANSLATIONS.get('en', {}))
+    text = table.get(key, key)
     try:
         return text.format(**kwargs) if kwargs else text
-    except (KeyError, ValueError):
+    except (KeyError, ValueError, IndexError):
         return text
 
 t = translate
@@ -7334,7 +7821,7 @@ def compute_fos_parallel(grid_x, grid_z, active_wells_tuple, well_x_tuple,
                          beta_th, D_factor, s_dyn, a_dyn,
                          n_workers: int = None) -> np.ndarray:
     if grid_x.shape != grid_z.shape or grid_x.shape != temp_field.shape or grid_x.shape != sigma_v_field.shape:
-        raise ValueError("Parallel FOS uchun barcha 2D massivlar bir xil shape ga ega bo'lishi kerak")
+        raise ValueError(tr("err.parallel_fos_shape"))
     if grid_x.size == 0:
         return np.zeros_like(grid_x, dtype=float)
     if n_workers is None:
@@ -8036,7 +8523,7 @@ class RealSyngasProperties:
         import numpy as np
         total = sum(composition.values())
         if total <= 0:
-            raise ValueError("Composition must have positive total")
+            raise ValueError(tr("err.composition_positive"))
         x = {k: v / total for k, v in composition.items()}
         M_mix = sum(x[g] * cls.SUTHERLAND[g]["M"] for g in x)
         mu_wilke = cls._wilke_mixture_viscosity(x, T_kelvin)
@@ -10255,7 +10742,7 @@ def predict_collapse(
     X_raw: np.ndarray,
 ) -> np.ndarray:
     if X_raw.shape[1] != 7:
-        raise ValueError(f"Expected 7 features, got {X_raw.shape[1]}")
+        raise ValueError(tr("err.expected_7_features", n=X_raw.shape[1]))
     X_sc = scaler.transform(X_raw)
     if model is not None:
         model.eval()
@@ -10297,7 +10784,7 @@ def validate_sensor_csv(
 ) -> pd.DataFrame:
     file_size_mb = uploaded_file.size / (1024 * 1024)
     if file_size_mb > max_size_mb:
-        raise ValueError(f"Fayl {file_size_mb:.1f} MB — {max_size_mb} MB dan katta!")
+        raise ValueError(tr("err.file_too_large", file_size_mb=file_size_mb, max_size_mb=max_size_mb))
     try:
         df = pd.read_csv(uploaded_file, encoding='utf-8', nrows=max_rows)
     except UnicodeDecodeError:
@@ -10305,14 +10792,14 @@ def validate_sensor_csv(
         df = pd.read_csv(uploaded_file, encoding='latin-1', nrows=max_rows)
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
-        raise ValueError(f"Ustunlar yo'q: {missing}")
+        raise ValueError(tr("err.columns_missing", missing=missing))
     for col in required_cols:
         df[col] = pd.to_numeric(df[col], errors='coerce')
     n_before = len(df)
     df = df.dropna(subset=required_cols)
     n_dropped = n_before - len(df)
     if n_dropped > 0:
-        st.warning(f"⚠️ {n_dropped} ta satr raqamga aylantirilmadi va o'chirildi (validate_sensor_csv).")
+        st.warning(tr("msg.csv_rows_dropped", n_dropped=n_dropped))
     return df
 
 
@@ -11727,7 +12214,7 @@ def run_v7_app():
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 )
             except ImportError:
-                st.error("python-docx o'rnatilmagan!")
+                st.error(tr("msg.python_docx_not_installed"))
 
         if export_col2.button("📋 JSON Hisobotni Yuklash"):
             report = {
@@ -11910,7 +12397,7 @@ def run_v7_app():
             kg.add_prior_art("JRMGE-2018-HoekBrown", "Hoek-Brown failure criterion 2018")
             st.json(kg.stats())
         else:
-            st.warning("rdflib not installed — install with: pip install rdflib")
+            st.warning(tr("msg.rdflib_not_installed"))
 
         st.markdown("---")
         st.subheader("9️⃣ RAG Patent Assistant")
@@ -15095,7 +15582,7 @@ def main():
         preset_names = ["— Custom —"] + list(presets.keys())
         selected_preset = st.selectbox("Select location preset:", preset_names, key="geo_preset")
         if selected_preset != "— Custom —":
-            st.info(f"Preset: {selected_preset} — sozlamalarni qo'lda qatlamlar bo'limida o'rnating.")
+            st.info(tr("msg.preset_configure_manually", selected_preset=selected_preset))
             preset_data = presets[selected_preset]
             st.json({
                 "T_max": preset_data["T_max"],
@@ -16122,11 +16609,11 @@ def main():
                 st.metric("Mean Risk", f"{avg_risk_val:.3f}",
                           delta="High" if avg_risk_val > 0.7 else ("Medium" if avg_risk_val > 0.5 else "Low"))
                 if avg_risk_val > 0.7:
-                    st.error("⚠️ High risk! Immediate action required.")
+                    st.error(tr("msg.high_risk"))
                 elif avg_risk_val > 0.5:
-                    st.warning("⚠️ Medium risk. Increase monitoring frequency.")
+                    st.warning(tr("msg.medium_risk"))
                 else:
-                    st.success("✅ Low risk. System currently safe.")
+                    st.success(tr("msg.low_risk"))
             except Exception as e:
                 st.error(f"Error reading file: {e}")
 
@@ -16655,7 +17142,7 @@ def main():
             if steps_done >= TIME_STEPS:
                 st.success(f"✅ Monitoring complete after {steps_done} steps.")
             elif st.session_state.stop_live:
-                st.warning("Monitoring stopped.")
+                st.warning(tr("msg.monitoring_stopped"))
 
         if not st.session_state.live_history_df.empty:
             st.markdown("---")
@@ -17246,7 +17733,7 @@ def main():
                               delta="Converged" if last_change < 0.01 else "Not converged",
                               delta_color="normal" if last_change < 0.01 else "inverse")
                 else:
-                    st.warning("Denominator is zero, cannot calculate relative change.")
+                    st.warning(tr("msg.denominator_zero"))
 
         st.markdown("---")
 
@@ -18739,7 +19226,7 @@ class PersistentKeyManager:
         Returns: (private_key_pem, public_key_pem)
         """
         if not CRYPTO_AVAILABLE:
-            raise RuntimeError("cryptography library required for RSA key management")
+            raise RuntimeError(tr("err.cryptography_required"))
         if cls.PRIVATE_KEY_PATH.exists() and cls.PUBLIC_KEY_PATH.exists():
             with open(cls.PRIVATE_KEY_PATH, "rb") as f:
                 priv_pem = f.read()
@@ -19449,7 +19936,7 @@ FINISH
             return cls.COMSOL_TEMPLATE.replace("BODY_FORCE", str(body_force))
         if solver == "ansys":
             return cls.ANSYS_TEMPLATE.replace("BODY_FORCE", str(body_force))
-        raise ValueError(f"Unsupported solver: {solver}. Use 'abaqus', 'comsol', or 'ansys'.")
+        raise ValueError(tr("err.unsupported_solver", solver=solver))
 
     @staticmethod
     def parse_solver_output(csv_path: Union[str, Path], solver: str = "abaqus") -> Dict[str, Any]:
@@ -19687,7 +20174,7 @@ class MonteCarloConvergenceReport:
         """
         samples = np.asarray(samples, dtype=float).flatten()
         if samples.size < 1000:
-            raise ValueError(f"Need ≥1000 samples, got {samples.size}")
+            raise ValueError(tr("err.min_1000_samples", n=samples.size))
         n = samples.size
         post_burn = samples[burn_in:] if burn_in < n else samples
 
@@ -20644,7 +21131,7 @@ class CybersecurityHardening:
         try:
             tree = ast.parse(s, mode="eval")
         except SyntaxError as e:
-            raise ValueError(f"Invalid expression: {e}")
+            raise ValueError(tr("err.invalid_expression", e=e))
         allowed_nodes = (
             ast.Expression, ast.BinOp, ast.UnaryOp, ast.Num, ast.Constant,
             ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Pow, ast.Mod,
@@ -20652,9 +21139,9 @@ class CybersecurityHardening:
         )
         for node in ast.walk(tree):
             if not isinstance(node, allowed_nodes):
-                raise ValueError(f"Forbidden node type: {type(node).__name__}")
+                raise ValueError(tr("err.forbidden_node_type", type=type(node).__name__))
             if isinstance(node, ast.Name) and node.id not in allowed_names:
-                raise ValueError(f"Variable not allowed: {node.id}")
+                raise ValueError(tr("err.variable_not_allowed", name=node.id))
         return eval(compile(tree, "<safe_eval>", "eval"), {"__builtins__": {}}, allowed_names)
 
     @classmethod
