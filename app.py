@@ -3678,6 +3678,217 @@ def add_image_bytes_to_doc(doc: Document, image_bytes: Optional[bytes], title: s
     doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
 
 
+def generate_all_plots_as_figures(df: pd.DataFrame) -> Dict[str, 'go.Figure']:
+    """
+    Yordamchi funksiya: barcha 12 grafikni Plotly fig obyekti sifatida qaytaradi.
+    DOCX/PDF eksport uchun ishlatiladi (st.plotly_chart ga bog'liq emas).
+    """
+    import plotly.graph_objects as go
+    figs = {}
+
+    # 1. Coal Conversion
+    try:
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=df.index, y=df['char_conversion']*100,
+                                  mode='lines', name='Conversion (%)',
+                                  line=dict(color='blue', width=2)))
+        fig.update_layout(title='Coal Conversion vs Time',
+                          xaxis_title='Step', yaxis_title='Conversion (%)',
+                          template='plotly_white', height=400)
+        figs['coal_conversion'] = fig
+    except Exception:
+        pass
+
+    # 2. Temperature
+    try:
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=df.index, y=df['temperature'],
+                                  mode='lines', name='Temperature (K)',
+                                  line=dict(color='red', width=2)))
+        fig.update_layout(title='Temperature vs Time',
+                          xaxis_title='Step', yaxis_title='Temperature (K)',
+                          template='plotly_white', height=400)
+        figs['temperature'] = fig
+    except Exception:
+        pass
+
+    # 3. Heat Source
+    try:
+        fig = go.Figure()
+        if 'heat_source' in df.columns:
+            fig.add_trace(go.Scatter(x=df.index, y=df['heat_source'],
+                                      mode='lines', name='Heat Source',
+                                      line=dict(color='orange', width=2)))
+        fig.update_layout(title='Heat Source vs Time',
+                          xaxis_title='Step', yaxis_title='Heat Source (W/m³)',
+                          template='plotly_white', height=400)
+        figs['heat_source'] = fig
+    except Exception:
+        pass
+
+    # 4. Gas Composition
+    try:
+        fig = go.Figure()
+        gas_cols = [c for c in ['CO', 'H2', 'CH4', 'CO2', 'N2', 'H2O'] if c in df.columns]
+        colors = ['blue', 'green', 'orange', 'red', 'gray', 'purple']
+        for i, col in enumerate(gas_cols):
+            fig.add_trace(go.Scatter(x=df.index, y=df[col],
+                                      mode='lines', name=col,
+                                      line=dict(color=colors[i % len(colors)])))
+        fig.update_layout(title='Gas Composition vs Time',
+                          xaxis_title='Step', yaxis_title='Fraction (%)',
+                          template='plotly_white', height=400)
+        figs['gas_composition'] = fig
+    except Exception:
+        pass
+
+    # 5. Porosity
+    try:
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=df.index, y=df['porosity'],
+                                  mode='lines', name='Porosity',
+                                  line=dict(color='brown', width=2)))
+        fig.update_layout(title='Porosity vs Time',
+                          xaxis_title='Step', yaxis_title='Porosity',
+                          template='plotly_white', height=400)
+        figs['porosity'] = fig
+    except Exception:
+        pass
+
+    # 6. Pressure
+    try:
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=df.index, y=df['pressure'],
+                                  mode='lines', name='Pressure (MPa)',
+                                  line=dict(color='purple', width=2)))
+        fig.update_layout(title='Pressure vs Time',
+                          xaxis_title='Step', yaxis_title='Pressure (MPa)',
+                          template='plotly_white', height=400)
+        figs['pressure'] = fig
+    except Exception:
+        pass
+
+    # 7. Reaction Rates
+    try:
+        fig = go.Figure()
+        rate_cols = [c for c in df.columns if 'rate' in c.lower() and c != 'char_conversion']
+        colors = ['red', 'blue', 'green', 'orange']
+        for i, col in enumerate(rate_cols[:4]):
+            fig.add_trace(go.Scatter(x=df.index, y=df[col],
+                                      mode='lines', name=col,
+                                      line=dict(color=colors[i % len(colors)])))
+        fig.update_layout(title='Reaction Rates vs Time',
+                          xaxis_title='Step', yaxis_title='Rate (1/s)',
+                          template='plotly_white', height=400)
+        figs['reaction_rates'] = fig
+    except Exception:
+        pass
+
+    # 8. Permeability
+    try:
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=df.index, y=df['permeability'],
+                                  mode='lines', name='Permeability (m²)',
+                                  line=dict(color='teal', width=2)))
+        fig.update_layout(title='Permeability vs Time',
+                          xaxis_title='Step', yaxis_title='Permeability (m²)',
+                          template='plotly_white', height=400)
+        figs['permeability'] = fig
+    except Exception:
+        pass
+
+    # 9. Novelty Index
+    try:
+        fig = go.Figure()
+        if 'novelty_index' in df.columns:
+            fig.add_trace(go.Scatter(x=df.index, y=df['novelty_index'],
+                                      mode='lines', name='Novelty Index',
+                                      line=dict(color='gold', width=2)))
+        fig.update_layout(title='Novelty Index vs Time',
+                          xaxis_title='Step', yaxis_title='Novelty Index (%)',
+                          template='plotly_white', height=400)
+        figs['novelty_index'] = fig
+    except Exception:
+        pass
+
+    # 10. 3D Surface (subsidence)
+    try:
+        n = min(50, len(df))
+        x_3d = np.linspace(-200, 200, n)
+        X3, Y3 = np.meshgrid(x_3d, x_3d)
+        R3 = np.sqrt(X3**2 + Y3**2)
+        Smax = float(df['char_conversion'].iloc[-1] * 24.0) if 'char_conversion' in df.columns else 20.0
+        i_inf = 0.45 * 200  # influence radius
+        Z3 = -Smax * np.exp(-R3**2 / (2 * i_inf**2))
+        fig = go.Figure(data=[go.Surface(z=Z3, x=x_3d, y=x_3d, colorscale='Viridis')])
+        fig.update_layout(title='3D Surface — Subsidence (Peck)',
+                          template='plotly_white', height=450)
+        figs['surface_3d'] = fig
+    except Exception:
+        pass
+
+    # 11. Delta H bar
+    try:
+        if 'delta_H' in df.columns:
+            fig = go.Figure(go.Bar(x=list(df.columns if 'delta_H' not in df.columns else ['R1','R2','R3','R4']),
+                                    y=[df['delta_H'].iloc[-1]] if 'delta_H' in df.columns else [0],
+                                    marker_color=['red' if v < 0 else 'green' for v in [df['delta_H'].iloc[-1]]]))
+            fig.update_layout(title='Reaction Enthalpies (ΔH)',
+                              yaxis_title='ΔH (kJ/mol)', template='plotly_white', height=350)
+            figs['delta_H'] = fig
+    except Exception:
+        pass
+
+    # 12. UCG Zones
+    try:
+        fig = go.Figure()
+        if 'temperature' in df.columns:
+            zone_data = df['temperature'].describe()
+            fig.add_trace(go.Bar(x=['Min','Mean','Max'], y=[zone_data['min'], zone_data['mean'], zone_data['max']],
+                                  marker_color=['blue','orange','red']))
+            fig.update_layout(title='UCG Temperature Zones',
+                              yaxis_title='Temperature (K)', template='plotly_white', height=350)
+            figs['ucg_zones'] = fig
+    except Exception:
+        pass
+
+    return figs
+
+
+def add_all_plots_to_docx(doc: Document, df: pd.DataFrame) -> None:
+    """
+    DOCX ga barcha 12 grafikni PNG rasm sifatida qo'shadi.
+    Har bir grafik formula nomi bilan birga.
+    """
+    doc.add_heading('Grafiklar (12 ta — barchasi)', level=1)
+
+    plot_titles = {
+        'coal_conversion': '1. Coal Conversion — Arrhenius: k = A·exp(-Ea/RT)',
+        'temperature': '2. Temperature — Heat equation: ∂T/∂t = α∇²T + Q/(ρcp)',
+        'heat_source': '3. Heat Source — Gaussian distribution',
+        'gas_composition': '4. Gas Composition — Water-gas shift + Boudouard',
+        'porosity': '5. Porosity — Char formation: φ(T) = φ₀ + Δφ_char(T)',
+        'pressure': '6. Pressure — Darcy: ∂P/∂t = ∇·(k/μ·∇P) + S',
+        'reaction_rates': '7. Reaction Rates — 3-step Arrhenius (Anthony & Howard 1976)',
+        'permeability': '8. Permeability — Kozeny-Carman: k = k₀·(φ/φ₀)³·((1-φ₀)/(1-φ))²',
+        'novelty_index': '9. Novelty Index — NI = 0.4·Np + 0.3·Ns + 0.2·V + 0.1·A',
+        'surface_3d': '10. 3D Surface — Peck: S(x) = Smax·exp(-x²/2i²)',
+        'delta_H': '11. ΔH — Gibbs: ΔG = ΔH - T·ΔS',
+        'ucg_zones': '12. UCG Zones — T threshold: 800°C',
+    }
+
+    figs = generate_all_plots_as_figures(df)
+    for key, fig in figs.items():
+        title = plot_titles.get(key, key)
+        doc.add_paragraph(title)
+        png_bytes = plotly_figure_to_png_bytes(fig, width=900, height=450)
+        if png_bytes:
+            add_image_bytes_to_doc(doc, png_bytes, "")
+        else:
+            doc.add_paragraph(f"[Grafik '{key}' eksport qilib bo'lmadi — plotly/kaleda o'rnatilmagan]")
+        doc.add_paragraph()
+
+
 # ── FIX 31-35: AI Explainability (Permutation Importance, LIME, PDP, ICE, Model Drift) ──
 def compute_mandatory_explainability_report(model: Any, X: np.ndarray, feature_names: List[str]) -> ExplainabilityArtifact:
     X_arr = np.asarray(X, dtype=float)
@@ -13810,8 +14021,14 @@ def run_v7_app():
                     for k, v in gibbs_data.items():
                         doc.add_paragraph(f'{k}: ΔG = {v/1000:.1f} kJ/mol', style='List Bullet')
 
-                    # 4. Validatsiya
-                    doc.add_heading('4. Validatsiya Jadvali', level=1)
+                    # 4. BARCHA GRAFIKLAR (12 ta — PNG sifatida)
+                    try:
+                        add_all_plots_to_docx(doc, df)
+                    except Exception as exc:
+                        doc.add_paragraph(f"[Grafiklar eksport xatosi: {exc}]")
+
+                    # 5. Validatsiya
+                    doc.add_heading('5. Validatsiya Jadvali', level=1)
                     try:
                         val_suite = RealExperimentalValidator.full_validation_suite()
                         add_dataframe_to_doc(doc, val_suite["summary_table"], "Validatsiya natijalari")
