@@ -11902,6 +11902,775 @@ def plot_monte_carlo(mc_summary: Dict[str, Dict[str, np.ndarray]], n_sim: int):
 # v7.0 STREAMLIT UI DISPATCHER
 # ============================================================================
 
+# ============================================================================
+# v7.0+ PATENT-GRADE UI PANEL — interactive demos for all 27 new classes
+# ============================================================================
+# FIX: all v7.0/v6.0 classes were defined but NEVER exposed in the Streamlit
+# UI. This function renders a comprehensive interactive panel with st.tabs
+# so the user can SEE and USE every new module from the sidebar menu.
+# ============================================================================
+
+def render_v7_patent_grade_panel():
+    """
+    Interactive UI panel exposing ALL v7.0+ patent-grade modules.
+
+    Organized into 6 tabs:
+      1. 🏭 Patent Engine     — PatentEngine, PatentClaimGeneratorV2, PatentCertificateGeneratorV2
+      2. 📚 Prior Art & Search — PriorArtDatabaseV2, RealSciBERTNovelty, AHPCalibration
+      3. 🗄️ Database & API    — AlembicMigrationManager, RateLimiter, DigitalPatentVault
+      4. 🧮 Scientific Models  — RealArrheniusKinetics, MarkBieniawskiPillar, RichardsonExtrapolation, RealSyngasProperties
+      5. 🤖 AI & Quantum      — FourierNeuralOperator, MultiGPUTrainer, FederatedLearningManager, QuantumOptimizer, AutonomousResearchAgent
+      6. 🔐 Security & Filing — IPFSDistributedLedger, PostQuantumCryptography, LatexFormalProofs, UzPatentFilingGuide, SCADAConnector, safe_shap/lime_explain
+    """
+    st.title("🚀 Patent-Grade Modules v7.0+")
+    st.markdown(
+        "Bu panel **27 ta** patent-darajadagi modulni interaktiv tarzda "
+        "ko'rsatadi. Har bir tabda modul haqida ma'lumot va demo mavjud."
+    )
+    st.markdown("---")
+
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "🏭 Patent Engine",
+        "📚 Prior Art & Search",
+        "🗄️ Database & API",
+        "🧮 Scientific Models",
+        "🤖 AI & Quantum",
+        "🔐 Security & Filing",
+    ])
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # TAB 1: PATENT ENGINE
+    # ═══════════════════════════════════════════════════════════════════════════
+    with tab1:
+        st.header("🏭 Patent Engine — single inventive-concept encapsulation")
+        st.markdown(
+            "PatentEngine class patentability algoritmini bitta classga jamlaydi: "
+            "novelty (SciBERT) → inventive step → industrial applicability → "
+            "AHP-weighted aggregation → FTO + claim strength → recommended claims."
+        )
+
+        st.subheader("1️⃣ PatentEngine — Evaluate Invention")
+        with st.form("patent_engine_form"):
+            invention_desc = st.text_area(
+                "Invention Description",
+                value="Adaptive Biot coefficient with thermal degradation for underground coal gasification (UCG). "
+                      "The system combines poroelasticity, thermal damage, FEM solver, and Monte Carlo UQ.",
+                height=100,
+            )
+            features_str = st.text_input(
+                "Core Features (comma-separated)",
+                value="Adaptive Biot coefficient, Thermal degradation model, 3D FEM solver, PINN, Monte Carlo UQ",
+            )
+            tech_complexity = st.slider("Technical Complexity", 0.0, 1.0, 0.8, 0.1)
+            submitted = st.form_submit_button("🔬 Evaluate Patentability")
+
+        if submitted:
+            features = [f.strip() for f in features_str.split(",") if f.strip()]
+            with st.spinner("Evaluating patentability..."):
+                try:
+                    engine = PatentEngine(language=str(st.session_state.get("language", "en")))
+                    verdict = engine.evaluate(
+                        invention_description=invention_desc,
+                        core_features=features,
+                        technical_complexity=tech_complexity,
+                    )
+                    # Display scores
+                    c1, c2, c3, c4 = st.columns(4)
+                    c1.metric("Patentability Index", f"{verdict['patentability_index']:.1f}")
+                    c2.metric("Novelty Index", f"{verdict['novelty_index']:.1f}")
+                    c3.metric("Inventive Step", f"{verdict['inventive_step']:.1f}")
+                    c4.metric("Industrial Applic.", f"{verdict['industrial_applicability']:.1f}")
+
+                    c5, c6, c7 = st.columns(3)
+                    c5.metric("FTO Score", f"{verdict['fto_score']:.1f}")
+                    c6.metric("Claim Strength", f"{verdict['claim_strength']:.1f}")
+                    c7.metric("Prior Art Docs", f"{verdict['n_prior_art_documents']}")
+
+                    # Recommendation
+                    rec = verdict["recommendation"]
+                    if "STRONG" in rec:
+                        st.success(f"✅ {rec}")
+                    elif "MODERATE" in rec:
+                        st.warning(f"⚠️ {rec}")
+                    elif "WEAK" in rec:
+                        st.warning(f"⚠️ {rec}")
+                    else:
+                        st.error(f"❌ {rec}")
+
+                    # AHP consistency
+                    st.subheader("AHP Consistency")
+                    st.json(verdict["ahp_consistency"])
+
+                    # Claims
+                    if verdict.get("recommended_claims", {}).get("independent"):
+                        st.subheader("Recommended Independent Claim")
+                        st.write(verdict["recommended_claims"]["independent"][0])
+                        if verdict["recommended_claims"].get("dependent"):
+                            st.subheader(f"Dependent Claims ({len(verdict['recommended_claims']['dependent'])})")
+                            for i, dep in enumerate(verdict["recommended_claims"]["dependent"], 1):
+                                st.write(f"{i}. {dep}")
+                except Exception as exc:
+                    st.error(f"PatentEngine error: {exc}")
+
+        st.markdown("---")
+
+        # 2. PatentClaimGeneratorV2
+        st.subheader("2️⃣ PatentClaimGeneratorV2 — Structured Claims")
+        with st.form("claims_form"):
+            claim_desc = st.text_input(
+                "Invention Description",
+                value="A method for controlling underground coal gasification",
+            )
+            claim_features = st.text_input(
+                "Core Features",
+                value="Adaptive Biot coefficient, Thermal degradation, FEM solver, PINN, Monte Carlo UQ",
+            )
+            claim_lang = st.selectbox("Language", ["en", "uz", "ru"], index=0)
+            claim_submitted = st.form_submit_button("📝 Generate Claims")
+
+        if claim_submitted:
+            try:
+                gen = PatentClaimGeneratorV2(language=claim_lang)
+                features = [f.strip() for f in claim_features.split(",") if f.strip()]
+                claims = gen.generate_claims(claim_desc, features, novelty_score=85.0, lang=claim_lang)
+                st.success(f"Generated {claims['n_claims']} claims (type: {claims['invention_type']})")
+                st.markdown(f"**Preamble:** {claims['preamble']}")
+                st.markdown(f"**Transition:** {claims['transition']}")
+                st.markdown("**Independent Claim:**")
+                st.write(claims["independent"][0])
+                if claims["dependent"]:
+                    st.markdown(f"**Dependent Claims ({len(claims['dependent'])}):**")
+                    for i, dep in enumerate(claims["dependent"], 1):
+                        st.write(f"{i}. {dep}")
+            except Exception as exc:
+                st.error(f"ClaimGenerator error: {exc}")
+
+        st.markdown("---")
+
+        # 3. PatentCertificateGeneratorV2
+        st.subheader("3️⃣ PatentCertificateGeneratorV2 — PDF + QR Verification")
+        with st.form("cert_form"):
+            cert_title = st.text_input("Patent Title", value="Adaptive Biot Coefficient for UCG")
+            cert_inventor = st.text_input("Inventor", value="Saitov Dilshodbek")
+            cert_novelty = st.slider("Novelty Index", 0.0, 100.0, 92.5, 0.5)
+            cert_inventive = st.slider("Inventive Step", 0.0, 100.0, 85.0, 0.5)
+            cert_industrial = st.slider("Industrial Applicability", 0.0, 100.0, 88.0, 0.5)
+            cert_submitted = st.form_submit_button("📄 Generate Certificate PDF")
+
+        if cert_submitted:
+            try:
+                import os
+                os.environ["UCG_CERT_DB"] = "/tmp/ucg_certs.db"
+                gen = PatentCertificateGeneratorV2()
+                cert_data = {
+                    "patent_title": cert_title,
+                    "inventor": cert_inventor,
+                    "applicant": "UCG Platform",
+                    "filing_date": datetime.utcnow().strftime("%Y-%m-%d"),
+                    "novelty_index": cert_novelty,
+                    "inventive_step": cert_inventive,
+                    "industrial_applicability": cert_industrial,
+                    "patentability_index": (cert_novelty + cert_inventive + cert_industrial) / 3,
+                    "ahp_cr": 0.05,
+                    "fto_score": 80.0,
+                    "claim_strength": 90.0,
+                }
+                with st.spinner("Generating PDF with QR code..."):
+                    pdf_bytes = gen.generate(cert_data)
+                st.success(f"✅ Certificate generated ({len(pdf_bytes)} bytes)")
+                st.download_button(
+                    "⬇️ Download Certificate PDF",
+                    data=pdf_bytes,
+                    file_name=f"patent_certificate_{datetime.utcnow().strftime('%Y%m%d')}.pdf",
+                    mime="application/pdf",
+                )
+                # Show verification URL
+                cert_id = f"UCG-CERT-{datetime.utcnow().strftime('%Y%m%d')}-DEMO0001"
+                token = gen.generate_verification_token(cert_id, cert_data["patentability_index"], cert_title)
+                url = gen.build_verification_url(cert_id, token)
+                st.code(f"Verification URL:\n{url}", language="text")
+                st.info("Scan the QR code in the PDF to verify authenticity online.")
+            except Exception as exc:
+                st.error(f"Certificate error: {exc}")
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # TAB 2: PRIOR ART & SEARCH
+    # ═══════════════════════════════════════════════════════════════════════════
+    with tab2:
+        st.header("📚 Prior Art & Semantic Search")
+
+        # 1. PriorArtDatabaseV2
+        st.subheader("1️⃣ PriorArtDatabaseV2 — 1000 Records")
+        if st.button("📊 Show Database Summary"):
+            with st.spinner("Building 1000-record database..."):
+                try:
+                    summary = PriorArtDatabaseV2.database_summary()
+                    c1, c2, c3, c4 = st.columns(4)
+                    c1.metric("Total Records", summary["total_records"])
+                    c2.metric("Patents", summary["n_patents"])
+                    c3.metric("Articles", summary["n_articles"])
+                    c4.metric("IPC Codes", summary["n_ipc_codes"])
+                    st.json(summary)
+                except Exception as exc:
+                    st.error(f"Error: {exc}")
+
+        if st.button("🔍 Show Sample Records (first 10)"):
+            with st.spinner("Loading records..."):
+                try:
+                    records = PriorArtDatabaseV2.build_extended_prior_art()
+                    sample = records[:10]
+                    df = pd.DataFrame([
+                        {"ID": r["id"], "Type": r["type"], "Title": r["title"][:60],
+                         "Year": r["year"], "Source": r["source"], "IPC": r["ipc"]}
+                        for r in sample
+                    ])
+                    st.dataframe(df, use_container_width=True)
+                except Exception as exc:
+                    st.error(f"Error: {exc}")
+
+        st.markdown("---")
+
+        # 2. RealSciBERTNovelty
+        st.subheader("2️⃣ RealSciBERTNovelty — Semantic Novelty Score")
+        with st.form("scibert_form"):
+            invention = st.text_input(
+                "Invention Text",
+                value="Adaptive Biot coefficient with thermal degradation for UCG",
+            )
+            prior_text = st.text_area(
+                "Prior Art (one per line)",
+                value="Coal gasification in underground cavities\nBiot poroelasticity theory\nThermal damage in rock mechanics",
+                height=80,
+            )
+            scibert_submitted = st.form_submit_button("🧬 Compute Novelty")
+
+        if scibert_submitted:
+            try:
+                analyzer = RealSciBERTNovelty()
+                prior_texts = [t.strip() for t in prior_text.split("\n") if t.strip()]
+                with st.spinner(f"Computing novelty (backend: {analyzer.backend})..."):
+                    score = analyzer.compute_novelty_score(invention, prior_texts)
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Novelty Index", f"{score['novelty_index']:.2f}/100")
+                c2.metric("Mean Similarity", f"{score['mean_similarity']:.4f}")
+                c3.metric("Max Similarity", f"{score['max_similarity']:.4f}")
+                st.info(f"Backend: **{score['backend']}** | Model Real: **{score['model_real']}** | "
+                        f"Embedding Dim: **{score.get('embedding_dim', 'N/A')}** | "
+                        f"Device: **{score.get('device', 'N/A')}**")
+            except Exception as exc:
+                st.error(f"SciBERT error: {exc}")
+
+        st.markdown("---")
+
+        # 3. AHPCalibration
+        st.subheader("3️⃣ AHPCalibration — Expert Pairwise Matrix")
+        if st.button("⚖️ Run AHP Calibration"):
+            with st.spinner("Calibrating AHP weights..."):
+                try:
+                    cal = AHPCalibration.calibrate_against_expert_scores()
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Pearson r", f"{cal['pearson_correlation']:.4f}")
+                    c2.metric("RMSE", f"{cal['rmse']:.2f}")
+                    c3.metric("Passed", "✅" if cal["calibration_passed"] else "❌")
+                    st.subheader("AHP Weights")
+                    for k, v in cal["weights"].items():
+                        st.write(f"- **{k}:** {v:.4f}")
+                    st.subheader("Consistency")
+                    st.json(cal["ahp_consistency"])
+                    st.subheader("Calibration Data")
+                    cal_df = pd.DataFrame(cal["CALIBRATION_DATA"] if "CALIBRATION_DATA" in cal else
+                                          AHPCalibration.CALIBRATION_DATA)
+                    cal_df["predicted"] = cal["predicted_scores"]
+                    st.dataframe(cal_df, use_container_width=True)
+                except Exception as exc:
+                    st.error(f"AHP error: {exc}")
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # TAB 3: DATABASE & API
+    # ═══════════════════════════════════════════════════════════════════════════
+    with tab3:
+        st.header("🗄️ Database & API Management")
+
+        # 1. AlembicMigrationManager
+        st.subheader("1️⃣ AlembicMigrationManager — Versioned Schema Migrations")
+        col_mig1, col_mig2, col_mig3 = st.columns(3)
+        with col_mig1:
+            if st.button("⬆️ Run All Migrations"):
+                import tempfile
+                db_path = os.getenv("UCG_SQLITE_PATH", "ucg_platform.db")
+                with st.spinner("Applying migrations..."):
+                    result = AlembicMigrationManager.migrate_up(db_path=db_path)
+                st.success(f"Applied {result['n_applied']} migrations")
+                st.write(f"Current revision: `{result['current_revision']}`")
+                if result["errors"]:
+                    st.warning(f"Errors: {result['errors']}")
+        with col_mig2:
+            if st.button("📜 Show History"):
+                db_path = os.getenv("UCG_SQLITE_PATH", "ucg_platform.db")
+                history = AlembicMigrationManager.migration_history(db_path=db_path)
+                if history:
+                    st.dataframe(pd.DataFrame(history), use_container_width=True)
+                else:
+                    st.info("No migrations applied yet. Click 'Run All Migrations' first.")
+        with col_mig3:
+            if st.button("✔️ Verify Chain"):
+                db_path = os.getenv("UCG_SQLITE_PATH", "ucg_platform.db")
+                verify = AlembicMigrationManager.verify_chain(db_path=db_path)
+                if verify["valid"]:
+                    st.success(f"✅ Chain valid (current: {verify['current']})")
+                else:
+                    st.error(f"❌ Chain broken: {verify['issues']}")
+
+        st.markdown(f"**Available Migrations:** {len(AlembicMigrationManager.MIGRATIONS)}")
+        mig_df = pd.DataFrame([
+            {"Revision": m["revision"], "Description": m["description"],
+             "Down Revision": m["down_revision"]}
+            for m in AlembicMigrationManager.MIGRATIONS
+        ])
+        st.dataframe(mig_df, use_container_width=True)
+
+        st.markdown("---")
+
+        # 2. RateLimiter
+        st.subheader("2️⃣ RateLimiter — Token-Bucket API Rate Limiting")
+        limiters = [
+            ("Crossref", CROSSREF_RATE_LIMITER),
+            ("WIPO Patentscope", WIPO_RATE_LIMITER),
+            ("Espacenet OPS", ESPACENET_RATE_LIMITER),
+            ("Google Patents", GOOGLE_PATENTS_RATE_LIMITER),
+            ("DataCite", DATACITE_RATE_LIMITER),
+        ]
+        rl_rows = []
+        for name, limiter in limiters:
+            info = limiter.info()
+            rl_rows.append({
+                "API": name,
+                "Capacity": info["capacity"],
+                "Refill/sec": info["refill_rate_per_sec"],
+                "Current Tokens": round(info["current_tokens"], 2),
+                "Block": info["block"],
+            })
+        st.dataframe(pd.DataFrame(rl_rows), use_container_width=True)
+        st.info("Rate limiters prevent HTTP 429 Too Many Requests from external patent APIs.")
+
+        st.markdown("---")
+
+        # 3. DigitalPatentVault
+        st.subheader("3️⃣ DigitalPatentVault — AES-256-GCM Encrypted Storage")
+        with st.form("vault_form"):
+            vault_title = st.text_input("Document Title", value="Test Patent Disclosure")
+            vault_type = st.selectbox("Document Type", ["patent", "certificate", "report", "audit"])
+            vault_content = st.text_area("Document Content", value="This is a confidential patent disclosure.", height=80)
+            vault_submitted = st.form_submit_button("🔒 Store in Vault")
+
+        if vault_submitted:
+            try:
+                vault = DigitalPatentVault()
+                rec = vault.store(vault_title, vault_type, vault_content.encode("utf-8"))
+                st.success(f"✅ Stored: {rec['doc_id']}")
+                st.write(f"SHA-256: `{rec['sha256']}`")
+                st.write(f"Size: {rec['size_bytes']} bytes")
+            except Exception as exc:
+                st.error(f"Vault error: {exc}")
+
+        if st.button("📋 List Vault Documents"):
+            try:
+                vault = DigitalPatentVault()
+                docs = vault.list_documents()
+                if docs:
+                    st.dataframe(pd.DataFrame(docs), use_container_width=True)
+                else:
+                    st.info("Vault is empty.")
+                st.json(vault.info())
+            except Exception as exc:
+                st.error(f"Error: {exc}")
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # TAB 4: SCIENTIFIC MODELS
+    # ═══════════════════════════════════════════════════════════════════════════
+    with tab4:
+        st.header("🧮 Scientific Models")
+
+        # 1. RealArrheniusKinetics
+        st.subheader("1️⃣ RealArrheniusKinetics — 3-Step Coal Pyrolysis")
+        with st.form("arrhenius_form"):
+            arr_T = st.slider("Temperature (K)", 500.0, 1500.0, 1073.15, 10.0)
+            arr_t = st.slider("Time (seconds)", 60.0, 7200.0, 3600.0, 60.0)
+            arr_submitted = st.form_submit_button("🔥 Run Pyrolysis")
+
+        if arr_submitted:
+            try:
+                arr = RealArrheniusKinetics.multi_step_pyrolysis(T_kelvin=arr_T, t_seconds=arr_t)
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Conversion", f"{arr['conversion_fraction']*100:.2f}%")
+                c2.metric("Mass Balance", f"{arr['mass_balance_check']:.6f}")
+                c3.metric("Time (h)", f"{arr['time_h']:.2f}")
+                st.subheader("Rate Constants")
+                st.json(arr["rate_constants"])
+                st.subheader("Activation Energies (kJ/mol)")
+                st.json(arr["activation_energies_kJ_mol"])
+                st.subheader("Products (mass fractions)")
+                st.json(arr["products"])
+                st.subheader("References")
+                for ref in arr["references"]:
+                    st.write(f"- {ref}")
+            except Exception as exc:
+                st.error(f"Arrhenius error: {exc}")
+
+        st.markdown("---")
+
+        # 2. MarkBieniawskiPillar
+        st.subheader("2️⃣ MarkBieniawskiPillar — Rectangular Pillar Strength")
+        with st.form("pillar_form"):
+            p_ucs = st.number_input("UCS (MPa)", value=24.5)
+            p_w1 = st.number_input("Width 1 (m)", value=20.0)
+            p_w2 = st.number_input("Width 2 (m)", value=25.0)
+            p_h = st.number_input("Height (m)", value=4.0)
+            pillar_submitted = st.form_submit_button("🏗️ Calculate Strength")
+
+        if pillar_submitted:
+            try:
+                ps = MarkBieniawskiPillar.pillar_strength_mark_bieniawski(p_ucs, p_w1, p_w2, p_h)
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Eff. Width (m)", f"{ps['effective_width_w_eff_m']:.2f}")
+                c2.metric("W/H Ratio", f"{ps['width_to_height_ratio']:.3f}")
+                c3.metric("Mark-Bieniawski (MPa)", f"{ps['pillar_strength_Mark_Bieniawski_MPa']:.2f}")
+                st.json({k: v for k, v in ps.items() if k not in ["references"]})
+                st.subheader("References")
+                for ref in ps["references"]:
+                    st.write(f"- {ref}")
+            except Exception as exc:
+                st.error(f"Pillar error: {exc}")
+
+        st.markdown("---")
+
+        # 3. RichardsonExtrapolation
+        st.subheader("3️⃣ RichardsonExtrapolation — Mesh Convergence (GCI)")
+        with st.form("richardson_form"):
+            r_coarse = st.number_input("y_coarse", value=1.10)
+            r_medium = st.number_input("y_medium", value=1.05)
+            r_fine = st.number_input("y_fine", value=1.025)
+            r_ratio = st.number_input("Refinement ratio", value=2.0)
+            rich_submitted = st.form_submit_button("📐 Extrapolate")
+
+        if rich_submitted:
+            try:
+                re = RichardsonExtrapolation.extrapolate(r_coarse, r_medium, r_fine, r_ratio)
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Observed Order (p)", f"{re['observed_order_p']:.4f}")
+                c2.metric("GCI (fine)", f"{re['GCI_fine']:.4f}")
+                c3.metric("Converged", "✅" if re["converged"] else "❌")
+                st.write(f"Extrapolated exact solution: **{re['extrapolated_exact_solution']:.6f}**")
+                st.write(f"Asymptotic range ratio: **{re['asymptotic_range_ratio']:.4f}** (should be ~1.0)")
+            except Exception as exc:
+                st.error(f"Richardson error: {exc}")
+
+        st.markdown("---")
+
+        # 4. RealSyngasProperties
+        st.subheader("4️⃣ RealSyngasProperties — Sutherland + Wilke Mixing")
+        with st.form("syngas_form"):
+            s_CO = st.slider("CO (%)", 0, 100, 30)
+            s_H2 = st.slider("H2 (%)", 0, 100, 20)
+            s_CH4 = st.slider("CH4 (%)", 0, 100, 8)
+            s_CO2 = st.slider("CO2 (%)", 0, 100, 20)
+            s_N2 = st.slider("N2 (%)", 0, 100, 12)
+            s_H2O = st.slider("H2O (%)", 0, 100, 10)
+            s_T = st.slider("Temperature (K)", 300.0, 1500.0, 1073.15, 10.0)
+            s_P = st.slider("Pressure (Pa)", 101325.0, 506625.0, 202650.0, 1000.0)
+            syngas_submitted = st.form_submit_button("💨 Compute Properties")
+
+        if syngas_submitted:
+            try:
+                syn = RealSyngasProperties.compute_full_syngas_properties(
+                    composition={"CO": s_CO, "H2": s_H2, "CH4": s_CH4,
+                                 "CO2": s_CO2, "N2": s_N2, "H2O": s_H2O},
+                    T_kelvin=s_T, P_pa=s_P,
+                )
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Molar Mass (g/mol)", f"{syn['mixture_molar_mass_g/mol']:.3f}")
+                c2.metric("Density (kg/m³)", f"{syn['density_kg_m3']:.4f}")
+                c3.metric("Viscosity (Pa·s)", f"{syn['viscosity_wilke_Pa_s']:.4e}")
+                c4.metric("LHV (MJ/Nm³)", f"{syn['lower_heating_value_MJ_Nm3']:.2f}")
+                st.json({k: v for k, v in syn.items() if k not in ["references", "methods"]})
+            except Exception as exc:
+                st.error(f"Syngas error: {exc}")
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # TAB 5: AI & QUANTUM
+    # ═══════════════════════════════════════════════════════════════════════════
+    with tab5:
+        st.header("🤖 AI & Quantum Computing")
+
+        # 1. FourierNeuralOperator
+        st.subheader("1️⃣ FourierNeuralOperator (FNO) — Resolution-Invariant PDE")
+        if st.button("📊 Show FNO Info"):
+            fno = FourierNeuralOperator(n_modes=(8, 8), in_channels=3, out_channels=1)
+            st.json(fno.info())
+
+        st.markdown("---")
+
+        # 2. MultiGPUTrainer
+        st.subheader("2️⃣ MultiGPUTrainer — Multi-GPU Orchestration")
+        if st.button("🖥️ Check GPU Setup"):
+            trainer = MultiGPUTrainer(model=None, strategy="auto")
+            setup = trainer.setup()
+            st.json(setup)
+            if setup["n_gpus"] > 0:
+                st.success(f"Found {setup['n_gpus']} GPU(s): {setup.get('gpu_names', [])}")
+            else:
+                st.warning("No GPUs detected. Using CPU fallback.")
+
+        st.markdown("---")
+
+        # 3. FederatedLearningManager
+        st.subheader("3️⃣ FederatedLearningManager — FedAvg (McMahan 2017)")
+        with st.form("fed_form"):
+            fed_clients = st.slider("Number of Clients (UCG sites)", 2, 10, 3)
+            fed_rounds = st.slider("Training Rounds", 1, 20, 5)
+            fed_submitted = st.form_submit_button("🌐 Run Federated Training")
+
+        if fed_submitted:
+            try:
+                with st.spinner(f"Running {fed_rounds} rounds with {fed_clients} clients..."):
+                    fed = FederatedLearningManager(n_clients=fed_clients, n_rounds=fed_rounds)
+                    # Generate dummy client data
+                    client_data = [(np.random.randn(100, 5), np.random.randint(0, 2, 100))
+                                   for _ in range(fed_clients)]
+                    fed.initialize_global_model(type("M", (), {"state_dict": lambda self: {}})())
+                    result = fed.train(client_data)
+                st.success(f"Training complete. Final avg loss: {result['final_avg_loss']:.4f}")
+                st.json({k: v for k, v in result.items() if k != "history"})
+                st.subheader("Round History")
+                st.dataframe(pd.DataFrame(result["history"]), use_container_width=True)
+            except Exception as exc:
+                st.error(f"Federated error: {exc}")
+
+        st.markdown("---")
+
+        # 4. QuantumOptimizer
+        st.subheader("4️⃣ QuantumOptimizer — QAOA / D-Wave / Classical Annealing")
+        with st.form("quantum_form"):
+            q_backend = st.selectbox("Backend", ["auto", "qiskit", "dwave", "classical"])
+            q_iterations = st.slider("Iterations", 100, 5000, 1000)
+            q_submitted = st.form_submit_button("⚛️ Optimize Test Function (Sphere)")
+
+        if q_submitted:
+            try:
+                qo = QuantumOptimizer(backend=q_backend)
+                with st.spinner(f"Optimizing with {q_backend} backend..."):
+                    def sphere(x):
+                        return float(np.sum(x**2))
+                    result = qo.optimize(sphere, n_params=5, n_iterations=q_iterations)
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Best Value", f"{result['best_value']:.6f}")
+                c2.metric("Iterations", result["n_iterations"])
+                c3.metric("Backend", result["backend"])
+                st.write("Best parameters:")
+                st.json(result["best_params"])
+            except Exception as exc:
+                st.error(f"Quantum error: {exc}")
+
+        st.markdown("---")
+
+        # 5. AutonomousResearchAgent
+        st.subheader("5️⃣ AutonomousResearchAgent — 24/7 Research")
+        with st.form("agent_form"):
+            agent_name = st.text_input("Agent Name", value="UCG-Agent-Alpha")
+            n_hyps = st.slider("Hypotheses per Cycle", 1, 10, 3)
+            agent_submitted = st.form_submit_button("🤖 Run Research Cycle")
+
+        if agent_submitted:
+            try:
+                with st.spinner(f"Running research cycle ({n_hyps} hypotheses)..."):
+                    agent = AutonomousResearchAgent(name=agent_name)
+                    cycle = agent.run_cycle(n_hypotheses=n_hyps)
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Hypotheses Tested", cycle["n_hypotheses_tested"])
+                c2.metric("Discoveries", cycle["n_discoveries"])
+                c3.metric("Discovery Rate", f"{cycle['n_discoveries']/cycle['n_hypotheses_tested']*100:.0f}%")
+                for i, r in enumerate(cycle["results"]):
+                    with st.expander(f"🔬 Hypothesis {i+1}: {r['hypothesis']['hypothesis'][:80]}..."):
+                        st.write(f"**Status:** {r['hypothesis']['status']}")
+                        st.write(f"**Experiment loss:** {r['experiment']['loss']:.4f}")
+                        st.write(f"**Improvement:** {r['experiment']['improvement_pct']:.1f}%")
+                        if r.get("discovery"):
+                            st.success(f"🎉 Discovery: {r['discovery']['patent_disclosure'][:100]}")
+                st.json(agent.info())
+            except Exception as exc:
+                st.error(f"Agent error: {exc}")
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # TAB 6: SECURITY & FILING
+    # ═══════════════════════════════════════════════════════════════════════════
+    with tab6:
+        st.header("🔐 Security & Patent Filing")
+
+        # 1. IPFSDistributedLedger
+        st.subheader("1️⃣ IPFSDistributedLedger — Content-Addressed Audit Trail")
+        if st.button("📡 Test IPFS Add"):
+            try:
+                ipfs = IPFSDistributedLedger()
+                result = ipfs.add_to_ipfs({
+                    "event": "patent_report_generated",
+                    "timestamp": _utc_now_iso(),
+                    "version": "v7.0+",
+                })
+                st.json(result)
+                if result.get("warning"):
+                    st.warning(result["warning"])
+            except Exception as exc:
+                st.error(f"IPFS error: {exc}")
+
+        st.markdown("---")
+
+        # 2. PostQuantumCryptography
+        st.subheader("2️⃣ PostQuantumCryptography — CRYSTALS-Kyber (FIPS 203)")
+        if st.button("🔐 Show PQC Info"):
+            try:
+                pqc = PostQuantumCryptography()
+                info = pqc.get_algorithm_info()
+                c1, c2 = st.columns(2)
+                c1.metric("Default Algorithm", info["default_algorithm"])
+                c2.metric("PQC Secure", "✅" if info["post_quantum_secure"] else "❌")
+                st.write(f"NIST Standard: **{info['nist_standard']}**")
+                st.write(f"Published: **{info['nist_publication_date']}**")
+                st.write(f"oqs-python Available: **{info['oqs_available']}**")
+                if info.get("algorithms"):
+                    st.subheader("Available Algorithms")
+                    st.dataframe(pd.DataFrame(info["algorithms"]), use_container_width=True)
+                st.info(info["install_instructions"])
+            except Exception as exc:
+                st.error(f"PQC error: {exc}")
+
+        st.markdown("---")
+
+        # 3. LatexFormalProofs
+        st.subheader("3️⃣ LatexFormalProofs — 5 Theorems with Proofs")
+        col_lat1, col_lat2 = st.columns(2)
+        with col_lat1:
+            if st.button("📄 Generate LaTeX Source"):
+                try:
+                    latex_src = LatexFormalProofs.generate_latex_document()
+                    st.code(latex_src[:2000] + "\n... (truncated)", language="latex")
+                    st.download_button(
+                        "⬇️ Download .tex",
+                        data=latex_src.encode("utf-8"),
+                        file_name="ucg_formal_proofs.tex",
+                        mime="application/x-tex",
+                    )
+                    st.info(f"Total LaTeX source: {len(latex_src)} chars, 5 theorems with proofs.")
+                except Exception as exc:
+                    st.error(f"LaTeX error: {exc}")
+        with col_lat2:
+            if st.button("📑 Try Render to PDF"):
+                try:
+                    result = LatexFormalProofs.render_to_pdf()
+                    if result["success"]:
+                        st.success(f"✅ PDF rendered: {result['pdf_path']}")
+                    else:
+                        st.warning("pdflatex not installed. Install texlive to render.")
+                        st.info(result["instructions"])
+                except Exception as exc:
+                    st.error(f"PDF error: {exc}")
+
+        st.markdown("---")
+
+        # 4. UzPatentFilingGuide
+        st.subheader("4️⃣ UzPatentFilingGuide — Filing Requirements + PCT Timeline")
+        col_uz1, col_uz2, col_uz3 = st.columns(3)
+        with col_uz1:
+            if st.button("📋 UzPatent Requirements"):
+                uz = UzPatentFilingGuide.uzpatent_requirements()
+                st.write(f"**{uz['official_name_en']}**")
+                st.write(f"Website: {uz['website']}")
+                st.write(f"Law: {uz['law_reference']}")
+                st.subheader("Fees (2024)")
+                st.json(uz["filing_requirements"]["fees_2024"])
+                st.subheader("Timeline")
+                st.json(uz["filing_requirements"]["timeline"])
+                st.subheader("Required Documents")
+                for doc in uz["filing_requirements"]["required_documents"]:
+                    st.write(f"- {doc}")
+        with col_uz2:
+            if st.button("🌍 PCT Timeline (Corrected)"):
+                pct = UzPatentFilingGuide.pct_timeline_accurate()
+                st.json(pct)
+        with col_uz3:
+            if st.button("💰 Attorney Costs (2024)"):
+                costs = UzPatentFilingGuide.attorney_cost_research()
+                st.json(costs)
+
+        st.markdown("---")
+
+        # 5. SCADAConnector
+        st.subheader("5️⃣ SCADAConnector — Industrial SCADA Integration")
+        with st.form("scada_form"):
+            scada_type = st.selectbox("System Type", ["opc_da", "modbus_tcp", "pi_web_api"])
+            scada_host = st.text_input("Host", value="localhost")
+            scada_port = st.number_input("Port", value=502)
+            scada_submitted = st.form_submit_button("🔗 Connect")
+
+        if scada_submitted:
+            try:
+                scada = SCADAConnector(system_type=scada_type, host=scada_host, port=scada_port)
+                conn = scada.connect()
+                st.json(conn)
+                st.json(scada.info())
+            except Exception as exc:
+                st.error(f"SCADA error: {exc}")
+
+        st.markdown("---")
+
+        # 6. SHAP / LIME explainability
+        st.subheader("6️⃣ safe_shap_explain / safe_lime_explain — Audited Explainability")
+        st.info(
+            "Bu wrapper funksiyalar SHAP_AVAILABLE / LIME_AVAILABLE ni har doim tekshiradi. "
+            "Model va ma'lumot yuklang yoki demo bilan sinab ko'ring."
+        )
+        if st.button("🧪 Run Demo Explainability"):
+            try:
+                from sklearn.ensemble import RandomForestClassifier
+                X = np.random.randn(200, 5)
+                y = (X[:, 0] > 0).astype(int)
+                model = RandomForestClassifier(n_estimators=20, random_state=42)
+                model.fit(X, y)
+                st.subheader("SHAP (via safe_shap_explain)")
+                shap_result = safe_shap_explain(model, X, max_samples=100)
+                st.write(f"Backend: **{shap_result['backend']}**")
+                st.write(f"Samples used: {shap_result['n_samples_used']}")
+                if shap_result.get("shap_summary") is not None and len(shap_result["shap_summary"]) > 0:
+                    st.dataframe(shap_result["shap_summary"], use_container_width=True)
+                st.subheader("LIME (via safe_lime_explain)")
+                lime_result = safe_lime_explain(model, X, [f"f{i}" for i in range(5)])
+                st.write(f"Backend: **{lime_result['backend']}**")
+                if lime_result.get("feature_weights"):
+                    st.json(lime_result["feature_weights"])
+            except Exception as exc:
+                st.error(f"Explainability error: {exc}")
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # FOOTER — module registry
+    # ═══════════════════════════════════════════════════════════════════════════
+    st.markdown("---")
+    st.subheader("📋 Complete Module Registry")
+    try:
+        registry = _v7_modules_registry()
+        rows = []
+        for name, info in registry.items():
+            rows.append({
+                "Module": name,
+                "Version": info["version"],
+                "Category": info["category"],
+                "Available": "✅" if info["class"] is not None else "❌",
+            })
+        st.dataframe(pd.DataFrame(rows), use_container_width=True)
+        st.success(f"**{len(rows)} modules** registered and available in this panel.")
+    except Exception as exc:
+        st.warning(f"Registry error: {exc}")
+
+
+
 def run_v7_app():
     """UCG Platform v7.0 Streamlit UI — sidebar menu + page dispatcher."""
     st.sidebar.title("🏭 UCG Platform v7.0")
@@ -11911,6 +12680,7 @@ def run_v7_app():
         "📂 Menu",
         ["Dashboard", "Simulation", "Monte Carlo UQ", "Info", "Help", "About",
          "Patent Report", "ISO Report",
+         "🚀 Patent-Grade v7.0+",
          "Patent Hardening (v7.1)", "Top-10 Modules (v7.1)",
          "Enterprise (v7.2)", "Deploy Files (Self-Extract)"]
     )
@@ -12276,6 +13046,10 @@ def run_v7_app():
         """)
 
     # ─── Patent Hardening (v7.1) ─────────────────────────────────────────────
+    # ─── Patent-Grade v7.0+ (interactive panel for all 27 new modules) ──────
+    elif menu == "🚀 Patent-Grade v7.0+":
+        render_v7_patent_grade_panel()
+
     elif menu == "Patent Hardening (v7.1)":
         st.title("🛡️ Patent Hardening — v7.1")
         st.markdown("10 ta kritik xavfsizlik/barqarorlik yaxshilanishi va 4 ta "
