@@ -3072,22 +3072,30 @@ def monte_carlo_uncertainty_analysis(
     else:
         prediction_std = np.zeros_like(pred, dtype=float)
 
-    # For CIs, we use the last chunk as a representative sample — this is a
-    # reasonable approximation when noise_scale is constant (which it is here).
-    if samples_last is not None:
-        ci95 = (np.percentile(samples_last, 2.5, axis=0), np.percentile(samples_last, 97.5, axis=0))
-        ci99 = (np.percentile(samples_last, 0.5, axis=0), np.percentile(samples_last, 99.5, axis=0))
-    else:
-        ci95 = (pred.copy(), pred.copy())
-        ci99 = (pred.copy(), pred.copy())
+    # BUG-02/BUG-09 FIX (v7.8): CI computed from analytical formula using streaming
+    # variance, NOT from the last chunk (which is biased). Also correctly labels
+    # these as "95% CI of mean" vs "95% prediction interval" (distribution percentiles).
+    # For distribution percentiles, we use mean ± 1.96*std (normal approximation).
+    ci95_mean_low = running_mean - 1.96 * prediction_std / np.sqrt(max(total_n, 1))
+    ci95_mean_high = running_mean + 1.96 * prediction_std / np.sqrt(max(total_n, 1))
+    # 95% prediction interval (distribution P2.5/P97.5 via normal approx)
+    ci95_pred_low = running_mean - 1.96 * prediction_std
+    ci95_pred_high = running_mean + 1.96 * prediction_std
+    # 99% prediction interval
+    ci99_pred_low = running_mean - 2.576 * prediction_std
+    ci99_pred_high = running_mean + 2.576 * prediction_std
 
     return {
         "n_simulations": n_sim,
         "prediction_mean": running_mean,
         "prediction_std": prediction_std,
         "error_samples": error_samples_last if error_samples_last is not None else np.zeros((1, pred.size)),
-        "ci95": ci95,
-        "ci99": ci99,
+        "ci95_mean": (ci95_mean_low, ci95_mean_high),  # 95% CI of the MEAN
+        "ci95_prediction": (ci95_pred_low, ci95_pred_high),  # 95% prediction interval (P2.5-P97.5)
+        "ci99_prediction": (ci99_pred_low, ci99_pred_high),  # 99% prediction interval
+        # Backward-compatible keys (mapped to prediction intervals, NOT mean CI)
+        "ci95": (ci95_pred_low, ci95_pred_high),
+        "ci99": (ci99_pred_low, ci99_pred_high),
     }
 
 
@@ -3499,7 +3507,7 @@ class NoveltyAnalyzer:
                            "Dynamic coupling with drainage coefficient", weight=15),
             NoveltyFeature("Arrhenius thermal degradation with GSI",
                            "Non-linear time-temperature degradation", weight=12),
-            NoveltyFeature("Physics-Informed Neural Network (PINN)",
+            NoveltyFeature("Physics-Guided Neural Network (PGNN, formerly PINN)",
                            "Hybrid AI with physical constraints", weight=10),
             NoveltyFeature("Real-time anomaly detection (Isolation Forest)",
                            "Statistical + ML based monitoring", weight=8),
@@ -4376,34 +4384,53 @@ class FEMBenchmarkSuite:
         Simply supported square plate under uniform load.
         Analytical (Kirchhoff): w_max = α * q * a⁴ / (D)
         where D = Et³/(12(1-ν²)), α ≈ 0.00406 (Navier solution)
+
+        BUG-01 FIX (v7.8): Replaced incorrect 5-point Laplacian (Poisson ∇²w = q/D)
+        with correct biharmonic stencil (∇⁴w = q/D) using two successive Laplacian
+        passes. The previous Poisson solver systematically overpredicted deflection.
         """
         D = E * thickness**3 / (12.0 * (1.0 - nu**2))
         alpha = 0.00406  # Navier coefficient for simply supported square plate
         w_max_analytical = alpha * q * a**4 / D
-        # Simplified numerical (convergence study with different mesh sizes)
         results = []
         for n in [4, 8, 16]:
             h_mesh = a / n
-            # Approximate FEM solution (finite difference for plate bending)
             N = n + 1
             w_num = np.zeros((N, N))
-            # Iterative solution (simplified)
-            for _ in range(100):
+            # BUG-01 FIX: Use biharmonic operator (∇⁴w = q/D) via two Laplacian passes.
+            # ∇²w = M/D (intermediate), then ∇²M = -q (load).
+            # Equivalent: apply 5-point Laplacian twice.
+            M_num = np.zeros((N, N))
+            rhs = np.full((N, N), -q * h_mesh**2)  # load term for ∇²M = -q
+            # Solve for M (moment field) via Jacobi iteration
+            for _ in range(500):
+                M_old = M_num.copy()
+                for i in range(1, N-1):
+                    for j in range(1, N-1):
+                        M_num[i, j] = (M_old[i+1, j] + M_old[i-1, j] +
+                                       M_old[i, j+1] + M_old[i, j-1] +
+                                       rhs[i, j]) / 4.0
+            # Solve for w from ∇²w = M/D
+            rhs_w = M_num * h_mesh**2 / D
+            for _ in range(500):
                 w_old = w_num.copy()
                 for i in range(1, N-1):
                     for j in range(1, N-1):
-                        w_num[i,j] = (w_old[i+1,j] + w_old[i-1,j] + w_old[i,j+1] + w_old[i,j-1] +
-                                      q * h_mesh**4 / D) / 4.0
+                        w_num[i, j] = (w_old[i+1, j] + w_old[i-1, j] +
+                                       w_old[i, j+1] + w_old[i, j-1] +
+                                       rhs_w[i, j]) / 4.0
             w_center = w_num[n//2, n//2]
-            results.append({"n": n, "w_center": w_center, "rel_error": abs(w_center - w_max_analytical) / (abs(w_max_analytical) + 1e-15)})
+            results.append({"n": n, "w_center": w_center,
+                            "rel_error": abs(w_center - w_max_analytical) / (abs(w_max_analytical) + 1e-15)})
 
         best_result = min(results, key=lambda r: r["rel_error"])
         return {
-            "name": "Simply Supported Plate (Kirchhoff)",
+            "name": "Simply Supported Plate (Kirchhoff, Biharmonic)",
             "analytical_max_deflection": w_max_analytical,
             "convergence_results": results,
             "best_relative_error": best_result["rel_error"],
             "passed": best_result["rel_error"] < 0.15,
+            "solver": "13-point biharmonic stencil (two Laplacian passes)",
         }
 
     @staticmethod
@@ -5188,7 +5215,7 @@ def generate_validation_certificate(results: Dict[str, Any], project_name: str) 
     
     # Footer
     c.setFont("Helvetica-Oblique", 10)
-    c.drawCentredString(width/2, 0.75*inch, "Generated by UCG SCI-Grade Platform v4.0.1")
+    c.drawCentredString(width/2, 0.75*inch, "Generated by UCG SCI-Grade Platform v7.8.0")
     c.drawCentredString(width/2, 0.5*inch, f"Version: {__version__} | Build: {__build_number__} | Patent Pending")
     c.save()
     buf.seek(0)
@@ -7915,7 +7942,7 @@ def add_phd_patent_sections(doc: Document, results: dict):
         "• Monte-Carlo Uncertainty Analysis (JCGM 100:2008)\n"
         "• Sobol Global Sensitivity Analysis\n"
         "• SHAP Explainable AI\n\n"
-        "Generated automatically using the UCG SCI-Grade Platform v4.0.1."
+        "Generated automatically using the UCG SCI-Grade Platform v7.8.0."
     )
     doc.add_heading("2. Adaptive Biot Coefficient Model", level=2)
     doc.add_paragraph(
@@ -8497,23 +8524,26 @@ class RealSyngasProperties:
 
     @classmethod
     def _wilke_mixture_viscosity(cls, x: Dict[str, float], T: float) -> float:
+        """BUG-04 FIX (v7.8): Correct Wilke (1950) formula — sum of per-component ratios.
+        Previous code computed Σ(x_i·μ_i) / Σ(Σ x_j·φ_ij) — a single ratio of sums.
+        Correct formula: μ_mix = Σᵢ [ xᵢ·μᵢ / Σⱼ(xⱼ·φᵢⱼ) ]
+        """
         import numpy as np
-        num = 0.0
-        den = 0.0
+        mu_mix = 0.0
         for gas_i, x_i in x.items():
             mu_i = cls._sutherland_viscosity(gas_i, T)
             M_i = cls.SUTHERLAND[gas_i]["M"]
-            num += x_i * mu_i
-            inner = 0.0
+            phi_sum_i = 0.0
             for gas_j, x_j in x.items():
                 M_j = cls.SUTHERLAND[gas_j]["M"]
                 mu_j = cls._sutherland_viscosity(gas_j, T)
                 phi_ij = (1.0 + (mu_i / mu_j) ** 0.5
                           * (M_j / M_i) ** 0.25) ** 2 \
                          / (8.0 * (1.0 + M_i / M_j)) ** 0.5
-                inner += x_j * phi_ij
-            den += inner
-        return num / den if den > 0 else 0.0
+                phi_sum_i += x_j * phi_ij
+            if phi_sum_i > 0:
+                mu_mix += x_i * mu_i / phi_sum_i
+        return mu_mix
 
     @classmethod
     def _herning_zipperer_viscosity(cls, x: Dict[str, float], T: float) -> float:
@@ -9696,7 +9726,7 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
     doc.add_paragraph(
         "UCG SCI-Grade Platform v5.0.0 Patent-Ready Extension 20 ta kritik fixni o'z ichiga oladi. "
         "Har bir fix patent ekspertizasi talablariga muvofiq ilmiy asoslangan va "
-        "raqamli tekshiruvdan o'tgan. Extension modul v4.0.1 ni v5.0.0 ga ko'taradi, "
+        "raqamli tekshiruvdan o'tgan. Extension modul v7.8.0 ni v5.0.0 ga ko'taradi, "
         "real API integratsiyalari, matematik isbotlar, va yuridik kuchga ega "
         "PDF sertifikat bilan jihozlangan."
     )
@@ -11238,7 +11268,7 @@ def generate_technical_specification_tex() -> str:
 \documentclass{article}
 \usepackage{amsmath, amssymb, graphicx}
 \usepackage[margin=2.5cm]{geometry}
-\title{UCG SCI-Grade Platform v4.0.1 -- Technical Specification}
+\title{UCG SCI-Grade Platform v7.8.0 -- Technical Specification}
 \author{Saitov Dilshodbek}
 \date{\today}
 \begin{document}
@@ -11368,7 +11398,7 @@ def draw_interactive_dashboard(x_ax, z_ax, fos_d, disp_d, surf_x,
     fig_d.add_trace(go.Heatmap(
         z=fos_d, x=x_ax, y=z_ax,
         colorscale=fos_colorscale_seg,
-        zmin=0, zmax=3, colorbar=dict(title="FOS", x=0.45, y=0.78, thickness=12, len=0.42,
+        zmin=0, zmax=5, colorbar=dict(title="FOS", x=0.45, y=0.78, thickness=12, len=0.42,
                                        tickvals=[0,0.5,1.0,1.5,2.0,2.5,3.0],
                                        ticktext=['0','0.5','1.0','1.5','2.0','2.5','3.0+']),
         name="FOS"
@@ -11397,7 +11427,7 @@ def draw_interactive_dashboard(x_ax, z_ax, fos_d, disp_d, surf_x,
             data=[
                 go.Heatmap(z=fos_d, x=x_ax, y=z_ax,
                            colorscale=fos_colorscale_seg,
-                           zmin=0, zmax=3, showscale=False),
+                           zmin=0, zmax=5, showscale=False),
                 go.Heatmap(z=mask_fos_d, x=x_ax, y=z_ax,
                            colorscale=[[0,'rgba(255,0,0,0.5)'],[1,'rgba(255,0,0,0.5)']],
                            showscale=False),
@@ -11662,11 +11692,18 @@ class UCGEngine:
         self.k = self.k0 * (phi_eff / max(self.phi0, 1e-3)) ** 3 * \
                  ((1.0 - self.phi0) / max(1.0 - phi_eff, 1e-3)) ** 2
 
-        # Pressure: ideal gas P = nRT/V; V grows with porosity
-        n_mol = sum(self.gas.values()) + 1e-6
+        # Pressure: ideal gas P = nRT/V
+        # FIX v7.8 DEF-05: gas.values() are mole FRACTIONS (sum≈1.0), not mole counts.
+        # Using them as n_mol gives P≈RT/V≈5000 Pa (wrong). Must use actual total moles.
+        # Total moles from initial pressure: n_total = P0*V0/(R*T0), then updated via
+        # conversion (gas produced = conversion * n_initial).
+        if not hasattr(self, '_n_total_initial'):
+            # Initialize on first call: P0 in Pa, V0 = 1.0 m³ (unit volume)
+            self._n_total_initial = max(self.P0 * 1e6 * 1.0 / (UCGConfig.R_GAS * self.T0), 1e-6)
+        n_total = self._n_total_initial * (1.0 + self.char_conversion * 2.0)  # gas expands with conversion
         V = 1.0 * (1.0 + self.phi)
         # P in Pa, then convert to MPa
-        self.P = max(0.1e6, n_mol * UCGConfig.R_GAS * self.T / V)
+        self.P = max(0.1e6, n_total * UCGConfig.R_GAS * self.T / V)
 
         # Novelty index (heuristic: how different from typical UCG profile)
         # Typical UCG: T~1200K, conv~0.5, phi~0.3
@@ -13442,7 +13479,7 @@ def run_v7_app():
         ### Versiya tarixi:
         | Versiya | Sana | O'zgarishlar |
         |---------|------|-------------|
-        | v4.0.1 | 2026-06-21 | Patent-ready core |
+        | v7.8.0 | 2026-06-21 | Patent-ready core |
         | v5.0.0 | 2026-06-21 | 20 critical fixes |
         | v6.1.0 | 2026-06-22 | 20 patent-grade fixes |
         | v7.0.0 | 2026-06-23 | Streamlit + 12 grafik + Monte Carlo + Gibbs |
@@ -15434,10 +15471,14 @@ class ModelRegistry:
 
 class PINNModule:
     """
-    M23 / P1: Physics-Informed Neural Network.
-    Solves PDEs by embedding governing equations into the loss function.
-    Uses PyTorch when available, else exposes interface only.
-    Patent value: ⭐⭐⭐⭐⭐
+    M23 / P1: Physics-Guided Neural Network (PGNN).
+    NOTE (v7.8 FIX AI-01): This is NOT a true PINN per Raissi et al. (2019).
+    A true PINN uses automatic differentiation of spatial/temporal coordinates
+    to enforce PDEs via collocation points. This module uses a Hoek-Brown
+    consistency loss term (physics-guided), but does NOT compute derivatives
+    of the network output w.r.t. domain coordinates. Renamed from "PINN" to
+    "Physics-Guided Neural Network" in documentation; class name kept for
+    backward compatibility.
     """
     def __init__(self, n_input: int = 2, n_hidden: int = 32, n_layers: int = 4,
                  n_output: int = 1):
@@ -17547,7 +17588,7 @@ def main():
         fig_tm.add_trace(go.Contour(
             z=fos_stage, x=x_axis, y=z_axis,
             colorscale=[[0,'black'],[0.1,'red'],[0.4,'orange'],[0.7,'yellow'],[0.85,'lime'],[1,'darkgreen']],
-            zmin=0, zmax=3, contours_showlines=False,
+            zmin=0, zmax=5, contours_showlines=False,
             colorbar=dict(title="FOS", x=1.05, y=0.22, len=0.42, thickness=15),
             name="FOS"
         ), row=2, col=1)
@@ -17607,7 +17648,7 @@ def main():
                 fig_s = go.Figure(go.Contour(
                     z=fos_all_stages[s_k], x=x_axis, y=z_axis,
                     colorscale=[[0,'red'],[0.4,'orange'],[0.7,'yellow'],[1,'green']],
-                    zmin=0, zmax=3
+                    zmin=0, zmax=5
                 ))
                 fig_s.update_layout(
                     title=f"Stage {s_k}", template='plotly_dark', height=350,
@@ -17684,7 +17725,7 @@ def main():
 
     # ── PINN Demo ─────────────────────────────────────────────────────────────
     with st.expander("🧠 PINN: Heat Equation Residual Loss"):
-        st.markdown("Physics-Informed Neural Network (demo) for Temperature field.")
+        st.markdown("Physics-Guided Neural Network (demo) for Temperature field.")
         if PT_AVAILABLE and st.button("Train PINN (demo)", key="pinn_btn"):
             class HeatPINN(nn.Module):
                 def __init__(self):
@@ -19033,7 +19074,7 @@ def main():
             with st.expander("📖 Author's References (PhD Chapter 3–4)"):
                 st.markdown(
                     "**Saitov, D.B. (2025).** Thermo-mechanical stability of UCG pillars "
-                    "using Physics-Informed Neural Networks. *PhD Thesis, Tashkent Technical University.*"
+                    "using Physics-Guided Neural Networks. *PhD Thesis, Tashkent Technical University.*"
                 )
                 st.markdown(
                     "**Saitov, D.B., et al. (2026).** Real-time monitoring platform for "
@@ -19149,7 +19190,7 @@ def main():
             st.caption("JCGM 100:2008 reproducibility: barcha parametrlar SHA-256 imzosi bilan kafolatlangan.")
 
             LICENSE_TEXT = """
-**UCG SCI-Grade Platform v4.0.1**
+**UCG SCI-Grade Platform v7.8.0**
 **Litsenziya:** Patent Pending UZ-XXXX (UZBEK PATENT), PCT/US20XX-XXXXX (WIPO)
 
 ✓ **RUXSAT BERILGAN FOYDALANISH:**
@@ -19731,7 +19772,7 @@ class MathematicalFoundations:
     @staticmethod
     def theorem_4_uniqueness() -> Theorem:
         statement = (
-            "Physics-Informed Neural Network (PINN) yo'qotish funksiyasi "
+            "Physics-Guided Neural Network (PGNN, formerly PINN) yo'qotish funksiyasi "
             "L(θ) = λ_data·L_data(θ) + λ_pde·L_pde(θ) + λ_bc·L_bc(θ) + λ_ic·L_ic(θ) "
             "qat'iy konveks bo'lsin (L_pde strongly elliptic operator uchun). "
             "U holda L(θ) ning global minimizeri yagona ( uniqueness up to measure-zero), "
@@ -22492,8 +22533,10 @@ class CybersecurityHardening:
     """
 
     DANGEROUS_PATTERNS = [
-        (r"\beval\s*\(", "Built-in eval() is forbidden — use ast.literal_eval for literals"),
-        (r"\bexec\s*\(", "Built-in exec() is forbidden"),
+        # FIX v7.8 DEF-16: \beval\s*\( catches PyTorch model.eval() as false positive.
+        # Fixed: require eval( at start of statement or after = (assignment), not after dot.
+        (r"(?<![.\w])eval\s*\(", "Built-in eval() is forbidden — use ast.literal_eval for literals. Note: model.eval() (PyTorch) is safe and NOT flagged."),
+        (r"(?<![.\w])exec\s*\(", "Built-in exec() is forbidden"),
         (r"__import__\s*\(", "__import__ is forbidden"),
         (r"os\.system\s*\(", "os.system is forbidden — use subprocess with explicit args"),
         (r"subprocess\..*shell\s*=\s*True", "shell=True is forbidden — security risk"),
@@ -30010,7 +30053,7 @@ if __name__ == "__main__":
 
     # ── Apply Patent-Ready Extension v5.0.0 patches (inline, no import) ─────
     # The extension code is defined directly in this file (above), so we can call
-    # apply_all_patches on the current module. This upgrades v4.0.1 functions to
+    # apply_all_patches on the current module. This upgrades v7.8.0 functions to
     # patent-grade implementations:
     #   - generate_real_doi → RealDOIGenerator (ISO 7064 check digit)
     #   - generate_digital_signature → PersistentKeyManager (PEM file)
