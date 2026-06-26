@@ -11856,6 +11856,8 @@ class UCGEngine:
         self.n_steps = int(n_steps)
         self.dt = float(dt)
         self.t = 0.0
+        self.T0 = config.T0   # Boshlang'ich harorat (K)
+        self.P0 = config.P0   # Boshlang'ich bosim (Pa)
         self.T = config.T0
         self.P = config.P0
         # Initial composition (mass fractions normalized)
@@ -11944,8 +11946,9 @@ class UCGEngine:
         # Total moles from initial pressure: n_total = P0*V0/(R*T0), then updated via
         # conversion (gas produced = conversion * n_initial).
         if not hasattr(self, '_n_total_initial'):
-            # Initialize on first call: P0 in Pa, V0 = 1.0 m³ (unit volume)
-            self._n_total_initial = max(self.P0 * 1e6 * 1.0 / (UCGConfig.R_GAS * self.T0), 1e-6)
+            # Initialize on first call: P0 already in Pa, V0 = 1.0 m³ (unit volume)
+            # n_total = P0 * V0 / (R * T0)  — ideal gas law
+            self._n_total_initial = max(self.P0 * 1.0 / (UCGConfig.R_GAS * self.T0), 1e-6)
         n_total = self._n_total_initial * (1.0 + self.char_conversion * 2.0)  # gas expands with conversion
         V = 1.0 * (1.0 + self.phi)
         # P in Pa, then convert to MPa
