@@ -1662,7 +1662,7 @@ class VersionInfo:
 
 # v9.10.0 FIX: VersionManager hali aniqlanmagan — shim ishlatamiz
 _version_manager = type('_VM_shim', (), {
-    'version': '9.10.0',
+    'version': '9.10.1',
     'get_version': lambda self: '9.5.1',
     'get_instance': classmethod(lambda cls: cls())
 })()
@@ -10779,10 +10779,10 @@ def _generate_v97_report_figures() -> dict:
     fig, ax = plt.subplots(figsize=(7, 5), constrained_layout=True)
     params = ['Temperature', 'UCS', 'GSI', 'Pore p', 'Biot', 'Pillar w', 'E_a']
     s1 = [0.342, 0.218, 0.156, 0.089, 0.067, 0.045, 0.023]
-    st = [0.387, 0.245, 0.182, 0.112, 0.089, 0.063, 0.041]
+    st_total = [0.387, 0.245, 0.182, 0.112, 0.089, 0.063, 0.041]  # v9.10.1 FIX: renamed st->st_total (avoid shadowing streamlit)
     y = np.arange(len(params))
     ax.barh(y - 0.15, s1, 0.3, label='S1 (First-order)', color='#2196F3')
-    ax.barh(y + 0.15, st, 0.3, label='ST (Total)', color='#FF9800')
+    ax.barh(y + 0.15, st_total, 0.3, label='ST (Total)', color='#FF9800')
     ax.set_yticks(y)
     ax.set_yticklabels(params)
     ax.set_xlabel('Sensitivity Index')
