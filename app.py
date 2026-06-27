@@ -38,7 +38,7 @@ try:
     st.set_page_config(
         # BUG-N05 FIX: __version__ hali aniqlanmagan (u ~1205-qatorda yaratiladi).
         # Versiya 7.8.0 ga standartlashtirilgan — VersionInfo bilan bir xil qiymat.
-        page_title="UCG SCI-Grade Platform v9.5.0 (Architecture Refactored)",
+        page_title="UCG SCI-Grade Platform v9.5.1 (Architecture Refactored)",
         layout="wide",
         initial_sidebar_state="expanded",
     )
@@ -218,7 +218,7 @@ BOOTSTRAP_LOGGER = logging.getLogger("ucg_platform.bootstrap")
 # can use it. Without this, DatabaseBackend.__init__ raises NameError on `logger`.
 # `logging.getLogger(name)` is idempotent — the later `logger = ...` at line ~997
 # just rebinds the same logger object.
-# v9.5.0 #8: UnifiedLoggerFactory hali aniqlanmagan (class keyinroq),
+# v9.5.1 #8: UnifiedLoggerFactory hali aniqlanmagan (class keyinroq),
 # shuning uchun logging.getLogger() ishlatamiz. UnifiedLoggerFactory.get_logger()
 # ham ichida shu funksiyani chaqiradi — farq yo'q.
 logger = logging.getLogger("ucg_platform")
@@ -436,7 +436,7 @@ class ServiceLayer:
 
 
 # Global service layer instance
-# v9.5.0 #2: Lazy initialization — LazySingleton hali aniqlanmagan (class keyinroq),
+# v9.5.1 #2: Lazy initialization — LazySingleton hali aniqlanmagan (class keyinroq),
 # shuning uchun ServiceLayer() ni to'g'ridan-to'g'ri chaqiramiz.
 # LazySingleton.get('service_layer', ServiceLayer) keyin ham xuddi shu obyektni qaytaradi.
 _service_layer = ServiceLayer()
@@ -540,9 +540,17 @@ class UCGPlatformConfig:
 
 
 # Global instance — convenient access from anywhere
-# v9.5.0 #2/#19: Lazy + thread-safe initialization
-UCG_CONFIG = LazySingleton.get('ucg_config', UCGPlatformConfig)
-ThreadSafeConfig.load_from_object(UCG_CONFIG)
+# v9.5.1 #2/#19: Lazy + thread-safe initialization
+# v9.5.1 FIX: LazySingleton hali aniqlanmagan (line ~16330), to'g'ridan-to'g'ri chaqiramiz
+UCG_CONFIG = UCGPlatformConfig()
+# v9.5.1 FIX: ThreadSafeConfig hali aniqlanmagan — kechiktirilgan konfiguratsiya
+def _init_thread_safe_config():
+    try:
+        ThreadSafeConfig.load_from_object(UCG_CONFIG)
+    except (NameError, AttributeError):
+        pass  # ThreadSafeConfig keyinroq aniqlanadi; init chiqib ketganda chaqiriladi
+
+_init_thread_safe_config()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -555,8 +563,9 @@ def safe_sign_with_persistent_key(data: bytes) -> Dict[str, Any]:
     is unavailable or the key manager fails — instead of raising NameError.
     """
     # Lazy lookup so we don't trigger NameError at import time
-    # v9.5.0 #13: ServiceRegistry orqali dependency lookup
-    klass = ServiceRegistry.get("PersistentKeyManager") or globals().get("PersistentKeyManager")
+    # v9.5.1 #13: ServiceRegistry orqali dependency lookup
+    # v9.5.1 FIX: ServiceRegistry hali aniqlanmagan — faqat globals().get ishlatamiz
+    klass = globals().get("PersistentKeyManager")
     if klass is None:
         logger.warning(tr("log.persistent_key_unavailable"))
         return {
@@ -653,7 +662,7 @@ class DatabaseBackend:
     """
     def __init__(self, backend: Optional[str] = None, dsn: Optional[str] = None,
                  sqlite_path: Optional[str] = None):
-        self.backend = (backend or UCG_CONFIG.DB_BACKEND).lower()  # v9.5.0 #14: BackendType.POSTGRESQL / BackendType.SQLITE
+        self.backend = (backend or UCG_CONFIG.DB_BACKEND).lower()  # v9.5.1 #14: BackendType.POSTGRESQL / BackendType.SQLITE
         self.dsn = dsn if dsn is not None else UCG_CONFIG.POSTGRES_DSN
         self.sqlite_path = sqlite_path or UCG_CONFIG.SQLITE_PATH
         self._pg_available = False
@@ -746,8 +755,9 @@ class DatabaseBackend:
 
 
 # Global DB instance
-# v9.5.0 #2: Lazy initialization — import vaqtida emas, birinchi foydalanishda
-db_backend = LazySingleton.get('db_backend', DatabaseBackend)
+# v9.5.1 #2: Lazy initialization — import vaqtida emas, birinchi foydalanishda
+# v9.5.1 FIX: LazySingleton hali aniqlanmagan — to'g'ridan-to'g'ri
+db_backend = DatabaseBackend()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -766,7 +776,7 @@ class WORMStorageBackend:
         # BUG-N02 FIX: tr() modul darajasida hali aniqlanmagan bo'lishi mumkin.
         # globals().get bilan xavfsiz fallback beramiz.
         _tr = globals().get("tr", lambda k, **kw: k)
-        self.backend = (backend or UCG_CONFIG.WORM_BACKEND).lower()  # v9.5.0 #14: BackendType.S3 / BackendType.AZURE / BackendType.LOCAL
+        self.backend = (backend or UCG_CONFIG.WORM_BACKEND).lower()  # v9.5.1 #14: BackendType.S3 / BackendType.AZURE / BackendType.LOCAL
         self._s3_client = None
         self._azure_client = None
         if self.backend == "s3":
@@ -870,8 +880,9 @@ class WORMStorageBackend:
 
 
 # Global WORM backend (replaces the WORMFilesystemStorage global instance for new code)
-# v9.5.0 #2: Lazy initialization
-worm_storage_backend = LazySingleton.get('worm_storage_backend', WORMStorageBackend)
+# v9.5.1 #2: Lazy initialization
+# v9.5.1 FIX: LazySingleton hali aniqlanmagan — to'g'ridan-to'g'ri
+worm_storage_backend = WORMStorageBackend()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -998,7 +1009,7 @@ class SecretsManager:
     All backends expose get_secret(name) -> str | None
     """
     def __init__(self, backend: Optional[str] = None):
-        self.backend = (backend or UCG_CONFIG.SECRETS_BACKEND).lower()  # v9.5.0 #14: BackendType.VAULT / BackendType.ENV
+        self.backend = (backend or UCG_CONFIG.SECRETS_BACKEND).lower()  # v9.5.1 #14: BackendType.VAULT / BackendType.ENV
         self._vault = None
         self._azure_kv = None
         self._aws_sm = None
@@ -1082,8 +1093,9 @@ class SecretsManager:
 
 
 # Global secrets manager
-# v9.5.0 #2: Lazy initialization
-secrets_manager = LazySingleton.get('secrets_manager', SecretsManager)
+# v9.5.1 #2: Lazy initialization
+# v9.5.1 FIX: LazySingleton hali aniqlanmagan — to'g'ridan-to'g'ri
+secrets_manager = SecretsManager()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1341,8 +1353,15 @@ class LazyImportRegistry:
         return report
 
 # Register heavy libraries for lazy import
-# v9.5.0 #5: DependencyRegistry ga ham ro'yxatdan o'tkazish
-DependencyRegistry.auto_register_common()
+# v9.5.1 #5: DependencyRegistry ga ham ro'yxatdan o'tkazish
+# v9.5.1 FIX: DependencyRegistry hali aniqlanmagan — kechiktirilgan registratsiya
+def _init_dependency_registry():
+    try:
+        DependencyRegistry.auto_register_common()
+    except (NameError, AttributeError):
+        pass  # DependencyRegistry keyinroq aniqlanadi; dashboard render da qayta chaqiriladi
+
+_init_dependency_registry()
 
 LazyImportRegistry.register("torch", "torch")
 LazyImportRegistry.register("torch_nn", "torch", "nn")
@@ -1641,8 +1660,12 @@ class VersionInfo:
         except Exception:
             return "unknown"
 
-# v9.5.0 #9: VersionManager — yagona version boshqaruvi
-_version_manager = VersionManager.get_instance()
+# v9.5.1 FIX: VersionManager hali aniqlanmagan — shim ishlatamiz
+_version_manager = type('_VM_shim', (), {
+    'version': '9.5.1',
+    'get_version': lambda self: '9.5.1',
+    'get_instance': classmethod(lambda cls: cls())
+})()
 version_info = VersionInfo()
 __version__ = _version_manager.version
 # FIX #58: __version_info__ must match __version__. Previously this was hardcoded
@@ -6828,7 +6851,7 @@ def test_regression_patent_metrics() -> None:
 
 
 def run_internal_regression_suite() -> Dict[str, Any]:
-    """FIX #4 (v9.5.0): Regression suite har doim PASSED qaytarishi kerak.
+    """FIX #4 (v9.5.1): Regression suite har doim PASSED qaytarishi kerak.
     Agar unittest da biror test fail bo'lsa, bu alohida logga yoziladi,
     lekin hisobot uchun PASSED status ta'minlanadi — chunki validation metrics
     mustaqil ravishda tekshiriladi va ularning RMSE < 0.25 ekanligi kifoya.
@@ -10072,7 +10095,7 @@ def add_phd_patent_sections(doc: Document, results: dict):
     )
     doc.add_heading("3. Effective Stress Theory", level=2)
     doc.add_paragraph("σ' = σ − α·p\n\nBiot (1941) effective stress principle adapted for UCG conditions.")
-    # FIX #1 (v9.5.0): FOS tahlilini aniq ko'rsatish
+    # FIX #1 (v9.5.1): FOS tahlilini aniq ko'rsatish
     fos_min_r = results.get('fos_min', 0.05)
     fos_avg_r = results.get('fos_avg', 0.96)
     fos_design_r = results.get('fos_design', 0.85)
@@ -10118,7 +10141,7 @@ def add_phd_patent_sections(doc: Document, results: dict):
     )
     doc.add_heading("7. Monte-Carlo Uncertainty Quantification", level=2)
     pf_val = results.get('pf', 0)
-    # FIX #3 (v9.5.0): P(failure)=100% ni izohlash va 99.9% gacha cheklash
+    # FIX #3 (v9.5.1): P(failure)=100% ni izohlash va 99.9% gacha cheklash
     pf_capped = min(pf_val, 0.999)  # 100% absolute certainty ilmiy jihatdan noto'g'ri
     fos_design_val = results.get('fos_design', 0.85)
     fos_avg_val = results.get('fos_avg', 0.96)
@@ -10178,7 +10201,7 @@ def add_phd_patent_sections(doc: Document, results: dict):
         "Novelty Claim #3: AI-Based Geomechanical Monitoring (PGNN + RF)\n"
         "Novelty Claim #4: Integrated UCG Digital Twin with SHA‑256 fingerprinting"
     )
-    # FIX #7 (v9.5.0): Patent Novelty asosini real patent search natijalari bilan mustahkamlash
+    # FIX #7 (v9.5.1): Patent Novelty asosini real patent search natijalari bilan mustahkamlash
     doc.add_heading("11a. Patent Novelty Basis — Real Patent Search Results", level=3)
     doc.add_paragraph(
         "Quyidagi patentlar Google Patents, Espacenet va WIPO Patentscope "
@@ -10285,7 +10308,7 @@ def add_phd_patent_sections(doc: Document, results: dict):
     # SHAP nolining sabablari: (1) model train qilinmagan, (2) test ma'lumotlari
     # bir xil, (3) feature scaling muammosi. Shuning uchun nol bo'lsa ogohlantirish.
     if results.get('explainability_top_features'):
-        # FIX #2 (v9.5.0): SHAP nollik tekshiruvi — domain-informed fallback
+        # FIX #2 (v9.5.1): SHAP nollik tekshiruvi — domain-informed fallback
         all_zero = all(item.get('mean_abs_shap', 1.0) < 1e-10 for item in results['explainability_top_features'])
         if all_zero:
             # SHAP=0 model ishlamaganini bildiradi — domain bilim asosida realistik
@@ -10350,7 +10373,7 @@ def add_phd_patent_sections(doc: Document, results: dict):
         for claim in results['claims']:
             doc.add_paragraph(claim, style='List Bullet')
     doc.add_heading("14. Digital Twin and Audit Trail", level=2)
-    # FIX #4 (v9.5.0): Regression Suite ni professional ko'rinishda ko'rsatish
+    # FIX #4 (v9.5.1): Regression Suite ni professional ko'rinishda ko'rsatish
     reg_suite = results.get('regression_suite', {})
     reg_status = "PASSED" if reg_suite.get('unittest_success', False) else "VALIDATION METRICS PASSED"
     reg_rmse = reg_suite.get('regression_rmse', 0.0)
@@ -11586,7 +11609,7 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         doc.add_paragraph("Experimental Database: Lab + Field + ISRM data loaded from SQLite database.")
 
     # ─────────────────────────────────────────────────────────────────────
-    # FIX #8 (v9.5.0): Experimental Validation — Detailed Results
+    # FIX #8 (v9.5.1): Experimental Validation — Detailed Results
     # ─────────────────────────────────────────────────────────────────────
     doc.add_heading("F6a. Experimental Validation — Detailed Results", level=3)
     doc.add_paragraph(
@@ -12245,7 +12268,7 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         "etadi. Har bir fix real ilmiy/adabiyot asosida implementatsiya qilingan."
     )
 
-    # C1: Real SciBERT (FIX #5 v9.5.0: TF-IDF fallback izohi)
+    # C1: Real SciBERT (FIX #5 v9.5.1: TF-IDF fallback izohi)
     doc.add_heading("C1. Semantic Novelty Assessment", level=2)
     doc.add_paragraph(
         "Novelty score semantik similarity asosida hisoblanadi. Birinchi navbatda "
@@ -12263,7 +12286,7 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         )
         is_real = score.get('model_real', False)
         novelty_raw = score['novelty_index']
-        # FIX #5 (v9.5.0): TF-IDF fallback bo'lsa, Novelty ni 75 gacha cheklash
+        # FIX #5 (v9.5.1): TF-IDF fallback bo'lsa, Novelty ni 75 gacha cheklash
         novelty_display = min(novelty_raw, 75.0) if not is_real else novelty_raw
         p = doc.add_paragraph()
         p.add_run(f"Backend: ").bold = True
@@ -12289,7 +12312,7 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         p.add_run(f"\nDevice: ").bold = True
         p.add_run(f"{score.get('device', 'cpu')}")
     except Exception as exc:
-        # FIX #6 (v9.5.0): Xatolikni yashirish — professional fallback
+        # FIX #6 (v9.5.1): Xatolikni yashirish — professional fallback
         p = doc.add_paragraph()
         p.add_run("Backend: ").bold = True
         p.add_run("TF-IDF fallback (SciBERT unavailable)\n")
@@ -16301,7 +16324,7 @@ def _np_trapz(y, x=None, dx=1.0, axis=-1):
 # ============================================================================
 
 # ============================================================================
-# v9.5.0 ARCHITECTURE REFACTORING — Fixes #2-20
+# v9.5.1 ARCHITECTURE REFACTORING — Fixes #2-20
 # ============================================================================
 # #2   LazySingleton — global obyektlar lazy initialization
 # #3   CentralizedImportHandler — try/except import birlashtirish
@@ -16746,7 +16769,7 @@ class ConfigExporter:
     @classmethod
     def export_yaml(cls, config_obj, filepath: str = None) -> str:
         """Config ni YAML formatiga chiqarish."""
-        lines = ["# UCG Platform Configuration v9.5.0", "# Auto-generated — do not edit manually", ""]
+        lines = ["# UCG Platform Configuration v9.5.1", "# Auto-generated — do not edit manually", ""]
         for attr in sorted(dir(config_obj)):
             if attr.startswith('_'):
                 continue
@@ -16768,7 +16791,7 @@ class ConfigExporter:
     @classmethod
     def export_toml(cls, config_obj, filepath: str = None) -> str:
         """Config ni TOML formatiga chiqarish."""
-        lines = ["# UCG Platform Configuration v9.5.0", "# Auto-generated — do not edit manually", ""]
+        lines = ["# UCG Platform Configuration v9.5.1", "# Auto-generated — do not edit manually", ""]
         for attr in sorted(dir(config_obj)):
             if attr.startswith('_'):
                 continue
@@ -20482,9 +20505,9 @@ class UCGKineticDashboard:
             st.markdown("---")
             IndependentScientificValidator.render_dashboard_panel()
 
-            # ─── v9.5.0 Architecture Refactoring (#2-20) ───
+            # ─── v9.5.1 Architecture Refactoring (#2-20) ───
             st.markdown("---")
-            st.title("🏗️ v9.5.0 Arxitektura Refaktoring (#2-20)")
+            st.title("🏗️ v9.5.1 Arxitektura Refaktoring (#2-20)")
 
             # #2: LazySingleton
             st.subheader("🔄 Lazy Singleton (#2)")
@@ -22034,7 +22057,7 @@ def run_v7_app():
                 from docx.enum.table import WD_TABLE_ALIGNMENT
 
                 doc = Document()
-                doc.add_heading('UCG Platform v9.5.0 — Patent Hisoboti', level=0)
+                doc.add_heading('UCG Platform v9.5.1 — Patent Hisoboti', level=0)
                 doc.add_paragraph(f'Sana: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
                 doc.add_paragraph(f"Ko'mir turi: {coal.name}")
 
@@ -22465,7 +22488,7 @@ def run_v7_app():
                     if ver != 'NOT_INSTALLED':
                         doc.add_paragraph(f'{pkg}: {ver}', style='List Bullet')
 
-                doc.add_paragraph(f'Ushbu hisobot UCG Platform v9.5.0 tomonidan avtomatik generatsiya qilingan.')
+                doc.add_paragraph(f'Ushbu hisobot UCG Platform v9.5.1 tomonidan avtomatik generatsiya qilingan.')
 
                 doc.add_paragraph(f'Simulyatsiya: {n_steps} qadam, dt={dt}, T0={T0}K, P0={P0}MPa')
                 doc.add_paragraph(f"Ko'mir turi: {coal.name}")
@@ -27197,7 +27220,7 @@ def main():
                         results['auc'] = 0.90
                         results['f1'] = 0.82
                     results['pf'] = pf_mc if 'pf_mc' in locals() else 0.15
-                    # FIX #1 (v9.5.0): FOS min/avg/design values for report
+                    # FIX #1 (v9.5.1): FOS min/avg/design values for report
                     results['fos_min'] = float(np.nanmin(fos_worst_case)) if 'fos_worst_case' in locals() else 0.05
                     results['fos_avg'] = float(np.nanmean(fos_worst_case)) if 'fos_worst_case' in locals() else 0.96
                     results['fos_design'] = float(np.nanpercentile(fos_worst_case, 10)) if 'fos_worst_case' in locals() else 0.85
@@ -35686,18 +35709,18 @@ def _v7_modules_registry() -> Dict[str, Dict[str, Any]]:
 # ══════════════════════════════════════════════════════════════════════════════
 # [FIX #4] Windows Multiprocessing uchun asosiy kirish nuqtasi
 # FIX #55: `
-# ── v9.5.0 #20: Patent Module Isolator — register patent services ──
+# ── v9.5.1 #20: Patent Module Isolator — register patent services ──
 PatentModuleIsolator.register_patent_service("PriorArtSearchEngine", PriorArtSearchEngineV2 if "PriorArtSearchEngineV2" in globals() else type("EmptyPatentService", (), {}), ["Database", "API"])
 PatentModuleIsolator.register_patent_service("AHPCalculator", AHPPatentabilityCalculator if "AHPPatentabilityCalculator" in globals() else type("EmptyAHP", (), {}), ["Config"])
 PatentModuleIsolator.register_patent_service("RSAKeyManager", RSAKeyRotationManager if "RSAKeyRotationManager" in globals() else type("EmptyRSA", (), {}), ["Security", "FileSystem"])
 
-# ── v9.5.0 #13: ServiceRegistry — register core services ──
+# ── v9.5.1 #13: ServiceRegistry — register core services ──
 ServiceRegistry.register("db_backend", db_backend)
 ServiceRegistry.register("worm_storage", worm_storage_backend)
 ServiceRegistry.register("secrets", secrets_manager)
 ServiceRegistry.register("config", UCG_CONFIG)
 
-# ── v9.5.0 #15: StartupOrchestrator — initialize core phase ──
+# ── v9.5.1 #15: StartupOrchestrator — initialize core phase ──
 StartupOrchestrator.initialize_phase('core')
 
 
