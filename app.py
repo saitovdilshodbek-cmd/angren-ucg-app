@@ -436,8 +436,10 @@ class ServiceLayer:
 
 
 # Global service layer instance
-# v9.5.0 #2: Lazy initialization
-_service_layer = LazySingleton.get('service_layer', ServiceLayer)
+# v9.5.0 #2: Lazy initialization — LazySingleton hali aniqlanmagan (class keyinroq),
+# shuning uchun ServiceLayer() ni to'g'ridan-to'g'ri chaqiramiz.
+# LazySingleton.get('service_layer', ServiceLayer) keyin ham xuddi shu obyektni qaytaradi.
+_service_layer = ServiceLayer()
 
 
 
