@@ -218,8 +218,10 @@ BOOTSTRAP_LOGGER = logging.getLogger("ucg_platform.bootstrap")
 # can use it. Without this, DatabaseBackend.__init__ raises NameError on `logger`.
 # `logging.getLogger(name)` is idempotent — the later `logger = ...` at line ~997
 # just rebinds the same logger object.
-# v9.5.0 #8: UnifiedLoggerFactory orqali logger
-logger = UnifiedLoggerFactory.get_logger("ucg_platform")
+# v9.5.0 #8: UnifiedLoggerFactory hali aniqlanmagan (class keyinroq),
+# shuning uchun logging.getLogger() ishlatamiz. UnifiedLoggerFactory.get_logger()
+# ham ichida shu funksiyani chaqiradi — farq yo'q.
+logger = logging.getLogger("ucg_platform")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # IMPROVEMENT #2: Dependency Injection Container
