@@ -13307,7 +13307,7 @@ def compute_confusion_roc_f1(y_true: np.ndarray, y_pred_proba: np.ndarray,
             fpr_list.append(fp_c / neg)
         tpr_arr = np.array(tpr_list)
         fpr_arr = np.array(fpr_list)
-        auc = float(np.trapz(tpr_arr, fpr_arr))
+        auc = float(_np_trapz(tpr_arr, fpr_arr))
     except Exception:
         auc = 0.5
     accuracy = (TP + TN) / max(TP + TN + FP + FN, 1)
@@ -14322,11 +14322,29 @@ def plot_monte_carlo(mc_summary: Dict[str, Dict[str, np.ndarray]], n_sim: int):
 # ============================================================================
 # 5 reaksiya: Gasification, Boudouard, Combustion, CO oxidation, H2 oxidation
 # ODE solver: solve_ivp with Radau method
-# Dynamic heat balance via np.trapz integration
+# Dynamic heat balance via np.trapezoid integration
 # Gibbs free energy: dG = dH - T*dS
 # Syngas quality: H2/CO ratio, LHV/HHV, Cold Gas Efficiency, Carbon Efficiency
 # 3D visualization + validation metrics (RMSE/MAE/R2)
 # ============================================================================
+
+# NumPy 2.0+ compatibility: np.trapz removed, use np.trapezoid instead
+def _np_trapz(y, x=None, dx=1.0, axis=-1):
+    """Compatibility wrapper for np.trapz / np.trapezoid (NumPy >=2.0 removed trapz)."""
+    if hasattr(np, 'trapezoid'):
+        return np.trapezoid(y, x=x, dx=dx, axis=axis)
+    elif hasattr(np, 'trapz'):
+        return np.trapz(y, x=x, dx=dx, axis=axis)
+    else:
+        # Manual trapezoidal integration fallback
+        if x is not None:
+            dx_arr = np.diff(x)
+            y_avg = (y[..., 1:] + y[..., :-1]) / 2.0
+            return np.sum(y_avg * dx_arr, axis=axis)
+        else:
+            y_avg = (y[..., 1:] + y[..., :-1]) / 2.0
+            return np.sum(y_avg * dx, axis=axis)
+
 
 class UCGKineticModel:
     """
@@ -14453,7 +14471,7 @@ class UCGKineticModel:
             rates[3, i] = k_vals[3] * CO[i] * np.sqrt(O2[i])
             rates[4, i] = k_vals[4] * H2[i] * np.sqrt(O2[i])
 
-        Q = [np.trapz(rates[i, :] * (list(self.REACTIONS.values())[i]['dH'] / 1000), t)
+        Q = [_np_trapz(rates[i, :] * (list(self.REACTIONS.values())[i]['dH'] / 1000), t)
              for i in range(5)]
 
         self._rates = rates
@@ -14601,7 +14619,7 @@ class UCGKineticDashboard:
         # TAB 2: Issiqlik Balansi (Dinamik)
         with tab2:
             st.markdown("### ⚖️ Dinamik Issiqlik Balansi")
-            st.markdown("Issiqlik oqimlari ODE yechimidan **np.trapz** integratsiyasi bilan hisoblanadi. Har bir reaksiyaning issiqlik hissasi: **Q_i = integral(r_i * dH_i, dt)**.")
+            st.markdown("Issiqlik oqimlari ODE yechimidan **np.trapezoid** integratsiyasi bilan hisoblanadi. Har bir reaksiyaning issiqlik hissasi: **Q_i = integral(r_i * dH_i, dt)**.")
             Q_endo_total = Q[0] + Q[1]
             Q_exo_total = abs(Q[2]) + abs(Q[3]) + abs(Q[4])
             col1, col2 = st.columns(2)
@@ -16306,7 +16324,7 @@ def run_v7_app():
 
                 # ═══ 5. Issiqlik Balansi Jadvali ═══
                 doc.add_heading('5. Issiqlik Balansi', level=1)
-                doc.add_paragraph('Issiqlik integratsiyasi: Q_i = integral(r_i * dH_i, dt) — np.trapz orqali hisoblanadi.')
+                doc.add_paragraph('Issiqlik integratsiyasi: Q_i = integral(r_i * dH_i, dt) — np.trapezoid orqali hisoblanadi.')
                 if 'heat_exo' in df.columns and 'heat_endo' in df.columns:
                     heat_table = doc.add_table(rows=1, cols=3, style='Light Shading Accent 1')
                     heat_table.rows[0].cells[0].text = 'Turi'
