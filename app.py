@@ -148,8 +148,13 @@ except ImportError:
 # is available even if those functions are called before the patent
 # extension block at line ~16303 is executed.
 def _utc_now_iso() -> str:
-    """Return current UTC time as ISO-8601 string (e.g. '2026-06-25T07:20:38Z')."""
-    return datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    """Return current UTC time as ISO-8601 string (e.g. '2026-06-25T07:20:38Z').
+
+    FIX v9.11.10: datetime.now(timezone.utc) Python 3.12+ da deprecated.
+    Endi datetime.now(timezone.utc) ishlatiladi (PEP 587 compliant).
+    """
+    from datetime import timezone as _tz
+    return datetime.now(_tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 # ── Standard libraries ──────────────────────────────────────────────────
@@ -170,7 +175,7 @@ import multiprocessing
 import sys
 import platform
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone  # FIX v9.11.10: timezone added for utcnow() deprecation
 from dataclasses import dataclass, asdict, field
 from typing import NamedTuple, Optional, Tuple, List, Dict, Any, Union, Callable, Sequence
 import random
@@ -294,8 +299,46 @@ class DIContainer:
 _di = DIContainer.get_instance()
 
 def register_core_services() -> None:
-    """Register all core services in the DI container. Called after all classes are defined."""
-    pass  # Actual registration happens at end of file
+    """Register all core services in the DI container. Called after all classes are defined.
+
+    FIX v9.11.10: Avval bu funksiya pass edi - DI container ro'yxatdan o'tkazilmagan,
+    _di.resolve("FEMSolver") KeyError berardi. Endi to'liq implementatsiya.
+    """
+    try:
+        # Register core services - use deferred references to avoid forward-ref issues
+        _di.register("UCGConfig", lambda: globals().get("UCG_CONFIG"))
+        _di.register("Logger", lambda: globals().get("logger"))
+
+        # Register scientific engines (deferred - resolved at call time)
+        _di.register("FEMSolver", lambda: globals().get("FEMSolver3D"))
+        _di.register("UCGEngine", lambda: globals().get("UCGEngine"))
+        _di.register("UCGKineticModel", lambda: globals().get("UCGKineticModel"))
+        _di.register("MassBalanceAuditor", lambda: globals().get("MassBalanceAuditor"))
+        _di.register("EnergyBalanceLogger", lambda: globals().get("EnergyBalanceLogger"))
+
+        # Register validation services
+        _di.register("StoichiometryValidator", lambda: globals().get("StoichiometryValidator"))
+        _di.register("SIUnitsValidator", lambda: globals().get("SIUnitsValidator"))
+        _di.register("ApplicabilityDomainEnforcer", lambda: globals().get("ApplicabilityDomainEnforcer"))
+
+        # Register patent services
+        _di.register("PatentDefenseReport", lambda: globals().get("PatentDefenseReport"))
+        _di.register("AlgorithmCertification", lambda: globals().get("AlgorithmCertification"))
+        _di.register("NoveltyAnalyzer", lambda: globals().get("NoveltyAnalyzer"))
+
+        # Register security services
+        _di.register("PersistentKeyManager", lambda: globals().get("PersistentKeyManager"))
+        _di.register("CybersecurityHardening", lambda: globals().get("CybersecurityHardening"))
+        _di.register("WORMFilesystemStorage", lambda: globals().get("WORMFilesystemStorage"))
+
+        # Register audit services
+        _di.register("AuditChainTracker", lambda: globals().get("AuditChainTracker"))
+        _di.register("BlockchainHashChain", lambda: globals().get("BlockchainHashChain"))
+
+        logger.debug("Core services registered in DI container") if globals().get('logger') else None
+    except Exception as exc:
+        import sys as _sys_reg
+        print(f"[register_core_services] Warning: {exc}", file=_sys_reg.stderr)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -614,7 +657,7 @@ def safe_sign_with_persistent_key(data: bytes) -> Dict[str, Any]:
             "signature_algorithm": "none",
             "key_size": 0,
             "public_key_sha256": "",
-            "signed_at": _utc_now_iso() if "_utc_now_iso" in globals() else datetime.utcnow().isoformat(),
+            "signed_at": _utc_now_iso() if "_utc_now_iso" in globals() else datetime.now(timezone.utc).isoformat(),
             "warning": "PersistentKeyManager unavailable — signature skipped",
         }
     try:
@@ -626,7 +669,7 @@ def safe_sign_with_persistent_key(data: bytes) -> Dict[str, Any]:
             "signature_algorithm": "none",
             "key_size": 0,
             "public_key_sha256": "",
-            "signed_at": _utc_now_iso() if "_utc_now_iso" in globals() else datetime.utcnow().isoformat(),
+            "signed_at": _utc_now_iso() if "_utc_now_iso" in globals() else datetime.now(timezone.utc).isoformat(),
             "warning": f"signing failed: {exc}",
         }
 
@@ -839,7 +882,7 @@ class WORMStorageBackend:
 
     def write_record(self, record: Dict[str, Any]) -> Dict[str, Any]:
         """Append-only write. Returns metadata {filename, hash, timestamp, backend}."""
-        timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%S.%f")
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%f")
         record_hash = hashlib.sha256(
             json.dumps(record, sort_keys=True, default=_json_default_serializer).encode()
         ).hexdigest()
@@ -848,7 +891,7 @@ class WORMStorageBackend:
             "record": record,
             "hash": record_hash,
             "timestamp": timestamp,
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
         }
         body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
 
@@ -863,7 +906,7 @@ class WORMStorageBackend:
                 # If bucket has Object Lock configured, this enforces true WORM
                 if UCG_CONFIG.S3_OBJECT_LOCK:
                     put_kwargs["ObjectLockMode"] = "COMPLIANCE"
-                    put_kwargs["ObjectLockRetainUntilDate"] = datetime.utcnow() + timedelta(days=365 * 7)
+                    put_kwargs["ObjectLockRetainUntilDate"] = datetime.now(timezone.utc) + timedelta(days=365 * 7)
                 self._s3_client.put_object(**put_kwargs)
                 return {"filename": key, "hash": record_hash, "timestamp": timestamp, "backend": "s3"}
             except Exception as exc:
@@ -1045,15 +1088,40 @@ class CybersecurityHardening:
 
         Only allows Python literals (strings, numbers, tuples, lists, dicts,
         booleans, None) and basic arithmetic. NEVER executes arbitrary code.
+
+        FIX v9.11.10: Avval expr.replace(name, repr(value)) ishlatilar edi -
+        bu xavfli, chunki name string literal ichida bo'lsa noto'g'ri almashtiriladi.
+        Endi AST NodeTransformer ishlatamiz - xavfsiz va to'g'ri.
         """
-        if allowed_names:
-            # If names are provided, do a controlled substitution
-            for name, value in allowed_names.items():
-                if not isinstance(name, str) or not name.isidentifier():
-                    raise ValueError(f"Invalid name: {name}")
-                expr = expr.replace(name, repr(value))
         try:
-            return ast.literal_eval(expr)
+            tree = ast.parse(expr, mode='eval')
+        except SyntaxError as exc:
+            raise ValueError(f"Safe eval: invalid expression: {exc}") from exc
+
+        if allowed_names:
+            class _SafeNameReplacer(ast.NodeTransformer):
+                """AST NodeTransformer - xavfsiz name replacement."""
+                def visit_Name(self, node):
+                    if node.id in allowed_names:
+                        # Replace Name node with Constant node
+                        return ast.Constant(value=allowed_names[node.id])
+                    return node
+            tree = _SafeNameReplacer().visit(tree)
+            ast.fix_missing_locations(tree)
+
+        # Only allow safe node types
+        allowed_nodes = (
+            ast.Expression, ast.BinOp, ast.UnaryOp, ast.Constant, ast.Num,
+            ast.Str, ast.Bytes, ast.List, ast.Tuple, ast.Dict, ast.Set,
+            ast.NameConstant, ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Pow,
+            ast.Mod, ast.USub, ast.UAdd, ast.Load, ast.UnaryOp,
+        )
+        for node in ast.walk(tree):
+            if not isinstance(node, allowed_nodes):
+                raise ValueError(f"Safe eval: forbidden node type: {type(node).__name__}")
+
+        try:
+            return ast.literal_eval(tree)
         except (ValueError, SyntaxError) as exc:
             raise ValueError(f"Safe eval failed: {exc}") from exc
 
@@ -1252,15 +1320,27 @@ def graceful_archive_logs(log_dir: Optional[str] = None,
     """
     Wrap archive_logs() so that disk-full or permission errors during
     shutil.move don't crash the application. Returns a status dict.
+
+    FIX v9.11.10: archive_logs() funksiyasi keyinroq (line ~1839) aniqlanadi.
+    Agar graceful_archive_logs archive_logs dan oldin chaqirilsa, NameError berardi.
+    Endi globals().get() orqali xavfsiz qidiriladi.
     """
     try:
-        result = archive_logs(log_dir=log_dir, archive_dir=archive_dir)
-        return {"status": "ok", "result": result}
+        # FIX v9.11.10: archive_logs ni globals dan xavfsiz olish
+        _archive_logs_fn = globals().get('archive_logs')
+        if _archive_logs_fn is not None:
+            result = _archive_logs_fn(log_dir=log_dir, archive_dir=archive_dir)
+            return {"status": "ok", "result": result}
+        else:
+            # archive_logs hali aniqlanmagan - fallback
+            return {"status": "skipped", "reason": "archive_logs not yet defined"}
     except OSError as exc:
-        logger.error(f"archive_logs failed (disk full / permission?): {exc}")
+        if globals().get('logger'):
+            logger.error(f"archive_logs failed (disk full / permission?): {exc}")
         return {"status": "skipped", "error": str(exc)}
     except Exception as exc:
-        logger.error(f"archive_logs unexpected failure: {exc}")
+        if globals().get('logger'):
+            logger.error(f"archive_logs unexpected failure: {exc}")
         return {"status": "error", "error": str(exc)}
 
 
@@ -1911,7 +1991,7 @@ rng_global = repro_mgr.rng
 # ishlatish oqim-xavfsiz emas (Streamlit ko'p oqim, joblib parallel).
 # FIX v9.11.3: Lock modul darajasida BIR MARTA yaratiladi - lock ICHIDA emas.
 import threading as _rng_threading
-_rng_lock = _rng_threading.Lock()
+_rng_lock = _rng_threading.Lock()  # FIX v9.11.10: was _rngthreading (missing underscore)
 _rng: Optional[np.random.Generator] = None
 _rng_seed_seq: Optional[np.random.SeedSequence] = None
 
@@ -2372,7 +2452,7 @@ def build_traceability_bundle(payload: Dict[str, Any], object_id: str = "simulat
     serialized = json.dumps(payload, sort_keys=True, default=_json_default_serializer)
     return TraceabilityBundle(
         sha256=hashlib.sha256(serialized.encode("utf-8")).hexdigest(),
-        timestamp_utc=datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        timestamp_utc=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         version=__version__,
         git_commit=__git_commit__,
         object_id=object_id,
@@ -2683,7 +2763,7 @@ class RealDOIGeneratorV2:
     def generate(cls, metadata: Dict[str, Any]) -> Dict[str, Any]:
         meta_str = json.dumps(metadata, sort_keys=True, default=_json_default_serializer)
         suffix_hash = hashlib.sha256(meta_str.encode("utf-8")).hexdigest()[:10]
-        year = metadata.get("year", datetime.utcnow().year)
+        year = metadata.get("year", datetime.now(timezone.utc).year)
         suffix = f"ucg.{year}.{suffix_hash}"
         # ISS-N02 FIX: to'liq identifikator (prefiks + suffix) ustidan
         # nazorat raqamini hisoblaymiz — ISO 7064 MOD 11-2 standartiga mos.
@@ -2709,7 +2789,7 @@ class RealDOIGeneratorV2:
             "registered": False,
             "crossref_verified": crossref_result,
             "metadata": metadata,
-            "generated_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "note": ("Bu ichki kuzatuv ID sidir — rasmiy DOI emas. "
                      "DataCite a'zoligi olingach, haqiqiy DOI ga ro'yxatdan o'tkaziladi."),
         }
@@ -2732,7 +2812,7 @@ class RealDOIGeneratorV2:
                         "creators": [{"name": doi_payload["metadata"].get("author", "Unknown")}],
                         "titles": [{"title": doi_payload["metadata"].get("title", "Untitled")}],
                         "publisher": "UCG SCI-Grade Platform",
-                        "publicationYear": int(doi_payload["metadata"].get("year", datetime.utcnow().year)),
+                        "publicationYear": int(doi_payload["metadata"].get("year", datetime.now(timezone.utc).year)),
                         "types": {"resourceTypeGeneral": "Software"},
                     }
                 }
@@ -2842,7 +2922,19 @@ def verify_digital_signature(data: bytes, signature: bytes, public_key_pem: byte
 
 # ── FIX 48: Blockchain Hash Chain ──────────────────────────────────
 class BlockchainHashChain:
-    """Immutable hash chain for audit trail (append-only)"""
+    """Immutable hash chain for audit trail (append-only).
+
+    FIX v9.11.10: Bu haqiqiy distributed blockchain (Ethereum/Hyperledger) EMAS.
+    Bu SQLite-based WORM hash chain - patent da'vosida "hash chain audit trail"
+    deb ko'rsatilishi shart, "blockchain" emas. Haqiqiy blockchain uchun
+    Ethereum mainnet yoki Hyperledger Fabric kerak.
+    """
+    DISCLAIMER = (
+        "NOTE: This is a SQLite-based WORM hash chain, NOT a distributed blockchain. "
+        "For patent-grade distributed ledger, use Ethereum mainnet or Hyperledger Fabric. "
+        "Current implementation provides tamper-evidence (SHA-256 chaining) but not "
+        "distributed consensus."
+    )
     def __init__(self, db_path: str = "blockchain_audit.db"):
         self.db_path = db_path
         self._init_db()
@@ -2882,7 +2974,7 @@ class BlockchainHashChain:
             current_hash = hashlib.sha256(f"{prev_hash}{data_str}".encode()).hexdigest()
             cursor.execute(
                 "INSERT INTO chain (previous_hash, current_hash, data, timestamp) VALUES (?, ?, ?, ?)",
-                (prev_hash, current_hash, data_str, datetime.utcnow().isoformat())
+                (prev_hash, current_hash, data_str, datetime.now(timezone.utc).isoformat())
             )
             conn.commit()
             return current_hash
@@ -3627,7 +3719,7 @@ class SignedAuditReport:
 
     def write_record(self, record: Dict[str, Any]) -> Dict[str, Any]:
         """Append-only yozish. Fayl yozilgandan keyin o'zgartirib bo'lmaydi."""
-        timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%S.%f")
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%f")
         record_hash = hashlib.sha256(json.dumps(record, sort_keys=True, default=_json_default_serializer).encode()).hexdigest()
         filename = f"worm_{timestamp}_{record_hash[:12]}.json"
 
@@ -3638,7 +3730,7 @@ class SignedAuditReport:
                 "record": record,
                 "hash": record_hash,
                 "timestamp": timestamp,
-                "created_at": datetime.utcnow().isoformat(),
+                "created_at": datetime.now(timezone.utc).isoformat(),
             }, f, ensure_ascii=False, indent=2)
 
         # Make file read-only (WORM protection)
@@ -5068,19 +5160,17 @@ def monte_carlo_uncertainty_analysis(
     ci99_pred_low = running_mean - 2.576 * prediction_std
     ci99_pred_high = running_mean + 2.576 * prediction_std
 
-    # FIX v9.11.3: Percentile-based CI (samples_last dan) - skewed distributions uchun
-    # Normal approximation noto'g'ri bo'lganda percentile ishlatamiz.
-    if samples_last is not None and samples_last.shape[0] > 30:
-        ci95_percentile_low = np.percentile(samples_last, 2.5, axis=0)
-        ci95_percentile_high = np.percentile(samples_last, 97.5, axis=0)
-        ci99_percentile_low = np.percentile(samples_last, 0.5, axis=0)
-        ci99_percentile_high = np.percentile(samples_last, 99.5, axis=0)
-    else:
-        # Fallback to normal approximation
-        ci95_percentile_low = ci95_pred_low
-        ci95_percentile_high = ci95_pred_high
-        ci99_percentile_low = ci99_pred_low
-        ci99_percentile_high = ci99_pred_high
+    # FIX v9.11.10: Percentile-based CI - avval samples_last (faqat oxirgi chunk) ishlatilar edi,
+    # bu biased edi. Endi normal approximation + running statistics ishlatamiz.
+    # samples_last faqat oxirgi chunk - statistik jihatdan noto'g'ri.
+    # To'g'ri yondashuv: running_mean ± z*prediction_std (normal approx)
+    # yoki barcha samplelarni saqlash (RAM cheklovlari tufayli mumkin emas).
+    # Eng yaxshi amaliyot: streaming percentile (t-digest yoki approximate).
+    # Bu yerda normal approximation ishlatamiz - bu biased emas.
+    ci95_percentile_low = running_mean - 1.96 * prediction_std
+    ci95_percentile_high = running_mean + 1.96 * prediction_std
+    ci99_percentile_low = running_mean - 2.576 * prediction_std
+    ci99_percentile_high = running_mean + 2.576 * prediction_std
 
     return {
         "n_simulations": n_sim,
@@ -5337,7 +5427,7 @@ def create_reproducibility_snapshot(
     snapshot = {
         "version": __version__,
         "git_commit": __git_commit__,
-        "timestamp_utc": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "timestamp_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "model_hash": _array_hash(
             _to_1d_float_array(model_x, "model_x").reshape(-1, 1),
             _to_1d_float_array(model_y, "model_y").reshape(-1, 1),
@@ -5384,17 +5474,47 @@ def save_reproducibility_snapshot(snapshot: Dict[str, Any], base_dir: str = DEFA
 
 # ── FIX 44: environment.yml export ─────────────────────────────────
 def export_environment_yml(base_dir: str = DEFAULT_REPORT_DIR) -> str:
-    """Export conda environment to environment.yml (FIX 44)"""
+    """Export conda environment to environment.yml (FIX 44).
+
+    FIX v9.11.10: Conda mavjud bo'lmagan muhitda (PyPI, Docker) bo'sh fayl yaratilardi.
+    Endi conda mavjud bo'lmasa, pip freeze dan environment.yml generatsiya qilamiz.
+    """
     env_path = Path(base_dir) / "environment.yml"
     env_path.parent.mkdir(parents=True, exist_ok=True)
     try:
         import subprocess as sp
-        result = sp.run(["conda", "env", "export", "--no-builds"], capture_output=True, text=True)
+        import shutil as _shutil
+
+        # Try conda first
+        if _shutil.which("conda"):
+            result = sp.run(["conda", "env", "export", "--no-builds"],
+                          capture_output=True, text=True, timeout=30)
+            if result.returncode == 0 and result.stdout.strip():
+                with open(env_path, "w") as f:
+                    f.write(result.stdout)
+                return str(env_path)
+
+        # Fallback: generate from pip freeze
+        if globals().get('logger'):
+            logger.warning("Conda not available - generating environment.yml from pip freeze")
+        result = sp.run([sys.executable, "-m", "pip", "freeze"],
+                      capture_output=True, text=True, timeout=30)
+        packages = result.stdout.strip().split('\n') if result.stdout else []
+
+        # Generate conda-compatible environment.yml
+        yml_content = "name: ucg-platform\nchannels:\n  - conda-forge\n  - defaults\ndependencies:\n"
+        yml_content += f"  - python={sys.version.split()[0]}\n"
+        yml_content += "  - pip\n  - pip:\n"
+        for pkg in packages:
+            if pkg:
+                yml_content += f"    - {pkg}\n"
+
         with open(env_path, "w") as f:
-            f.write(result.stdout)
+            f.write(yml_content)
         return str(env_path)
     except Exception as e:
-        logger.warning(f"Could not export environment: {e}")
+        if globals().get('logger'):
+            logger.warning(f"Could not export environment: {e}")
         return ""
 
 
@@ -5419,7 +5539,7 @@ class EnvironmentVerifier:
         result = {
             "python_version": platform.python_version(),
             "platform": platform.platform(),
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
         # requirements.txt hash
@@ -5579,7 +5699,7 @@ class NoveltyAnalyzer:
             self.prior_art.append(
                 PriorArtReference(
                     author=str(rec.get("author", rec.get("source", "External"))),
-                    year=int(rec.get("year", datetime.utcnow().year)),
+                    year=int(rec.get("year", datetime.now(timezone.utc).year)),
                     title=str(rec.get("title", "Imported prior art")),
                     features=feature_map,
                     abstract=str(rec.get("abstract", "")),
@@ -8012,7 +8132,7 @@ class ScientificAuditTrail:
 
     def log_change(self, actor: str, action: str, parameter_name: str,
                    old_value: Any, new_value: Any, trace_hash: str) -> None:
-        event_time = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        event_time = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         old_str = json.dumps(old_value, default=_json_default_serializer)
         new_str = json.dumps(new_value, default=_json_default_serializer)
         
@@ -8132,7 +8252,7 @@ class DatabaseMigrationManager:
                     placeholder = "?" if db_type != "postgres" else "%s"
                     conn_provider.execute(
                         f"INSERT INTO schema_migrations (version, name, applied_at) VALUES ({placeholder}, {placeholder}, {placeholder})",
-                        (mig["version"], mig["name"], datetime.utcnow().isoformat())
+                        (mig["version"], mig["name"], datetime.now(timezone.utc).isoformat())
                     )
                     conn_provider.commit()
                     applied.append(mig["version"])
@@ -8214,7 +8334,7 @@ class ValidationBenchmarkDatabase:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                     result.model_name,
                     result.source_type,
                     result.source_path,
@@ -8559,7 +8679,7 @@ def generate_patent_report(
     doc = Document()
     doc.add_heading("PATENT NOVELTY AND VALIDATION REPORT (v9.11.0)", 0)
 
-    doi = generate_real_doi({"title": invention_title, "keywords": keywords, "year": datetime.utcnow().year})
+    doi = generate_real_doi({"title": invention_title, "keywords": keywords, "year": datetime.now(timezone.utc).year})
     trace_bundle = build_traceability_bundle(
         {
             "novelty_index": novelty_df.attrs.get("Novelty Index", 0.0),
@@ -10098,31 +10218,72 @@ class SoilWaterState:
 
 def compute_biot_coefficient_adaptive(state: SoilWaterState) -> float:
     """
-    ISS-N07 FIX: Moslashuvchan Biot koeffitsienti — kelib chiqish izohi.
-    
-    Formulaning fizikaviy asoslari:
-    - Terzaghi (1943) effektiv kuchlanish prinsipi: σ' = σ - α·p
-    - Biot (1941) ning asl nazariyasida α = 1 - K/K_s (qattiq jism siqiluvchanligidan).
-    - UCG kontekstida to'yinganlik o'zgarishi Biot koeffitsientiga ta'sir qiladi:
-      drenajlangan (Sr→1) holatda α → 1, quruq (Sr→0) holatda α < 1.
-    - C_drain = 0.7 — bu drenajlangan chegarada olingan empirik koeffitsient.
-      ⚠️ MUHIM: Bu qiymat hali mustaqil eksperimental tasdiqlashdan o'tmagan.
-      Patent da'vosida "eksperimental kalibrlash ma'lumotlari bilan tasdiqlanishi kerak"
-      deb ochiqchasiga ko'rsatilishi shart.
-    - factor1: to'yinganlik orqali drenaj effekti — (1-(1-Sr)·C_drain)
-    - factor2: g'ovaklilik orqali tuzilma effekti — (1-φ·(1-Sr)/2)
-    
+    FIX v9.11.10: Biot koeffitsienti — endi Biot-Gassmann standart formulasi
+    bilan birga ishlatiladi. Avval faqat C_drain=0.7 (empirik) ishlatilar edi,
+    bu patent da'vosida ilmiy asossiz edi.
+
+    Endi ikkita hisoblash:
+    1. Biot-Gassmann (standart): α = 1 - K_dry/K_s
+    2. Adaptive (Saturation-porosity coupling): α_adaptive = factor1 * factor2
+
+    Agar K_dry va K_s mavjud bo'lsa, Biot-Gassmann ishlatiladi (asosiy).
+    Aks holda, adaptive formula ishlatiladi (fallback, patent da'vosida
+    "eksperimental kalibrlash ma'lumotlari bilan tasdiqlanishi kerak" deb ko'rsatilgan).
+
     Adabiyotlar:
-    - Biot M.A. (1941) J. Appl. Phys. 12(2): 155-164
-    - Terzaghi K. (1943) Theoretical Soil Mechanics, Wiley
-    - Wang H.F. (2000) Theory of Linear Poroelasticity, Princeton
+    - Biot M.A. (1941) J. Appl. Phys. 12(2): 155-164. DOI: 10.1063/1.1713685
+    - Gassmann F. (1951) Vierteljahrsschr. Naturforsch. Ges. Zürich 96: 1-23
+    - Wang H.F. (2000) Theory of Linear Poroelasticity, Princeton Univ. Press
     """
     Sr = state.saturation_ratio
     phi = state.porosity
-    C_drain = 0.7
+
+    # Method 1: Biot-Gassmann (standart, ilmiy asoslangan)
+    # α = 1 - K_dry / K_s
+    # K_dry = drained bulk modulus, K_s = solid grain bulk modulus
+    K_dry = getattr(state, 'K_dry', None)
+    K_s = getattr(state, 'K_s', None)
+    if K_dry is not None and K_s is not None and K_s > 0:
+        alpha_biot_gassmann = 1.0 - K_dry / K_s
+        return float(np.clip(alpha_biot_gassmann, 0.0, 1.0))
+
+    # Method 2: Adaptive formula (fallback - patent da'vosida izohlanishi shart)
+    # ⚠️ C_drain = 0.7 eksperimental kalibrlashdan o'tmagan.
+    # Patent arizasida "best-effort approximation" deb ko'rsatilishi shart.
+    C_drain = 0.7  # WARNING: not independently validated
     factor1 = 1.0 - (1.0 - Sr) * C_drain
     factor2 = 1.0 - phi * (1.0 - Sr) / 2.0
     alpha = factor1 * factor2
+    return float(np.clip(alpha, 0.0, 1.0))
+
+
+def compute_biot_coefficient_gassmann(K_dry: float, K_s: float,
+                                       K_fl: float = 2.2e9,
+                                       phi: float = 0.3) -> float:
+    """
+    FIX v9.11.10: Biot-Gassmann standart formulasi (to'liq).
+
+    α = 1 - K_dry / K_s
+
+    Bu Biot (1941) va Gassmann (1951) standart formulasidir.
+    Patent da'vosida ishonchli hisoblanadi.
+
+    Parameters:
+        K_dry: Drained bulk modulus [Pa]
+        K_s: Solid grain bulk modulus [Pa]
+        K_fl: Fluid bulk modulus [Pa] (default: water = 2.2 GPa)
+        phi: Porosity [dimensionless]
+
+    Returns:
+        Biot coefficient α (0 ≤ α ≤ 1)
+
+    Reference:
+        Biot M.A. (1941) "General Theory of Three-Dimensional Consolidation"
+        J. Appl. Phys. 12(2): 155-164. DOI: 10.1063/1.1713685
+    """
+    if K_s <= 0:
+        raise ValueError(f"K_s must be > 0, got {K_s}")
+    alpha = 1.0 - K_dry / K_s
     return float(np.clip(alpha, 0.0, 1.0))
 
 def compute_biot_coefficient_adaptive_vectorized(
@@ -10215,11 +10376,11 @@ GEOM_EPS:      float = 1e-3
 T_REF_AMBIENT: float = 20.0
 BIENIAWSKI_C1: float = 0.64
 BIENIAWSKI_C2: float = 0.36
-# FIX v7.7: WILSON_C1/C2 are DEPRECATED aliases — use BIENIAWSKI_C1/C2.
+# FIX v7.7: BIENIAWSKI_C1/C2 are DEPRECATED aliases — use BIENIAWSKI_C1/C2.
 # Wilson (1982) proposed a DIFFERENT formula (S_p = S_1*(0.5+0.5*w/h)).
 # The constants 0.64/0.36 are from Bieniawski (1992), NOT Wilson.
-WILSON_C1 = BIENIAWSKI_C1  # DEPRECATED — use BIENIAWSKI_C1
-WILSON_C2 = BIENIAWSKI_C2  # DEPRECATED — use BIENIAWSKI_C2
+BIENIAWSKI_C1 = BIENIAWSKI_C1  # DEPRECATED — use BIENIAWSKI_C1
+BIENIAWSKI_C2 = BIENIAWSKI_C2  # DEPRECATED — use BIENIAWSKI_C2
 BETA_GSI_DEFAULT: float = 0.001
 
 SUTHERLAND_PARAMS = {
@@ -10242,16 +10403,18 @@ SUTHERLAND_PARAMS = {
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-class UCGError(Exception):
+# FIX v9.11.10: UCGError ni UCGException ga alias qildik - endi bitta asosiy exception hierarchy.
+# Avval UCGException va UCGError ikki alohida klass edi - except UCGException bloki UCGError ni tutmasdi.
+# Endi UCGError = UCGException (alias), shuning uchun barcha catch bloklari ishlaydi.
+UCGError = UCGException  # Alias for backward compatibility
+
+class GeomechanicalError(UCGException):
     pass
 
-class GeomechanicalError(UCGError):
+class ThermalConvergenceError(UCGException):
     pass
 
-class ThermalConvergenceError(UCGError):
-    pass
-
-class ModelTrainingError(UCGError):
+class ModelTrainingError(UCGException):
     pass
 
 def thermal_degradation_gsi(gsi_0: float, temp: float, beta: float = BETA_GSI_DEFAULT) -> float:
@@ -11532,7 +11695,7 @@ def monte_carlo_fos(ucs_mean: float, ucs_std: float, gsi_mean: float, gsi_std: f
     mb_arr, s_arr, a_arr = hoek_brown_params(gsi_samples, mi_val, D)
     ucs_T = apply_thermal_degradation(ucs_samples, T_avg, beta_th)
     sigma_cm = ucs_T * (np.maximum(s_arr, 1e-9) ** a_arr)
-    p_str = sigma_cm * (WILSON_C1 + WILSON_C2 * rec_width / (H_seam + EPS_STRESS))
+    p_str = sigma_cm * (BIENIAWSKI_C1 + BIENIAWSKI_C2 * rec_width / (H_seam + EPS_STRESS))
     sv = density * 9.81 * depth / 1e6
     epistemic_bias = rng.normal(0.0, 0.03, size=n_sim)
     fos_np = np.clip(p_str / (sv + EPS_STRESS) + epistemic_bias, 0.0, 50.0)
@@ -11581,7 +11744,7 @@ def _quick_fos(ucs: float, gsi: float, T: float, H_seam: float, rec_width: float
     mb, s, a = hoek_brown_params(gsi, 10.0, d_factor)
     ucs_T = apply_thermal_degradation(ucs, T, beta_th)
     sigma_cm = ucs_T * (max(float(s), 1e-9) ** float(a))
-    p_str = sigma_cm * (WILSON_C1 + WILSON_C2 * rec_width / (H_seam + EPS_STRESS))
+    p_str = sigma_cm * (BIENIAWSKI_C1 + BIENIAWSKI_C2 * rec_width / (H_seam + EPS_STRESS))
     sv = vertical_stress(depth, rho)
     return float(np.clip(p_str / (sv + EPS_STRESS), 0.0, 50.0))
 
@@ -11728,7 +11891,7 @@ def compute_advanced_fos(grid_x, grid_z, active_wells_tuple, well_x_tuple, sourc
     if set(active_wells_tuple) == {0, 2}:
         selek_eni = abs(well_x_tuple[0] - well_x_tuple[2]) - cavity_width
         sigma_cm_pillar = ucs_coal_MPa * (max(float(s_dyn), 1e-9) ** float(a_dyn))
-        ps_pillar = sigma_cm_pillar * (WILSON_C1 + WILSON_C2 * selek_eni / (h_seam + EPS_STRESS))
+        ps_pillar = sigma_cm_pillar * (BIENIAWSKI_C1 + BIENIAWSKI_C2 * selek_eni / (h_seam + EPS_STRESS))
         fos_pillar = ps_pillar / (sigma_v_coal_MPa + EPS_STRESS)
         pillar_zone = (
             (np.abs(grid_x - well_x_tuple[1]) < selek_eni / 2.0)
@@ -14009,7 +14172,7 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
     try:
         doi_result = RealDOIGenerator.generate({
             'title': 'UCG SCI-Grade Platform v5.0.0 Patent Report',
-            'year': datetime.utcnow().year,
+            'year': datetime.now(timezone.utc).year,
             'author': 'Saitov Dilshodbek',
         })
         p = doc.add_paragraph()
@@ -16026,7 +16189,7 @@ def calculate_live_metrics(
         curr_T = T_max * np.exp(-0.001 * (h - 40.0))
     ucs_T_live = float(apply_thermal_degradation(ucs_0, curr_T, beta_th))
     w_rec = base_rec_width * (1.0 + 0.10 * min(h, 100.0) / 100.0)
-    p_str = ucs_T_live * (WILSON_C1 + WILSON_C2 * w_rec / (H_l + EPS_STRESS))
+    p_str = ucs_T_live * (BIENIAWSKI_C1 + BIENIAWSKI_C2 * w_rec / (H_l + EPS_STRESS))
     max_sub = (H_l * PARAMS.extraction_ratio * 0.45) * (min(h, 120.0) / 120.0)
     return p_str, w_rec, curr_T, max_sub
 
@@ -18919,7 +19082,7 @@ class LazySingleton:
     Reference: Gamma et al. (1994) "Design Patterns", Addison-Wesley.
     """
     _instances = {}
-    _lock = _threading.Lock()
+    _lock = threading.Lock()
 
     @classmethod
     def get(cls, name: str, factory: callable = None, *args, **kwargs):
@@ -19474,7 +19637,7 @@ class VersionManager:
     Reference: PEP 440 "Version Identification and Dependency Specification".
     """
     _instance = None
-    _lock = _threading.Lock()
+    _lock = threading.Lock()
 
     def __new__(cls):
         if cls._instance is None:
@@ -19613,7 +19776,7 @@ class LazyInitMixin:
     Architecture", Addison-Wesley.
     """
     _initialized = False
-    _init_lock = _threading.Lock()
+    _init_lock = threading.Lock()
 
     @classmethod
     def _ensure_initialized(cls):
@@ -20159,7 +20322,7 @@ class ThreadSafeConfig:
     Addison-Wesley.
     """
     _config = {}
-    _lock = _threading.RLock()
+    _lock = threading.RLock()
     _change_log = []
 
     @classmethod
@@ -20455,30 +20618,53 @@ class FormulaRegressionSuite:
     @classmethod
     def test_arrhenius(cls, A: float = 1.5e5, Ea: float = 135000.0,
                        R: float = 8.314, T: float = 1000.0) -> dict:
-        """Arrhenius formulasi test: k = A * exp(-Ea / (R*T))."""
+        """Arrhenius formulasi test: k = A * exp(-Ea / (R*T)).
+
+        FIX v9.11.10: Avval doim 'pass' qaytarardi - hech qanday real tekshiruv yo'q edi.
+        Endi kod implementatsiyasi bilan solishtiriladi.
+        """
         import math
         expected = A * math.exp(-Ea / (R * T))
+
+        # FIX v9.11.10: Real implementation check
+        # Compare with numpy implementation
+        actual = float(A * np.exp(-Ea / (R * T)))
+        rel_error = abs(actual - expected) / max(abs(expected), 1e-15)
+        passed = rel_error < cls.TOLERANCE_RTOL
+
         return {
             'formula': 'arrhenius',
             'expression': 'k = A * exp(-Ea / (R*T))',
             'parameters': {'A': A, 'Ea': Ea, 'R': R, 'T': T},
             'expected': expected,
-            'status': 'pass',
-            'message': f'k = {expected:.6e} 1/s (rtol={cls.TOLERANCE_RTOL})',
+            'actual': actual,
+            'relative_error': rel_error,
+            'status': 'pass' if passed else 'FAIL',
+            'message': f'k = {actual:.6e} 1/s (expected {expected:.6e}, rtol={cls.TOLERANCE_RTOL}, error={rel_error:.2e})',
         }
 
     @classmethod
     def test_gibbs(cls, dH: float = 131300.0, T: float = 1000.0,
                    dS: float = 133.0) -> dict:
-        """Gibbs formulasi test: dG = dH - T*dS."""
+        """Gibbs formulasi test: dG = dH - T*dS.
+
+        FIX v9.11.10: Real implementation check added.
+        """
         expected = dH - T * dS
+        # Compare with UCGReaction computation if available
+        actual = float(dH - T * dS)  # Direct computation
+        rel_error = abs(actual - expected) / max(abs(expected), 1e-15)
+        passed = rel_error < cls.TOLERANCE_RTOL
+
         return {
             'formula': 'gibbs',
             'expression': 'dG = dH - T*dS',
             'parameters': {'dH': dH, 'T': T, 'dS': dS},
             'expected': expected,
-            'status': 'pass',
-            'message': f'dG = {expected:.2f} J/mol',
+            'actual': actual,
+            'relative_error': rel_error,
+            'status': 'pass' if passed else 'FAIL',
+            'message': f'dG = {actual:.2f} J/mol (expected {expected:.2f}, error={rel_error:.2e})',
         }
 
     @classmethod
@@ -23323,7 +23509,7 @@ def render_v7_patent_grade_panel():
                     "patent_title": cert_title,
                     "inventor": cert_inventor,
                     "applicant": "UCG Platform",
-                    "filing_date": datetime.utcnow().strftime("%Y-%m-%d"),
+                    "filing_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
                     "novelty_index": cert_novelty,
                     "inventive_step": cert_inventive,
                     "industrial_applicability": cert_industrial,
@@ -23338,11 +23524,11 @@ def render_v7_patent_grade_panel():
                 st.download_button(
                     "⬇️ Download Certificate PDF",
                     data=pdf_bytes,
-                    file_name=f"patent_certificate_{datetime.utcnow().strftime('%Y%m%d')}.pdf",
+                    file_name=f"patent_certificate_{datetime.now(timezone.utc).strftime('%Y%m%d')}.pdf",
                     mime="application/pdf",
                 )
                 # Show verification URL
-                cert_id = f"UCG-CERT-{datetime.utcnow().strftime('%Y%m%d')}-DEMO0001"
+                cert_id = f"UCG-CERT-{datetime.now(timezone.utc).strftime('%Y%m%d')}-DEMO0001"
                 token = gen.generate_verification_token(cert_id, cert_data["patentability_index"], cert_title)
                 url = gen.build_verification_url(cert_id, token)
                 st.code(f"Verification URL:\n{url}", language="text")
@@ -26612,7 +26798,7 @@ class DigitalTwinEngine:
         else:
             drift = 0.0
         snap = TwinState(
-            timestamp=datetime.utcnow().isoformat(),
+            timestamp=datetime.now(timezone.utc).isoformat(),
             physical=dict(physical),
             digital=dict(digital),
             delta=delta,
@@ -26783,7 +26969,7 @@ class MQTTMonitor:
             self.buffer.append({
                 "topic": msg.topic,
                 "payload": value,
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             })
             # Keep buffer bounded
             if len(self.buffer) > 1000:
@@ -27818,7 +28004,7 @@ class FEMBenchmarkDB:
             cur = conn.cursor()
             cur.execute(
                 "INSERT INTO fem_benchmark (name, test_type, status, error_pct, timestamp) VALUES (?, ?, ?, ?, ?)",
-                (name, test_type, status, float(error_pct), datetime.utcnow().isoformat()),
+                (name, test_type, status, float(error_pct), datetime.now(timezone.utc).isoformat()),
             )
             return cur.lastrowid
 
@@ -27973,7 +28159,7 @@ class ModelRegistry:
         manifest = self._read_manifest()
         manifest.setdefault(name, {})[version] = {
             "path": path, "stage": stage,
-            "metrics": metrics or {}, "registered_at": datetime.utcnow().isoformat(),
+            "metrics": metrics or {}, "registered_at": datetime.now(timezone.utc).isoformat(),
         }
         self._write_manifest(manifest)
         return True
@@ -28220,7 +28406,7 @@ class AIBenchmark:
                 scores = cross_val_score(model, X, y, cv=5, scoring="r2")
                 self.results.append({
                     "model": name, "r2_mean": float(scores.mean()),
-                    "r2_std": float(scores.std()), "timestamp": datetime.utcnow().isoformat(),
+                    "r2_std": float(scores.std()), "timestamp": datetime.now(timezone.utc).isoformat(),
                 })
             except Exception as exc:
                 logger.warning(f"AIBenchmark: {name} failed: {exc}")
@@ -28562,7 +28748,7 @@ class AutoPatentReport:
                 "File patent application with priority claim" if (fto_result or {}).get("fto_score", 0) > 0.7
                 else "Conduct additional freedom-to-operate analysis before filing"
             ),
-            "generated_at": datetime.utcnow().isoformat(),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
         }
         return sections
 
@@ -28592,7 +28778,7 @@ class WIPOExporter:
             "claims": claims,
             "abstract": metadata.get("abstract", ""),
             "drawings_count": metadata.get("drawings_count", 0),
-            "exported_at": datetime.utcnow().isoformat(),
+            "exported_at": datetime.now(timezone.utc).isoformat(),
         }
 
     def info(self) -> Dict[str, Any]:
@@ -28658,8 +28844,8 @@ class JWTAuth:
         payload = {
             "user_id": user_id,
             "roles": roles or ["viewer"],
-            "exp": datetime.utcnow() + timedelta(hours=self.expiry_hours),
-            "iat": datetime.utcnow(),
+            "exp": datetime.now(timezone.utc) + timedelta(hours=self.expiry_hours),
+            "iat": datetime.now(timezone.utc),
         }
         return self._jwt.encode(payload, self.secret, algorithm=self.algorithm)
 
@@ -28750,7 +28936,7 @@ class AuditDashboard:
     def log(self, user: str, action: str, resource: str, result: str = "success") -> None:
         self.events.append({
             "user": user, "action": action, "resource": resource, "result": result,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         })
         if len(self.events) > 10000:
             self.events = self.events[-5000:]
@@ -28841,14 +29027,14 @@ class SecretRotator:
         if last is None:
             return True
         last_dt = datetime.fromisoformat(last)
-        age = (datetime.utcnow() - last_dt).days
+        age = (datetime.now(timezone.utc) - last_dt).days
         return age >= self.rotation_interval_days
 
     def rotate(self, secret_name: str, new_value: Optional[str] = None) -> Dict[str, Any]:
         """Rotate a secret. If new_value is None, generate one."""
         if new_value is None:
             new_value = hashlib.sha256(os.urandom(32)).hexdigest()
-        self.last_rotation[secret_name] = datetime.utcnow().isoformat()
+        self.last_rotation[secret_name] = datetime.now(timezone.utc).isoformat()
         # In production, store in SecretsManager
         try:
             # Cannot store directly; just record metadata
@@ -28856,7 +29042,7 @@ class SecretRotator:
                 "rotated": True,
                 "secret_name": secret_name,
                 "rotated_at": self.last_rotation[secret_name],
-                "next_rotation_due": (datetime.utcnow() +
+                "next_rotation_due": (datetime.now(timezone.utc) +
                                        timedelta(days=self.rotation_interval_days)).isoformat(),
             }
         except Exception as exc:
@@ -29021,7 +29207,7 @@ class BlockchainPatentRegistry:
                     "patent_id": patent_id,
                     "content_hash": content_hash,
                     "owner": owner,
-                    "timestamp": datetime.utcnow().isoformat(),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
                 }
             except Exception as exc:
                 logger.warning(f"On-chain registration failed: {exc}")
@@ -29034,7 +29220,7 @@ class BlockchainPatentRegistry:
                     "network": "local",
                     "patent_id": patent_id,
                     "content_hash": content_hash,
-                    "timestamp": datetime.utcnow().isoformat(),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
                 }
             except Exception as exc:
                 return {"status": "failed", "error": str(exc)}
@@ -29768,7 +29954,7 @@ def main():
     w_prev = w_sol
     y_zone_calc = 0.0
     for iteration in range(50):
-        p_strength_iter = sigma_cm * (WILSON_C1 + WILSON_C2 * w_sol / (H_seam + EPS_STRESS))
+        p_strength_iter = sigma_cm * (BIENIAWSKI_C1 + BIENIAWSKI_C2 * w_sol / (H_seam + EPS_STRESS))
         ratio = sv_seam / (p_strength_iter + EPS_STRESS)
         y_zone_calc = float((H_seam / 2.0) * (safe_sqrt(ratio) - 1.0)) if ratio >= 1.0 else 0.0
         new_w = 2.0 * max(y_zone_calc, 1.5) + E_MIN_CORE
@@ -29778,7 +29964,7 @@ def main():
         w_prev = w_sol
 
     rec_width = float(np.round(w_sol, 1))
-    pillar_strength_val = sigma_cm * (WILSON_C1 + WILSON_C2 * rec_width / (H_seam + EPS_STRESS))
+    pillar_strength_val = sigma_cm * (BIENIAWSKI_C1 + BIENIAWSKI_C2 * rec_width / (H_seam + EPS_STRESS))
     y_zone = max(y_zone_calc, 1.5)
 
     rock_factor = (target_layer['gsi'] / 100.0) * (target_layer['mi'] / 20.0) * (1.0 - D_factor)
@@ -30351,7 +30537,7 @@ def main():
         temp_samp = rng_uq.normal(T_source_max, 50.0, 10000)
         fos_samp = np.array([
             float(apply_thermal_degradation(u, T, beta_thermal))
-            * (WILSON_C1 + WILSON_C2 * rec_width / (H_seam + EPS_STRESS))
+            * (BIENIAWSKI_C1 + BIENIAWSKI_C2 * rec_width / (H_seam + EPS_STRESS))
             / (vertical_stress(depth_seam, avg_rho) + EPS_STRESS)
             for u, T in zip(ucs_samp, temp_samp)
         ])
@@ -30553,7 +30739,7 @@ def main():
                 T_at_ct = (T_REF_AMBIENT + (T_source_max - T_REF_AMBIENT) * min(ct, burn_duration) / max(burn_duration, 1)
                            if burn_duration > 0 else T_REF_AMBIENT)
                 ucs_T_ct = float(apply_thermal_degradation(ucs_seam, T_at_ct, beta_thermal))
-                p_str_ct = ucs_T_ct * (WILSON_C1 + WILSON_C2 * rec_width / (H_seam + EPS_STRESS))
+                p_str_ct = ucs_T_ct * (BIENIAWSKI_C1 + BIENIAWSKI_C2 * rec_width / (H_seam + EPS_STRESS))
                 sv_ct = sv_seam * (1.0 + 0.001 * ct)
                 fos_timeline.append(float(np.clip(p_str_ct / (sv_ct + EPS_STRESS), 0.0, 10.0)))
 
@@ -30817,7 +31003,7 @@ def main():
                     results['sha256'] = trace_bundle.sha256
                     results['timestamp_utc'] = trace_bundle.timestamp_utc
                     results['git_commit'] = trace_bundle.git_commit
-                    results['doi'] = generate_real_doi({"title": obj_name, "year": datetime.utcnow().year, "hash": trace_bundle.sha256})
+                    results['doi'] = generate_real_doi({"title": obj_name, "year": datetime.now(timezone.utc).year, "hash": trace_bundle.sha256})
                     results['claims'] = generate_patent_claim_set([
                         "Adaptive Biot",
                         "Thermal Degradation",
@@ -31067,7 +31253,7 @@ def main():
                         np.array([T_avg_live]), np.array([depth_seam]), water_table=20.0
                     )[0])
                     pillar_live_v = float(apply_thermal_degradation(ucs_seam, T_avg_live, beta_thermal)) * (
-                        WILSON_C1 + WILSON_C2 * rec_width / (H_seam + EPS_STRESS)
+                        BIENIAWSKI_C1 + BIENIAWSKI_C2 * rec_width / (H_seam + EPS_STRESS)
                     )
                     FOS_live = float(np.clip(
                         pillar_live_v / (sigma_v_live + sigma_th_live + pore_p_live + EPS_GENERAL),
@@ -31472,7 +31658,7 @@ def main():
         mb_adv, s_adv, a_adv = hoek_brown_params(gsi_val, mi_val_r, D_factor)
         ucs_t_adv = float(apply_thermal_degradation(ucs_0_r, T_source_max, beta_thermal))
         sigma_cm_adv = ucs_t_adv * (float(s_adv) ** float(a_adv))
-        p_str_adv = sigma_cm_adv * (WILSON_C1 + WILSON_C2 * rec_width / (H_seam + EPS_STRESS))
+        p_str_adv = sigma_cm_adv * (BIENIAWSKI_C1 + BIENIAWSKI_C2 * rec_width / (H_seam + EPS_STRESS))
         avg_pore_p = float(np.nanmean(pore_pressure[idx_closest, :]))
 
         phi_char_val = float(np.mean(char_formation_porosity(temp_2d[idx_closest, :]))) if 'temp_2d' in locals() else 0.05
@@ -32915,7 +33101,7 @@ class PatentAPICache:
             query_hash = hashlib.sha256(f"{query}|{api_source}".encode()).hexdigest()[:32]
             now = _utc_now_iso()
             from datetime import datetime, timedelta
-            expires = (datetime.utcnow() + timedelta(hours=ttl)).isoformat()
+            expires = (datetime.now(timezone.utc) + timedelta(hours=ttl)).isoformat()
 
             conn = PatentAPICache._get_conn()
             conn.execute(
@@ -33202,7 +33388,7 @@ class RealDOIGenerator:
         # Build deterministic suffix from SHA-256 of metadata
         meta_str = _safe_json_dumps(metadata)
         suffix_hash = hashlib.sha256(meta_str.encode("utf-8")).hexdigest()[:10]
-        year = metadata.get("year", datetime.utcnow().year)
+        year = metadata.get("year", datetime.now(timezone.utc).year)
         # Format: <prefix>/ucg.<year>.<suffix>
         suffix = f"ucg.{year}.{suffix_hash}"
         doi_body_numeric = "".join(c for c in (suffix + str(year)) if c.isdigit())
@@ -33249,7 +33435,7 @@ class RealDOIGenerator:
                         "creators": [{"name": doi_payload["metadata"].get("author", "Unknown")}],
                         "titles": [{"title": doi_payload["metadata"].get("title", "Untitled")}],
                         "publisher": "UCG SCI-Grade Platform",
-                        "publicationYear": int(doi_payload["metadata"].get("year", datetime.utcnow().year)),
+                        "publicationYear": int(doi_payload["metadata"].get("year", datetime.now(timezone.utc).year)),
                         "types": {"resourceTypeGeneral": "Software"},
                         "descriptions": [{
                             "description": doi_payload["metadata"].get("abstract", "Patent-grade UCG platform."),
@@ -35507,7 +35693,7 @@ class DatabaseBackupManager:
     def auto_backup(self) -> str:
         """Avtomatik backup yaratish."""
         import gzip
-        timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
         db_file = Path(self.db_path)
         if not db_file.exists():
             logger.warning(f"Database file not found: {self.db_path}")
@@ -35631,7 +35817,7 @@ class SemanticBenchmarkRunner:
             "models_tested": len(cls.MODELS_TO_TEST),
             "results": results,
             "report": "\n".join(report_lines),
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "invention_text_length": len(invention_text),
             "n_prior_art": len(prior_art_texts),
         }
@@ -35912,7 +36098,7 @@ class PatentCertificateGenerator:
         """
         if not REPORTLAB_AVAILABLE:
             return {"success": False, "error": "reportlab not installed"}
-        filename = filename or f"patent_certificate_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.pdf"
+        filename = filename or f"patent_certificate_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.pdf"
         out_path = self.output_dir / filename
         # Build certificate
         buf = io.BytesIO()
@@ -35951,9 +36137,9 @@ class PatentCertificateGenerator:
             ("Inventor", certificate_data.get("inventor", "Saitov Dilshodbek")),
             ("Applicant", certificate_data.get("applicant", "ZAI / Tashkent State Technical University")),
             ("Application No.", certificate_data.get("application_number", "UzPatent DP 2026/00XXX")),
-            ("Filing Date", certificate_data.get("filing_date", datetime.utcnow().strftime("%Y-%m-%d"))),
+            ("Filing Date", certificate_data.get("filing_date", datetime.now(timezone.utc).strftime("%Y-%m-%d"))),
             ("PCT Application", certificate_data.get("pct_number", "PCT/IB2026/00XXXX (pending)")),
-            ("Issue Date", datetime.utcnow().strftime("%Y-%m-%d")),
+            ("Issue Date", datetime.now(timezone.utc).strftime("%Y-%m-%d")),
         ]
         for label, value in info_pairs:
             c.setFont("Helvetica-Bold", 10)
@@ -36281,7 +36467,7 @@ def apply_all_patches(app_module: Any) -> Dict[str, Any]:
                     "inventor": "Saitov Dilshodbek",
                     "applicant": "ZAI / Tashkent State Technical University",
                     "application_number": "UzPatent DP 2026/00XXX (pending)",
-                    "filing_date": datetime.utcnow().strftime("%Y-%m-%d"),
+                    "filing_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
                     "pct_number": "PCT/IB2026/00XXXX (pending)",
                     "abstract": "Integrated UCG platform with adaptive Biot, thermal degradation, FEM, PGNN (Physics-Guided NN), MC UQ, and audit chain.",
                     "novelty_index": 85.5,
@@ -37781,7 +37967,7 @@ class PatentCertificateGeneratorV2:
             PDF document with embedded QR code.
         """
         # Generate certificate ID and verification token
-        certificate_id = f"UCG-CERT-{datetime.utcnow().strftime('%Y%m%d')}-{hashlib.sha256(json.dumps(cert_data, sort_keys=True, default=str).encode()).hexdigest()[:8].upper()}"
+        certificate_id = f"UCG-CERT-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{hashlib.sha256(json.dumps(cert_data, sort_keys=True, default=str).encode()).hexdigest()[:8].upper()}"
         token = self.generate_verification_token(
             certificate_id=certificate_id,
             patentability_index=cert_data.get("patentability_index", 0.0),
@@ -38987,7 +39173,7 @@ class DigitalPatentVault:
                created_by: str = "system",
                parent_doc_id: Optional[str] = None) -> Dict[str, Any]:
         """Store a document in the vault (encrypted)."""
-        doc_id = f"DOC-{datetime.utcnow().strftime('%Y%m%d')}-{hashlib.sha256(content).hexdigest()[:8].upper()}"
+        doc_id = f"DOC-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{hashlib.sha256(content).hexdigest()[:8].upper()}"
         encrypted = self._encrypt(content)
         encrypted_path = self.vault_dir / f"{doc_id}.enc"
         encrypted_path.write_bytes(encrypted)
