@@ -13607,31 +13607,31 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         "Asymptotic range check orqali convergence order tasdiqlanadi."
     )
     try:
-        re = RichardsonExtrapolation.extrapolate(
+        re_result = RichardsonExtrapolation.extrapolate(
             y_coarse=1.10, y_medium=1.05, y_fine=1.025, refinement_ratio=2.0
         )
         p = doc.add_paragraph()
         p.add_run(f"Method: ").bold = True
-        p.add_run(f"{re['method']}\n")
+        p.add_run(f"{re_result['method']}\n")
         p.add_run(f"Inputs: ").bold = True
-        p.add_run(f"y_coarse={re['inputs']['y_coarse']}, "
-                  f"y_medium={re['inputs']['y_medium']}, "
-                  f"y_fine={re['inputs']['y_fine']}, r={re['inputs']['refinement_ratio_r']}\n")
+        p.add_run(f"y_coarse={re_result['inputs']['y_coarse']}, "
+                  f"y_medium={re_result['inputs']['y_medium']}, "
+                  f"y_fine={re_result['inputs']['y_fine']}, r={re_result['inputs']['refinement_ratio_r']}\n")
         p.add_run(f"Observed Order (p): ").bold = True
-        p.add_run(f"{re['observed_order_p']:.4f}\n")
+        p.add_run(f"{re_result['observed_order_p']:.4f}\n")
         p.add_run(f"Extrapolated Exact Solution: ").bold = True
-        p.add_run(f"{re['extrapolated_exact_solution']:.6f}\n")
+        p.add_run(f"{re_result['extrapolated_exact_solution']:.6f}\n")
         p.add_run(f"GCI (fine): ").bold = True
-        p.add_run(f"{re['GCI_fine']:.4f} (must be < 0.05)\n")
+        p.add_run(f"{re_result['GCI_fine']:.4f} (must be < 0.05)\n")
         p.add_run(f"GCI (coarse): ").bold = True
-        p.add_run(f"{re['GCI_coarse']:.4f}\n")
+        p.add_run(f"{re_result['GCI_coarse']:.4f}\n")
         p.add_run(f"Asymptotic Range Ratio: ").bold = True
-        p.add_run(f"{re['asymptotic_range_ratio']:.4f} (must be ~1.0)\n")
+        p.add_run(f"{re_result['asymptotic_range_ratio']:.4f} (must be ~1.0)\n")
         p.add_run(f"Converged: ").bold = True
-        p.add_run(f"{'✓ YES' if re['converged'] else '✗ NO'}\n")
+        p.add_run(f"{'✓ YES' if re_result['converged'] else '✗ NO'}\n")
         p.add_run(f"Safety Factor (Fs): ").bold = True
-        p.add_run(f"{re['safety_factor_Fs']}")
-        for ref in re['references']:
+        p.add_run(f"{re_result['safety_factor_Fs']}")
+        for ref in re_result['references']:
             doc.add_paragraph(f"• {ref}", style='List Bullet')
     except Exception as exc:
         doc.add_paragraph("Richardson Extrapolation: 3-mesh convergence study with GCI (Roache 1994) completed.")
@@ -22295,13 +22295,13 @@ def render_v7_patent_grade_panel():
 
         if rich_submitted:
             try:
-                re = RichardsonExtrapolation.extrapolate(r_coarse, r_medium, r_fine, r_ratio)
+                re_result = RichardsonExtrapolation.extrapolate(r_coarse, r_medium, r_fine, r_ratio)
                 c1, c2, c3 = st.columns(3)
-                c1.metric("Observed Order (p)", f"{re['observed_order_p']:.4f}")
-                c2.metric("GCI (fine)", f"{re['GCI_fine']:.4f}")
-                c3.metric("Converged", "✅" if re["converged"] else "❌")
-                st.write(f"Extrapolated exact solution: **{re['extrapolated_exact_solution']:.6f}**")
-                st.write(f"Asymptotic range ratio: **{re['asymptotic_range_ratio']:.4f}** (should be ~1.0)")
+                c1.metric("Observed Order (p)", f"{re_result['observed_order_p']:.4f}")
+                c2.metric("GCI (fine)", f"{re_result['GCI_fine']:.4f}")
+                c3.metric("Converged", "✅" if re_result["converged"] else "❌")
+                st.write(f"Extrapolated exact solution: **{re_result['extrapolated_exact_solution']:.6f}**")
+                st.write(f"Asymptotic range ratio: **{re_result['asymptotic_range_ratio']:.4f}** (should be ~1.0)")
             except Exception as exc:
                 st.error(f"Richardson error: {exc}")
 
@@ -24328,11 +24328,11 @@ def run_v7_app():
                     ("Pore pressure", "0.089", "0.112", "4"),
                     ("Biot coefficient", "0.067", "0.089", "5"),
                 ]
-                for i, (p, s1, st, r) in enumerate(sens_sum_data):
+                for i, (p, s1, s_total, r) in enumerate(sens_sum_data):
                     row = sens_sum_table.add_row().cells
                     row[0].text = p
                     row[1].text = s1
-                    row[2].text = st
+                    row[2].text = s_total
                     row[3].text = r
                 doc.add_paragraph(
                     "Noaniqlik tahlili (Bootstrap, 10,000 resamples): "
