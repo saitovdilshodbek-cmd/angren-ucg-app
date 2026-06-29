@@ -1005,6 +1005,59 @@ def clamp_mc_samples(requested: int, *, label: str = "n_simulations") -> int:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# FIX v9.11.22: Universal SQLite path resolver — DatabaseBackend dan OLDIN
+# Sabab: DatabaseBackend.__init__ _resolve_db_path() ni chaqiradi, lekin
+# v9.11.21 da u keyinroq aniqlangan edi → NameError.
+# ══════════════════════════════════════════════════════════════════════════════
+def _resolve_db_path(db_path: Optional[str] = None, default_name: str = "ucg_platform.db") -> str:
+    """Resolve a SQLite database path to a writable absolute path.
+
+    1. If db_path is None → use default_name
+    2. If db_path is ':memory:' → return ':memory:'
+    3. If db_path is absolute → use as-is
+    4. If db_path is relative → prepend UCG_DATA_DIR (or temp fallback)
+    5. Always create parent directory
+    6. If fails → fall back to temp dir
+
+    Returns absolute path string (or ':memory:').
+    """
+    if db_path is None:
+        db_path = default_name
+    if db_path == ":memory:":
+        return ":memory:"
+    _data_dir = os.getenv("UCG_DATA_DIR", "")
+    if not _data_dir:
+        _data_dir = os.path.join(os.path.expanduser("~"), ".ucg_platform")
+    try:
+        os.makedirs(_data_dir, exist_ok=True)
+    except (OSError, PermissionError):
+        import tempfile as _tempfile
+        _data_dir = _tempfile.gettempdir()
+    if not os.path.isabs(db_path):
+        db_path = os.path.join(_data_dir, os.path.basename(db_path))
+    _parent = os.path.dirname(os.path.abspath(db_path))
+    try:
+        os.makedirs(_parent, exist_ok=True)
+    except (OSError, PermissionError):
+        import tempfile as _tempfile
+        db_path = os.path.join(_tempfile.gettempdir(), os.path.basename(db_path))
+    return db_path
+
+
+def _safe_sqlite_connect(db_path: Optional[str] = None, default_name: str = "ucg_platform.db", **kwargs):
+    """Safe sqlite3.connect with automatic path resolution and :memory: fallback."""
+    import sqlite3 as _sqlite3
+    resolved = _resolve_db_path(db_path, default_name)
+    try:
+        return _sqlite3.connect(resolved, **kwargs)
+    except _sqlite3.OperationalError:
+        _lg = globals().get("logger")
+        if _lg:
+            _lg.warning("[DB] Failed to open %s — falling back to :memory:", resolved)
+        return _sqlite3.connect(":memory:", **kwargs)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # FIX #5 — DatabaseBackend abstraction (PostgreSQL default, SQLite fallback)
 # ══════════════════════════════════════════════════════════════════════════════
 class DatabaseBackend:
@@ -2081,63 +2134,8 @@ MAX_SUBPROCESS_TIMEOUT_SEC = 2.0
 MAX_STREAMLIT_CACHE_ENTRIES = 32
 
 
-# ── FIX v9.11.21 (DB-path): Universal SQLite path resolver ──────────────
-# Muammo: 40+ joyda sqlite3.connect() nisbiy yo'l bilan chaqirilgan.
-# Streamlit Cloud / Docker / faqat o'qish kataloglarida "unable to open
-# database file" xatosi. Endi: bitta umumiy helper — hamma joyda ishlatiladi.
-def _resolve_db_path(db_path: Optional[str] = None, default_name: str = "ucg_platform.db") -> str:
-    """Resolve a SQLite database path to a writable absolute path.
-
-    1. If db_path is None or ':memory:' → return ':memory:'
-    2. If db_path is absolute → use as-is (ensure parent dir exists)
-    3. If db_path is relative → prepend UCG_DATA_DIR (or temp fallback)
-    4. Always create parent directory if needed
-    5. If parent dir creation fails → fall back to temp dir
-
-    Returns absolute path string (or ':memory:').
-    """
-    if db_path is None:
-        db_path = default_name
-    if db_path == ":memory:":
-        return ":memory:"
-    # Determine data directory
-    _data_dir = os.getenv("UCG_DATA_DIR", "")
-    if not _data_dir:
-        _data_dir = os.path.join(os.path.expanduser("~"), ".ucg_platform")
-    try:
-        os.makedirs(_data_dir, exist_ok=True)
-    except (OSError, PermissionError):
-        import tempfile as _tempfile
-        _data_dir = _tempfile.gettempdir()
-    # Make absolute
-    if not os.path.isabs(db_path):
-        db_path = os.path.join(_data_dir, os.path.basename(db_path))
-    # Create parent directory
-    _parent = os.path.dirname(os.path.abspath(db_path))
-    try:
-        os.makedirs(_parent, exist_ok=True)
-    except (OSError, PermissionError):
-        import tempfile as _tempfile
-        db_path = os.path.join(_tempfile.gettempdir(), os.path.basename(db_path))
-    return db_path
-
-
-def _safe_sqlite_connect(db_path: Optional[str] = None, default_name: str = "ucg_platform.db", **kwargs):
-    """Safe sqlite3.connect with automatic path resolution and fallback.
-
-    FIX v9.11.21: Universal wrapper — resolves path, creates parent dir,
-    falls back to :memory: if all file-based attempts fail.
-    """
-    import sqlite3 as _sqlite3
-    resolved = _resolve_db_path(db_path, default_name)
-    try:
-        return _sqlite3.connect(resolved, **kwargs)
-    except _sqlite3.OperationalError:
-        # Last resort: in-memory
-        if globals().get("logger"):
-            logger.warning("[DB] Failed to open %s — falling back to :memory:", resolved)
-        return _sqlite3.connect(":memory:", **kwargs)
-
+# FIX v9.11.22: _resolve_db_path va _safe_sqlite_connect ENDI qator ~890 da
+# (DatabaseBackend dan OLDIN) aniqlangan. Bu yerda takroriy aniqlash olib tashlandi.
 
 SAFE_SUBPROCESS_COMMANDS: Tuple[Tuple[str, ...], ...] = (
     ("git", "rev-parse", "--short", "HEAD"),
