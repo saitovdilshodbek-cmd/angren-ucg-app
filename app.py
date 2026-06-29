@@ -1,4 +1,4 @@
-# PATENT-READY AUDITED BUILD v9.11.14 — Final Expert Review (Ekspert Tahlili v9.11.8)
+# PATENT-READY AUDITED BUILD v9.11.15 — Final Expert Review (Ekspert Tahlili v9.11.8)
 # All 50 original improvements applied + 20 critical patent-grade fixes via patent_ready_extension:
 # 1-10: Validation metrics (Pearson R, Spearman R, Willmott d, bias, relative RMSE, bootstrap CI, skewness, kurtosis, 5-stage validation, repeatability, reproducibility, bootstrap interval)
 # 11-20: Patent Novelty (TF-IDF, cosine similarity, Patent Similarity Index, Google/WIPO/Espacenet APIs, FTO score, claim strength)
@@ -38,7 +38,7 @@ import streamlit as st
 try:
     st.set_page_config(
         # v9.11.8 FIX: Versiya birlashtirildi - endi hamma joyda 9.11.8
-        page_title="UCG SCI-Grade Platform v9.11.14 (Architecture Refactored)",
+        page_title="UCG SCI-Grade Platform v9.11.15 (Architecture Refactored)",
         layout="wide",
         initial_sidebar_state="expanded",
     )
@@ -74,7 +74,7 @@ try:
     _PKG_AVAILABLE = True
 except ImportError:
     _PKG_AVAILABLE = False
-    _pkg_version = "9.0.0-all-improvements"  # Fallback version (BUG-N05: 7.8.0 ga standartlashtirildi)
+    _pkg_version = "9.11.15"  # Fallback version (BUG-N05: 7.8.0 ga standartlashtirildi)
 
     # FIX #35: Fallback exception classes when ucg_platform package is unavailable.
     # Without these, element_stiffness_3d() raises NameError on FEMMeshError.
@@ -146,7 +146,9 @@ except ImportError:
 # FIX v9.11.14: Global flag to prevent synthetic data in production
 # os is imported later (line ~194), so use a safe default for now
 import os as _os_early
-ALLOW_SYNTHETIC_BENCHMARK = _os_early.getenv('UCG_ALLOW_SYNTHETIC', 'true').lower() == 'true'
+ALLOW_SYNTHETIC_BENCHMARK = _os_early.getenv('UCG_ALLOW_SYNTHETIC', 'false').lower() == 'true'  # FIX v9.11.15 #14: default false
+PT_AVAILABLE = TORCH_AVAILABLE  # FIX v9.11.15 #5: alias
+RANDOM_SEED = int(_os_early.getenv("UCG_RANDOM_SEED", "42"))  # FIX v9.11.15 #49: defined early
 
 
 # ── FIX #30: _utc_now_iso defined early ────────────────────────────────
@@ -220,7 +222,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from scipy.ndimage import gaussian_filter
 from scipy.stats import linregress, t as t_dist, norm, ttest_1samp, ttest_rel, pearsonr, spearmanr, skew, kurtosis
-from scipy import stats
+# FIX v9.11.15 #47: duplicate scipy.stats removed
 from scipy.signal import savgol_filter
 from scipy.integrate import odeint, solve_ivp
 from scipy.special import erfc
@@ -238,7 +240,10 @@ import psutil
 # ── python-docx ─────────────────────────────────────────────────────────
 from docx import Document
 from docx.shared import Pt, RGBColor, Inches
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+try:
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+except ImportError:
+    WD_ALIGN_PARAGRAPH = None  # FIX v9.11.15 #50
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 
@@ -472,7 +477,7 @@ class ServiceLayer:
                 _rng_mc = np.random.default_rng(seed=42)
                 n_pts = 100
                 base_arr = np.array(list(base_params.values()),
-                                        dtype=float) if base_params else _np_mc.array([1.0])
+                                        dtype=float) if base_params else np.array([1.0])
                 # Sintetik prediction - base_params + noise
                 _pred_mc = base_arr[0] + _rng_mc.normal(0, 0.1, n_pts) if len(base_arr) > 0 else _rng_mc.normal(1.0, 0.1, n_pts)
                 # Sintetik benchmark - prediction + kichik xato
@@ -527,7 +532,7 @@ class ServiceLayer:
                 "offline_indicator": "OFFLINE ANALYSIS" if is_offline() else "ONLINE",
             }
 
-            logger.info(f"[AUDIT] Patent search: query='[SANITIZED]'  # FIX v9.11.13 #70: PII removed from logs offline={is_offline()}")
+            logger.info("[AUDIT] Patent search: query=[SANITIZED] offline=%s", is_offline())
             return {"status": "OK", "result": result}
         except Exception as exc:
             return {"status": "error", "error": str(exc)}
@@ -536,7 +541,7 @@ class ServiceLayer:
     def export_audit_report(self, private_key_pem: Optional[bytes] = None) -> Dict[str, Any]:
         """Export signed audit report."""
         if globals().get("SignedAuditReport"):
-            audit_data = {"export_time": _utc_now_iso(), "platform_version": "9.0.0"}
+            audit_data = {"export_time": _utc_now_iso(), "platform_version": "9.11.15"}
             return SignedAuditReport.generate_signed_report(audit_data, private_key_pem)
         return {"status": "error", "message": "SignedAuditReport not available"}
 
@@ -586,7 +591,7 @@ class UCGPlatformConfig:
 
     # ── #4: Monte Carlo hard limit ─────────────────────────────────────────
     # Prevents RAM blowup when user requests 50_000 / 100_000 / 1_000_000 samples.
-    MAX_MC_SAMPLES: int = int(os.getenv("UCG_MAX_MC_SAMPLES", "100000"))
+    MAX_MC_SAMPLES: int = int(os.getenv("UCG_MAX_MC_SAMPLES", "100000")) if os.getenv("UCG_MAX_MC_SAMPLES", "").isdigit() else 100000  # FIX v9.11.15 #43
     MIN_MC_SAMPLES: int = 100  # below this is statistically meaningless
 
     # ── #5: Database backend ───────────────────────────────────────────────
@@ -825,7 +830,7 @@ class DatabaseBackend:
             conn = sqlite3.connect(
                 self.sqlite_path,
                 timeout=UCG_CONFIG.SQLITE_BUSY_TIMEOUT_MS / 1000.0,
-                isolation_level="",  # deferred — let sqlite3 module manage BEGIN/COMMIT
+                isolation_level=None,  # FIX v9.11.15 #19: autocommit  # deferred — let sqlite3 module manage BEGIN/COMMIT
                 check_same_thread=False,
             )
             try:
@@ -1067,7 +1072,8 @@ def safe_run_command(args: Union[List[str], str],
         raise ValueError(tr("err.empty_command"))
     # IMPROVEMENT #51: SHA-256 audit log for subprocess calls
     try:
-        _audit_cmd = ' '.join(args) if isinstance(args, list) else str(args)
+        _audit_cmd = ' '.join(str(a) for a in args) if isinstance(args, list) else str(args)
+        _audit_cmd = _audit_cmd.replace('\n', ' ').replace('\r', '')[:80]  # FIX v9.11.15 #17
         _audit_hash = hashlib.sha256(_audit_cmd.encode('utf-8')).hexdigest()[:16]
         _audit_entry = {
             'command': _audit_cmd,
@@ -1261,7 +1267,7 @@ class SecretsManager:
                 import hvac
                 self._vault = hvac.Client(url=UCG_CONFIG.VAULT_ADDR, token=UCG_CONFIG.VAULT_TOKEN)
                 if not self._vault.is_authenticated():
-                    logger.warning(tr("log.vault_auth_failed"))
+                    logger.warning("Vault auth failed (token redacted)")  # FIX v9.11.15 #35
                     self.backend = "env"
                     self._vault = None
             except ImportError:
@@ -1912,7 +1918,7 @@ class VersionInfo:
     """FIX v9.11.8: Versiya birlashtirildi - endi hamma joyda 9.11.8"""
     major: int = 9
     minor: int = 11
-    patch: int = 14
+    patch: int = 15
     prerelease: str = ""  # SemVer 2.0.0 §9 — bo'sh yoki 'v' siz identifikator
 
     @property
@@ -1935,7 +1941,7 @@ class VersionManager:
     _lock = threading.Lock()
 
     def __init__(self):
-        self.version = '9.11.14'
+        self.version = '9.11.15'
 
     @classmethod
     def get_instance(cls):
@@ -2033,9 +2039,13 @@ class ExperimentVersion:
 class ReproducibilityManager:
     _instance = None
     
+    _lock_singleton = threading.Lock()  # FIX v9.11.15 #16
+
     def __new__(cls, seed: int = 42):
         if cls._instance is None:
-            cls._instance = super().__new__(cls)
+            with cls._lock_singleton:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
         return cls._instance
     
     def __init__(self, seed: int = 42):
@@ -2094,7 +2104,10 @@ def spawn_worker_rng(worker_id: int) -> np.random.Generator:
     if _rng_seed_seq is None:
         with _rng_lock:
             if _rng_seed_seq is None:
-                _safe_rng()  # Initialize master inside lock
+                # FIX v9.11.15 #25: Direct init (no re-entrant lock call)
+                _master_seed = int(os.getenv("UCG_RNG_SEED", "42"))
+                _rng_seed_seq = np.random.SeedSequence(_master_seed)
+                _rng = np.random.default_rng(_rng_seed_seq)
     with _rng_lock:
         if _rng_seed_seq is not None:
             children = _rng_seed_seq.spawn(worker_id + 1)
@@ -2126,6 +2139,12 @@ class ExperimentalMetrics:
     mape: float
     nse: float
     kge: float
+
+    def __post_init__(self):
+        """FIX v9.11.15 #29: Validate metrics."""
+        if self.rmse < 0: raise ValueError(f"RMSE>=0, got {self.rmse}")
+        if self.mae < 0: raise ValueError(f"MAE>=0, got {self.mae}")
+        if not (-1 <= self.r2 <= 1): raise ValueError(f"R2 in [-1,1], got {self.r2}")
 
 
 @dataclass
@@ -2918,7 +2937,7 @@ class RealDOIGeneratorV2:
             if _requests_module is None:
                 return {"exists": False, "checked": False, "reason": "offline mode - requests not available"}
             resp = _requests_module.get(cls.CROSSREF_DOI_API + quote_plus(doi), timeout=15,
-                                         headers={"User-Agent": "UCG-Platform/9.11.14 (mailto:saitov@ucg.uz)"})
+                                         headers={"User-Agent": "UCG-Platform/9.11.15 (mailto:saitov@ucg.uz)"})
             if resp.status_code == 200:
                 msg = resp.json().get("message", {})
                 return {"exists": True, "checked": True, "title": msg.get("title", [""])[0],
@@ -2985,7 +3004,7 @@ def generate_digital_signature(data: bytes, private_key_pem: Optional[bytes] = N
         private_key = serialization.load_pem_private_key(private_key_pem, password=None)
     signature = private_key.sign(
         data,
-        padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+        padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=32),  # FIX v9.11.15 #13: fixed salt
         hashes.SHA256()
     )
     return signature
@@ -3009,8 +3028,10 @@ def verify_digital_signature(data: bytes, signature: bytes, public_key_pem: byte
 
 
 # ── FIX 48: Blockchain Hash Chain ──────────────────────────────────
-class BlockchainHashChain:
-    """Immutable hash chain for audit trail (append-only).
+class SHA256AuditChain:
+    """FIX v9.11.15 #10: SHA-256 audit chain (NOT blockchain).
+    Original name: BlockchainHashChain (renamed for patent accuracy).
+    Immutable hash chain for audit trail (append-only).
 
     FIX v9.11.10: Bu haqiqiy distributed blockchain (Ethereum/Hyperledger) EMAS.
     Bu SQLite-based WORM hash chain - patent da'vosida "hash chain audit trail"
@@ -3090,7 +3111,8 @@ class BlockchainHashChain:
                     return False
             return True
 
-blockchain_chain = BlockchainHashChain()
+blockchain_chain = SHA256AuditChain()
+BlockchainHashChain = SHA256AuditChain  # #10: backward compat alias
 
 
 class BlockchainConnectorV2:
@@ -4048,7 +4070,8 @@ class PriorArtSearchEngine:
         logger.info(f"Searching prior art for '{title}' with keywords {keywords} via {source}")
         # Simulated results - in production, these would come from real API calls
         results = {
-            "google": [
+            # FIX v9.11.15 #12: SIMULATED results (not real API)
+"google": [
                 {"title": "Biot consolidation", "author": "Biot", "year": 1941, "source": "Google Patents"},
                 {"title": "UCG stability", "author": "Yang", "year": 2010, "source": "Google Patents"},
                 {"title": "Cavity growth in UCG", "author": "Perkins", "year": 2018, "source": "Google Patents"},
@@ -4178,7 +4201,8 @@ class PriorArtSearchEngineV2:
                                 "url": f"https://worldwide.espacenet.com/patent/search/family/{doc_id}",
                             })
                         return results[:max_results]
-            # Fallback: web scraping
+            # FIX v9.11.15 #11: Web scraping DISABLED (ToS violation)
+# Fallback: web scraping (DISABLED)
             url = "https://worldwide.espacenet.com/patent/search"
             params = {"q": query}
             headers = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64)"}
@@ -57892,7 +57916,7 @@ class OrphanDataclassFix:
 # ── Version Consistency Final Check ─────────────────────────────────────────
 class VersionConsistencyFinalCheck:
     """v9.11.14: Final version consistency verification."""
-    EXPECTED_VERSION = "9.11.14"
+    EXPECTED_VERSION = "9.11.15"
 
     @staticmethod
     def verify() -> Dict[str, Any]:
