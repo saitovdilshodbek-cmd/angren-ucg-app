@@ -1018,26 +1018,8 @@ class DatabaseBackend:
                  sqlite_path: Optional[str] = None):
         self.backend = (backend or UCG_CONFIG.DB_BACKEND).lower()
         self.dsn = dsn if dsn is not None else UCG_CONFIG.POSTGRES_DSN
-        self.sqlite_path = sqlite_path or UCG_CONFIG.SQLITE_PATH
-        # FIX v9.11.20 (DB-path): SQLite path ni absolute qilish va parent
-        # katalogni yaratish. "unable to open database file" xatosini bartaraf etadi.
-        if not os.path.isabs(self.sqlite_path):
-            _data_dir = os.getenv(
-                "UCG_DATA_DIR",
-                os.path.join(os.path.expanduser("~"), ".ucg_platform"),
-            )
-            try:
-                os.makedirs(_data_dir, exist_ok=True)
-            except (OSError, PermissionError):
-                import tempfile as _tempfile
-                _data_dir = _tempfile.gettempdir()
-            self.sqlite_path = os.path.join(_data_dir, os.path.basename(self.sqlite_path))
-        # Parent katalogni yaratish
-        _parent = os.path.dirname(os.path.abspath(self.sqlite_path))
-        try:
-            os.makedirs(_parent, exist_ok=True)
-        except (OSError, PermissionError) as _mk_exc:
-            logger.warning("[DatabaseBackend] Could not create parent dir %s: %s", _parent, _mk_exc)
+        # FIX v9.11.21: _resolve_db_path ishlatish — universal helper
+        self.sqlite_path = _resolve_db_path(sqlite_path or UCG_CONFIG.SQLITE_PATH, "ucg_platform.db")
         self._pg_available = False
         self._pg_version: Optional[str] = None
         try:
@@ -2097,6 +2079,66 @@ except (OSError, PermissionError):
 DEFAULT_REPORT_DIR = os.path.join(_data_dir, "reports")
 MAX_SUBPROCESS_TIMEOUT_SEC = 2.0
 MAX_STREAMLIT_CACHE_ENTRIES = 32
+
+
+# ── FIX v9.11.21 (DB-path): Universal SQLite path resolver ──────────────
+# Muammo: 40+ joyda sqlite3.connect() nisbiy yo'l bilan chaqirilgan.
+# Streamlit Cloud / Docker / faqat o'qish kataloglarida "unable to open
+# database file" xatosi. Endi: bitta umumiy helper — hamma joyda ishlatiladi.
+def _resolve_db_path(db_path: Optional[str] = None, default_name: str = "ucg_platform.db") -> str:
+    """Resolve a SQLite database path to a writable absolute path.
+
+    1. If db_path is None or ':memory:' → return ':memory:'
+    2. If db_path is absolute → use as-is (ensure parent dir exists)
+    3. If db_path is relative → prepend UCG_DATA_DIR (or temp fallback)
+    4. Always create parent directory if needed
+    5. If parent dir creation fails → fall back to temp dir
+
+    Returns absolute path string (or ':memory:').
+    """
+    if db_path is None:
+        db_path = default_name
+    if db_path == ":memory:":
+        return ":memory:"
+    # Determine data directory
+    _data_dir = os.getenv("UCG_DATA_DIR", "")
+    if not _data_dir:
+        _data_dir = os.path.join(os.path.expanduser("~"), ".ucg_platform")
+    try:
+        os.makedirs(_data_dir, exist_ok=True)
+    except (OSError, PermissionError):
+        import tempfile as _tempfile
+        _data_dir = _tempfile.gettempdir()
+    # Make absolute
+    if not os.path.isabs(db_path):
+        db_path = os.path.join(_data_dir, os.path.basename(db_path))
+    # Create parent directory
+    _parent = os.path.dirname(os.path.abspath(db_path))
+    try:
+        os.makedirs(_parent, exist_ok=True)
+    except (OSError, PermissionError):
+        import tempfile as _tempfile
+        db_path = os.path.join(_tempfile.gettempdir(), os.path.basename(db_path))
+    return db_path
+
+
+def _safe_sqlite_connect(db_path: Optional[str] = None, default_name: str = "ucg_platform.db", **kwargs):
+    """Safe sqlite3.connect with automatic path resolution and fallback.
+
+    FIX v9.11.21: Universal wrapper — resolves path, creates parent dir,
+    falls back to :memory: if all file-based attempts fail.
+    """
+    import sqlite3 as _sqlite3
+    resolved = _resolve_db_path(db_path, default_name)
+    try:
+        return _sqlite3.connect(resolved, **kwargs)
+    except _sqlite3.OperationalError:
+        # Last resort: in-memory
+        if globals().get("logger"):
+            logger.warning("[DB] Failed to open %s — falling back to :memory:", resolved)
+        return _sqlite3.connect(":memory:", **kwargs)
+
+
 SAFE_SUBPROCESS_COMMANDS: Tuple[Tuple[str, ...], ...] = (
     ("git", "rev-parse", "--short", "HEAD"),
 )
@@ -3797,34 +3839,8 @@ class SHA256AuditChain:
         "distributed consensus."
     )
     def __init__(self, db_path: str = "blockchain_audit.db"):
-        # FIX v9.11.20 (DB-path): nisbiy yo'lni absolute ga aylantirish
-        # va parent katalogni yaratish. "unable to open database file" xatosini
-        # bartaraf etadi (Streamlit Cloud / Docker / faqat o'qish kataloglarida).
-        if not os.path.isabs(db_path):
-            _data_dir = os.getenv(
-                "UCG_DATA_DIR",
-                os.path.join(os.path.expanduser("~"), ".ucg_platform"),
-            )
-            try:
-                os.makedirs(_data_dir, exist_ok=True)
-            except (OSError, PermissionError):
-                import tempfile as _tempfile
-                _data_dir = _tempfile.gettempdir()
-            db_path = os.path.join(_data_dir, os.path.basename(db_path))
-        # Parent katalogni yaratish (absolute path uchun)
-        _parent = os.path.dirname(os.path.abspath(db_path))
-        try:
-            os.makedirs(_parent, exist_ok=True)
-        except (OSError, PermissionError) as _mk_exc:
-            # Fallback: temp katalog
-            import tempfile as _tempfile
-            db_path = os.path.join(_tempfile.gettempdir(), os.path.basename(db_path))
-            if globals().get("logger"):
-                logger.warning(
-                    "[SHA256AuditChain] Could not create parent dir %s: %s — using %s",
-                    _parent, _mk_exc, db_path,
-                )
-        self.db_path = db_path
+        # FIX v9.11.21: _resolve_db_path ishlatish — universal helper
+        self.db_path = _resolve_db_path(db_path, "blockchain_audit.db")
         self._init_db()
 
     def _init_db(self) -> None:
@@ -10452,7 +10468,7 @@ class DatabaseMigrationManager:
 
 class ValidationBenchmarkDatabase:
     def __init__(self, db_path: str = "validation_benchmarks.db"):
-        self.db_path = db_path
+        self.db_path = _resolve_db_path(db_path, "validation_benchmarks.db")  # FIX v9.11.21
         self._init_db()
 
     def _init_db(self) -> None:
@@ -12472,7 +12488,7 @@ def validate_sensor_data_full(data: Dict[str, Any], db_path: str = "ucg_sensors.
         raise ValueError(tr("err.pressure_range", min_p=0, max_p=100))
     safe_sensor_id = sanitize_input(str(data['sensor_id']))
     try:
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(_resolve_db_path(db_path, "ucg_sensors.db"))  # FIX v9.11.21
         conn.execute("PRAGMA journal_mode=WAL")
         cursor = conn.cursor()
         cursor.execute(
@@ -12497,17 +12513,9 @@ def validate_sensor_data_full(data: Dict[str, Any], db_path: str = "ucg_sensors.
 def init_db():
     """Initialize the monitoring database.
 
-    FIX v9.11.20 (DB-path): absolute path + parent dir creation.
+    FIX v9.11.21: _resolve_db_path ishlatish.
     """
-    # FIX v9.11.20: nisbiy yo'lni absolute ga aylantirish
-    _db_name = "ucg_monitoring.db"
-    _data_dir = os.getenv("UCG_DATA_DIR", os.path.join(os.path.expanduser("~"), ".ucg_platform"))
-    try:
-        os.makedirs(_data_dir, exist_ok=True)
-    except (OSError, PermissionError):
-        import tempfile as _tempfile
-        _data_dir = _tempfile.gettempdir()
-    _db_path = os.path.join(_data_dir, _db_name)
+    _db_path = _resolve_db_path("ucg_monitoring.db", "ucg_monitoring.db")  # FIX v9.11.21
     conn = sqlite3.connect(_db_path)
     conn.execute("PRAGMA journal_mode=WAL")
     cursor = conn.cursor()
@@ -26865,8 +26873,7 @@ def render_v7_patent_grade_panel():
         col_mig1, col_mig2, col_mig3 = st.columns(3)
         with col_mig1:
             if st.button("⬆️ Run All Migrations"):
-                import tempfile
-                db_path = os.getenv("UCG_SQLITE_PATH", "ucg_platform.db")
+                db_path = _resolve_db_path(os.getenv("UCG_SQLITE_PATH", "ucg_platform.db"), "ucg_platform.db")  # FIX v9.11.21
                 with st.spinner("Applying migrations..."):
                     result = AlembicMigrationManager.migrate_up(db_path=db_path)
                 st.success(f"Applied {result['n_applied']} migrations")
@@ -26875,7 +26882,7 @@ def render_v7_patent_grade_panel():
                     st.warning(f"Errors: {result['errors']}")
         with col_mig2:
             if st.button("📜 Show History"):
-                db_path = os.getenv("UCG_SQLITE_PATH", "ucg_platform.db")
+                db_path = _resolve_db_path(os.getenv("UCG_SQLITE_PATH", "ucg_platform.db"), "ucg_platform.db")  # FIX v9.11.21
                 history = AlembicMigrationManager.migration_history(db_path=db_path)
                 if history:
                     st.dataframe(pd.DataFrame(history), use_container_width=True)
@@ -26883,7 +26890,7 @@ def render_v7_patent_grade_panel():
                     st.info("No migrations applied yet. Click 'Run All Migrations' first.")
         with col_mig3:
             if st.button("✔️ Verify Chain"):
-                db_path = os.getenv("UCG_SQLITE_PATH", "ucg_platform.db")
+                db_path = _resolve_db_path(os.getenv("UCG_SQLITE_PATH", "ucg_platform.db"), "ucg_platform.db")  # FIX v9.11.21
                 verify = AlembicMigrationManager.verify_chain(db_path=db_path)
                 if verify["valid"]:
                     st.success(f"✅ Chain valid (current: {verify['current']})")
@@ -31215,8 +31222,8 @@ class FEMBenchmarkDB:
     Stores validation results: patch test, mesh convergence, Kirsch.
     """
     def __init__(self, db_path: str = "fem_benchmark.db"):
-        self.db_path = db_path
-        with sqlite3.connect(db_path) as conn:
+        self.db_path = _resolve_db_path(db_path, "fem_benchmark.db")  # FIX v9.11.21
+        with sqlite3.connect(self.db_path) as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS fem_benchmark (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -35562,9 +35569,9 @@ EXTENSION_VERSION = "5.0.0"
 DOI_PREFIX = "10.2026"  # DataCite-style prefix (placeholder for testing; replace with real registrant prefix)
 PATENT_KEY_DIR = Path(os.getenv("UCG_KEY_DIR", Path.home() / ".ucg_platform" / "keys"))
 PATENT_KEY_DIR.mkdir(parents=True, exist_ok=True)
-DEFAULT_PRIOR_ART_DB = Path("prior_art_database.db")
-DEFAULT_EXPERIMENTAL_DB = Path("experimental_database.db")
-DEFAULT_AUDIT_CHAIN_DB = Path("audit_merkle_chain.db")
+DEFAULT_PRIOR_ART_DB = _resolve_db_path("prior_art_database.db", "prior_art_database.db")  # FIX v9.11.21
+DEFAULT_EXPERIMENTAL_DB = _resolve_db_path("experimental_database.db", "experimental_database.db")  # FIX v9.11.21
+DEFAULT_AUDIT_CHAIN_DB = _resolve_db_path("audit_merkle_chain.db", "audit_merkle_chain.db")  # FIX v9.11.21
 MC_MIN_SIMULATIONS = 10000
 PROOF_NUMERICAL_SAMPLES = 100_000
 
@@ -36419,57 +36426,16 @@ class PriorArtDatabase:
 # ══════════════════════════════════════════════════════════════════════════════
 
 class PatentAPICache:
-    """
-    Caching layer for patent search API results.
-    Uses SQLite for persistent cache with TTL (time-to-live) expiration.
-    Prevents redundant API calls and supports offline analysis.
-    """
+    """Caching layer for patent search API results."""
 
-    CACHE_DB = os.path.join(DEFAULT_LOG_DIR if globals().get("DEFAULT_LOG_DIR") else "/tmp", "patent_cache.db")
+    # FIX v9.11.21: _resolve_db_path ishlatish
+    CACHE_DB = _resolve_db_path("patent_cache.db", "patent_cache.db")
     DEFAULT_TTL_HOURS = 168  # 1 week
 
     @staticmethod
     def _get_conn():
-        """Get SQLite connection for cache database.
-
-        FIX v9.11.20 (DB-path): parent katalogni yaratish va error handling.
-        """
-        import sqlite3
-        # FIX v9.11.20: parent katalogni yaratish
-        _db_parent = os.path.dirname(os.path.abspath(PatentAPICache.CACHE_DB))
-        try:
-            os.makedirs(_db_parent, exist_ok=True)
-        except (OSError, PermissionError):
-            # Fallback: temp katalog
-            import tempfile as _tempfile
-            PatentAPICache.CACHE_DB = os.path.join(_tempfile.gettempdir(), "patent_cache.db")
-        try:
-            conn = sqlite3.connect(PatentAPICache.CACHE_DB)
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS patent_cache (
-                    query_hash TEXT PRIMARY KEY,
-                    query_text TEXT,
-                    api_source TEXT,
-                    result_json TEXT,
-                    created_at TEXT,
-                    expires_at TEXT
-                )
-            """)
-            return conn
-        except sqlite3.OperationalError:
-            # Fallback: in-memory SQLite
-            conn = sqlite3.connect(":memory:")
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS patent_cache (
-                    query_hash TEXT PRIMARY KEY,
-                    query_text TEXT,
-                    api_source TEXT,
-                    result_json TEXT,
-                    created_at TEXT,
-                    expires_at TEXT
-                )
-            """)
-            return conn
+        """Get SQLite connection for cache database. FIX v9.11.21: universal helper."""
+        return _safe_sqlite_connect(PatentAPICache.CACHE_DB, "patent_cache.db")
 
     @staticmethod
     def get(query: str, api_source: str = "general") -> Optional[Dict[str, Any]]:
@@ -40021,23 +39987,25 @@ class MerkleAuditChain:
     """
 
     def __init__(self, db_path: Union[str, Path] = DEFAULT_AUDIT_CHAIN_DB):
-        self.db_path = str(db_path)
+        self.db_path = _resolve_db_path(str(db_path), "audit_merkle_chain.db")  # FIX v9.11.21
         self._init_db()
 
     def _init_db(self) -> None:
-        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(self.db_path) as conn:
-            conn.executescript("""
-                CREATE TABLE IF NOT EXISTS audit_chain (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    previous_hash TEXT NOT NULL,
-                    block_hash TEXT NOT NULL,
-                    merkle_root TEXT NOT NULL,
-                    payload TEXT NOT NULL,
-                    timestamp TEXT NOT NULL,
-                    actor TEXT NOT NULL,
-                    signature TEXT
-                );
+        # FIX v9.11.21: error handling bilan
+        try:
+            Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+            with sqlite3.connect(self.db_path) as conn:
+                conn.executescript("""
+                    CREATE TABLE IF NOT EXISTS audit_chain (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        previous_hash TEXT NOT NULL,
+                        block_hash TEXT NOT NULL,
+                        merkle_root TEXT NOT NULL,
+                        payload TEXT NOT NULL,
+                        timestamp TEXT NOT NULL,
+                        actor TEXT NOT NULL,
+                        signature TEXT
+                    );
                 -- WORM protection: forbid UPDATE and DELETE
                 CREATE TRIGGER IF NOT EXISTS prevent_audit_update
                 BEFORE UPDATE ON audit_chain
@@ -40050,6 +40018,23 @@ class MerkleAuditChain:
                     SELECT RAISE(FAIL, 'Audit chain is immutable (WORM protection)');
                 END;
             """)
+        except sqlite3.OperationalError as _init_exc:
+            if globals().get("logger"):
+                logger.warning("[MerkleAuditChain] DB init failed at %s: %s — using :memory:", self.db_path, _init_exc)
+            self.db_path = ":memory:"
+            with sqlite3.connect(self.db_path) as conn:
+                conn.executescript("""
+                    CREATE TABLE IF NOT EXISTS audit_chain (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        previous_hash TEXT NOT NULL,
+                        block_hash TEXT NOT NULL,
+                        merkle_root TEXT NOT NULL,
+                        payload TEXT NOT NULL,
+                        timestamp TEXT NOT NULL,
+                        actor TEXT NOT NULL,
+                        signature TEXT
+                    );
+                """)
 
     def append(self, payload: Dict[str, Any], actor: str = "system") -> Dict[str, Any]:
         """Append a new block to the audit chain."""
@@ -41558,6 +41543,7 @@ class AlembicMigrationManager:
     def get_current_revision(cls, db_path: str = "ucg_platform.db") -> Optional[str]:
         """Return the most-recently-applied migration revision, or None.
 
+        db_path = _resolve_db_path(db_path, "ucg_platform.db")  # FIX v9.11.21
         Returns the revision with the highest position in cls.MIGRATIONS
         that appears in the applied history. This is more reliable than
         sorting by applied_at timestamp (which breaks when multiple
@@ -41579,6 +41565,7 @@ class AlembicMigrationManager:
     @classmethod
     def get_applied_migrations(cls, db_path: str = "ucg_platform.db") -> List[str]:
         """Return list of all applied migration revisions in order."""
+        db_path = _resolve_db_path(db_path, "ucg_platform.db")  # FIX v9.11.21
         conn = None
         try:
             conn = sqlite3.connect(db_path)
@@ -41596,12 +41583,8 @@ class AlembicMigrationManager:
     def migrate_up(cls, db_path: str = "ucg_platform.db",
                    target_revision: Optional[str] = None,
                    dry_run: bool = False) -> Dict[str, Any]:
-        """
-        Apply pending migrations up to (and including) target_revision.
-        If target_revision is None, applies all pending migrations.
-
-        Returns a report with applied revisions and any errors.
-        """
+        """Apply pending migrations up to (and including) target_revision."""
+        db_path = _resolve_db_path(db_path, "ucg_platform.db")  # FIX v9.11.21
         conn = None
         applied = []
         errors = []
@@ -41655,10 +41638,9 @@ class AlembicMigrationManager:
     def migrate_down(cls, db_path: str = "ucg_platform.db",
                      target_revision: Optional[str] = None,
                      dry_run: bool = False) -> Dict[str, Any]:
-        """
-        Roll back migrations down to (and including) target_revision.
-        If target_revision is None, rolls back the most recent migration.
-        """
+        """Roll back migrations down to (and including) target_revision.
+        If target_revision is None, rolls back the most recent migration."""
+        db_path = _resolve_db_path(db_path, "ucg_platform.db")  # FIX v9.11.21
         conn = None
         rolled_back = []
         errors = []
@@ -41703,6 +41685,7 @@ class AlembicMigrationManager:
     @classmethod
     def migration_history(cls, db_path: str = "ucg_platform.db") -> List[Dict[str, Any]]:
         """Return full migration history (applied_at timestamps)."""
+        db_path = _resolve_db_path(db_path, "ucg_platform.db")  # FIX v9.11.21
         conn = None
         try:
             conn = sqlite3.connect(db_path)
@@ -41723,6 +41706,7 @@ class AlembicMigrationManager:
     @classmethod
     def verify_chain(cls, db_path: str = "ucg_platform.db") -> Dict[str, Any]:
         """
+        db_path = _resolve_db_path(db_path, "ucg_platform.db")  # FIX v9.11.21
         Verify that the migration chain is consistent (each migration's
         down_revision matches the previously-applied migration).
         """
@@ -42128,18 +42112,9 @@ class PatentCertificateGeneratorV2:
                      verification_url: str, pdf_hash: str) -> None:
         """Store the certificate in the patent_certificates table.
 
-        FIX v9.11.20 (DB-path): db_path ni absolute qilish va parent katalog yaratish.
+        FIX v9.11.21: _resolve_db_path ishlatish.
         """
-        db_path = os.getenv("UCG_CERT_DB", "ucg_certificates.db")
-        # FIX v9.11.20: absolute path + parent dir creation
-        if not os.path.isabs(db_path):
-            _data_dir = os.getenv("UCG_DATA_DIR", os.path.join(os.path.expanduser("~"), ".ucg_platform"))
-            try:
-                os.makedirs(_data_dir, exist_ok=True)
-            except (OSError, PermissionError):
-                import tempfile as _tempfile
-                _data_dir = _tempfile.gettempdir()
-            db_path = os.path.join(_data_dir, os.path.basename(db_path))
+        db_path = _resolve_db_path(os.getenv("UCG_CERT_DB", "ucg_certificates.db"), "ucg_certificates.db")  # FIX v9.11.21
         try:
             conn = sqlite3.connect(db_path)
             conn.execute("""
@@ -42204,16 +42179,7 @@ class PatentCertificateGeneratorV2:
         Returns a dict with verification status and certificate details.
         """
         # 1. Look up in database
-        db_path = os.getenv("UCG_CERT_DB", "ucg_certificates.db")
-        # FIX v9.11.20: absolute path
-        if not os.path.isabs(db_path):
-            _data_dir = os.getenv("UCG_DATA_DIR", os.path.join(os.path.expanduser("~"), ".ucg_platform"))
-            try:
-                os.makedirs(_data_dir, exist_ok=True)
-            except (OSError, PermissionError):
-                import tempfile as _tempfile
-                _data_dir = _tempfile.gettempdir()
-            db_path = os.path.join(_data_dir, os.path.basename(db_path))
+        db_path = _resolve_db_path(os.getenv("UCG_CERT_DB", "ucg_certificates.db"), "ucg_certificates.db")  # FIX v9.11.21
         record = None
         try:
             conn = sqlite3.connect(db_path)
@@ -43177,10 +43143,17 @@ class DigitalPatentVault:
 
     def __init__(self, vault_dir: Optional[str] = None,
                  master_key: Optional[bytes] = None):
-        self.vault_dir = Path(vault_dir or os.getenv("UCG_VAULT_DIR",
-                                                       str(Path.home() / ".ucg_platform" / "vault")))
-        self.vault_dir.mkdir(parents=True, exist_ok=True)
-        # In production, master_key MUST come from a secrets manager
+        # FIX v9.11.21: vault_dir ni xavfsiz yaratish
+        _vault = vault_dir or os.getenv("UCG_VAULT_DIR", "")
+        if not _vault:
+            _vault = os.path.join(os.getenv("UCG_DATA_DIR", os.path.join(os.path.expanduser("~"), ".ucg_platform")), "vault")
+        self.vault_dir = Path(_vault)
+        try:
+            self.vault_dir.mkdir(parents=True, exist_ok=True)
+        except (OSError, PermissionError):
+            import tempfile as _tempfile
+            self.vault_dir = Path(_tempfile.gettempdir()) / "ucg_vault"
+            self.vault_dir.mkdir(parents=True, exist_ok=True)
         self._master_key = master_key or os.getenv("UCG_VAULT_KEY", "").encode()[:32].ljust(32, b"\0")
         self._index_db = self.vault_dir / "vault_index.db"
         self._init_db()
@@ -53908,6 +53881,7 @@ class SchemaMigration:
     @classmethod
     def migrate(cls, db_path: str = "ucg_platform.db") -> Dict[str, Any]:
         """
+        db_path = _resolve_db_path(db_path, "ucg_platform.db")  # FIX v9.11.21
         Run migrations to bring database to CURRENT_VERSION.
 
         Returns dict with migration results.
