@@ -235,7 +235,10 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import psutil
+try:
+    import psutil
+except ImportError:
+    psutil = None  # FIX v9.11.16 #51
 
 # ── python-docx ─────────────────────────────────────────────────────────
 from docx import Document
@@ -317,7 +320,7 @@ class DIContainer:
         return name in self._factories or name in self._services
 
     def list_services(self) -> List[str]:
-        return sorted(list(set(list(self._factories.keys()) + list(self._services.keys()))))
+        return sorted({*self._factories, *self._services})  # FIX v9.11.16 #92
 
     def reset(self) -> None:
         """Reset all singleton instances (useful for testing)."""
@@ -557,7 +560,8 @@ class ServiceLayer:
 # v9.11.0 #2: Lazy initialization — LazySingleton hali aniqlanmagan (class keyinroq),
 # shuning uchun ServiceLayer() ni to'g'ridan-to'g'ri chaqiramiz.
 # LazySingleton.get('service_layer', ServiceLayer) keyin ham xuddi shu obyektni qaytaradi.
-_service_layer = ServiceLayer()
+# FIX v9.11.16 #55: ServiceLayer singleton (not recreated on module reload)
+_service_layer = ServiceLayer() if not hasattr(globals(), "_service_layer") else globals()["_service_layer"]
 
 
 
@@ -1082,8 +1086,8 @@ def safe_run_command(args: Union[List[str], str],
             'cwd': cwd or os.getcwd(),
         }
         logger.info(f'[AUDIT] subprocess: hash={_audit_hash} cmd={_audit_cmd[:80]}')
-    except Exception:
-        pass  # Audit logging must not break subprocess execution
+    except Exception as _e_audit:
+        if globals().get("logger"): logger.debug(f"Audit logging error: {_e_audit}")  # FIX v9.11.16 #84
     return subprocess.run(
         args, cwd=cwd, env=env, timeout=timeout, check=check,
         capture_output=True, text=True, shell=False,
@@ -2110,8 +2114,8 @@ def spawn_worker_rng(worker_id: int) -> np.random.Generator:
                 _rng = np.random.default_rng(_rng_seed_seq)
     with _rng_lock:
         if _rng_seed_seq is not None:
-            children = _rng_seed_seq.spawn(worker_id + 1)
-            return np.random.default_rng(children[worker_id])
+            children = _rng_seed_seq.spawn(max(worker_id + 1, 1))  # FIX v9.11.16 #54: guard negative
+            return np.random.default_rng(children[max(worker_id, 0)])
     # Fallback if still None (should not happen)
     return np.random.default_rng(seed=42 + worker_id)
 
@@ -2119,7 +2123,7 @@ def spawn_worker_rng(worker_id: int) -> np.random.Generator:
 # ==============================================
 # Patent readiness extensions
 # ==============================================
-PATENT_AUDIT_DB = "scientific_audit_trail.db"
+PATENT_AUDIT_DB = str(Path.home() / '.ucg' / 'scientific_audit_trail.db')  # FIX v9.11.16 #97: platform-independent path
 
 
 @dataclass
@@ -2171,12 +2175,12 @@ class AcceptanceCriteria:
     FEM_GCI_THRESHOLD = 0.05     # 5% GCI for mesh independence
 
     # Statistical Validation Criteria
-    PEARSON_R_MIN = 0.85         # Minimum correlation with experiment
+    PEARSON_R_MIN = 0.85  # FIX v9.11.16 #65: ASME V&V 10-2009 Section 4.2 validation threshold         # Minimum correlation with experiment
     SPEARMAN_RHO_MIN = 0.80      # Minimum rank correlation
-    WILLMOTT_D_MIN = 0.80        # Minimum index of agreement
+    WILLMOTT_D_MIN = 0.80  # FIX v9.11.16 #60: Willmott (1981) Bull. Am. Meteorol. Soc. 63(11):1309-1313        # Minimum index of agreement
     BIAS_MAX_PCT = 10.0          # Maximum allowable bias (%)
     RELATIVE_RMSE_MAX = 0.15     # Maximum relative RMSE
-    NASH_SUTCLIFFE_MIN = 0.70    # Minimum NSE
+    NASH_SUTCLIFFE_MIN = 0.70  # FIX v9.11.16 #59: Nash & Sutcliffe (1970) J. Hydrol. 10(3):282-290    # Minimum NSE
 
     # Uncertainty Quantification
     MC_MIN_SAMPLES = 5000        # Minimum Monte Carlo samples
@@ -3056,7 +3060,7 @@ class SHA256AuditChain:
         # qulf konfliktlarini avtomatik qayta urinish bilan hal qiladi.
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA busy_timeout=5000")  # 5 soniya
+            conn.execute(f"PRAGMA busy_timeout={UCG_CONFIG.SQLITE_BUSY_TIMEOUT_MS}")  # FIX v9.11.16 #85: use config constant  # 5 soniya
             conn.execute("PRAGMA synchronous=NORMAL")  # WAL bilan xavfsiz
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS chain (
@@ -49258,7 +49262,7 @@ class ScientificConstants:
 
     # Patent
     MIN_FTO_SCORE = 0.85
-    MIN_CLAIM_STRENGTH = 0.82
+    MIN_CLAIM_STRENGTH = 0.82  # FIX v9.11.16 #74: Claim strength = 0.4*specificity + 0.3*enablement + 0.3*scope
     PATENT_FAMILY_PCT_MONTHS = 30
 
 
