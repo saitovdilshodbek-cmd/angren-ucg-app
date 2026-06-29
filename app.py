@@ -1010,14 +1010,11 @@ def clamp_mc_samples(requested: int, *, label: str = "n_simulations") -> int:
 # v9.11.21 da u keyinroq aniqlangan edi → NameError.
 # ══════════════════════════════════════════════════════════════════════════════
 def _resolve_db_path(db_path: Optional[str] = None, default_name: str = "ucg_platform.db") -> str:
-    """Resolve a SQLite database path to a writable absolute path.
+    """Resolve a SQLite database path to a WRITABLE absolute path.
 
-    1. If db_path is None → use default_name
-    2. If db_path is ':memory:' → return ':memory:'
-    3. If db_path is absolute → use as-is
-    4. If db_path is relative → prepend UCG_DATA_DIR (or temp fallback)
-    5. Always create parent directory
-    6. If fails → fall back to temp dir
+    FIX v9.11.23: Streamlit Cloud'da /mount/src/ faqat o'qish uchun.
+    Endi: katalog yaratgandan keyin UNI TEST QILAMIZ — test fayl yozib
+    ko'ramiz. Agar yozib bo'lmasa → /tmp/ ga o'tamiz.
 
     Returns absolute path string (or ':memory:').
     """
@@ -1025,27 +1022,60 @@ def _resolve_db_path(db_path: Optional[str] = None, default_name: str = "ucg_pla
         db_path = default_name
     if db_path == ":memory:":
         return ":memory:"
-    _data_dir = os.getenv("UCG_DATA_DIR", "")
-    if not _data_dir:
-        _data_dir = os.path.join(os.path.expanduser("~"), ".ucg_platform")
-    try:
-        os.makedirs(_data_dir, exist_ok=True)
-    except (OSError, PermissionError):
-        import tempfile as _tempfile
-        _data_dir = _tempfile.gettempdir()
-    if not os.path.isabs(db_path):
-        db_path = os.path.join(_data_dir, os.path.basename(db_path))
-    _parent = os.path.dirname(os.path.abspath(db_path))
-    try:
-        os.makedirs(_parent, exist_ok=True)
-    except (OSError, PermissionError):
-        import tempfile as _tempfile
-        db_path = os.path.join(_tempfile.gettempdir(), os.path.basename(db_path))
+
+    import tempfile as _tempfile
+
+    # 1. Candidate directories (priority order)
+    candidates = []
+    env_dir = os.getenv("UCG_DATA_DIR", "")
+    if env_dir:
+        candidates.append(env_dir)
+    home_dir = os.path.join(os.path.expanduser("~"), ".ucg_platform")
+    candidates.append(home_dir)
+    candidates.append(_tempfile.gettempdir())  # /tmp — always last resort
+
+    # 2. Find first WRITABLE directory
+    writable_dir = None
+    for cdir in candidates:
+        try:
+            os.makedirs(cdir, exist_ok=True)
+            # TEST: actually write a file to verify writability
+            test_file = os.path.join(cdir, ".ucg_write_test")
+            with open(test_file, "w") as f:
+                f.write("test")
+            os.remove(test_file)
+            writable_dir = cdir
+            break
+        except (OSError, PermissionError, IOError):
+            continue
+
+    if writable_dir is None:
+        # Absolute last resort — /tmp ( POSIX guaranteed writable)
+        writable_dir = _tempfile.gettempdir()
+
+    # 3. Build absolute path
+    if os.path.isabs(db_path):
+        # Already absolute — keep as-is but verify parent is writable
+        _parent = os.path.dirname(os.path.abspath(db_path))
+        try:
+            os.makedirs(_parent, exist_ok=True)
+            test_file = os.path.join(_parent, ".ucg_write_test")
+            with open(test_file, "w") as f:
+                f.write("test")
+            os.remove(test_file)
+        except (OSError, PermissionError, IOError):
+            db_path = os.path.join(writable_dir, os.path.basename(db_path))
+    else:
+        db_path = os.path.join(writable_dir, os.path.basename(db_path))
+
     return db_path
 
 
 def _safe_sqlite_connect(db_path: Optional[str] = None, default_name: str = "ucg_platform.db", **kwargs):
-    """Safe sqlite3.connect with automatic path resolution and :memory: fallback."""
+    """Safe sqlite3.connect — resolves path, tests writability, falls back to :memory:.
+
+    FIX v9.11.23: Universal wrapper for ALL sqlite3.connect calls.
+    """
     import sqlite3 as _sqlite3
     resolved = _resolve_db_path(db_path, default_name)
     try:
@@ -1121,20 +1151,25 @@ class DatabaseBackend:
             finally:
                 conn.close()
         else:  # sqlite
-            # FIX #8 (v9.11.16): v9.11.15 da `isolation_level=None` (autocommit rejimi)
-            # ishlatilgan — har bir SQL ifodasi alohida commit bo'lib, transaksion
-            # yaxlitlik buzilgan (BlockchainHashChain.append() va WORMStorageBackend
-            # bir nechta operatsiya qilganda biri muvaffaqiyatli, biri xato bo'lsa,
-            # partial state qoladi). Endi: `isolation_level=""` (deferred) ishlatamiz
-            # va `with self.connect() as conn:` blokini aniq BEGIN/COMMIT/ROLLBACK
-            # bilan boshqaramiz — bu SQLite python moduli uchun to'g'ri transactional
-            # semantics beradi.
-            conn = sqlite3.connect(
-                self.sqlite_path,
-                timeout=UCG_CONFIG.SQLITE_BUSY_TIMEOUT_MS / 1000.0,
-                isolation_level="",  # FIX #8 (v9.11.16): deferred isolation — proper transactional semantics
-                check_same_thread=False,
-            )
+            # FIX v9.11.23: sqlite3.connect ni try/except bilan o'rab, :memory: fallback
+            try:
+                conn = sqlite3.connect(
+                    self.sqlite_path,
+                    timeout=UCG_CONFIG.SQLITE_BUSY_TIMEOUT_MS / 1000.0,
+                    isolation_level="",
+                    check_same_thread=False,
+                )
+            except sqlite3.OperationalError:
+                logger.warning(
+                    "[DatabaseBackend] Cannot open %s — falling back to :memory:",
+                    self.sqlite_path,
+                )
+                self.sqlite_path = ":memory:"
+                conn = sqlite3.connect(
+                    ":memory:",
+                    isolation_level="",
+                    check_same_thread=False,
+                )
             try:
                 # Enable WAL mode + set busy_timeout (mitigates "database is locked")
                 conn.execute("PRAGMA journal_mode=WAL;")
@@ -3850,7 +3885,7 @@ class SHA256AuditChain:
         # FIX v9.11.20 (DB-path): error handling — agar DB ochib bo'lmasa,
         # in-memory SQLite ga fallback qilamiz (module import buzilmasligi uchun).
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with _safe_sqlite_connect(self.db_path) as conn:
                 conn.execute("PRAGMA journal_mode=WAL")
                 conn.execute(f"PRAGMA busy_timeout={UCG_CONFIG.SQLITE_BUSY_TIMEOUT_MS}")
                 conn.execute("PRAGMA synchronous=NORMAL")
@@ -3875,7 +3910,7 @@ class SHA256AuditChain:
                     self.db_path, _db_init_exc,
                 )
             self.db_path = _fallback_path
-            with sqlite3.connect(self.db_path) as conn:
+            with _safe_sqlite_connect(self.db_path) as conn:
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS chain (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3887,19 +3922,11 @@ class SHA256AuditChain:
                 """)
 
     def append(self, data: Dict[str, Any]) -> str:
-        # ISS-N08 FIX: har bir ulanishda WAL va busy_timeout ni qayta yoqamiz
-        # (SQLite PRAGMA lar ulanish-scoped, har bir yangi ulanishda qayta
-        # o'rnatilishi kerak).
-        # FIX #52 (v9.11.17): v9.11.16 da SELECT va INSERT orasida boshqa transaksiya
-        # kirishi mumkin edi — prev_hash noto'g'ri bo'lib qolardi. Endi:
-        #   1) `BEGIN IMMEDIATE` — boshqa o'quvchi/yozuvchi bloklanadi
-        #   2) `isolation_level="IMMEDIATE"` — yozuvchi lock darhol olinadi
-        #   3) SELECT ... FOR UPDATE (SQLite da emas, lekin IMMEDIATE ham xuddi shu ta'sir)
-        # Reference: SQLite docs — "BEGIN IMMEDIATE acquires a RESERVED lock".
-        with sqlite3.connect(self.db_path, isolation_level="IMMEDIATE") as conn:
+        # FIX v9.11.23: _safe_sqlite_connect ishlatish — :memory: fallback bilan
+        conn = _safe_sqlite_connect(self.db_path, "blockchain_audit.db", isolation_level="IMMEDIATE")
+        try:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA busy_timeout=5000")
-            # FIX #52: IMMEDIATE transaction — boshqa yozuvchi ulanishlar bloklanadi
             conn.execute("BEGIN IMMEDIATE")
             cursor = conn.cursor()
             cursor.execute("SELECT current_hash FROM chain ORDER BY id DESC LIMIT 1")
@@ -3913,11 +3940,13 @@ class SHA256AuditChain:
             )
             conn.commit()
             return current_hash
+        finally:
+            conn.close()
 
     def verify_chain(self) -> bool:
-        # ISS-N08 FIX: WAL rejimini bu erda ham yoqamiz (faqat o'qish uchun
-        # bo'lsa ham, pragma xavfsiz va izchil o'qishni ta'minlaydi).
-        with sqlite3.connect(self.db_path) as conn:
+        # FIX v9.11.23: _safe_sqlite_connect ishlatish
+        conn = _safe_sqlite_connect(self.db_path, "blockchain_audit.db")
+        try:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA busy_timeout=5000")
             cursor = conn.cursor()
@@ -3936,6 +3965,8 @@ class SHA256AuditChain:
                 if computed != curr_hash:
                     return False
             return True
+        finally:
+            conn.close()
 
 # FIX v9.11.20 (DB-path): global blockchain_chain yaratishni xavfsiz qilish.
 # Agar SHA256AuditChain() muvaffaqiyatsiz bo'lsa (masalan, DB fayl ochib
@@ -10089,7 +10120,7 @@ class TestPatentV6Full(unittest.TestCase):
         import tempfile
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "test_backup.db"
-            with sqlite3.connect(str(db_path)) as conn:
+            with _safe_sqlite_connect(str(db_path)) as conn:
                 conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)")
                 conn.execute("INSERT INTO t VALUES (1, 'hello')")
             bm = DatabaseBackupManager(str(db_path))
@@ -10263,7 +10294,7 @@ class ScientificAuditTrail:
                 self.use_postgres = False
         
         # SQLite fallback
-        with sqlite3.connect(self.db_path) as conn:
+        with _safe_sqlite_connect(self.db_path) as conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS audit_log (
@@ -10315,7 +10346,7 @@ class ScientificAuditTrail:
                 logger.warning(f"PostgreSQL insert failed: {e}, falling back to SQLite")
                 self.use_postgres = False
         
-        with sqlite3.connect(self.db_path) as conn:
+        with _safe_sqlite_connect(self.db_path) as conn:
             conn.execute(
                 "INSERT INTO audit_log (event_time, actor, action, parameter_name, old_value, new_value, trace_hash) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -10406,7 +10437,7 @@ class DatabaseMigrationManager:
             if db_type == "postgres" and POSTGRES_AVAILABLE and pg_config:
                 conn_provider = psycopg2.connect(**pg_config)
             else:
-                conn_provider = sqlite3.connect(db_path)
+                conn_provider = _safe_sqlite_connect(db_path)
 
             cls._ensure_migration_table(conn_provider)
             cursor = conn_provider.cursor()
@@ -10453,7 +10484,7 @@ class DatabaseMigrationManager:
                     return []
                 conn = psycopg2.connect(**pg_config)
             else:
-                conn = sqlite3.connect(db_path)
+                conn = _safe_sqlite_connect(db_path)
             cursor = conn.cursor()
             cursor.execute("SELECT version FROM schema_migrations ORDER BY version")
             result = [row[0] for row in cursor.fetchall()]
@@ -10470,7 +10501,7 @@ class ValidationBenchmarkDatabase:
         self._init_db()
 
     def _init_db(self) -> None:
-        with sqlite3.connect(self.db_path) as conn:
+        with _safe_sqlite_connect(self.db_path) as conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS validation_history (
@@ -10494,7 +10525,7 @@ class ValidationBenchmarkDatabase:
             )
 
     def record_result(self, result: BenchmarkResult, snapshot: Optional[Dict[str, Any]] = None) -> None:
-        with sqlite3.connect(self.db_path) as conn:
+        with _safe_sqlite_connect(self.db_path) as conn:
             conn.execute(
                 """
                 INSERT INTO validation_history
@@ -10520,7 +10551,7 @@ class ValidationBenchmarkDatabase:
             )
 
     def ranking_dataframe(self, limit: int = 20) -> pd.DataFrame:
-        with sqlite3.connect(self.db_path) as conn:
+        with _safe_sqlite_connect(self.db_path) as conn:
             df = pd.read_sql_query(
                 """
                 SELECT benchmark AS "Benchmark",
@@ -12486,7 +12517,7 @@ def validate_sensor_data_full(data: Dict[str, Any], db_path: str = "ucg_sensors.
         raise ValueError(tr("err.pressure_range", min_p=0, max_p=100))
     safe_sensor_id = sanitize_input(str(data['sensor_id']))
     try:
-        conn = sqlite3.connect(_resolve_db_path(db_path, "ucg_sensors.db"))  # FIX v9.11.21
+        conn = _safe_sqlite_connect(_resolve_db_path(db_path, "ucg_sensors.db"))  # FIX v9.11.21
         conn.execute("PRAGMA journal_mode=WAL")
         cursor = conn.cursor()
         cursor.execute(
@@ -12514,7 +12545,7 @@ def init_db():
     FIX v9.11.21: _resolve_db_path ishlatish.
     """
     _db_path = _resolve_db_path("ucg_monitoring.db", "ucg_monitoring.db")  # FIX v9.11.21
-    conn = sqlite3.connect(_db_path)
+    conn = _safe_sqlite_connect(_db_path)
     conn.execute("PRAGMA journal_mode=WAL")
     cursor = conn.cursor()
     cursor.executescript("""
@@ -31221,7 +31252,7 @@ class FEMBenchmarkDB:
     """
     def __init__(self, db_path: str = "fem_benchmark.db"):
         self.db_path = _resolve_db_path(db_path, "fem_benchmark.db")  # FIX v9.11.21
-        with sqlite3.connect(self.db_path) as conn:
+        with _safe_sqlite_connect(self.db_path) as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS fem_benchmark (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -31231,7 +31262,7 @@ class FEMBenchmarkDB:
             """)
 
     def add_result(self, name: str, test_type: str, status: str, error_pct: float) -> int:
-        with sqlite3.connect(self.db_path) as conn:
+        with _safe_sqlite_connect(self.db_path) as conn:
             cur = conn.cursor()
             cur.execute(
                 "INSERT INTO fem_benchmark (name, test_type, status, error_pct, timestamp) VALUES (?, ?, ?, ?, ?)",
@@ -31240,14 +31271,14 @@ class FEMBenchmarkDB:
             return cur.lastrowid
 
     def list_results(self) -> List[Dict[str, Any]]:
-        with sqlite3.connect(self.db_path) as conn:
+        with _safe_sqlite_connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cur = conn.cursor()
             cur.execute("SELECT * FROM fem_benchmark ORDER BY id DESC LIMIT 100")
             return [dict(r) for r in cur.fetchall()]
 
     def info(self) -> Dict[str, Any]:
-        with sqlite3.connect(self.db_path) as conn:
+        with _safe_sqlite_connect(self.db_path) as conn:
             cur = conn.cursor()
             cur.execute("SELECT COUNT(*) FROM fem_benchmark")
             n = cur.fetchone()[0]
@@ -39515,7 +39546,7 @@ class ExperimentalDatabase:
     @staticmethod
     def init_db(db_path: Union[str, Path] = DEFAULT_EXPERIMENTAL_DB) -> None:
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(str(db_path)) as conn:
+        with _safe_sqlite_connect(str(db_path)) as conn:
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS lab_tests (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -39566,7 +39597,7 @@ class ExperimentalDatabase:
     def populate_default(db_path: Union[str, Path] = DEFAULT_EXPERIMENTAL_DB) -> None:
         """Populate with curated experimental data references."""
         ExperimentalDatabase.init_db(db_path)
-        with sqlite3.connect(str(db_path)) as conn:
+        with _safe_sqlite_connect(str(db_path)) as conn:
             # Lab tests
             lab_data = [
                 # sample_id, test_type, rock_type, depth_m, temp_K, conf_MPa, ucs, E, nu, gsi, date, lab, tech, isrm, src, notes
@@ -39640,7 +39671,7 @@ class ExperimentalDatabase:
             query += " AND rock_type = ?"
             params.append(rock_type)
         query += " ORDER BY test_date DESC"
-        with sqlite3.connect(str(db_path)) as conn:
+        with _safe_sqlite_connect(str(db_path)) as conn:
             return pd.read_sql_query(query, conn, params=params)
 
     @staticmethod
@@ -39653,13 +39684,13 @@ class ExperimentalDatabase:
             query += " AND country = ?"
             params.append(country)
         query += " ORDER BY measurement_date DESC"
-        with sqlite3.connect(str(db_path)) as conn:
+        with _safe_sqlite_connect(str(db_path)) as conn:
             return pd.read_sql_query(query, conn, params=params)
 
     @staticmethod
     def database_summary(db_path: Union[str, Path] = DEFAULT_EXPERIMENTAL_DB) -> Dict[str, Any]:
         """Return database summary statistics."""
-        with sqlite3.connect(str(db_path)) as conn:
+        with _safe_sqlite_connect(str(db_path)) as conn:
             n_lab = conn.execute("SELECT COUNT(*) FROM lab_tests").fetchone()[0]
             n_field = conn.execute("SELECT COUNT(*) FROM field_monitoring").fetchone()[0]
             n_isrm = conn.execute("SELECT COUNT(*) FROM isrm_methods").fetchone()[0]
@@ -39992,7 +40023,7 @@ class MerkleAuditChain:
         # FIX v9.11.21: error handling bilan
         try:
             Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
-            with sqlite3.connect(self.db_path) as conn:
+            with _safe_sqlite_connect(self.db_path) as conn:
                 conn.executescript("""
                     CREATE TABLE IF NOT EXISTS audit_chain (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -40020,7 +40051,7 @@ class MerkleAuditChain:
             if globals().get("logger"):
                 logger.warning("[MerkleAuditChain] DB init failed at %s: %s — using :memory:", self.db_path, _init_exc)
             self.db_path = ":memory:"
-            with sqlite3.connect(self.db_path) as conn:
+            with _safe_sqlite_connect(self.db_path) as conn:
                 conn.executescript("""
                     CREATE TABLE IF NOT EXISTS audit_chain (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -40038,7 +40069,7 @@ class MerkleAuditChain:
         """Append a new block to the audit chain."""
         payload_str = _safe_json_dumps(payload)
         timestamp = _utc_now_iso()
-        with sqlite3.connect(self.db_path) as conn:
+        with _safe_sqlite_connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT block_hash FROM audit_chain ORDER BY id DESC LIMIT 1")
             row = cursor.fetchone()
@@ -40073,7 +40104,7 @@ class MerkleAuditChain:
 
     def verify_chain(self) -> Dict[str, Any]:
         """Verify the integrity of the entire chain."""
-        with sqlite3.connect(self.db_path) as conn:
+        with _safe_sqlite_connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT id, previous_hash, block_hash, payload, timestamp, actor FROM audit_chain ORDER BY id")
             rows = cursor.fetchall()
@@ -41566,7 +41597,7 @@ class AlembicMigrationManager:
         db_path = _resolve_db_path(db_path, "ucg_platform.db")  # FIX v9.11.21
         conn = None
         try:
-            conn = sqlite3.connect(db_path)
+            conn = _safe_sqlite_connect(db_path)
             cls._ensure_history_table(conn)
             cursor = conn.cursor()
             cursor.execute(f"SELECT revision FROM {cls.HISTORY_TABLE} ORDER BY applied_at")
@@ -41587,7 +41618,7 @@ class AlembicMigrationManager:
         applied = []
         errors = []
         try:
-            conn = sqlite3.connect(db_path)
+            conn = _safe_sqlite_connect(db_path)
             cls._ensure_history_table(conn)
             already_applied = set(cls.get_applied_migrations(db_path))
             for mig in cls.MIGRATIONS:
@@ -41643,7 +41674,7 @@ class AlembicMigrationManager:
         rolled_back = []
         errors = []
         try:
-            conn = sqlite3.connect(db_path)
+            conn = _safe_sqlite_connect(db_path)
             cls._ensure_history_table(conn)
             applied = cls.get_applied_migrations(db_path)
             # Find migrations to roll back (in reverse order)
@@ -41686,7 +41717,7 @@ class AlembicMigrationManager:
         db_path = _resolve_db_path(db_path, "ucg_platform.db")  # FIX v9.11.21
         conn = None
         try:
-            conn = sqlite3.connect(db_path)
+            conn = _safe_sqlite_connect(db_path)
             cls._ensure_history_table(conn)
             cursor = conn.cursor()
             cursor.execute(f"SELECT revision, down_revision, description, applied_at, applied_by FROM {cls.HISTORY_TABLE} ORDER BY applied_at")
@@ -42114,7 +42145,7 @@ class PatentCertificateGeneratorV2:
         """
         db_path = _resolve_db_path(os.getenv("UCG_CERT_DB", "ucg_certificates.db"), "ucg_certificates.db")  # FIX v9.11.21
         try:
-            conn = sqlite3.connect(db_path)
+            conn = _safe_sqlite_connect(db_path)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS patent_certificates (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -42180,7 +42211,7 @@ class PatentCertificateGeneratorV2:
         db_path = _resolve_db_path(os.getenv("UCG_CERT_DB", "ucg_certificates.db"), "ucg_certificates.db")  # FIX v9.11.21
         record = None
         try:
-            conn = sqlite3.connect(db_path)
+            conn = _safe_sqlite_connect(db_path)
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT certificate_id, patent_title, inventor, applicant, filing_date, "
@@ -43157,7 +43188,7 @@ class DigitalPatentVault:
         self._init_db()
 
     def _init_db(self):
-        conn = sqlite3.connect(str(self._index_db))
+        conn = _safe_sqlite_connect(str(self._index_db))
         conn.execute("""
             CREATE TABLE IF NOT EXISTS vault_documents (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -43219,7 +43250,7 @@ class DigitalPatentVault:
         encrypted_path.write_bytes(encrypted)
         sha256_hash = hashlib.sha256(content).hexdigest()
         # Index in DB
-        conn = sqlite3.connect(str(self._index_db))
+        conn = _safe_sqlite_connect(str(self._index_db))
         conn.execute("""
             INSERT INTO vault_documents
             (doc_id, title, doc_type, encrypted_path, sha256_hash, created_at, created_by, parent_doc_id)
@@ -43239,7 +43270,7 @@ class DigitalPatentVault:
 
     def retrieve(self, doc_id: str, user_id: str = "system") -> Optional[bytes]:
         """Retrieve and decrypt a document from the vault."""
-        conn = sqlite3.connect(str(self._index_db))
+        conn = _safe_sqlite_connect(str(self._index_db))
         cursor = conn.cursor()
         cursor.execute("SELECT encrypted_path FROM vault_documents WHERE doc_id = ?", (doc_id,))
         row = cursor.fetchone()
@@ -43261,7 +43292,7 @@ class DigitalPatentVault:
 
     def list_documents(self, doc_type: Optional[str] = None) -> List[Dict[str, Any]]:
         """List documents in the vault (metadata only, no content)."""
-        conn = sqlite3.connect(str(self._index_db))
+        conn = _safe_sqlite_connect(str(self._index_db))
         cursor = conn.cursor()
         if doc_type:
             cursor.execute("""
@@ -43286,7 +43317,7 @@ class DigitalPatentVault:
 
     def access_log(self, doc_id: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
         """Return the access log (audit trail)."""
-        conn = sqlite3.connect(str(self._index_db))
+        conn = _safe_sqlite_connect(str(self._index_db))
         cursor = conn.cursor()
         if doc_id:
             cursor.execute("""
@@ -43307,7 +43338,7 @@ class DigitalPatentVault:
         ]
 
     def info(self) -> Dict[str, Any]:
-        conn = sqlite3.connect(str(self._index_db))
+        conn = _safe_sqlite_connect(str(self._index_db))
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM vault_documents")
         n_docs = cursor.fetchone()[0]
@@ -50717,7 +50748,7 @@ class SQLiteMaintenanceManager:
             return {"status": "skipped", "reason": "Database file not found"}
         try:
             size_before = os.path.getsize(path)
-            conn = sqlite3.connect(path)
+            conn = _safe_sqlite_connect(path)
             conn.execute("VACUUM")
             conn.close()
             size_after = os.path.getsize(path)
