@@ -767,6 +767,34 @@ class UCGPlatformConfig:
     # SQLite busy timeout (ms) — mitigates "database is locked" under concurrency
     SQLITE_BUSY_TIMEOUT_MS: int = int(os.getenv("UCG_SQLITE_BUSY_TIMEOUT", "5000"))
 
+    # FIX v9.11.20 (DB-path): ma'lumotlar bazasi fayllari uchun data katalogi.
+    # Muammo: "ucg_platform.db" va "blockchain_audit.db" nisbiy yo'llar —
+    # Streamlit Cloud / Docker / faqat o'qish kataloglarida "unable to open
+    # database file" xatosi. Endi: UCG_DATA_DIR env var orqali sozlanadi,
+    # default — tizim bo'yicha yozish mumkin katalog.
+    DATA_DIR: str = os.getenv(
+        "UCG_DATA_DIR",
+        os.path.join(os.path.expanduser("~"), ".ucg_platform"),
+    )
+    # Katalogni yaratish (import vaqtida)
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+    except (OSError, PermissionError) as _data_dir_exc:
+        # Fallback: /tmp (Linux/Mac) yoki temp katalog
+        import tempfile as _tempfile
+        DATA_DIR = _tempfile.gettempdir()
+        if globals().get("logger"):
+            logger.warning(
+                "Could not create DATA_DIR %s: %s — falling back to %s",
+                os.getenv("UCG_DATA_DIR", os.path.join(os.path.expanduser("~"), ".ucg_platform")),
+                _data_dir_exc,
+                DATA_DIR,
+            )
+        os.makedirs(DATA_DIR, exist_ok=True)
+    # SQLite path — endi absolute (DATA_DIR ichida)
+    _sqlite_filename = os.path.basename(os.getenv("UCG_SQLITE_PATH", "ucg_platform.db"))
+    SQLITE_PATH: str = os.path.join(DATA_DIR, _sqlite_filename)
+
     # ── #6: WORM storage backend ───────────────────────────────────────────
     # "s3" | "azure" | "local"
     WORM_BACKEND: str = os.getenv("UCG_WORM_BACKEND", "local")
@@ -988,9 +1016,28 @@ class DatabaseBackend:
     """
     def __init__(self, backend: Optional[str] = None, dsn: Optional[str] = None,
                  sqlite_path: Optional[str] = None):
-        self.backend = (backend or UCG_CONFIG.DB_BACKEND).lower()  # v9.11.0 #14: BackendType.POSTGRESQL / BackendType.SQLITE
+        self.backend = (backend or UCG_CONFIG.DB_BACKEND).lower()
         self.dsn = dsn if dsn is not None else UCG_CONFIG.POSTGRES_DSN
         self.sqlite_path = sqlite_path or UCG_CONFIG.SQLITE_PATH
+        # FIX v9.11.20 (DB-path): SQLite path ni absolute qilish va parent
+        # katalogni yaratish. "unable to open database file" xatosini bartaraf etadi.
+        if not os.path.isabs(self.sqlite_path):
+            _data_dir = os.getenv(
+                "UCG_DATA_DIR",
+                os.path.join(os.path.expanduser("~"), ".ucg_platform"),
+            )
+            try:
+                os.makedirs(_data_dir, exist_ok=True)
+            except (OSError, PermissionError):
+                import tempfile as _tempfile
+                _data_dir = _tempfile.gettempdir()
+            self.sqlite_path = os.path.join(_data_dir, os.path.basename(self.sqlite_path))
+        # Parent katalogni yaratish
+        _parent = os.path.dirname(os.path.abspath(self.sqlite_path))
+        try:
+            os.makedirs(_parent, exist_ok=True)
+        except (OSError, PermissionError) as _mk_exc:
+            logger.warning("[DatabaseBackend] Could not create parent dir %s: %s", _parent, _mk_exc)
         self._pg_available = False
         self._pg_version: Optional[str] = None
         try:
@@ -1231,8 +1278,15 @@ class WORMStorageBackend:
                 # fall through to local
 
         # Local fallback
+        # FIX v9.11.20 (DB-path): WORM katalogini yaratishda error handling
         worm_dir = Path(os.getenv("UCG_WORM_DIR", Path.home() / ".ucg_platform" / "worm_storage"))
-        worm_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            worm_dir.mkdir(parents=True, exist_ok=True)
+        except (OSError, PermissionError) as _worm_exc:
+            logger.warning("[WORM] Could not create WORM dir %s: %s — using temp dir", worm_dir, _worm_exc)
+            import tempfile as _tempfile
+            worm_dir = Path(_tempfile.gettempdir()) / "ucg_worm"
+            worm_dir.mkdir(parents=True, exist_ok=True)
         data_path = worm_dir / key
         with open(data_path, "wb") as f:
             f.write(body)
@@ -2032,7 +2086,15 @@ class FeatureAvailabilityReport:
 
 
 DEFAULT_LOG_DIR = Path(os.getenv("UCG_LOG_DIR", Path.home() / ".ucg_platform" / "logs")).expanduser()
-DEFAULT_REPORT_DIR = "reports"
+# FIX v9.11.20 (DB-path): DEFAULT_REPORT_DIR ni absolute qilish
+# (nisbiy "reports" — Streamlit Cloud/Docker da yozish mumkin emas)
+_data_dir = os.getenv("UCG_DATA_DIR", os.path.join(os.path.expanduser("~"), ".ucg_platform"))
+try:
+    os.makedirs(_data_dir, exist_ok=True)
+except (OSError, PermissionError):
+    import tempfile as _tempfile
+    _data_dir = _tempfile.gettempdir()
+DEFAULT_REPORT_DIR = os.path.join(_data_dir, "reports")
 MAX_SUBPROCESS_TIMEOUT_SEC = 2.0
 MAX_STREAMLIT_CACHE_ENTRIES = 32
 SAFE_SUBPROCESS_COMMANDS: Tuple[Tuple[str, ...], ...] = (
@@ -3735,6 +3797,33 @@ class SHA256AuditChain:
         "distributed consensus."
     )
     def __init__(self, db_path: str = "blockchain_audit.db"):
+        # FIX v9.11.20 (DB-path): nisbiy yo'lni absolute ga aylantirish
+        # va parent katalogni yaratish. "unable to open database file" xatosini
+        # bartaraf etadi (Streamlit Cloud / Docker / faqat o'qish kataloglarida).
+        if not os.path.isabs(db_path):
+            _data_dir = os.getenv(
+                "UCG_DATA_DIR",
+                os.path.join(os.path.expanduser("~"), ".ucg_platform"),
+            )
+            try:
+                os.makedirs(_data_dir, exist_ok=True)
+            except (OSError, PermissionError):
+                import tempfile as _tempfile
+                _data_dir = _tempfile.gettempdir()
+            db_path = os.path.join(_data_dir, os.path.basename(db_path))
+        # Parent katalogni yaratish (absolute path uchun)
+        _parent = os.path.dirname(os.path.abspath(db_path))
+        try:
+            os.makedirs(_parent, exist_ok=True)
+        except (OSError, PermissionError) as _mk_exc:
+            # Fallback: temp katalog
+            import tempfile as _tempfile
+            db_path = os.path.join(_tempfile.gettempdir(), os.path.basename(db_path))
+            if globals().get("logger"):
+                logger.warning(
+                    "[SHA256AuditChain] Could not create parent dir %s: %s — using %s",
+                    _parent, _mk_exc, db_path,
+                )
         self.db_path = db_path
         self._init_db()
 
@@ -3744,19 +3833,44 @@ class SHA256AuditChain:
         # "database is locked" xatosini keltirib chiqarmaydi va audit
         # zanjirini buzmaydi. busy_timeout esa qisqa vaqt ichidagi
         # qulf konfliktlarini avtomatik qayta urinish bilan hal qiladi.
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute(f"PRAGMA busy_timeout={UCG_CONFIG.SQLITE_BUSY_TIMEOUT_MS}")  # FIX v9.11.16 #85: use config constant  # 5 soniya
-            conn.execute("PRAGMA synchronous=NORMAL")  # WAL bilan xavfsiz
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS chain (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    previous_hash TEXT NOT NULL,
-                    current_hash TEXT NOT NULL,
-                    data TEXT NOT NULL,
-                    timestamp TEXT NOT NULL
+        # FIX v9.11.20 (DB-path): error handling — agar DB ochib bo'lmasa,
+        # in-memory SQLite ga fallback qilamiz (module import buzilmasligi uchun).
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute(f"PRAGMA busy_timeout={UCG_CONFIG.SQLITE_BUSY_TIMEOUT_MS}")
+                conn.execute("PRAGMA synchronous=NORMAL")
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS chain (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        previous_hash TEXT NOT NULL,
+                        current_hash TEXT NOT NULL,
+                        data TEXT NOT NULL,
+                        timestamp TEXT NOT NULL
+                    )
+                """)
+        except sqlite3.OperationalError as _db_init_exc:
+            # FIX v9.11.20 (DB-path): in-memory fallback — module import
+            # buzilmasligi uchun. Report generation ishlayveradi, lekin
+            # audit chain xotirada saqlanadi (restart da yo'qoladi).
+            _fallback_path = ":memory:"
+            if globals().get("logger"):
+                logger.warning(
+                    "[SHA256AuditChain] Database init failed at %s: %s — "
+                    "falling back to in-memory SQLite (audit chain will NOT persist).",
+                    self.db_path, _db_init_exc,
                 )
-            """)
+            self.db_path = _fallback_path
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS chain (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        previous_hash TEXT NOT NULL,
+                        current_hash TEXT NOT NULL,
+                        data TEXT NOT NULL,
+                        timestamp TEXT NOT NULL
+                    )
+                """)
 
     def append(self, data: Dict[str, Any]) -> str:
         # ISS-N08 FIX: har bir ulanishda WAL va busy_timeout ni qayta yoqamiz
@@ -3809,7 +3923,16 @@ class SHA256AuditChain:
                     return False
             return True
 
-blockchain_chain = SHA256AuditChain()
+# FIX v9.11.20 (DB-path): global blockchain_chain yaratishni xavfsiz qilish.
+# Agar SHA256AuditChain() muvaffaqiyatsiz bo'lsa (masalan, DB fayl ochib
+# bo'lmasa), module import buzilmasligi kerak — in-memory fallback bilan.
+try:
+    blockchain_chain = SHA256AuditChain()
+except Exception as _bc_init_exc:
+    if globals().get("logger"):
+        logger.error("[bootstrap] SHA256AuditChain init failed: %s — using in-memory fallback", _bc_init_exc)
+    # In-memory fallback
+    blockchain_chain = SHA256AuditChain(db_path=":memory:")
 BlockchainHashChain = SHA256AuditChain  # #10: backward compat alias
 
 
@@ -4826,7 +4949,14 @@ class SignedAuditReport:
 
     def __init__(self):
         self.worm_dir = self.WORM_DIR
-        self.worm_dir.mkdir(parents=True, exist_ok=True)
+        # FIX v9.11.20 (DB-path): WORM katalogini yaratishda error handling
+        try:
+            self.worm_dir.mkdir(parents=True, exist_ok=True)
+        except (OSError, PermissionError) as _worm_init_exc:
+            logger.warning("[WORMFilesystem] Could not create WORM dir %s: %s — using temp dir", self.worm_dir, _worm_init_exc)
+            import tempfile as _tempfile
+            self.worm_dir = Path(_tempfile.gettempdir()) / "ucg_worm"
+            self.worm_dir.mkdir(parents=True, exist_ok=True)
         self.manifest_path = self.worm_dir / self.MANIFEST_FILE
 
     def write_record(self, record: Dict[str, Any]) -> Dict[str, Any]:
@@ -10178,13 +10308,18 @@ class ScientificAuditTrail:
                 (event_time, actor, action, parameter_name, old_str, new_str, trace_hash),
             )
         # FIX 48: Add to blockchain hash chain
-        blockchain_chain.append({
-            "event_time": event_time,
-            "actor": actor,
-            "action": action,
-            "parameter_name": parameter_name,
-            "trace_hash": trace_hash,
-        })
+        # FIX v9.11.20 (DB-path): blockchain_chain.append() ni try/except bilan
+        # o'rab, DB xatosi report generation ni to'xtatmasligi uchun.
+        try:
+            blockchain_chain.append({
+                "event_time": event_time,
+                "actor": actor,
+                "action": action,
+                "parameter_name": parameter_name,
+                "trace_hash": trace_hash,
+            })
+        except Exception as _chain_exc:
+            logger.warning("[AuditTrail] blockchain_chain.append failed: %s — audit continues without chain entry", _chain_exc)
 
 
 class DatabaseMigrationManager:
@@ -11839,7 +11974,11 @@ def generate_patent_report(
         doc.add_paragraph(f"Digital Signature (RSA-4096): {sig.hex()[:32]}...")
 
     _chain_hash = trace_bundle.sha256 or '0' * 64
-    blockchain_chain.append({'report': invention_title, 'hash': _chain_hash})
+    # FIX v9.11.20 (DB-path): try/except — DB xatosi report ni to'xtatmasligi kerak
+    try:
+        blockchain_chain.append({'report': invention_title, 'hash': _chain_hash})
+    except Exception as _chain_exc:
+        logger.warning("[generate_patent_report] blockchain_chain.append failed: %s — report continues without chain entry", _chain_exc)
     chain_preview = (trace_bundle.sha256 or "0" * 64)[:16]
     doc.add_paragraph(f"Blockchain Hash Chain: {chain_preview}... (Audit: CONSISTENT)")
 
@@ -12356,7 +12495,20 @@ def validate_sensor_data_full(data: Dict[str, Any], db_path: str = "ucg_sensors.
 
 
 def init_db():
-    conn = sqlite3.connect("ucg_monitoring.db")
+    """Initialize the monitoring database.
+
+    FIX v9.11.20 (DB-path): absolute path + parent dir creation.
+    """
+    # FIX v9.11.20: nisbiy yo'lni absolute ga aylantirish
+    _db_name = "ucg_monitoring.db"
+    _data_dir = os.getenv("UCG_DATA_DIR", os.path.join(os.path.expanduser("~"), ".ucg_platform"))
+    try:
+        os.makedirs(_data_dir, exist_ok=True)
+    except (OSError, PermissionError):
+        import tempfile as _tempfile
+        _data_dir = _tempfile.gettempdir()
+    _db_path = os.path.join(_data_dir, _db_name)
+    conn = sqlite3.connect(_db_path)
     conn.execute("PRAGMA journal_mode=WAL")
     cursor = conn.cursor()
     cursor.executescript("""
@@ -34408,7 +34560,23 @@ def main():
                         except Exception as e:
                             st.error(f"RU: {e}")
                 except Exception as e:
-                    st.error(f"Report generation error: {e}")
+                    # FIX v9.11.20 (DB-path): aniq xato xabari va DB diagnostic
+                    _err_msg = str(e)
+                    if "unable to open database" in _err_msg.lower():
+                        st.error(
+                            f"❌ Database error: unable to open database file.\n"
+                            f"**Sabab:** Ma'lumotlar bazasi katalogi yozish uchun "
+                            f"mavjud emas yoki ruxsat yo'q.\n"
+                            f"**Yechim:** `UCG_DATA_DIR` environment variable ni "
+                            f"yozish mumkin katalogga sozlang (masalan: "
+                            f"`export UCG_DATA_DIR=/tmp/ucg_data`).\n"
+                            f"**Texnik xato:** {_err_msg}"
+                        )
+                        logger.error("[Report Generation] DB error: %s | UCG_DATA_DIR=%s",
+                                     _err_msg, os.getenv("UCG_DATA_DIR", "not set"))
+                    else:
+                        st.error(f"Report generation error: {e}")
+                        logger.error("[Report Generation] error: %s", e, exc_info=True)
 
     # ── Live 3D Monitoring ─────────────────────────────────────────────────────
     st.header("🔄 Live 3D Monitoring")
@@ -36262,20 +36430,46 @@ class PatentAPICache:
 
     @staticmethod
     def _get_conn():
-        """Get SQLite connection for cache database."""
+        """Get SQLite connection for cache database.
+
+        FIX v9.11.20 (DB-path): parent katalogni yaratish va error handling.
+        """
         import sqlite3
-        conn = sqlite3.connect(PatentAPICache.CACHE_DB)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS patent_cache (
-                query_hash TEXT PRIMARY KEY,
-                query_text TEXT,
-                api_source TEXT,
-                result_json TEXT,
-                created_at TEXT,
-                expires_at TEXT
-            )
-        """)
-        return conn
+        # FIX v9.11.20: parent katalogni yaratish
+        _db_parent = os.path.dirname(os.path.abspath(PatentAPICache.CACHE_DB))
+        try:
+            os.makedirs(_db_parent, exist_ok=True)
+        except (OSError, PermissionError):
+            # Fallback: temp katalog
+            import tempfile as _tempfile
+            PatentAPICache.CACHE_DB = os.path.join(_tempfile.gettempdir(), "patent_cache.db")
+        try:
+            conn = sqlite3.connect(PatentAPICache.CACHE_DB)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS patent_cache (
+                    query_hash TEXT PRIMARY KEY,
+                    query_text TEXT,
+                    api_source TEXT,
+                    result_json TEXT,
+                    created_at TEXT,
+                    expires_at TEXT
+                )
+            """)
+            return conn
+        except sqlite3.OperationalError:
+            # Fallback: in-memory SQLite
+            conn = sqlite3.connect(":memory:")
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS patent_cache (
+                    query_hash TEXT PRIMARY KEY,
+                    query_text TEXT,
+                    api_source TEXT,
+                    result_json TEXT,
+                    created_at TEXT,
+                    expires_at TEXT
+                )
+            """)
+            return conn
 
     @staticmethod
     def get(query: str, api_source: str = "general") -> Optional[Dict[str, Any]]:
@@ -41932,10 +42126,22 @@ class PatentCertificateGeneratorV2:
 
     def _store_in_db(self, certificate_id: str, cert_data: Dict[str, Any],
                      verification_url: str, pdf_hash: str) -> None:
-        """Store the certificate in the patent_certificates table."""
+        """Store the certificate in the patent_certificates table.
+
+        FIX v9.11.20 (DB-path): db_path ni absolute qilish va parent katalog yaratish.
+        """
         db_path = os.getenv("UCG_CERT_DB", "ucg_certificates.db")
-        conn = sqlite3.connect(db_path)
+        # FIX v9.11.20: absolute path + parent dir creation
+        if not os.path.isabs(db_path):
+            _data_dir = os.getenv("UCG_DATA_DIR", os.path.join(os.path.expanduser("~"), ".ucg_platform"))
+            try:
+                os.makedirs(_data_dir, exist_ok=True)
+            except (OSError, PermissionError):
+                import tempfile as _tempfile
+                _data_dir = _tempfile.gettempdir()
+            db_path = os.path.join(_data_dir, os.path.basename(db_path))
         try:
+            conn = sqlite3.connect(db_path)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS patent_certificates (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -41999,6 +42205,15 @@ class PatentCertificateGeneratorV2:
         """
         # 1. Look up in database
         db_path = os.getenv("UCG_CERT_DB", "ucg_certificates.db")
+        # FIX v9.11.20: absolute path
+        if not os.path.isabs(db_path):
+            _data_dir = os.getenv("UCG_DATA_DIR", os.path.join(os.path.expanduser("~"), ".ucg_platform"))
+            try:
+                os.makedirs(_data_dir, exist_ok=True)
+            except (OSError, PermissionError):
+                import tempfile as _tempfile
+                _data_dir = _tempfile.gettempdir()
+            db_path = os.path.join(_data_dir, os.path.basename(db_path))
         record = None
         try:
             conn = sqlite3.connect(db_path)
@@ -50515,7 +50730,18 @@ class SQLiteMaintenanceManager:
     def run_vacuum(db_path: Optional[str] = None) -> Dict[str, Any]:
         """Run VACUUM to reclaim space and optimize database."""
         import sqlite3
-        path = db_path or os.path.join(DEFAULT_LOG_DIR if globals().get("DEFAULT_LOG_DIR") else "/tmp", "ucg_data.db")
+        # FIX v9.11.20: absolute path + DEFAULT_LOG_DIR fallback
+        _fallback_dir = "/tmp"
+        if globals().get("DEFAULT_LOG_DIR"):
+            _fallback_dir = str(globals()["DEFAULT_LOG_DIR"])
+        path = db_path or os.path.join(_fallback_dir, "ucg_data.db")
+        # Ensure parent dir exists
+        _parent = os.path.dirname(os.path.abspath(path))
+        try:
+            os.makedirs(_parent, exist_ok=True)
+        except (OSError, PermissionError):
+            import tempfile as _tempfile
+            path = os.path.join(_tempfile.gettempdir(), "ucg_data.db")
         if not os.path.exists(path):
             return {"status": "skipped", "reason": "Database file not found"}
         try:
