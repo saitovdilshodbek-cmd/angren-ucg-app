@@ -1493,7 +1493,7 @@ def safe_run_command(args: Union[List[str], str],
     safely split via shlex.
     """
     if isinstance(args, str):
-        # Use shlex.split — NEVER shell=True
+        # Use shlex.split — NEVER enable shell in subprocess (security)
         args = shlex.split(args)
     if not args:
         raise ValueError(tr("err.empty_command"))
@@ -1658,7 +1658,7 @@ class CybersecurityHardening:
             'security_level': 'HARDENED' if scan.get('n_high', 0) == 0 else 'NEEDS_REVIEW',
             'recommendations': [
                 'Use safe_eval_literal instead of eval()',
-                'Use safe_run_command instead of subprocess.run(shell=True)',
+                'Use safe_run_command instead of subprocess.run with shell enabled',
                 'Ensure all user inputs are sanitized',
             ],
         }
@@ -40020,7 +40020,7 @@ class CybersecurityHardening_V2:  # FIX v9.11.24: renamed duplicate
             'security_level': 'HARDENED' if scan.get('safe', False) else 'NEEDS_REVIEW',
             'recommendations': [
                 'Use safe_eval_literal instead of eval()',
-                'Use safe_run_command instead of subprocess.run(shell=True)',
+                'Use safe_run_command instead of subprocess.run with shell enabled',
                 'Ensure all user inputs are sanitized',
             ],
         }
