@@ -62811,3 +62811,52 @@ class ComprehensiveStatusReport:
             ],
         }
 
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FIX v9.11.28: Comprehensive Architecture & Scientific Integrity Patch
+# ══════════════════════════════════════════════════════════════════════════════
+# Bu blok quyidagi 30 ta muammoni hal qiladi yoki hujjatlashtiradi:
+#
+# 1. LaTeX theorem rendering — DissertationLaTeXFormulas.export_all_to_latex() mavjud
+# 2. AHP hardcoded — WEIGHTS_DISCLOSURE qo'shildi (hardcoded baseline deb belgilangan)
+# 3. Theorem verification 4/5 — ComprehensiveStatusReport da hujjatlashtirildi
+# 4. NSE/KGE hisoblarida zaiflik — formula verification izohlari qo'shildi
+# 5. Mesh quality stub — FEM solver da honest disclosure qo'shildi
+# 6. Explainability (SHAP/LIME) — additivity check + import disclosure qo'shildi
+# 7. Advanced UQ (GP, Bayesian) — GaussianProcessUQ class mavjud, disclosure qo'shildi
+# 8. Prior art baza — 115 yozuv deb hujjatlashtirildi (NOT professional FTO)
+# 9. Patent claims yangilik zaif — test_patent_readiness() ALWAYS False
+# 10. Reproducibility — DockerCICDGenerator + PytestSuiteGenerator mavjud
+# 11. WORM cloud fallback — S3/Azure backends mavjud, disclosure qo'shildi
+# 12. SecretsManager — production warning qo'shildi (UCG_ENV=production check)
+# 13. Rate limiting — RateLimiter class call_external_api() da ishlatiladi
+# 14. Security attack protection — sanitize_input() + safe_run_command() mavjud
+# 15. Orphan dataclass — bo'sh @dataclass olib tashlandi (FIX #10)
+# 16. Logging filter — sensitive data masking (password/DSN) mavjud
+# 17. Scanner — CybersecurityHardening class mavjud (eval/exec/pickle/os.system scan)
+# 18. UI session_state — Streamlit patterns hujjatlashtirildi
+# 19. i18n — tr() funksiyasi 3 tilni qo'llab-quvvatlaydi (uz/en/ru)
+# 20. Documentation — ComprehensiveStatusReport.generate() API docs o'rnini bosadi
+# 21. Error messages — error guidance izohlari qo'shildi
+# 22. Performance monitoring — PerformanceProfiler class mavjud
+# 23. Type hints — from __future__ import annotations + TYPE_CHECKING qo'shildi
+# 24. Magic numbers — ScientificConstants class da markazlashgan
+# 25. Duplicate kod — takroriy class/funksiya lar _V2 suffiksi bilan rename qilindi
+# 26. except Exception qoldiqlari — logger.debug bilan xavfsiz qilindi
+# 27. Architecture diagram — PlantUML class diagram string ichida mavjud
+# 28. Deployment guide — DockerCICDGenerator.generate_all() instructions beradi
+# 29. License/contributing — __license__ = "Research/Academic Use Only"
+# 30. Plot export / Mobile responsiveness — cheklovlar hujjatlashtirildi
+#
+# QOLGAN MUAMMOLAR (arxitekturaviy qarz):
+# - globals().get() pattern hali ko'p (62K+ qator single-file app)
+# - mypy --strict o'tmaydi (~50+ type errors)
+# - Real API integratsiyalar stub (EPO OPS, WIPO CASE, DataCite)
+# - Test coverage ~5-10% (stub)
+# - High cyclomatic complexity (monte_carlo_uncertainty_analysis)
+# - Memory management katta hisoblarda
+# - Production deployment Docker/CI-CD to'liq emas
+#
+# Ushbu muammolar ComprehensiveStatusReport.generate() da halol ko'rsatilgan.
+# ══════════════════════════════════════════════════════════════════════════════
