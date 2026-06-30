@@ -80,7 +80,6 @@ try:
     from dotenv import load_dotenv
     load_dotenv()
 except ImportError:
-    logger.debug("[silent fail] %s", repr(e) if "e" in dir() else "unknown")  # FIX v9.11.25b
     pass
 
 # ── UCG Platform Core Package ──────────────────────────────────────────
@@ -899,8 +898,11 @@ UCG_CONFIG = UCGPlatformConfig()
 def _init_thread_safe_config():
     try:
         ThreadSafeConfig.load_from_object(UCG_CONFIG)
-    except (NameError, AttributeError):
-        logger.debug("[silent fail] %s", repr(e) if "e" in dir() else "unknown")  # FIX v9.11.25b
+    except (NameError, AttributeError) as e:  # FIX v9.11.26
+        try:
+            logger.debug("[silent fail] %s", e)
+        except Exception:
+            pass  # logger not available yet
         pass
 
 _init_thread_safe_config()
@@ -1154,8 +1156,11 @@ class DatabaseBackend:
                 self._pg_version,
                 self._pg_libpq_version,
             )
-        except ImportError:
-            logger.debug("[silent fail] %s", repr(e) if "e" in dir() else "unknown")  # FIX v9.11.25
+        except ImportError as e:  # FIX v9.11.26
+            try:
+                logger.debug("[silent fail] %s", e)
+            except Exception:
+                pass  # logger not available yet
             pass
 
         # FIX #52: If user requested postgresql but psycopg2 is missing OR
@@ -1409,8 +1414,11 @@ class WORMStorageBackend:
             try:
                 import stat as _stat
                 os.chmod(data_path, _stat.S_IREAD)
-            except OSError:
-                logger.debug("[silent fail] %s", repr(e) if "e" in dir() else "unknown")  # FIX v9.11.25
+            except OSError as e:  # FIX v9.11.26
+                try:
+                    logger.debug("[silent fail] %s", e)
+                except Exception:
+                    pass  # logger not available yet
                 pass
         return {"filename": key, "hash": record_hash, "timestamp": timestamp, "backend": "local"}
 
@@ -1472,8 +1480,11 @@ def safe_loads(payload: Union[bytes, str]) -> Any:
             raise ValueError(tr("err.binary_payload"))
     try:
         return json.loads(payload)
-    except (ValueError, TypeError):
-        logger.debug("[silent fail] %s", repr(e) if "e" in dir() else "unknown")  # FIX v9.11.25
+    except (ValueError, TypeError) as e:  # FIX v9.11.26
+        try:
+            logger.debug("[silent fail] %s", e)
+        except Exception:
+            pass  # logger not available yet
         pass
     try:
         return ast.literal_eval(payload)
@@ -2075,8 +2086,11 @@ class LazyImportRegistry:
 def _init_dependency_registry():
     try:
         DependencyRegistry.auto_register_common()
-    except (NameError, AttributeError):
-        logger.debug("[silent fail] %s", repr(e) if "e" in dir() else "unknown")  # FIX v9.11.25b
+    except (NameError, AttributeError) as e:  # FIX v9.11.26
+        try:
+            logger.debug("[silent fail] %s", e)
+        except Exception:
+            pass  # logger not available yet
         pass
 
 _init_dependency_registry()
@@ -2184,8 +2198,11 @@ class FeatureAvailabilityReport:
                 )
                 with st.sidebar.expander("📋 Feature Availability Report"):
                     st.markdown(cls.format_report().replace("\n", "  \n"))
-        except Exception:
-            logger.debug("[silent fail] %s", repr(e) if "e" in dir() else "unknown")  # FIX v9.11.25b
+        except Exception as e:  # FIX v9.11.26
+            try:
+                logger.debug("[silent fail] %s", e)
+            except Exception:
+                pass  # logger not available yet
             pass
 
 
@@ -3268,8 +3285,11 @@ def _json_default_serializer(value: Any) -> Any:
             else:
                 value = value.tz_convert("UTC")
             return value.isoformat()
-    except ImportError:
-        logger.debug("[silent fail] %s", repr(e) if "e" in dir() else "unknown")  # FIX v9.11.25b
+    except ImportError as e:  # FIX v9.11.26
+        try:
+            logger.debug("[silent fail] %s", e)
+        except Exception:
+            pass  # logger not available yet
         pass
     if isinstance(value, datetime):
         # FIX v9.11.13 #55: Always use UTC ISO 8601 for audit trail
@@ -4049,8 +4069,11 @@ class BlockchainConnectorV2:
                 stored = keyring.get_password("ucg_platform", "blockchain_private_key")
                 if stored:
                     self.private_key_hex = stored
-            except ImportError:
-                logger.debug("[silent fail] %s", repr(e) if "e" in dir() else "unknown")  # FIX v9.11.25
+            except ImportError as e:  # FIX v9.11.26
+                try:
+                    logger.debug("[silent fail] %s", e)
+                except Exception:
+                    pass  # logger not available yet
                 pass
             except Exception:
                 # keyring is installed but no backend is available (e.g. headless Linux
@@ -4818,8 +4841,11 @@ class RFC3161TimestampAuthority:
             # cryptography lib doesn't expose a public TimeStampReq builder until v40+
             # so we build DER manually below — this is well-documented in RFC-3161
             raise ImportError("Use manual DER builder")
-        except ImportError:
-            logger.debug("[silent fail] %s", repr(e) if "e" in dir() else "unknown")  # FIX v9.11.25
+        except ImportError as e:  # FIX v9.11.26
+            try:
+                logger.debug("[silent fail] %s", e)
+            except Exception:
+                pass  # logger not available yet
             pass
 
         # Manual DER encoding of TimeStampReq for SHA-256 (RFC-3161 §2.4.1)
@@ -5076,8 +5102,11 @@ class SignedAuditReport:
                 try:
                     import ctypes as _ctypes
                     _ctypes.windll.kernel32.SetFileAttributesW(str(data_path), 0x01)  # FILE_ATTRIBUTE_READONLY
-                except Exception:
-                    logger.debug("[silent fail] %s", repr(e) if "e" in dir() else "unknown")  # FIX v9.11.25b
+                except Exception as e:  # FIX v9.11.26
+                    try:
+                        logger.debug("[silent fail] %s", e)
+                    except Exception:
+                        pass  # logger not available yet
                     pass
         except Exception as chmod_exc:
             logger.warning(tr("log.worm_chmod_failed", path=data_path, exc=chmod_exc))
@@ -14439,8 +14468,11 @@ def compute_fos_parallel(grid_x, grid_z, active_wells_tuple, well_x_tuple,
             _rows_count = grid_x.shape[0] if hasattr(grid_x, 'shape') else 0
             if _rows_count > 10000:
                 gc.collect()
-        except Exception:
-            logger.debug("[silent fail] %s", repr(e) if "e" in dir() else "unknown")  # FIX v9.11.25b
+        except Exception as e:  # FIX v9.11.26
+            try:
+                logger.debug("[silent fail] %s", e)
+            except Exception:
+                pass  # logger not available yet
             pass
 
 
@@ -15795,8 +15827,11 @@ class RealSciBERTNovelty:
             self._AutoTokenizer = AutoTokenizer
             self._AutoModel = AutoModel
             self.backend = "scibert_lazy"
-        except ImportError:
-            logger.debug("[silent fail] %s", repr(e) if "e" in dir() else "unknown")  # FIX v9.11.25
+        except ImportError as e:  # FIX v9.11.26
+            try:
+                logger.debug("[silent fail] %s", e)
+            except Exception:
+                pass  # logger not available yet
             pass
 
     def _ensure_model_loaded(self) -> None:
@@ -22608,8 +22643,11 @@ class DependencyRegistry:
             mod = importlib.import_module(name)
             version = getattr(mod, '__version__', 'unknown')
             available = True
-        except ImportError:
-            logger.debug("[silent fail] %s", repr(e) if "e" in dir() else "unknown")  # FIX v9.11.25
+        except ImportError as e:  # FIX v9.11.26
+            try:
+                logger.debug("[silent fail] %s", e)
+            except Exception:
+                pass  # logger not available yet
             pass
         version_ok = True
         if min_version and available and version != 'unknown':
@@ -31979,8 +32017,11 @@ class FTOAnalyzer:
                     if expiry_date < datetime.now(timezone.utc):
                         # Patent expired — no FTO risk
                         continue
-                except Exception:
-                    logger.debug("[silent fail] %s", repr(e) if "e" in dir() else "unknown")  # FIX v9.11.25b
+                except Exception as e:  # FIX v9.11.26
+                    try:
+                        logger.debug("[silent fail] %s", e)
+                    except Exception:
+                        pass  # logger not available yet
                     pass
             active_unexpired.append(c)
 
@@ -42967,14 +43008,20 @@ class QuantumOptimizer:
         try:
             import qiskit  # noqa: F401
             self._qiskit_available = True
-        except ImportError:
-            logger.debug("[silent fail] %s", repr(e) if "e" in dir() else "unknown")  # FIX v9.11.25
+        except ImportError as e:  # FIX v9.11.26
+            try:
+                logger.debug("[silent fail] %s", e)
+            except Exception:
+                pass  # logger not available yet
             pass
         try:
             import dwave  # noqa: F401
             self._dwave_available = True
-        except ImportError:
-            logger.debug("[silent fail] %s", repr(e) if "e" in dir() else "unknown")  # FIX v9.11.25
+        except ImportError as e:  # FIX v9.11.26
+            try:
+                logger.debug("[silent fail] %s", e)
+            except Exception:
+                pass  # logger not available yet
             pass
         if backend == "auto":
             if self._qiskit_available:
@@ -44119,14 +44166,20 @@ class GPUOptimizer:
             try:
                 from torch.amp import autocast, GradScaler  # PyTorch 2.0+
                 self._amp_available = True
-            except ImportError:
-                logger.debug("[silent fail] %s", repr(e) if "e" in dir() else "unknown")  # FIX v9.11.25
+            except ImportError as e:  # FIX v9.11.26
+                try:
+                    logger.debug("[silent fail] %s", e)
+                except Exception:
+                    pass  # logger not available yet
                 pass
             try:
                 from torch import compile as _compile  # noqa: F401
                 self._compile_available = True
-            except ImportError:
-                logger.debug("[silent fail] %s", repr(e) if "e" in dir() else "unknown")  # FIX v9.11.25
+            except ImportError as e:  # FIX v9.11.26
+                try:
+                    logger.debug("[silent fail] %s", e)
+                except Exception:
+                    pass  # logger not available yet
                 pass
 
     def info(self) -> Dict[str, Any]:
@@ -44876,8 +44929,11 @@ class CoverageReporter:
                 if len(parts) >= 4:
                     try:
                         coverage_pct = float(parts[-1].rstrip("%"))
-                    except ValueError:
-                        logger.debug("[silent fail] %s", repr(e) if "e" in dir() else "unknown")  # FIX v9.11.25
+                    except ValueError as e:  # FIX v9.11.26
+                        try:
+                            logger.debug("[silent fail] %s", e)
+                        except Exception:
+                            pass  # logger not available yet
                         pass
             return {
                 "source_file": source_file,
@@ -50980,8 +51036,11 @@ class CentralizedTimeoutConfig:
         if env_val:
             try:
                 return float(env_val)
-            except ValueError:
-                logger.debug("[silent fail] %s", repr(e) if "e" in dir() else "unknown")  # FIX v9.11.25
+            except ValueError as e:  # FIX v9.11.26
+                try:
+                    logger.debug("[silent fail] %s", e)
+                except Exception:
+                    pass  # logger not available yet
                 pass
         return cls.TIMEOUTS.get(operation, 60.0)
 
@@ -56426,20 +56485,29 @@ class DistributedComputing:
         try:
             from mpi4py import MPI  # noqa: F401
             backends[DistributedComputing.MPI] = True
-        except ImportError:
-            logger.debug("[silent fail] %s", repr(e) if "e" in dir() else "unknown")  # FIX v9.11.25
+        except ImportError as e:  # FIX v9.11.26
+            try:
+                logger.debug("[silent fail] %s", e)
+            except Exception:
+                pass  # logger not available yet
             pass
         try:
             import dask  # noqa: F401
             backends[DistributedComputing.DASK] = True
-        except ImportError:
-            logger.debug("[silent fail] %s", repr(e) if "e" in dir() else "unknown")  # FIX v9.11.25
+        except ImportError as e:  # FIX v9.11.26
+            try:
+                logger.debug("[silent fail] %s", e)
+            except Exception:
+                pass  # logger not available yet
             pass
         try:
             import ray  # noqa: F401
             backends[DistributedComputing.RAY] = True
-        except ImportError:
-            logger.debug("[silent fail] %s", repr(e) if "e" in dir() else "unknown")  # FIX v9.11.25
+        except ImportError as e:  # FIX v9.11.26
+            try:
+                logger.debug("[silent fail] %s", e)
+            except Exception:
+                pass  # logger not available yet
             pass
         return backends
 
@@ -56474,8 +56542,11 @@ class DistributedComputing:
                     return func(item)
                 futures = [_remote_func.remote(item) for item in items]
                 return ray.get(futures)
-            except Exception:
-                logger.debug("[silent fail] %s", repr(e) if "e" in dir() else "unknown")  # FIX v9.11.25b
+            except Exception as e:  # FIX v9.11.26
+                try:
+                    logger.debug("[silent fail] %s", e)
+                except Exception:
+                    pass  # logger not available yet
                 pass
 
         if backend == DistributedComputing.DASK:
@@ -56483,8 +56554,11 @@ class DistributedComputing:
                 from dask import delayed, compute
                 delayed_results = [delayed(func)(item) for item in items]
                 return list(compute(*delayed_results))
-            except Exception:
-                logger.debug("[silent fail] %s", repr(e) if "e" in dir() else "unknown")  # FIX v9.11.25b
+            except Exception as e:  # FIX v9.11.26
+                try:
+                    logger.debug("[silent fail] %s", e)
+                except Exception:
+                    pass  # logger not available yet
                 pass
 
         # Local (serial) fallback
@@ -58403,8 +58477,11 @@ class PublicationQualityGraphs:
         import matplotlib.pyplot as plt
         try:
             plt.style.use(style)
-        except OSError:
-            logger.debug("[silent fail] %s", repr(e) if "e" in dir() else "unknown")  # FIX v9.11.25b
+        except OSError as e:  # FIX v9.11.26
+            try:
+                logger.debug("[silent fail] %s", e)
+            except Exception:
+                pass  # logger not available yet
             pass
         fig, ax = plt.subplots(figsize=figsize, dpi=300)
         # Set consistent fonts
