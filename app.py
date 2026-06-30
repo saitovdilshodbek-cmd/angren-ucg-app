@@ -12675,7 +12675,7 @@ PARAMS = UCGPhysicsParams()
 
 # ── Biot coefficient ──────────────────────────────────────────────────────
 @dataclass
-class SoilWaterState_V2:  # FIX v9.11.24: renamed duplicate
+class SoilWaterState:  # FIX v9.11.27: restored original name (primary definition)
     saturation_ratio: float
     porosity: float
     degree_consolidation: float
