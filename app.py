@@ -1,8 +1,8 @@
 # ══════════════════════════════════════════════════════════════════════════════
-# UCG Platform — v9.11.32 (Critical Indentation + cert_data Fix)
+# UCG Platform — v9.11.33 (original_cert_fn + PDF-in-DOCX Embed)
 # ══════════════════════════════════════════════════════════════════════════════
 #
-# STATUS: Research/Development Platform — v9.11.32 critical indentation + cert_data fix applied.
+# STATUS: Research/Development Platform — v9.11.33 original_cert_fn + PDF embed applied.
 # Still NOT patent-ready / PhD-ready (see ComprehensiveStatusReport for blockers).
 #
 # ═══ KNOWN LIMITATIONS (Acknowledged for Academic Integrity) ═══
@@ -117,7 +117,7 @@ import streamlit as st
 _ST_CFG_OK = False
 try:
     st.set_page_config(
-        page_title="UCG SCI-Grade Platform v9.11.32 (Critical Indentation + cert_data Fix)",
+        page_title="UCG SCI-Grade Platform v9.11.33 (original_cert_fn + PDF Embed)",
         layout="wide",
         initial_sidebar_state="expanded",
     )
@@ -156,7 +156,7 @@ try:
     _PKG_AVAILABLE = True
 except ImportError:
     _PKG_AVAILABLE = False
-    _pkg_version = "9.11.32"  # Fallback version (critical indentation + cert_data fix)
+    _pkg_version = "9.11.33"  # Fallback version (original_cert_fn + PDF embed)
 
     # FIX #35: Fallback exception classes when ucg_platform package is unavailable.
     # Without these, element_stiffness_3d() raises NameError on FEMMeshError.
@@ -2493,7 +2493,7 @@ class VersionInfo:
     """FIX v9.11.8: Versiya birlashtirildi - endi hamma joyda 9.11.8"""
     major: int = 9
     minor: int = 11
-    patch: int = 32
+    patch: int = 33
     prerelease: str = ""  # SemVer 2.0.0 §9 — bo'sh yoki 'v' siz identifikator
 
     @property
@@ -2516,7 +2516,7 @@ class VersionManager:
     _lock = threading.Lock()
 
     def __init__(self):
-        self.version = '9.11.32'
+        self.version = '9.11.33'
 
     @classmethod
     def get_instance(cls):
@@ -2536,7 +2536,7 @@ __version__ = _version_manager.version
 # to (4, 0, 1) while __version__ was "6.1.0-v6.1" — the inconsistency broke
 # downstream code that compared version tuples (e.g. for feature flags).
 __version_info__ = (version_info.major, version_info.minor, version_info.patch)
-__build_number__ = "20260705"  # v9.11.32 critical indentation + cert_data fix
+__build_number__ = "20260705"  # v9.11.33 original_cert_fn + PDF embed
 __git_commit__ = version_info.get_git_commit()
 
 
@@ -2546,7 +2546,7 @@ class PatentMetadata:
     """Proper dataclass for patent metadata (replaces __dunder__ variables)."""
     patent_status: str = "PCT/IB pending (application number required)"
     license_info: str = "Patent Pending - Uzbekistan + WIPO PCT"
-    version: str = "9.11.32"
+    version: str = "9.11.33"
     build_number: str = "20260705"
     patent_application_number: Optional[str] = None
     pct_application_number: Optional[str] = None
@@ -12407,6 +12407,31 @@ def generate_patent_report(
     report_payload["validation_certificate_bytes"] = cert_data
     report_payload["validation_certificate_path"] = _cert_path if _cert_saved else None
     report_payload["validation_certificate_sha256"] = trace_bundle.sha256
+
+    # FIX v9.11.33 (4-version unfixed issue): Embed the PDF certificate bytes
+    # DIRECTLY into the DOCX report as base64. Previously (v9.11.29-v9.11.32)
+    # only TEXT METADATA was added to the DOCX — the actual PDF content was
+    # not "written into" the report. Now the PDF is embedded as a base64
+    # paragraph so the certificate travels WITH the DOCX (not just on disk).
+    # This addresses the user's complaint: "PDF hisobotga yozilmaydi".
+    import base64 as _b64_mod
+    try:
+        _cert_b64 = _b64_mod.b64encode(cert_data).decode('ascii')
+        # Split into 76-char lines for readability (RFC 2045 style)
+        _cert_b64_wrapped = '\n'.join(_cert_b64[i:i+76] for i in range(0, len(_cert_b64), 76))
+        doc.add_heading("Validation Certificate (Embedded PDF — Base64)", level=3)
+        doc.add_paragraph(
+            f"The validation certificate PDF is embedded below as base64-encoded data. "
+            f"To extract the PDF: decode the base64 block and save as .pdf.\n"
+            f"Size: {len(cert_data):,} bytes | Base64 length: {len(_cert_b64):,} chars\n"
+            f"SHA-256: {trace_bundle.sha256}"
+        )
+        _b64_para = doc.add_paragraph()
+        _b64_run = _b64_para.add_run(_cert_b64_wrapped)
+        _b64_run.font.size = Pt(6)  # small font for base64 block
+        _b64_run.font.name = 'Courier New'  # monospace for base64
+    except Exception as _b64_exc:
+        logger.warning("[generate_patent_report] Failed to embed cert PDF as base64: %s", _b64_exc)
 
     if CRYPTO_AVAILABLE:
         sig = generate_digital_signature(trace_bundle.sha256.encode())
@@ -41366,6 +41391,21 @@ def apply_all_patches(app_module: Any) -> Dict[str, Any]:
             # because the broken code above caused NameError which was caught by
             # the outer except. Now the function is properly defined and the
             # patch is applied.
+            # FIX v9.11.33: Save the original function as an attribute of the patched
+            # version, for consistency with other patches (FIX 2/7/15 use
+            # `patched_X._original = original_X`). This allows rollback and audit
+            # of what the original function was.
+            # NOTE: @staticmethod wraps the function — we must set _original on
+            # the inner function BEFORE applying @staticmethod, otherwise the
+            # attribute is on the staticmethod wrapper (which is not accessible
+            # via AlgorithmCertification.generate_patent_certificate due to
+            # Python's descriptor protocol).
+            patched_patent_certificate._original = original_cert_fn  # set on staticmethod wrapper
+            # Also set on the underlying function (accessible via __func__)
+            try:
+                patched_patent_certificate.__func__._original = original_cert_fn
+            except AttributeError:
+                pass  # not a staticmethod in some Python versions
             app_module.AlgorithmCertification.generate_patent_certificate = patched_patent_certificate
             patches_applied.append("FIX 18: Patent certificate generator patched with audit trail check")
     except Exception as e:
@@ -63407,7 +63447,7 @@ class VersionConsistencyFinalCheck:
     construction (and remains a real consistency guard for downstream
     components like version_info.full_version and _version_manager.version).
     """
-    EXPECTED_VERSION = "9.11.32"
+    EXPECTED_VERSION = "9.11.33"
 
     @staticmethod
     def verify() -> Dict[str, Any]:
@@ -63449,7 +63489,7 @@ class ComprehensiveStatusReport:
     def generate() -> dict:
         """Generate comprehensive status report."""
         return {
-            "platform_version": "v9.11.32",
+            "platform_version": "v9.11.33",
             "status": "Research/Development (NOT patent-ready, NOT PhD-ready)",
             "disclosure_date": _utc_now_iso() if callable(globals().get("_utc_now_iso")) else "",
 
