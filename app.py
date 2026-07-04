@@ -1,8 +1,8 @@
 # ══════════════════════════════════════════════════════════════════════════════
-# UCG Platform — v9.11.33 (original_cert_fn + PDF-in-DOCX Embed)
+# UCG Platform — v9.11.34 (DOCX Line Break Render Fix)
 # ══════════════════════════════════════════════════════════════════════════════
 #
-# STATUS: Research/Development Platform — v9.11.33 original_cert_fn + PDF embed applied.
+# STATUS: Research/Development Platform — v9.11.34 DOCX line break render fix applied.
 # Still NOT patent-ready / PhD-ready (see ComprehensiveStatusReport for blockers).
 #
 # ═══ KNOWN LIMITATIONS (Acknowledged for Academic Integrity) ═══
@@ -117,7 +117,7 @@ import streamlit as st
 _ST_CFG_OK = False
 try:
     st.set_page_config(
-        page_title="UCG SCI-Grade Platform v9.11.33 (original_cert_fn + PDF Embed)",
+        page_title="UCG SCI-Grade Platform v9.11.34 (DOCX Line Break Fix)",
         layout="wide",
         initial_sidebar_state="expanded",
     )
@@ -156,7 +156,7 @@ try:
     _PKG_AVAILABLE = True
 except ImportError:
     _PKG_AVAILABLE = False
-    _pkg_version = "9.11.33"  # Fallback version (original_cert_fn + PDF embed)
+    _pkg_version = "9.11.34"  # Fallback version (DOCX line break render fix)
 
     # FIX #35: Fallback exception classes when ucg_platform package is unavailable.
     # Without these, element_stiffness_3d() raises NameError on FEMMeshError.
@@ -2493,7 +2493,7 @@ class VersionInfo:
     """FIX v9.11.8: Versiya birlashtirildi - endi hamma joyda 9.11.8"""
     major: int = 9
     minor: int = 11
-    patch: int = 33
+    patch: int = 34
     prerelease: str = ""  # SemVer 2.0.0 §9 — bo'sh yoki 'v' siz identifikator
 
     @property
@@ -2516,7 +2516,7 @@ class VersionManager:
     _lock = threading.Lock()
 
     def __init__(self):
-        self.version = '9.11.33'
+        self.version = '9.11.34'
 
     @classmethod
     def get_instance(cls):
@@ -2536,7 +2536,7 @@ __version__ = _version_manager.version
 # to (4, 0, 1) while __version__ was "6.1.0-v6.1" — the inconsistency broke
 # downstream code that compared version tuples (e.g. for feature flags).
 __version_info__ = (version_info.major, version_info.minor, version_info.patch)
-__build_number__ = "20260705"  # v9.11.33 original_cert_fn + PDF embed
+__build_number__ = "20260705"  # v9.11.34 DOCX line break render fix
 __git_commit__ = version_info.get_git_commit()
 
 
@@ -2546,7 +2546,7 @@ class PatentMetadata:
     """Proper dataclass for patent metadata (replaces __dunder__ variables)."""
     patent_status: str = "PCT/IB pending (application number required)"
     license_info: str = "Patent Pending - Uzbekistan + WIPO PCT"
-    version: str = "9.11.33"
+    version: str = "9.11.34"
     build_number: str = "20260705"
     patent_application_number: Optional[str] = None
     pct_application_number: Optional[str] = None
@@ -12414,22 +12414,36 @@ def generate_patent_report(
     # not "written into" the report. Now the PDF is embedded as a base64
     # paragraph so the certificate travels WITH the DOCX (not just on disk).
     # This addresses the user's complaint: "PDF hisobotga yozilmaydi".
+    #
+    # FIX v9.11.34 (render bug): python-docx does NOT render `\n` inside
+    # run.text as a line break in Microsoft Word — this is a known limitation
+    # of the library (the `\n` is silently dropped or shown as a space).
+    # The previous version used `'\n'.join(lines)` + single `add_run()`,
+    # which produced one long unreadable line in Word. Now we use
+    # `run.add_break()` between 76-char chunks — this creates REAL line
+    # breaks that Word renders correctly.
     import base64 as _b64_mod
     try:
         _cert_b64 = _b64_mod.b64encode(cert_data).decode('ascii')
         # Split into 76-char lines for readability (RFC 2045 style)
-        _cert_b64_wrapped = '\n'.join(_cert_b64[i:i+76] for i in range(0, len(_cert_b64), 76))
+        _b64_lines = [_cert_b64[i:i+76] for i in range(0, len(_cert_b64), 76)]
         doc.add_heading("Validation Certificate (Embedded PDF — Base64)", level=3)
         doc.add_paragraph(
             f"The validation certificate PDF is embedded below as base64-encoded data. "
-            f"To extract the PDF: decode the base64 block and save as .pdf.\n"
-            f"Size: {len(cert_data):,} bytes | Base64 length: {len(_cert_b64):,} chars\n"
+            f"To extract the PDF: decode the base64 block and save as .pdf. "
+            f"Size: {len(cert_data):,} bytes | Base64 length: {len(_cert_b64):,} chars. "
             f"SHA-256: {trace_bundle.sha256}"
         )
+        # FIX v9.11.34: Use run.add_break() for real line breaks in Word.
+        # Each 76-char chunk is a separate run, followed by add_break().
         _b64_para = doc.add_paragraph()
-        _b64_run = _b64_para.add_run(_cert_b64_wrapped)
-        _b64_run.font.size = Pt(6)  # small font for base64 block
-        _b64_run.font.name = 'Courier New'  # monospace for base64
+        for _idx, _line in enumerate(_b64_lines):
+            _b64_run = _b64_para.add_run(_line)
+            _b64_run.font.size = Pt(6)  # small font for base64 block
+            _b64_run.font.name = 'Courier New'  # monospace for base64
+            # Add a line break after each chunk EXCEPT the last one
+            if _idx < len(_b64_lines) - 1:
+                _b64_run.add_break()  # ← REAL Word line break (not \n)
     except Exception as _b64_exc:
         logger.warning("[generate_patent_report] Failed to embed cert PDF as base64: %s", _b64_exc)
 
@@ -63447,7 +63461,7 @@ class VersionConsistencyFinalCheck:
     construction (and remains a real consistency guard for downstream
     components like version_info.full_version and _version_manager.version).
     """
-    EXPECTED_VERSION = "9.11.33"
+    EXPECTED_VERSION = "9.11.34"
 
     @staticmethod
     def verify() -> Dict[str, Any]:
@@ -63489,7 +63503,7 @@ class ComprehensiveStatusReport:
     def generate() -> dict:
         """Generate comprehensive status report."""
         return {
-            "platform_version": "v9.11.33",
+            "platform_version": "v9.11.34",
             "status": "Research/Development (NOT patent-ready, NOT PhD-ready)",
             "disclosure_date": _utc_now_iso() if callable(globals().get("_utc_now_iso")) else "",
 
