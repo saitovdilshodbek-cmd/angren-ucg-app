@@ -1,8 +1,8 @@
 # ══════════════════════════════════════════════════════════════════════════════
-# UCG Platform — v9.11.29 (NameError + Audit-Fix Edition)
+# UCG Platform — v9.11.30 (Critical NameError Fixes)
 # ══════════════════════════════════════════════════════════════════════════════
 #
-# STATUS: Research/Development Platform — v9.11.29 NameError + audit fixes applied.
+# STATUS: Research/Development Platform — v9.11.30 critical NameError fixes applied.
 # Still NOT patent-ready / PhD-ready (see ComprehensiveStatusReport for blockers).
 #
 # ═══ KNOWN LIMITATIONS (Acknowledged for Academic Integrity) ═══
@@ -117,7 +117,7 @@ import streamlit as st
 _ST_CFG_OK = False
 try:
     st.set_page_config(
-        page_title="UCG SCI-Grade Platform v9.11.29 (NameError + Audit-Fix)",
+        page_title="UCG SCI-Grade Platform v9.11.30 (Critical NameError Fixes)",
         layout="wide",
         initial_sidebar_state="expanded",
     )
@@ -154,7 +154,7 @@ try:
     _PKG_AVAILABLE = True
 except ImportError:
     _PKG_AVAILABLE = False
-    _pkg_version = "9.11.29"  # Fallback version (NameError + audit-fix)
+    _pkg_version = "9.11.30"  # Fallback version (critical NameError fixes)
 
     # FIX #35: Fallback exception classes when ucg_platform package is unavailable.
     # Without these, element_stiffness_3d() raises NameError on FEMMeshError.
@@ -2491,7 +2491,7 @@ class VersionInfo:
     """FIX v9.11.8: Versiya birlashtirildi - endi hamma joyda 9.11.8"""
     major: int = 9
     minor: int = 11
-    patch: int = 29
+    patch: int = 30
     prerelease: str = ""  # SemVer 2.0.0 §9 — bo'sh yoki 'v' siz identifikator
 
     @property
@@ -2514,7 +2514,7 @@ class VersionManager:
     _lock = threading.Lock()
 
     def __init__(self):
-        self.version = '9.11.29'
+        self.version = '9.11.30'
 
     @classmethod
     def get_instance(cls):
@@ -2534,7 +2534,7 @@ __version__ = _version_manager.version
 # to (4, 0, 1) while __version__ was "6.1.0-v6.1" — the inconsistency broke
 # downstream code that compared version tuples (e.g. for feature flags).
 __version_info__ = (version_info.major, version_info.minor, version_info.patch)
-__build_number__ = "20260705"  # v9.11.29 NameError + audit-fix build
+__build_number__ = "20260705"  # v9.11.30 critical NameError fixes
 __git_commit__ = version_info.get_git_commit()
 
 
@@ -2544,7 +2544,7 @@ class PatentMetadata:
     """Proper dataclass for patent metadata (replaces __dunder__ variables)."""
     patent_status: str = "PCT/IB pending (application number required)"
     license_info: str = "Patent Pending - Uzbekistan + WIPO PCT"
-    version: str = "9.11.29"
+    version: str = "9.11.30"
     build_number: str = "20260705"
     patent_application_number: Optional[str] = None
     pct_application_number: Optional[str] = None
@@ -3799,10 +3799,14 @@ class EffectSizeCI:
 
         # FIX v9.11.3: ishlatilmagan 'var_g = ...' dead code olib tashlandi.
         # Recalculate with J factor
-        se = (result["ci_upper"] - result["ci_lower"]) / (2 * z) * J  # FIX v9.11.12: use computed z, not hardcoded 1.96
-
+        # FIX v9.11.30: z ishlatilishi aniqlanishidan oldin turardi — qatorlar almashtirildi.
+        # Avval: se = ... / (2 * z) * J  ← z bu yerda aniqlanmagan
+        #        from scipy.stats import norm
+        #        z = norm.ppf(1 - alpha/2)  ← z faqat KEYIN aniqlanardi
+        # Endi: avval z aniqlanadi, keyin se hisoblanadi.
         from scipy.stats import norm
         z = norm.ppf(1 - alpha/2)
+        se = (result["ci_upper"] - result["ci_lower"]) / (2 * z) * J  # FIX v9.11.12: use computed z, not hardcoded 1.96
 
         return {
             "hedges_g": float(g),
@@ -5619,7 +5623,11 @@ class PriorArtSearchEngineV2:
             consumer_secret = os.getenv("EPO_CONSUMER_SECRET", "")
             if consumer_key and consumer_secret:
                 # FIX v9.11.19 #16: cached token ishlatish (har safar yangi emas)
-                token = PriorArtSearchAPI._get_espacenet_oauth_token(consumer_key, consumer_secret)
+                # FIX v9.11.30: "PriorArtSearchAPI" — bunday klass yo'q! Haqiqiy klass
+                # nomi — PriorArtSearchEngineV2 (yoki mavjud alias — PatentSearchAPI).
+                # Avval bu yerda "PatentSearchAPI" turardi (u ham yo'q edi), keyin
+                # "PriorArtSearchAPI" ga o'zgartirildi (u ham yo'q). Endi to'g'ri nom.
+                token = PriorArtSearchEngineV2._get_espacenet_oauth_token(consumer_key, consumer_secret)
                 if token:
                     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
                     resp = _requests_module.get(
@@ -63074,7 +63082,7 @@ class VersionConsistencyFinalCheck:
     construction (and remains a real consistency guard for downstream
     components like version_info.full_version and _version_manager.version).
     """
-    EXPECTED_VERSION = "9.11.29"
+    EXPECTED_VERSION = "9.11.30"
 
     @staticmethod
     def verify() -> Dict[str, Any]:
@@ -63116,7 +63124,7 @@ class ComprehensiveStatusReport:
     def generate() -> dict:
         """Generate comprehensive status report."""
         return {
-            "platform_version": "v9.11.29",
+            "platform_version": "v9.11.30",
             "status": "Research/Development (NOT patent-ready, NOT PhD-ready)",
             "disclosure_date": _utc_now_iso() if callable(globals().get("_utc_now_iso")) else "",
 
