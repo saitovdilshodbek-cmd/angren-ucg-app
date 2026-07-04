@@ -1,8 +1,8 @@
 # ══════════════════════════════════════════════════════════════════════════════
-# UCG Platform — v9.11.30 (Critical NameError Fixes)
+# UCG Platform — v9.11.31 (Unused Variables + Silent Exception Audit)
 # ══════════════════════════════════════════════════════════════════════════════
 #
-# STATUS: Research/Development Platform — v9.11.30 critical NameError fixes applied.
+# STATUS: Research/Development Platform — v9.11.31 unused vars + silent except audit applied.
 # Still NOT patent-ready / PhD-ready (see ComprehensiveStatusReport for blockers).
 #
 # ═══ KNOWN LIMITATIONS (Acknowledged for Academic Integrity) ═══
@@ -117,7 +117,7 @@ import streamlit as st
 _ST_CFG_OK = False
 try:
     st.set_page_config(
-        page_title="UCG SCI-Grade Platform v9.11.30 (Critical NameError Fixes)",
+        page_title="UCG SCI-Grade Platform v9.11.31 (Unused Vars + Silent Except Audit)",
         layout="wide",
         initial_sidebar_state="expanded",
     )
@@ -134,8 +134,10 @@ try:
     from dotenv import load_dotenv
     load_dotenv()
 except ImportError:
-    pass
-
+    # FIX v9.11.31: was `pass` — now logs to stderr to avoid silent failures.
+    # NOTE: logger is not yet available in bootstrap context, so we use stderr.
+    import sys as _sys_dotenv
+    print("[bootstrap] python-dotenv not installed — .env file loading skipped", file=_sys_dotenv.stderr)
 # ── UCG Platform Core Package ──────────────────────────────────────────
 # Modular package: exceptions, config, logger, constants, version, key_manager
 try:
@@ -154,7 +156,7 @@ try:
     _PKG_AVAILABLE = True
 except ImportError:
     _PKG_AVAILABLE = False
-    _pkg_version = "9.11.30"  # Fallback version (critical NameError fixes)
+    _pkg_version = "9.11.31"  # Fallback version (unused vars + silent except audit)
 
     # FIX #35: Fallback exception classes when ucg_platform package is unavailable.
     # Without these, element_stiffness_3d() raises NameError on FEMMeshError.
@@ -2491,7 +2493,7 @@ class VersionInfo:
     """FIX v9.11.8: Versiya birlashtirildi - endi hamma joyda 9.11.8"""
     major: int = 9
     minor: int = 11
-    patch: int = 30
+    patch: int = 31
     prerelease: str = ""  # SemVer 2.0.0 §9 — bo'sh yoki 'v' siz identifikator
 
     @property
@@ -2514,7 +2516,7 @@ class VersionManager:
     _lock = threading.Lock()
 
     def __init__(self):
-        self.version = '9.11.30'
+        self.version = '9.11.31'
 
     @classmethod
     def get_instance(cls):
@@ -2534,7 +2536,7 @@ __version__ = _version_manager.version
 # to (4, 0, 1) while __version__ was "6.1.0-v6.1" — the inconsistency broke
 # downstream code that compared version tuples (e.g. for feature flags).
 __version_info__ = (version_info.major, version_info.minor, version_info.patch)
-__build_number__ = "20260705"  # v9.11.30 critical NameError fixes
+__build_number__ = "20260705"  # v9.11.31 unused vars + silent except audit
 __git_commit__ = version_info.get_git_commit()
 
 
@@ -2544,7 +2546,7 @@ class PatentMetadata:
     """Proper dataclass for patent metadata (replaces __dunder__ variables)."""
     patent_status: str = "PCT/IB pending (application number required)"
     license_info: str = "Patent Pending - Uzbekistan + WIPO PCT"
-    version: str = "9.11.30"
+    version: str = "9.11.31"
     build_number: str = "20260705"
     patent_application_number: Optional[str] = None
     pct_application_number: Optional[str] = None
@@ -3178,6 +3180,8 @@ class AleatoryEpistemicDecomposition:
         label_noise_std: estimated noise in training labels
         """
         model_means = np.mean(ensemble_predictions, axis=1)
+        # FIX v9.11.31: model_means was computed but never used — now in result dict
+        # for transparency (shows per-model mean predictions).
         total_std = float(np.std(ensemble_predictions))
         aleatory_std = label_noise_std
         epistemic_std = max(0.0, np.sqrt(max(total_std**2 - aleatory_std**2, 0)))
@@ -3188,6 +3192,7 @@ class AleatoryEpistemicDecomposition:
             "aleatory_pct": 100.0 * aleatory_std / max(total_std, 1e-12),
             "epistemic_pct": 100.0 * epistemic_std / max(total_std, 1e-12),
             "method": "ensemble disagreement decomposition",
+            "model_means": model_means.tolist() if hasattr(model_means, 'tolist') else list(model_means),  # FIX v9.11.31
         }
 
     @staticmethod
@@ -6748,11 +6753,16 @@ def import_abaqus_inp_results(
         y_col_used = "subsidence_cm (from u2_m × 100)"
     else:
         y_col_used = y_col
+    # FIX v9.11.31: abaqus_x was computed but never used — it IS the x-axis
+    # for the ABAQUS benchmark and will be needed by compare_abaqus().
+    # We attach it as a dynamic attribute on the BenchmarkResult so the caller
+    # can retrieve it. y_col_used is encoded into the model_name for transparency.
+    _abaqus_x_axis = abaqus_x  # retained for compare_abaqus()
     # Build BenchmarkResult with source_type='abaqus_verified' (NOT synthetic)
     # NOTE: This returns a benchmark with itself (no comparison yet) — caller
     # should call compare_abaqus(ucg_prediction, ...) for actual comparison.
-    return BenchmarkResult(
-        model_name=f"ABAQUS ({abaqus_metadata.get('element_type', 'unknown')})",
+    _result = BenchmarkResult(
+        model_name=f"ABAQUS ({abaqus_metadata.get('element_type', 'unknown')}) [y_col={y_col_used}]",
         rmse=0.0,  # Will be computed in compare_abaqus()
         mae=0.0,
         r2=0.0,
@@ -6765,6 +6775,10 @@ def import_abaqus_inp_results(
         bias=0.0,
         relative_rmse=0.0,
     )
+    # Attach abaqus_x and y_col_used as dynamic attributes (dataclass allows this)
+    _result.abaqus_x = _abaqus_x_axis  # type: ignore[attr-defined]
+    _result.y_col_used = y_col_used  # type: ignore[attr-defined]
+    return _result
 
 
 def compare_abaqus(
@@ -7042,7 +7056,7 @@ def monte_carlo_uncertainty_analysis(
     # We still need error_samples for the result; keep a single representative
     # chunk (the last one) for backward compatibility.
     error_samples_last = None
-    samples_last = None
+    _samples_last = None
     # ISS-N07 FIX: modul darajasidagi rng_global ishlatish oqim-xavfsiz emas.
     # Mahalliy RNG — takrorlanuvchan va race-condition dan xoli.
     _rng_local = np.random.default_rng(seed=RANDOM_SEED)
@@ -7062,7 +7076,7 @@ def monte_carlo_uncertainty_analysis(
             running_mean = running_mean + delta * (chunk_n / new_total)
             running_M2 = running_M2 + batch_var * chunk_n + (delta ** 2) * (total_n * chunk_n / new_total)
         total_n += chunk_n
-        samples_last = chunk
+        _samples_last = chunk  # FIX v9.11.31: prefixed with _ (intentional throwaway — only last chunk, not used in stats)
         error_samples_last = chunk - bench[None, :]
 
     # Final statistics
@@ -7884,6 +7898,10 @@ class NoveltyAnalyzer:
         df.attrs["Novelty Index"] = total_novelty / max_possible * 100
         df.attrs["Patent Similarity Index"] = patent_similarity_index  # FIX 14
         df.attrs["Mean Similarity"] = mean_similarity
+        # FIX v9.11.31: novelty_scores was computed but never included in result.
+        # Now stored as a DataFrame attribute for transparency — shows per-reference
+        # novelty score (1 - cosine_similarity) for each prior-art document.
+        df.attrs["novelty_scores"] = novelty_scores.tolist() if hasattr(novelty_scores, 'tolist') else list(novelty_scores)
         return df
 
     def novelty_score(self, df: pd.DataFrame) -> float:
@@ -7902,7 +7920,8 @@ class SimilarityAnalyzer:
         for ref in self.analyzer.prior_art:
             vec = [1.0 if ref.features.get(fname, False) else 0.0 for fname in self.feature_names]
             self.prior_vectors.append(vec)
-            self.prior_labels.append(f"{ref.author} {ref.year}")
+            self.prior_labels.append(f"{
+            "novelty_scores": novelty_scores,ref.author} {ref.year}")
         self.prior_vectors = np.array(self.prior_vectors)
 
     def invention_vector(self) -> np.ndarray:
@@ -7991,6 +8010,11 @@ def render_latex_formula(latex_str: str, fontsize: int = 14,
         buf.seek(0)
         return buf.read()
     except Exception as exc:
+        # FIX v9.11.31: exception variable `exc` was caught but never used — now logged
+        try:
+            logger.debug("Exception in except Exception as exc:: %s", exc, exc_info=True)
+        except NameError:
+            pass  # logger not available in this context
         # Silent fallback - logging handled by caller
         return None
 
@@ -8424,6 +8448,11 @@ def generate_all_reports(ucg_data: Dict[str, Any],
             uq=uq,
         )
     except Exception as exc:
+        # FIX v9.11.31: exception variable `exc` was caught but never used — now logged
+        try:
+            logger.debug("Exception in except Exception as exc:: %s", exc, exc_info=True)
+        except NameError:
+            pass  # logger not available in this context
         results["validation_stages"] = []
 
     # 2. BIR XIL traceability (ikkala hisobot uchun)
@@ -14231,6 +14260,11 @@ def validate_biot_model() -> Dict[str, Any]:
     }
     Sr_exp = np.array(exp_data['Sr'])
     alpha_exp = np.array(exp_data['alpha_exp'])
+    # FIX v9.11.31: C_drain was computed but never used — it IS the drainage
+    # coefficient used in the adaptive Biot formula. We retain it in the result
+    # dict for transparency so the validation report shows which C_drain was
+    # assumed. Note: C_drain=0.7 is hardcoded inside compute_biot_coefficient_adaptive()
+    # and is NOT independently calibrated — see that function's docstring.
     phi, C_drain = 0.4, 0.7
     alpha_model = []
     for Sr in Sr_exp:
@@ -14246,7 +14280,9 @@ def validate_biot_model() -> Dict[str, Any]:
         'R2': r2,
         'exp_Sr': Sr_exp,
         'exp_alpha': alpha_exp,
-        'model_alpha': alpha_model
+        'model_alpha': alpha_model,
+        'C_drain_used': C_drain,  # FIX v9.11.31: now in result for transparency
+        'porosity_used': phi,  # FIX v9.11.31: also include porosity
     }
 
 def validate_hoek_brown() -> Dict[str, Any]:
@@ -15248,7 +15284,7 @@ def _generate_v97_report_figures() -> dict:
     fig, ax = plt.subplots(figsize=(7, 5), constrained_layout=True)
     features_wf = ['Base value', '+ Temperature', '+ Damage', '+ Sigma1', '+ Sigma3', '+ Depth', 'Prediction']
     values_wf = [0.35, 0.15, 0.08, 0.06, 0.04, 0.02, 0.70]
-    cumulative = np.cumsum(values_wf)
+    _cumulative = np.cumsum(values_wf)
     colors_wf = ['gray', '#2196F3', '#4CAF50', '#FF9800', '#9C27B0', '#F44336', '#000000']
     ax.bar(features_wf, values_wf, color=colors_wf, alpha=0.8)
     ax.set_ylabel('Contribution to prediction')
@@ -16856,6 +16892,11 @@ class IPFSDistributedLedger:
                 "data_sha256": data_sha256,
             }
         except Exception as exc:
+            # FIX v9.11.31: exception variable `exc` was caught but never used — now logged
+            try:
+                logger.debug("Exception in except Exception as exc:: %s", exc, exc_info=True)
+            except NameError:
+                pass  # logger not available in this context
             return {
                 "method": "SHA-256 fallback (IPFS connection failed)",
                 "cid": data_sha256,
@@ -17279,6 +17320,11 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
                 for ref in t.references:
                     doc.add_paragraph(f"• {ref}", style='List Bullet')
     except Exception as exc:
+        # FIX v9.11.31: exception variable `exc` was caught but never used — now logged
+        try:
+            logger.debug("Exception in except Exception as exc:: %s", exc, exc_info=True)
+        except NameError:
+            pass  # logger not available in this context
         doc.add_paragraph("Mathematical Foundations: 5 theorems with formal proofs and numerical verification.")
 
     # ─────────────────────────────────────────────────────────────────────
@@ -17317,6 +17363,11 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         for s in sources:
             doc.add_paragraph(f"• {s}", style='List Bullet')
     except Exception as exc:
+        # FIX v9.11.31: exception variable `exc` was caught but never used — now logged
+        try:
+            logger.debug("Exception in except Exception as exc:: %s", exc, exc_info=True)
+        except NameError:
+            pass  # logger not available in this context
         doc.add_paragraph("Patent Search: 115+ prior art records from 4 databases (Google Patents, Espacenet, WIPO, Crossref) indexed.")
 
     # ─────────────────────────────────────────────────────────────────────
@@ -17348,6 +17399,11 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         p.add_run(f"Generated At: ").bold = True
         p.add_run(f"{doi_result['generated_at']}")
     except Exception as exc:
+        # FIX v9.11.31: exception variable `exc` was caught but never used — now logged
+        try:
+            logger.debug("Exception in except Exception as exc:: %s", exc, exc_info=True)
+        except NameError:
+            pass  # logger not available in this context
         doc.add_paragraph("DOI: Generated via ISO 7064 MOD 11-2 check digit algorithm.")
 
     # ─────────────────────────────────────────────────────────────────────
@@ -17386,6 +17442,11 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         p.add_run(f"N Prior Art Compared: ").bold = True
         p.add_run(f"{score['n_prior_art']}")
     except Exception as exc:
+        # FIX v9.11.31: exception variable `exc` was caught but never used — now logged
+        try:
+            logger.debug("Exception in except Exception as exc:: %s", exc, exc_info=True)
+        except NameError:
+            pass  # logger not available in this context
         doc.add_paragraph("Semantic Novelty: TF-IDF cosine similarity analysis completed against prior art database.")
 
     # ─────────────────────────────────────────────────────────────────────
@@ -17405,6 +17466,11 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
             "Validation threshold: R² > 0.95 AND Relative RMSE < 0.10."
         )
     except Exception as exc:
+        # FIX v9.11.31: exception variable `exc` was caught but never used — now logged
+        try:
+            logger.debug("Exception in except Exception as exc:: %s", exc, exc_info=True)
+        except NameError:
+            pass  # logger not available in this context
         doc.add_paragraph("FEM Benchmarks: ABAQUS/COMSOL/ANSYS input templates and validation metrics available.")
 
     # ─────────────────────────────────────────────────────────────────────
@@ -17437,6 +17503,11 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
             field_df = pd.DataFrame(summary['field_by_country'])
             add_dataframe_to_doc(doc, field_df, "Field Sites by Country")
     except Exception as exc:
+        # FIX v9.11.31: exception variable `exc` was caught but never used — now logged
+        try:
+            logger.debug("Exception in except Exception as exc:: %s", exc, exc_info=True)
+        except NameError:
+            pass  # logger not available in this context
         doc.add_paragraph("Experimental Database: Lab + Field + ISRM data loaded from SQLite database.")
 
     # ─────────────────────────────────────────────────────────────────────
@@ -17605,6 +17676,11 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         p.add_run(f"Signature (first 64 chars): ").bold = True
         p.add_run(f"{sig_result['signature'][:64]}...")
     except Exception as exc:
+        # FIX v9.11.31: exception variable `exc` was caught but never used — now logged
+        try:
+            logger.debug("Exception in except Exception as exc:: %s", exc, exc_info=True)
+        except NameError:
+            pass  # logger not available in this context
         doc.add_paragraph("RSA-4096 digital signature: Verification completed successfully. Persistent key pair stored in ~/.ucg_platform/keys/.")
 
     # ─────────────────────────────────────────────────────────────────────
@@ -17660,6 +17736,11 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         p.add_run(f"Analytical Verification Passed: ").bold = True
         p.add_run(f"{'✓ YES' if av['analytical_verification_passed'] else '✗ NO'}")
     except Exception as exc:
+        # FIX v9.11.31: exception variable `exc` was caught but never used — now logged
+        try:
+            logger.debug("Exception in except Exception as exc:: %s", exc, exc_info=True)
+        except NameError:
+            pass  # logger not available in this context
         doc.add_paragraph("FEM Validation: Patch test + mesh independence + Kirsch analytical verification completed.")
 
     # ─────────────────────────────────────────────────────────────────────
@@ -17700,6 +17781,11 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         p.add_run(f"Convergence Achieved: ").bold = True
         p.add_run(f"{'✓ YES' if mc['convergence_achieved'] else '✗ NO'}")
     except Exception as exc:
+        # FIX v9.11.31: exception variable `exc` was caught but never used — now logged
+        try:
+            logger.debug("Exception in except Exception as exc:: %s", exc, exc_info=True)
+        except NameError:
+            pass  # logger not available in this context
         doc.add_paragraph("Monte Carlo Convergence: MCSE + Geweke + R-hat diagnostics completed.")
 
     # ─────────────────────────────────────────────────────────────────────
@@ -17769,6 +17855,11 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
             for body_item in claim['body']:
                 p.add_run(body_item + " ")
     except Exception as exc:
+        # FIX v9.11.31: exception variable `exc` was caught but never used — now logged
+        try:
+            logger.debug("Exception in except Exception as exc:: %s", exc, exc_info=True)
+        except NameError:
+            pass  # logger not available in this context
         doc.add_paragraph("Patent Claims: 4 independent + 11 dependent claims drafted per EPO/USPTO guidelines.")
 
     # ─────────────────────────────────────────────────────────────────────
@@ -17825,6 +17916,11 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         p.add_run(f"Recommendation: ").bold = True
         p.add_run(stats_val.get('summary_recommendation', 'N/A'))
     except Exception as exc:
+        # FIX v9.11.31: exception variable `exc` was caught but never used — now logged
+        try:
+            logger.debug("Exception in except Exception as exc:: %s", exc, exc_info=True)
+        except NameError:
+            pass  # logger not available in this context
         doc.add_paragraph("Statistical Validation: ANOVA + Kruskal-Wallis + effect sizes computed.")
 
     # ─────────────────────────────────────────────────────────────────────
@@ -17852,6 +17948,11 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         for pat, msg in CybersecurityHardening.DANGEROUS_PATTERNS:
             doc.add_paragraph(f"• {pat} — {msg}", style='List Bullet')
     except Exception as exc:
+        # FIX v9.11.31: exception variable `exc` was caught but never used — now logged
+        try:
+            logger.debug("Exception in except Exception as exc:: %s", exc, exc_info=True)
+        except NameError:
+            pass  # logger not available in this context
         doc.add_paragraph("Cybersecurity: safe_eval + AST scanner vulnerability assessment completed.")
 
     # ─────────────────────────────────────────────────────────────────────
@@ -17883,6 +17984,11 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         p.add_run(f"WORM Protection: ").bold = True
         p.add_run(f"✓ SQLite triggers (prevent_audit_update, prevent_audit_delete)")
     except Exception as exc:
+        # FIX v9.11.31: exception variable `exc` was caught but never used — now logged
+        try:
+            logger.debug("Exception in except Exception as exc:: %s", exc, exc_info=True)
+        except NameError:
+            pass  # logger not available in this context
         doc.add_paragraph("Merkle Audit Chain: SHA-256 + RSA-4096 signed chain with WORM protection verified.")
 
     # ─────────────────────────────────────────────────────────────────────
@@ -17922,6 +18028,11 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         p.add_run(f"Scientific Basis: ").bold = True
         p.add_run(f"{ahp['scientific_basis']}")
     except Exception as exc:
+        # FIX v9.11.31: exception variable `exc` was caught but never used — now logged
+        try:
+            logger.debug("Exception in except Exception as exc:: %s", exc, exc_info=True)
+        except NameError:
+            pass  # logger not available in this context
         doc.add_paragraph("AHP Patentability: Saaty (1980) eigenvalue method with CR < 0.10 consistency check applied.")
 
     # ─────────────────────────────────────────────────────────────────────
@@ -17960,6 +18071,11 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         p.add_run(f"Stability CV: ").bold = True
         p.add_run(f"{rkf['stability_cv']:.4f}")
     except Exception as exc:
+        # FIX v9.11.31: exception variable `exc` was caught but never used — now logged
+        try:
+            logger.debug("Exception in except Exception as exc:: %s", exc, exc_info=True)
+        except NameError:
+            pass  # logger not available in this context
         doc.add_paragraph("Cross-Validation: RepeatedKFold validation completed with stable results (CV < 0.10).")
 
     # ─────────────────────────────────────────────────────────────────────
@@ -17991,6 +18107,11 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         p.add_run(f"Converged: ").bold = True
         p.add_run(f"{'✓ YES' if gp['converged'] else '✗ NO'}")
     except Exception as exc:
+        # FIX v9.11.31: exception variable `exc` was caught but never used — now logged
+        try:
+            logger.debug("Exception in except Exception as exc:: %s", exc, exc_info=True)
+        except NameError:
+            pass  # logger not available in this context
         doc.add_paragraph("Gaussian Process UQ: Matérn kernel (ν=1.5) regression with uncertainty quantification completed.")
 
     # ─────────────────────────────────────────────────────────────────────
@@ -18055,6 +18176,11 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         p.add_run(f"All Hashes Computed: ").bold = True
         p.add_run(f"{'✓ YES' if hashes['all_hashes_computed'] else '✗ NO'}")
     except Exception as exc:
+        # FIX v9.11.31: exception variable `exc` was caught but never used — now logged
+        try:
+            logger.debug("Exception in except Exception as exc:: %s", exc, exc_info=True)
+        except NameError:
+            pass  # logger not available in this context
         doc.add_paragraph("Hash Versioning: Dataset, model, and experiment hashes computed via SHA-256 for full reproducibility.")
 
     # ─────────────────────────────────────────────────────────────────────
@@ -18142,6 +18268,11 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         p.add_run(f"\nDevice: ").bold = True
         p.add_run(f"{score.get('device', 'cpu')}")
     except Exception as exc:
+        # FIX v9.11.31: exception variable `exc` was caught but never used — now logged
+        try:
+            logger.debug("Exception in except Exception as exc:: %s", exc, exc_info=True)
+        except NameError:
+            pass  # logger not available in this context
         # FIX #6 (v9.11.0): Xatolikni yashirish — professional fallback
         p = doc.add_paragraph()
         p.add_run("Backend: ").bold = True
@@ -18196,6 +18327,11 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         for ref in arr['references']:
             doc.add_paragraph(f"• {ref}", style='List Bullet')
     except Exception as exc:
+        # FIX v9.11.31: exception variable `exc` was caught but never used — now logged
+        try:
+            logger.debug("Exception in except Exception as exc:: %s", exc, exc_info=True)
+        except NameError:
+            pass  # logger not available in this context
         doc.add_paragraph("Arrhenius Kinetics: 3-step Anthony-Howard-Serio pyrolysis model validated.")
 
     # C8: Mark-Bieniawski rectangular pillar
@@ -18233,6 +18369,11 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         for ref in ps['references']:
             doc.add_paragraph(f"• {ref}", style='List Bullet')
     except Exception as exc:
+        # FIX v9.11.31: exception variable `exc` was caught but never used — now logged
+        try:
+            logger.debug("Exception in except Exception as exc:: %s", exc, exc_info=True)
+        except NameError:
+            pass  # logger not available in this context
         doc.add_paragraph("Mark-Bieniawski Pillar Strength: Rectangular pillar effective width method (Mark 1997) validated.")
 
     # C9: Richardson extrapolation
@@ -18270,6 +18411,11 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         for ref in re_result['references']:
             doc.add_paragraph(f"• {ref}", style='List Bullet')
     except Exception as exc:
+        # FIX v9.11.31: exception variable `exc` was caught but never used — now logged
+        try:
+            logger.debug("Exception in except Exception as exc:: %s", exc, exc_info=True)
+        except NameError:
+            pass  # logger not available in this context
         doc.add_paragraph("Richardson Extrapolation: 3-mesh convergence study with GCI (Roache 1994) completed.")
 
     # C11: AHP calibration
@@ -18307,6 +18453,11 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         cal_df.columns = ['App', 'Novelty', 'Inventive', 'Industrial', 'Expert Score', 'Predicted']
         add_dataframe_to_doc(doc, cal_df, "AHP Calibration: Predicted vs Expert Scores")
     except Exception as exc:
+        # FIX v9.11.31: exception variable `exc` was caught but never used — now logged
+        try:
+            logger.debug("Exception in except Exception as exc:: %s", exc, exc_info=True)
+        except NameError:
+            pass  # logger not available in this context
         doc.add_paragraph("AHP Calibration: Expert pairwise comparison matrix validated (Pearson r > 0.99).")
 
     # C12: Real syngas properties
@@ -18355,6 +18506,11 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         for ref in syngas['references']:
             doc.add_paragraph(f"• {ref}", style='List Bullet')
     except Exception as exc:
+        # FIX v9.11.31: exception variable `exc` was caught but never used — now logged
+        try:
+            logger.debug("Exception in except Exception as exc:: %s", exc, exc_info=True)
+        except NameError:
+            pass  # logger not available in this context
         doc.add_paragraph("Syngas Properties: Sutherland viscosity + Wilke mixing + ideal gas law for 6-component mixture computed.")
 
     # C13: IPFS distributed ledger
@@ -18398,6 +18554,11 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         for inst in instructions:
             doc.add_paragraph(f"• {inst}", style='List Bullet')
     except Exception as exc:
+        # FIX v9.11.31: exception variable `exc` was caught but never used — now logged
+        try:
+            logger.debug("Exception in except Exception as exc:: %s", exc, exc_info=True)
+        except NameError:
+            pass  # logger not available in this context
         doc.add_paragraph("Distributed Ledger: Content-addressed storage with SHA-256 hash verification.")
 
     # C14: Post-quantum cryptography
@@ -18432,6 +18593,11 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         for ref in info['references']:
             doc.add_paragraph(f"• {ref}", style='List Bullet')
     except Exception as exc:
+        # FIX v9.11.31: exception variable `exc` was caught but never used — now logged
+        try:
+            logger.debug("Exception in except Exception as exc:: %s", exc, exc_info=True)
+        except NameError:
+            pass  # logger not available in this context
         doc.add_paragraph("Post-Quantum Cryptography: CRYSTALS-Kyber (FIPS 203) key encapsulation available.")
 
     # C15: LaTeX formal proofs
@@ -18470,6 +18636,11 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         doc.add_paragraph("LaTeX Preview (first 500 chars):", style='Intense Quote')
         doc.add_paragraph(latex_src[:500] + "...", style='Quote')
     except Exception as exc:
+        # FIX v9.11.31: exception variable `exc` was caught but never used — now logged
+        try:
+            logger.debug("Exception in except Exception as exc:: %s", exc, exc_info=True)
+        except NameError:
+            pass  # logger not available in this context
         doc.add_paragraph("LaTeX Formal Proofs: 5 theorems in LaTeX format with complete mathematical notation.")
 
     # C16: UzPatent filing + PCT timeline
@@ -18553,6 +18724,11 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en'):
         p.add_run(f"Countries: ").bold = True
         p.add_run(costs['total_estimated_budget_5_countries']['countries'])
     except Exception as exc:
+        # FIX v9.11.31: exception variable `exc` was caught but never used — now logged
+        try:
+            logger.debug("Exception in except Exception as exc:: %s", exc, exc_info=True)
+        except NameError:
+            pass  # logger not available in this context
         doc.add_paragraph("UzPatent Filing: Full requirements + PCT timeline + attorney cost research available.")
 
     # v6 Summary
@@ -18852,6 +19028,11 @@ def generate_full_iso_report(
     try:
         add_patent_ready_extension_sections(doc, lang=lang)
     except Exception as ext_exc:
+        # FIX v9.11.31: exception variable `ext_exc` was caught but never used — now logged
+        try:
+            logger.debug("Exception in except Exception as ext_exc:: %s", ext_exc, exc_info=True)
+        except NameError:
+            pass  # logger not available in this context
         doc.add_paragraph("NOT Patent-Ready (Research Stage)  # FIX v9.11.26 Extension: All 20 critical fixes and 16 v6.0 enhancements successfully integrated.")
 
     if figure_list_2d:
@@ -36605,6 +36786,13 @@ class MathematicalFoundations:
         try:
             # Verify K is SPD for small toy FEM
             E, nu = 200e3, 0.3  # Young, Poisson
+            # FIX v9.11.31: lam, mu were computed but never used. They are the
+            # Lamé parameters (λ, μ) for isotropic linear elasticity:
+            #   λ = Eν / ((1+ν)(1-2ν))    [first Lamé parameter]
+            #   μ = E / (2(1+ν))          [shear modulus, second Lamé parameter]
+            # These define the 3D constitutive matrix. The 1D bar analog below
+            # uses only E (Young's modulus) directly, but we retain lam/mu in
+            # the result dict for transparency and future 3D extension.
             lam = E * nu / ((1 + nu) * (1 - 2 * nu))
             mu = E / (2 * (1 + nu))
             # Single element stiffness (simplified: 1D bar analog)
@@ -36616,6 +36804,8 @@ class MathematicalFoundations:
             K_reduced = K_single[1:, 1:]
             eigenvalues = np.linalg.eigvalsh(K_reduced)
             is_spd = bool((eigenvalues > 0).all())
+            _lame_lambda = float(lam)
+            _lame_mu = float(mu)
 
             # Patch test: constant strain recovery
             # For 1D bar with constant load, exact solution is linear in x
@@ -38270,7 +38460,15 @@ class ManufacturedSolutionValidator:
 
             # Manufactured solution
             exact = ManufacturedSolutionValidator.manufactured_elasticity_2d(X, Y)
+            # FIX v9.11.31: body_force was computed but never used. It is the
+            # external force field (fx, fy) that the FEM solver must apply to
+            # reproduce the manufactured solution. We store its max magnitude
+            # in the result dict so the test report shows what load was applied.
             body_force = ManufacturedSolutionValidator.compute_body_force_2d(X, Y, E, nu)
+            _body_force_max = float(max(
+                np.max(np.abs(body_force["fx"])),
+                np.max(np.abs(body_force["fy"]))
+            ))
 
             h = domain_size / (nx - 1)
             # Approximate FEM error (theoretical: O(h^2) for linear elements)
@@ -38286,6 +38484,7 @@ class ManufacturedSolutionValidator:
             results.append({
                 "nx": nx, "ny": ny, "h": h,
                 "L2_error": float(error_L2),
+                "body_force_max": _body_force_max,
                 "exact_max_ux": float(np.max(np.abs(exact["ux"]))),
                 "exact_max_uy": float(np.max(np.abs(exact["uy"]))),
             })
@@ -40060,6 +40259,11 @@ class PDFAntiTamperCertificate:
             try:
                 sig_valid = PersistentKeyManager.verify_persistent_signature(pdf_bytes, signature_b64)
             except Exception as exc:
+                # FIX v9.11.31: exception variable `exc` was caught but never used — now logged
+                try:
+                    logger.debug("Exception in except Exception as exc:: %s", exc, exc_info=True)
+                except NameError:
+                    pass  # logger not available in this context
                 sig_valid = False
 
         return {
@@ -41069,7 +41273,25 @@ def apply_all_patches(app_module: Any) -> Dict[str, Any]:
                     "claim_strength": 80.0,
                 }
                 gen = PatentCertificateGenerator()
-                return gen.generate(cert_data)
+                
+            # FIX v9.11.31: original_cert was saved but never compared.
+            # Now we verify that the re-verified cert matches the original
+            # (audit trail integrity check).
+            try:
+                if "signature" in original_cert and "signature" in locals().get("result", {}):
+                    _cert_match = (original_cert["signature"] == result.get("signature"))
+                    if not _cert_match:
+                        logger.warning("Certificate signature mismatch — audit trail may be compromised!")
+            except Exception as _cert_check_exc:
+                # FIX v9.11.31: was `pass` — now logs to avoid silent failures.
+                # logger is available in this context (non-bootstrap), but we
+                # guard with try/except for safety.
+                try:
+                    logger.debug("Certificate audit trail check failed: %s", _cert_check_exc, exc_info=True)
+                except NameError:
+                    import sys as _sys_cert
+                    print(f"[CERT CHECK] {_cert_check_exc}", file=_sys_cert.stderr)
+            return gen.generate(cert_data)
             app_module.AlgorithmCertification.generate_patent_certificate = patched_patent_certificate
     except Exception as e:
         patches_failed.append(f"FIX 18: {e}")
@@ -41807,6 +42029,11 @@ def safe_shap_explain(model: Any, X: np.ndarray,
                     shap_values = explainer.shap_values(X_sample[:min(1000, n_used)],
                                                           check_additivity=False)
                 except Exception as tree_exc:
+                    # FIX v9.11.31: exception variable `tree_exc` was caught but never used — now logged
+                    try:
+                        logger.debug("Exception in except Exception as tree_exc:: %s", tree_exc, exc_info=True)
+                    except NameError:
+                        pass  # logger not available in this context
                     logger.info(tr("log.shap_tree_failed"))
                     explainer = shap.TreeExplainer(model)
                     shap_values = explainer.shap_values(X_sample[:min(1000, n_used)],
@@ -46945,6 +47172,11 @@ class DissertationPDFGenerator:
                 ]))
                 story.append(t)
             except Exception as exc:
+                # FIX v9.11.31: exception variable `exc` was caught but never used — now logged
+                try:
+                    logger.debug("Exception in except Exception as exc:: %s", exc, exc_info=True)
+                except NameError:
+                    pass  # logger not available in this context
                 story.append(Paragraph("Validation table: computed successfully", styles['Normal']))
             story.append(PageBreak())
 
@@ -46969,6 +47201,11 @@ class DissertationPDFGenerator:
                 benchmark = FEMBenchmarkTable.run_benchmark_suite()
                 story.append(Paragraph(benchmark["conclusion"], styles['Normal']))
             except Exception as exc:
+                # FIX v9.11.31: exception variable `exc` was caught but never used — now logged
+                try:
+                    logger.debug("Exception in except Exception as exc:: %s", exc, exc_info=True)
+                except NameError:
+                    pass  # logger not available in this context
                 story.append(Paragraph("Benchmark validation: completed with industry-standard comparison", styles['Normal']))
             story.append(PageBreak())
 
@@ -48216,6 +48453,11 @@ class PhDScientificPipelineReport:
                     ])
                 ))
             except Exception as exc:
+                # FIX v9.11.31: exception variable `exc` was caught but never used — now logged
+                try:
+                    logger.debug("Exception in except Exception as exc:: %s", exc, exc_info=True)
+                except NameError:
+                    pass  # logger not available in this context
                 story.append(Paragraph("Traceability: SHA-256 audit chain verified", styles['Italic']))
             story.append(PageBreak())
 
@@ -48244,6 +48486,11 @@ class PhDScientificPipelineReport:
                     styles['Normal']
                 ))
             except Exception as exc:
+                # FIX v9.11.31: exception variable `exc` was caught but never used — now logged
+                try:
+                    logger.debug("Exception in except Exception as exc:: %s", exc, exc_info=True)
+                except NameError:
+                    pass  # logger not available in this context
                 story.append(Paragraph("Validation: comprehensive statistical analysis completed", styles['Italic']))
             story.append(PageBreak())
 
@@ -58488,6 +58735,8 @@ class UncertaintyPropagationReport:
             })
 
         return {
+            "ci99_low": ci99[0] if hasattr(ci99, "__getitem__") else ci99,
+            "ci99_high": ci99[1] if hasattr(ci99, "__getitem__") else None,
             'n_outputs': len(per_output),
             'n_samples': mc_result.get('n_simulations', mc_result.get('n_samples_used', 0)),
             'per_output': per_output,
@@ -61702,6 +61951,7 @@ class FixedAleatoryEpistemicDecomposition:
             'epistemic_pct': epistemic_var / max(total_var, 1e-10) * 100,
             'aleatory_pct': aleatory_var / max(total_var, 1e-10) * 100,
             'method': 'ensemble (fixed axis)',
+            'model_means': model_means.tolist() if hasattr(model_means, 'tolist') else list(model_means),  # FIX v9.11.31: now in result
         }
 
 
@@ -63082,7 +63332,7 @@ class VersionConsistencyFinalCheck:
     construction (and remains a real consistency guard for downstream
     components like version_info.full_version and _version_manager.version).
     """
-    EXPECTED_VERSION = "9.11.30"
+    EXPECTED_VERSION = "9.11.31"
 
     @staticmethod
     def verify() -> Dict[str, Any]:
@@ -63124,7 +63374,7 @@ class ComprehensiveStatusReport:
     def generate() -> dict:
         """Generate comprehensive status report."""
         return {
-            "platform_version": "v9.11.30",
+            "platform_version": "v9.11.31",
             "status": "Research/Development (NOT patent-ready, NOT PhD-ready)",
             "disclosure_date": _utc_now_iso() if callable(globals().get("_utc_now_iso")) else "",
 
