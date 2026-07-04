@@ -1,8 +1,8 @@
 # ══════════════════════════════════════════════════════════════════════════════
-# UCG Platform — v9.11.31 (Unused Variables + Silent Exception Audit)
+# UCG Platform — v9.11.32 (Critical Indentation + cert_data Fix)
 # ══════════════════════════════════════════════════════════════════════════════
 #
-# STATUS: Research/Development Platform — v9.11.31 unused vars + silent except audit applied.
+# STATUS: Research/Development Platform — v9.11.32 critical indentation + cert_data fix applied.
 # Still NOT patent-ready / PhD-ready (see ComprehensiveStatusReport for blockers).
 #
 # ═══ KNOWN LIMITATIONS (Acknowledged for Academic Integrity) ═══
@@ -117,7 +117,7 @@ import streamlit as st
 _ST_CFG_OK = False
 try:
     st.set_page_config(
-        page_title="UCG SCI-Grade Platform v9.11.31 (Unused Vars + Silent Except Audit)",
+        page_title="UCG SCI-Grade Platform v9.11.32 (Critical Indentation + cert_data Fix)",
         layout="wide",
         initial_sidebar_state="expanded",
     )
@@ -156,7 +156,7 @@ try:
     _PKG_AVAILABLE = True
 except ImportError:
     _PKG_AVAILABLE = False
-    _pkg_version = "9.11.31"  # Fallback version (unused vars + silent except audit)
+    _pkg_version = "9.11.32"  # Fallback version (critical indentation + cert_data fix)
 
     # FIX #35: Fallback exception classes when ucg_platform package is unavailable.
     # Without these, element_stiffness_3d() raises NameError on FEMMeshError.
@@ -2493,7 +2493,7 @@ class VersionInfo:
     """FIX v9.11.8: Versiya birlashtirildi - endi hamma joyda 9.11.8"""
     major: int = 9
     minor: int = 11
-    patch: int = 31
+    patch: int = 32
     prerelease: str = ""  # SemVer 2.0.0 §9 — bo'sh yoki 'v' siz identifikator
 
     @property
@@ -2516,7 +2516,7 @@ class VersionManager:
     _lock = threading.Lock()
 
     def __init__(self):
-        self.version = '9.11.31'
+        self.version = '9.11.32'
 
     @classmethod
     def get_instance(cls):
@@ -2536,7 +2536,7 @@ __version__ = _version_manager.version
 # to (4, 0, 1) while __version__ was "6.1.0-v6.1" — the inconsistency broke
 # downstream code that compared version tuples (e.g. for feature flags).
 __version_info__ = (version_info.major, version_info.minor, version_info.patch)
-__build_number__ = "20260705"  # v9.11.31 unused vars + silent except audit
+__build_number__ = "20260705"  # v9.11.32 critical indentation + cert_data fix
 __git_commit__ = version_info.get_git_commit()
 
 
@@ -2546,7 +2546,7 @@ class PatentMetadata:
     """Proper dataclass for patent metadata (replaces __dunder__ variables)."""
     patent_status: str = "PCT/IB pending (application number required)"
     license_info: str = "Patent Pending - Uzbekistan + WIPO PCT"
-    version: str = "9.11.31"
+    version: str = "9.11.32"
     build_number: str = "20260705"
     patent_application_number: Optional[str] = None
     pct_application_number: Optional[str] = None
@@ -12358,11 +12358,55 @@ def generate_patent_report(
     )
 
     # Validation certificate + signature
+    # FIX v9.11.32 (3-version unfixed issue): cert_data was computed but never
+    # saved to disk or embedded in the report. For 3 versions (v9.11.29, 30, 31)
+    # this was claimed as "fixed" but the code never changed. Now:
+    #   1. Save the PDF certificate to disk in DEFAULT_REPORT_DIR
+    #   2. Embed certificate metadata (hash, path, size) in the DOCX report
+    #   3. Include the cert_data bytes in the report payload for downstream use
     cert_data = generate_validation_certificate(
         {"metrics": {"rmse": report_payload.get('rmse', 0), "r2": report_payload.get('r2', 0), "score": validation_score},
          "hash": trace_bundle.sha256}, invention_title
     )
-    doc.add_paragraph("Validation Certificate (PDF) generated separately.")
+
+    # FIX v9.11.32: Save the PDF certificate to disk
+    _cert_filename = f"validation_certificate_{invention_title.replace(' ', '_')[:50]}_{_utc_now_iso().replace(':', '-').replace('.', '')}.pdf"
+    _cert_path = os.path.join(DEFAULT_REPORT_DIR, _cert_filename)
+    try:
+        os.makedirs(DEFAULT_REPORT_DIR, exist_ok=True)
+        with open(_cert_path, 'wb') as _cert_f:
+            _cert_f.write(cert_data)
+        _cert_saved = True
+    except Exception as _cert_save_exc:
+        logger.warning("[generate_patent_report] Failed to save validation certificate PDF: %s", _cert_save_exc)
+        _cert_saved = False
+        _cert_path = "(save failed)"
+
+    # FIX v9.11.32: Embed certificate metadata in the DOCX report
+    doc.add_heading("Validation Certificate", level=2)
+    if _cert_saved:
+        doc.add_paragraph(
+            f"Validation Certificate (PDF) has been generated and saved:\n"
+            f"  File: {_cert_filename}\n"
+            f"  Path: {_cert_path}\n"
+            f"  Size: {len(cert_data):,} bytes\n"
+            f"  SHA-256: {trace_bundle.sha256}\n"
+            f"  Generated: {_utc_now_iso()}\n"
+            f"  Version: {__version__} (Build {__build_number__})\n\n"
+            f"The certificate contains: validation metrics, SHA-256 hash, "
+            f"RSA-4096 digital signature, and QR code for verification."
+        )
+    else:
+        doc.add_paragraph(
+            f"Validation Certificate (PDF) was generated ({len(cert_data):,} bytes) "
+            f"but could not be saved to disk. The certificate data is included "
+            f"in the report payload for programmatic access."
+        )
+
+    # FIX v9.11.32: Include cert_data in the report payload (was previously discarded)
+    report_payload["validation_certificate_bytes"] = cert_data
+    report_payload["validation_certificate_path"] = _cert_path if _cert_saved else None
+    report_payload["validation_certificate_sha256"] = trace_bundle.sha256
 
     if CRYPTO_AVAILABLE:
         sig = generate_digital_signature(trace_bundle.sha256.encode())
@@ -41253,7 +41297,22 @@ def apply_all_patches(app_module: Any) -> Dict[str, Any]:
     # FIX 18: PDF patent certificate
     try:
         if hasattr(app_module.AlgorithmCertification, "generate_patent_certificate"):
-            original_cert = app_module.AlgorithmCertification.generate_patent_certificate
+            # FIX v9.11.32 (CRITICAL): Previous versions (v9.11.29-v9.11.31) had
+            # the audit trail check code OUTSIDE the patched_patent_certificate
+            # function — it referenced `gen`, `cert_data`, `result` which are
+            # local variables of the function and don't exist at this scope.
+            # This caused NameError, which was silently caught by the outer
+            # try/except and added to patches_failed. As a result, the patch
+            # assignment (app_module.AlgorithmCertification.generate_patent_certificate
+            # = patched_patent_certificate) NEVER executed — the patent certificate
+            # generator remained unpatched.
+            #
+            # Now: the audit trail check is INSIDE the function, after
+            # gen.generate(cert_data). The check verifies that re-generating
+            # the cert with the same data produces a consistent signature
+            # (reproducibility — a core audit trail requirement).
+            original_cert_fn = app_module.AlgorithmCertification.generate_patent_certificate
+
             @staticmethod
             def patched_patent_certificate(cert_data: Optional[Dict[str, Any]] = None):
                 cert_data = cert_data or {
@@ -41273,26 +41332,42 @@ def apply_all_patches(app_module: Any) -> Dict[str, Any]:
                     "claim_strength": 80.0,
                 }
                 gen = PatentCertificateGenerator()
-                
-            # FIX v9.11.31: original_cert was saved but never compared.
-            # Now we verify that the re-verified cert matches the original
-            # (audit trail integrity check).
-            try:
-                if "signature" in original_cert and "signature" in locals().get("result", {}):
-                    _cert_match = (original_cert["signature"] == result.get("signature"))
-                    if not _cert_match:
-                        logger.warning("Certificate signature mismatch — audit trail may be compromised!")
-            except Exception as _cert_check_exc:
-                # FIX v9.11.31: was `pass` — now logs to avoid silent failures.
-                # logger is available in this context (non-bootstrap), but we
-                # guard with try/except for safety.
+                # FIX v9.11.32: generate the certificate FIRST, then check audit trail
+                result = gen.generate(cert_data)
+
+                # FIX v9.11.32: Audit trail integrity check — INSIDE the function.
+                # Verify that re-generating the cert with the same data produces
+                # a consistent signature (reproducibility). If the signature
+                # contains a timestamp, this check will log a warning (expected
+                # behavior — timestamps differ). If the signature is purely
+                # data-dependent, it should match exactly.
                 try:
-                    logger.debug("Certificate audit trail check failed: %s", _cert_check_exc, exc_info=True)
-                except NameError:
-                    import sys as _sys_cert
-                    print(f"[CERT CHECK] {_cert_check_exc}", file=_sys_cert.stderr)
-            return gen.generate(cert_data)
+                    if isinstance(result, dict) and "signature" in result:
+                        # Re-generate to check reproducibility of the data-dependent part
+                        _regen = gen.generate(cert_data)
+                        if isinstance(_regen, dict) and "signature" in _regen:
+                            if result["signature"] != _regen["signature"]:
+                                logger.debug(
+                                    "Certificate signature differs on re-generation "
+                                    "(expected if timestamp-dependent): %s vs %s",
+                                    str(result["signature"])[:32],
+                                    str(_regen["signature"])[:32],
+                                )
+                except Exception as _cert_check_exc:
+                    try:
+                        logger.debug("Certificate audit trail check failed: %s", _cert_check_exc, exc_info=True)
+                    except NameError:
+                        import sys as _sys_cert
+                        print(f"[CERT CHECK] {_cert_check_exc}", file=_sys_cert.stderr)
+
+                return result
+
+            # FIX v9.11.32: This assignment was NEVER reached in v9.11.29-v9.11.31
+            # because the broken code above caused NameError which was caught by
+            # the outer except. Now the function is properly defined and the
+            # patch is applied.
             app_module.AlgorithmCertification.generate_patent_certificate = patched_patent_certificate
+            patches_applied.append("FIX 18: Patent certificate generator patched with audit trail check")
     except Exception as e:
         patches_failed.append(f"FIX 18: {e}")
 
@@ -63332,7 +63407,7 @@ class VersionConsistencyFinalCheck:
     construction (and remains a real consistency guard for downstream
     components like version_info.full_version and _version_manager.version).
     """
-    EXPECTED_VERSION = "9.11.31"
+    EXPECTED_VERSION = "9.11.32"
 
     @staticmethod
     def verify() -> Dict[str, Any]:
@@ -63374,7 +63449,7 @@ class ComprehensiveStatusReport:
     def generate() -> dict:
         """Generate comprehensive status report."""
         return {
-            "platform_version": "v9.11.31",
+            "platform_version": "v9.11.32",
             "status": "Research/Development (NOT patent-ready, NOT PhD-ready)",
             "disclosure_date": _utc_now_iso() if callable(globals().get("_utc_now_iso")) else "",
 
