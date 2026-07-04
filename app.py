@@ -20411,6 +20411,49 @@ def run_monte_carlo_V2(T0: float, P0: float, coal_name: str,  # FIX v9.11.24: re
 
 
 # ============================================================================
+# FIX v9.11.27 (PhD/Patent audit): Module-level `run_monte_carlo` alias.
+# ============================================================================
+# Previously a top-level function `run_monte_carlo(T0, P0, coal_name, n_sim,
+# n_steps, dt, uncertainty)` existed with the same signature as
+# `run_monte_carlo_V2`. In v9.11.24 it was renamed to `run_monte_carlo_V2`
+# to resolve a duplicate-definition conflict, but two call sites were not
+# updated:
+#   - line ~28136 (Streamlit UI): run_monte_carlo(T0, P0, coal_name, n_sim, mc_steps, dt, uncertainty)
+#   - line ~31143 (CLI _cmd_monte_carlo): run_monte_carlo(args.T0, args.P0, args.coal, args.n_sim, 50, args.dt, 0.10)
+# This caused `NameError: name 'run_monte_carlo' is not defined` at runtime
+# in Streamlit Cloud, redacted to a generic app error.
+#
+# The fix exposes `run_monte_carlo` as a backward-compatibility alias to
+# `run_monte_carlo_V2`. The signatures are identical (T0, P0, coal_name,
+# n_sim, n_steps, dt, uncertainty) — the only renaming was the function
+# name itself. This is the safest fix because:
+#   1. It restores the public API that downstream code (and Streamlit UI)
+#      depends on.
+#   2. It does NOT remove `run_monte_carlo_V2`, so any code that already
+#      migrated to the new name keeps working.
+#   3. It does NOT touch the `ServiceLayer.run_monte_carlo(self, params)`
+#      method (different namespace, different signature).
+# ============================================================================
+def run_monte_carlo(T0: float, P0: float, coal_name: str,
+                    n_sim: int = 1000, n_steps: int = 100,
+                    dt: float = 1.0, uncertainty: float = 0.10
+                    ) -> Tuple[Dict[str, Dict[str, np.ndarray]], int]:
+    """Backward-compatibility wrapper around `run_monte_carlo_V2`.
+
+    See `run_monte_carlo_V2` for the full implementation and docstring.
+    Returns ``(mc_summary, n_sim_actual)`` where ``mc_summary`` is a dict
+    keyed by ``temperature``, ``char_conversion``, ``porosity``,
+    ``novelty_index`` — each value being a dict with ``mean``, ``std``,
+    ``ci95_low``, ``ci95_high`` numpy arrays of shape ``(n_steps,)``.
+    """
+    return run_monte_carlo_V2(
+        T0=T0, P0=P0, coal_name=coal_name,
+        n_sim=n_sim, n_steps=n_steps,
+        dt=dt, uncertainty=uncertainty,
+    )
+
+
+# ============================================================================
 # v7.0 PLOTTING FUNCTIONS
 # ============================================================================
 
