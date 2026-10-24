@@ -14843,8 +14843,9 @@ def solve_heat_equation_dynamic(T: np.ndarray, Q: np.ndarray, rho_field: np.ndar
         raise ValueError("Heat solver arrays must contain finite values.")
     if np.any(rho <= 0) or np.any(cp <= 0) or np.any(k <= 0):
         raise ValueError("Density, heat capacity and conductivity must be positive.")
-    if dx <= 0 or dz <= 0 or total_time < 0 or max_steps < 1 or h_conv < 0:
-        raise ValueError("Invalid grid spacing, time, step budget or convection coefficient.")
+    if (not all(np.isfinite(v) for v in (dx, dz, total_time, T_air, h_conv))
+            or dx <= 0 or dz <= 0 or total_time < 0 or max_steps < 1 or h_conv < 0):
+        raise ValueError("Invalid or non-finite grid spacing, time, step budget or boundary parameters.")
     if total_time == 0:
         return T
     # Conservative safety bound for explicit diffusion, including evolving k/cp.
@@ -34008,6 +34009,31 @@ ANGREN_VALIDATION_ROWS = (
     ("ST-06", 80.0, -11.8, -10.2, -11.0),
     ("ST-07", 120.0, -1.9, -2.2, -1.6),
 )
+# Original seven-row CSV supplied by the author; reported percentage strings are retained.
+# Values are not independent 360-day daily observations or verified site measurements.
+ANGREN_REPORTED_PERCENT_ERRORS = (14.28, 7.25, 3.70, 1.59, 2.60, 6.78, 15.78)
+
+def get_angren_original_csv():
+    """Export original user-supplied headings and percentages without silently editing them."""
+    import csv
+    import io
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "Monitoring Station", "Spatial Position Line [m]",
+        "Measured Geodetic Leveling [mm]", "InSAR Extracted Value [mm]",
+        "FEA THCM Model Prediction [mm]",
+        "Absolute Residual vs Leveling [mm]", "Relative Error (%)",
+    ])
+    if len(ANGREN_VALIDATION_ROWS) != len(ANGREN_REPORTED_PERCENT_ERRORS):
+        raise ValueError("Angren CSV: station and reported-percentage counts differ")
+    for row, supplied_pct in zip(ANGREN_VALIDATION_ROWS, ANGREN_REPORTED_PERCENT_ERRORS):
+        station, x, leveling, insar, prediction = row
+        writer.writerow([station, f"{x:.1f}", f"{leveling:.1f}", f"{insar:.1f}",
+                         f"{prediction:.1f}", f"{abs(prediction-leveling):.1f}",
+                         f"{supplied_pct:.2f}%"])
+    return output.getvalue()
+
 ANGREN_EXTERNAL_360_DAY_METRICS = {
     "RMSE_mm": 14.2, "R2": 0.948, "MAPE_pct": 4.12,
     "status": "AUTHOR_REPORTED_UNVERIFIED_SEPARATE_AGGREGATE",
@@ -34030,6 +34056,8 @@ def calculate_angren_station_metrics(df=None):
         df = get_angren_validation_dataset()
     observed = df["Measured Leveling [mm]"].to_numpy(dtype=float)
     predicted = df["FEA THCM Model [mm]"].to_numpy(dtype=float)
+    if observed.ndim != 1 or predicted.ndim != 1 or len(observed) != len(predicted):
+        raise ValueError("Observed and predicted values must be matching 1D arrays")
     if len(observed) < 2 or not np.isfinite(observed).all() or not np.isfinite(predicted).all():
         raise ValueError("At least two finite observation/prediction pairs required")
     residual = predicted - observed
@@ -34070,6 +34098,15 @@ def render_angren_validation_panel():
         fig.update_layout(xaxis_title="Profil koordinatasi (m)", yaxis_title="Cho‘kish (mm)", title="Angren: taqdim etilgan 7 stansiya profili")
         st.plotly_chart(fig, use_container_width=True)
         st.download_button("7 stansiya CSV yuklab olish", df.to_csv(index=False).encode("utf-8-sig"), file_name="angren_validation_7_stations.csv", mime="text/csv")
+        st.download_button(
+            "Muallif yuborgan CSV (asl ustun nomlari va foizlari)",
+            get_angren_original_csv().encode("utf-8-sig"),
+            file_name="angren_monitoring_original_author_supplied.csv",
+            mime="text/csv",
+        )
+        st.caption("Eslatma: ST-07 asl CSV da 15.78% deb berilgan; 0.3/1.9×100 "
+                   "hisobidan 15.79% (ikki xona) chiqadi. Asl CSV o‘zgartirilmagan; "
+                   "hisoblangan jadval va metrikalar esa boshlang‘ich siljish qiymatlaridan olinadi.")
         st.info("Alohida bildirilgan 360 kunlik ko‘rsatkichlar: RMSE = 14.2 mm, R² = 0.948, MAPE = 4.12%. Bu raqamlar 7 stansiyadan HISOBLANMAGAN; 360 kunlik xom vaqt qatori taqdim etilmagan va mustaqil tekshirilmagan.")
 
 def main():
