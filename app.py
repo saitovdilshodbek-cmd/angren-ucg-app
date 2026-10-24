@@ -33995,6 +33995,83 @@ def embedded_files_info() -> Dict[str, Any]:
 # ══════════════════════════════════════════════════════════════════════════════
 
 
+
+# === Angren seven-station author-supplied validation dataset (2026-10-24) ===
+# Provenance: values supplied in chat; original survey/InSAR files not independently verified.
+# A 360-day operation period is a dataset description, NOT 360 daily observations.
+ANGREN_VALIDATION_ROWS = (
+    ("ST-01", -120.0, -2.1, -2.8, -1.8),
+    ("ST-02", -80.0, -12.4, -14.1, -11.5),
+    ("ST-03", -40.0, -48.6, -45.2, -46.8),
+    ("ST-04 (Center)", 0.0, -94.2, -91.0, -92.7),
+    ("ST-05", 40.0, -46.1, -48.9, -44.9),
+    ("ST-06", 80.0, -11.8, -10.2, -11.0),
+    ("ST-07", 120.0, -1.9, -2.2, -1.6),
+)
+ANGREN_EXTERNAL_360_DAY_METRICS = {
+    "RMSE_mm": 14.2, "R2": 0.948, "MAPE_pct": 4.12,
+    "status": "AUTHOR_REPORTED_UNVERIFIED_SEPARATE_AGGREGATE",
+}
+
+def get_angren_validation_dataset():
+    """Seven author-supplied station pairs; values are NOT independently authenticated."""
+    df = pd.DataFrame(ANGREN_VALIDATION_ROWS, columns=[
+        "Monitoring Station", "Spatial Position Line [m]", "Measured Leveling [mm]",
+        "InSAR Extracted [mm]", "FEA THCM Model [mm]",
+    ])
+    # FEA THCM Model is the author's original column label, not an independently verified solver classification.
+    df["Absolute Residual [mm]"] = (df["FEA THCM Model [mm]"] - df["Measured Leveling [mm]"]).abs()
+    df["Relative Error (%)"] = 100.0 * df["Absolute Residual [mm]"] / df["Measured Leveling [mm]"].abs()
+    return df
+
+def calculate_angren_station_metrics(df=None):
+    """Metrics strictly for seven station model-vs-leveling pairs."""
+    if df is None:
+        df = get_angren_validation_dataset()
+    observed = df["Measured Leveling [mm]"].to_numpy(dtype=float)
+    predicted = df["FEA THCM Model [mm]"].to_numpy(dtype=float)
+    if len(observed) < 2 or not np.isfinite(observed).all() or not np.isfinite(predicted).all():
+        raise ValueError("At least two finite observation/prediction pairs required")
+    residual = predicted - observed
+    ss_total = np.sum((observed - observed.mean())**2)
+    return {
+        "n_stations": len(observed),
+        "bias_mm": float(residual.mean()),
+        "MAE_mm": float(np.mean(np.abs(residual))),
+        "RMSE_mm": float(np.sqrt(np.mean(residual**2))),
+        "R2": float(1 - np.sum(residual**2) / ss_total) if ss_total > 0 else float("nan"),
+        "MAPE_pct": float(100 * np.mean(np.abs(residual / observed))) if np.all(observed != 0) else float("nan"),
+    }
+
+def render_angren_validation_panel():
+    """Additive panel: does not replace existing menus or simulation results."""
+    with st.expander("📍 Angren — 7 stansiya monitoring validatsiyasi (muallif ma’lumotlari)", expanded=False):
+        st.warning("Manba: foydalanuvchi taqdim etgan jadval; asl nivelirlash, InSAR va FEM fayllari mustaqil tasdiqlanmagan. 'FEA THCM Model' — taqdim etilgan ustun nomi, to‘liq THCM solver tasdig‘i emas.")
+        df = get_angren_validation_dataset()
+        st.dataframe(df.style.format({
+            "Spatial Position Line [m]": "{:.1f}",
+            "Measured Leveling [mm]": "{:.1f}",
+            "InSAR Extracted [mm]": "{:.1f}",
+            "FEA THCM Model [mm]": "{:.1f}",
+            "Absolute Residual [mm]": "{:.1f}",
+            "Relative Error (%)": "{:.2f}",
+        }), use_container_width=True)
+        m = calculate_angren_station_metrics(df)
+        a,b,c,d = st.columns(4)
+        a.metric("7 stansiya RMSE", f"{m['RMSE_mm']:.3f} mm")
+        b.metric("R²", f"{m['R2']:.6f}")
+        c.metric("MAPE", f"{m['MAPE_pct']:.2f}%")
+        d.metric("Bias", f"{m['bias_mm']:+.3f} mm")
+        st.caption("7 stansiya MAE = %.3f mm. Barcha model−nivelirlash qoldiqlari musbat." % m['MAE_mm'])
+        fig = go.Figure()
+        x = df["Spatial Position Line [m]"]
+        for label,col in (("Nivelirlash", "Measured Leveling [mm]"), ("InSAR", "InSAR Extracted [mm]"), ("Muallif bergan FEA natijasi", "FEA THCM Model [mm]")):
+            fig.add_trace(go.Scatter(x=x, y=df[col], mode="lines+markers", name=label))
+        fig.update_layout(xaxis_title="Profil koordinatasi (m)", yaxis_title="Cho‘kish (mm)", title="Angren: taqdim etilgan 7 stansiya profili")
+        st.plotly_chart(fig, use_container_width=True)
+        st.download_button("7 stansiya CSV yuklab olish", df.to_csv(index=False).encode("utf-8-sig"), file_name="angren_validation_7_stations.csv", mime="text/csv")
+        st.info("Alohida bildirilgan 360 kunlik ko‘rsatkichlar: RMSE = 14.2 mm, R² = 0.948, MAPE = 4.12%. Bu raqamlar 7 stansiyadan HISOBLANMAGAN; 360 kunlik xom vaqt qatori taqdim etilmagan va mustaqil tekshirilmagan.")
+
 def main():
     init_db()
     # ════════════════════════════════════════════════════════════════════════
@@ -34024,6 +34101,7 @@ def main():
         return
 
     # ── v6 Geomechanical flow continues below ────────────────────────────────
+    render_angren_validation_panel()
     if "comparison_mode" not in st.session_state:
         st.session_state["comparison_mode"] = False
     if "benchmark_data" not in st.session_state:
