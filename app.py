@@ -14826,39 +14826,76 @@ def vertical_stress(depth: float, density: float) -> float:
 def solve_heat_equation_dynamic(T: np.ndarray, Q: np.ndarray, rho_field: np.ndarray, cp_field: np.ndarray,
                                 k_field: np.ndarray, dx: float, dz: float, total_time: float,
                                 T_air: float = 25.0, h_conv: float = 10.0, max_steps: int = 2000) -> np.ndarray:
-    with warnings.catch_warnings():
-        warnings.filterwarnings('ignore', category=RuntimeWarning)
-        alpha_field = k_field / (rho_field * cp_field + EPS_GENERAL)
-        alpha_max = float(np.max(alpha_field))
-        dt_max = 0.25 / (alpha_max * (1.0 / dx ** 2 + 1.0 / dz ** 2) + EPS_GENERAL)
-        dt_candidate = 0.8 * dt_max
-        n_steps = max(int(np.ceil(total_time / dt_candidate)), 1)
-        n_steps = min(n_steps, max_steps)
-        dt = total_time / n_steps
+    """Conservative 2D explicit heat equation: rho*cp*dT/dt=div(k*grad(T))+Q.
 
-        for step_i in range(n_steps):
-            if step_i % 200 == 0 and step_i > 0:
-                cp_field = specific_heat(T)
-                k_field = thermal_conductivity(T)
-                alpha_field = k_field / (rho_field * cp_field + EPS_GENERAL)
-
-            T_old = T.copy()
-            Txx = (T_old[1:-1, 2:] - 2.0 * T_old[1:-1, 1:-1] + T_old[1:-1, :-2]) / dx ** 2
-            Tzz = (T_old[2:, 1:-1] - 2.0 * T_old[1:-1, 1:-1] + T_old[:-2, 1:-1]) / dz ** 2
-            T_new = T_old.copy()
-            T_new[1:-1, 1:-1] = T_old[1:-1, 1:-1] + dt * (
-                alpha_field[1:-1, 1:-1] * (Txx + Tzz)
-                + Q[1:-1, 1:-1] / (rho_field[1:-1, 1:-1] * cp_field[1:-1, 1:-1] + EPS_GENERAL)
-            )
-            T_new[:, 0] = T_new[:, 1]
-            T_new[:, -1] = T_new[:, -2]
-            T_new[-1, :] = T_new[-2, :]
-            k_surface = k_field[0, :]
-            T_new[0, :] = (k_surface * T_new[1, :] + dz * h_conv * T_air) / (
-                k_surface + dz * h_conv + EPS_GENERAL
-            )
-            T = T_new.copy()
+    Uses harmonic face conductivity. Rejects timesteps exceeding the supplied
+    max_steps budget instead of silently violating the explicit stability limit.
+    Temperature-dependent material functions, if available, are updated every step.
+    """
+    T = np.asarray(T, dtype=float).copy()
+    Q = np.asarray(Q, dtype=float)
+    rho = np.asarray(rho_field, dtype=float)
+    cp = np.asarray(cp_field, dtype=float).copy()
+    k = np.asarray(k_field, dtype=float).copy()
+    if T.ndim != 2 or min(T.shape) < 3 or any(a.shape != T.shape for a in (Q, rho, cp, k)):
+        raise ValueError("T, Q, rho_field, cp_field and k_field must be matching 2D arrays (>=3x3).")
+    if not all(np.isfinite(a).all() for a in (T, Q, rho, cp, k)):
+        raise ValueError("Heat solver arrays must contain finite values.")
+    if np.any(rho <= 0) or np.any(cp <= 0) or np.any(k <= 0):
+        raise ValueError("Density, heat capacity and conductivity must be positive.")
+    if dx <= 0 or dz <= 0 or total_time < 0 or max_steps < 1 or h_conv < 0:
+        raise ValueError("Invalid grid spacing, time, step budget or convection coefficient.")
+    if total_time == 0:
+        return T
+    # Conservative safety bound for explicit diffusion, including evolving k/cp.
+    def stable_dt(kk, cc):
+        alpha = float(np.max(kk / (rho * cc)))
+        return 0.45 / (alpha * (1.0 / dx**2 + 1.0 / dz**2))
+    dt_limit = stable_dt(k, cp)
+    n_steps = max(1, int(np.ceil(total_time / dt_limit)))
+    if n_steps > max_steps:
+        raise ValueError(f"Explicit heat solver requires {n_steps} steps, exceeds max_steps={max_steps}. "
+                         "Increase max_steps, shorten total_time, or use an implicit scheme.")
+    dt = total_time / n_steps
+    for _ in range(n_steps):
+        # Coefficients are frozen within each explicit step; avoid silent
+        # changes in timestep stability when properties vary with temperature.
+        if callable(globals().get('specific_heat')):
+            cp_candidate = np.asarray(specific_heat(T), dtype=float)
+            if cp_candidate.shape == T.shape:
+                cp = cp_candidate
+        if callable(globals().get('thermal_conductivity')):
+            k_candidate = np.asarray(thermal_conductivity(T), dtype=float)
+            if k_candidate.shape == T.shape:
+                k = k_candidate
+        if not np.isfinite(cp).all() or not np.isfinite(k).all() or np.any(cp <= 0) or np.any(k <= 0):
+            raise ValueError("Temperature-dependent heat properties became invalid.")
+        if dt > stable_dt(k, cp):
+            raise ValueError("Thermal diffusivity increased; explicit timestep is unstable. "
+                             "Reduce total_time or use adaptive/implicit stepping.")
+        old = T
+        kc = k[1:-1, 1:-1]
+        def harmonic(a, b):
+            return 2.0 * a * b / (a + b)
+        ke = harmonic(kc, k[1:-1, 2:])
+        kw = harmonic(kc, k[1:-1, :-2])
+        ks = harmonic(kc, k[2:, 1:-1])
+        kn = harmonic(kc, k[:-2, 1:-1])
+        div = (ke * (old[1:-1, 2:] - old[1:-1, 1:-1])
+               - kw * (old[1:-1, 1:-1] - old[1:-1, :-2])) / dx**2
+        div += (ks * (old[2:, 1:-1] - old[1:-1, 1:-1])
+                - kn * (old[1:-1, 1:-1] - old[:-2, 1:-1])) / dz**2
+        updated = old.copy()
+        updated[1:-1, 1:-1] += dt * (div + Q[1:-1, 1:-1]) / (rho[1:-1, 1:-1] * cp[1:-1, 1:-1])
+        updated[:, 0] = updated[:, 1]
+        updated[:, -1] = updated[:, -2]
+        updated[-1, :] = updated[-2, :]
+        updated[0, :] = (k[0, :] * updated[1, :] + dz * h_conv * T_air) / (k[0, :] + dz * h_conv)
+        if not np.isfinite(updated).all():
+            raise FloatingPointError("Heat solver produced non-finite temperatures.")
+        T = updated
     return T
+
 
 def principal_stresses(sx: np.ndarray, sy: np.ndarray, txy: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     avg = (sx + sy) / 2.0
