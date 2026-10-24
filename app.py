@@ -718,12 +718,12 @@ class ServiceLayer:
         """Run FEM analysis with full validation and audit trail."""
         try:
             # Input validation
-            E = params.get("young_modulus", 0)
-            nu = params.get("poisson_ratio", 0)
-            if E <= 0:
+            E = float(params.get("young_modulus", 0))
+            nu = float(params.get("poisson_ratio", 0))
+            if not np.isfinite(E) or E <= 0:
                 raise FEMMaterialError("Young's modulus must be positive")
-            if not (0 < nu < 0.5):
-                raise FEMMaterialError("Poisson's ratio must be between 0 and 0.5")
+            if not np.isfinite(nu) or not (-1.0 < nu < 0.5):
+                raise FEMMaterialError("Poisson's ratio must be finite and between -1 and 0.5")
 
             # Run solver
             mesh = build_hexahedral_mesh(
@@ -6282,6 +6282,11 @@ def compute_prediction_intervals(
 ) -> Dict[str, Tuple[np.ndarray, np.ndarray]]:
     pred = _to_1d_float_array(prediction, "prediction")
     err = _to_1d_float_array(residuals, "residuals")
+    if not confidence_levels or any(
+        not np.isfinite(level) or not 0.0 < level < 1.0
+        for level in confidence_levels
+    ):
+        raise ValueError("Each confidence level must be finite and strictly between 0 and 1.")
     std_err = float(np.std(err, ddof=1)) if err.size > 1 else 0.0
     dof = max(err.size - 1, 1)
     intervals: Dict[str, Tuple[np.ndarray, np.ndarray]] = {}
@@ -6301,17 +6306,26 @@ def compute_prediction_intervals(
 def bootstrap_prediction_interval(prediction: np.ndarray, residuals: np.ndarray,
                                     n_bootstrap: int = 1000,
                                     confidence: float = 0.95) -> Dict[str, Any]:
-    """Bootstrap confidence intervals for predictions."""
+    """Residual-bootstrap prediction intervals, one interval per prediction.
+
+    Residuals are sampled independently from the observed predictions because
+    they generally come from a training/validation set and need not have the
+    same length as the prediction vector.
+    """
+    prediction = _to_1d_float_array(prediction, "prediction")
+    residuals = _to_1d_float_array(residuals, "residuals")
+    if isinstance(n_bootstrap, bool) or not isinstance(n_bootstrap, (int, np.integer)) or n_bootstrap < 1:
+        raise ValueError("n_bootstrap must be a positive integer.")
+    if not np.isfinite(confidence) or not 0.0 < confidence < 1.0:
+        raise ValueError("confidence must be finite and strictly between 0 and 1.")
     rng = _safe_rng()
-    n = len(prediction)
-    boot_preds = []
-    for _ in range(n_bootstrap):
-        idx = rng.choice(n, size=n, replace=True)
-        boot_preds.append(prediction[idx] + residuals[idx])
-    boot_preds = np.array(boot_preds)
+    sampled_residuals = rng.choice(
+        residuals, size=(n_bootstrap, prediction.size), replace=True
+    )
+    boot_preds = prediction[np.newaxis, :] + sampled_residuals
     alpha = 1 - confidence
-    lower = np.percentile(boot_preds, 100 * alpha / 2, axis=0)
-    upper = np.percentile(boot_preds, 100 * (1 - alpha / 2), axis=0)
+    lower = np.quantile(boot_preds, alpha / 2, axis=0)
+    upper = np.quantile(boot_preds, 1 - alpha / 2, axis=0)
     return {"prediction_interval": (lower, upper)}
 
 
@@ -6329,16 +6343,16 @@ def bca_bootstrap_ci(data: np.ndarray, statistic: Callable = np.mean,
     The BCa method corrects for both bias and skewness in the bootstrap
     distribution, providing more accurate coverage than percentile intervals.
 
-    FIX #38 (v9.11.16): Endi n < 30 bo'lsa, ValueError ko'tariladi — BCa CI
-    kichik namunalar uchun ishonchsiz (Efron & Tibshirani, 1993, §14.2).
-    PhD himoyasida "n=5 bilan BCa CI" rad etiladi.
+    This implementation applies a conservative n >= 30 policy. That cutoff is
+    a project policy, not a theorem: passing it does not guarantee nominal
+    coverage, which still depends on the data-generating process and statistic.
     Reference: Efron, B., & Tibshirani, R. J. (1993). An Introduction to the
     Bootstrap. Chapman & Hall/CRC.
 
     Parameters:
     -----------
     data : array-like
-        Input data sample (MUST have at least 30 elements for reliable BCa)
+        One-dimensional input sample (this implementation requires at least 30 observations)
     statistic : callable
         Function to compute on each bootstrap sample (default: np.mean)
     n_bootstrap : int
@@ -6355,36 +6369,45 @@ def bca_bootstrap_ci(data: np.ndarray, statistic: Callable = np.mean,
     if rng is None:
         rng = _safe_rng()
 
-    data = np.asarray(data, dtype=float)
-    n = len(data)
+    data = _to_1d_float_array(data, "data")
+    if not callable(statistic):
+        raise TypeError("statistic must be callable.")
+    if isinstance(n_bootstrap, bool) or not isinstance(n_bootstrap, (int, np.integer)) or n_bootstrap < 2:
+        raise ValueError("n_bootstrap must be an integer >= 2.")
+    if not np.isfinite(alpha) or not 0.0 < alpha < 1.0:
+        raise ValueError("alpha must be finite and strictly between 0 and 1.")
+    n = data.size
 
-    # FIX #38: Minimum sample size check
+    # Conservative project policy; n >= 30 is not, by itself, evidence of valid coverage.
     if n < 30:
         raise ValueError(
-            f"BCa bootstrap CI requires at least 30 samples (got n={n}). "
-            "For smaller samples, use exact t-distribution CI or collect more data. "
-            "Reference: Efron & Tibshirani (1993) An Introduction to the Bootstrap."
+            f"This implementation requires at least 30 samples for BCa (got n={n}). "
+            "This is a conservative project policy, not a universal validity threshold; "
+            "choose an interval method justified by the study design."
         )
 
     # Original statistic
-    theta_hat = statistic(data)
+    theta_hat = float(statistic(data))
+    if not np.isfinite(theta_hat):
+        raise ValueError("statistic(data) must return a finite scalar.")
 
     # Bootstrap resamples
     boot_stats = np.empty(n_bootstrap)
     for b in range(n_bootstrap):
         sample = rng.choice(data, size=n, replace=True)
-        boot_stats[b] = statistic(sample)
+        boot_stats[b] = float(statistic(sample))
+    if not np.all(np.isfinite(boot_stats)):
+        raise ValueError("statistic must return a finite scalar for every bootstrap sample.")
 
     # Bias correction factor z0
     # Proportion of bootstrap stats less than original
-    prop_less = np.mean(boot_stats < theta_hat)
-    if prop_less == 0:
-        z0 = -5.0  # Clamp
-    elif prop_less == 1:
-        z0 = 5.0
-    else:
-        from scipy.stats import norm
-        z0 = norm.ppf(prop_less)
+    # Mid-rank ties plus a finite-bootstrap correction avoid infinite z0 for
+    # constant or highly discrete bootstrap distributions.
+    less = int(np.count_nonzero(boot_stats < theta_hat))
+    ties = int(np.count_nonzero(boot_stats == theta_hat))
+    prop_less = (less + 0.5 * ties + 0.5) / (n_bootstrap + 1.0)
+    from scipy.stats import norm
+    z0 = norm.ppf(prop_less)
 
     # Acceleration factor a
     # Jackknife influence values
@@ -6392,7 +6415,7 @@ def bca_bootstrap_ci(data: np.ndarray, statistic: Callable = np.mean,
     # np.mean uchun jackknife statistikasi to'g'ridan-to'g'ri hisoblanishi mumkin:
     # jack_stat[i] = (sum - data[i]) / (n - 1)
     # Bu O(n) emas, O(n²) dan O(n) ga o'tadi.
-    if statistic is np.mean or statistic.__name__ == 'mean':
+    if statistic is np.mean or getattr(statistic, "__name__", "") == "mean":
         # Vektorlashtirilgan jackknife for mean
         total_sum = np.sum(data)
         jack_stats = (total_sum - data) / (n - 1)
@@ -6412,13 +6435,22 @@ def bca_bootstrap_ci(data: np.ndarray, statistic: Callable = np.mean,
     z_alpha_lower = _norm.ppf(alpha / 2)
     z_alpha_upper = _norm.ppf(1 - alpha / 2)
 
-    # BCa adjusted quantiles
-    alpha1 = _norm.cdf(z0 + (z0 + z_alpha_lower) / (1 - a_hat * (z0 + z_alpha_lower)))
-    alpha2 = _norm.cdf(z0 + (z0 + z_alpha_upper) / (1 - a_hat * (z0 + z_alpha_upper)))
+    # BCa adjusted quantiles. A zero denominator makes the transformation
+    # undefined, so report the failure rather than silently manufacturing a CI.
+    denom1 = 1.0 - a_hat * (z0 + z_alpha_lower)
+    denom2 = 1.0 - a_hat * (z0 + z_alpha_upper)
+    if abs(denom1) <= np.finfo(float).eps or abs(denom2) <= np.finfo(float).eps:
+        raise ValueError("BCa adjusted quantile is undefined for this statistic/sample.")
+    alpha1 = float(_norm.cdf(z0 + (z0 + z_alpha_lower) / denom1))
+    alpha2 = float(_norm.cdf(z0 + (z0 + z_alpha_upper) / denom2))
+    if not np.isfinite(alpha1) or not np.isfinite(alpha2):
+        raise ValueError("BCa adjusted quantile is non-finite for this statistic/sample.")
 
-    # Clamp to valid range
-    alpha1 = max(0.001, min(0.999, alpha1))
-    alpha2 = max(0.001, min(0.999, alpha2))
+    # Restrict quantiles to the finite range supported by this bootstrap run.
+    min_quantile = 1.0 / (n_bootstrap + 1.0)
+    max_quantile = 1.0 - min_quantile
+    alpha1 = float(np.clip(alpha1, min_quantile, max_quantile))
+    alpha2 = float(np.clip(alpha2, min_quantile, max_quantile))
 
     ci_lower = float(np.percentile(boot_stats, 100 * alpha1))
     ci_upper = float(np.percentile(boot_stats, 100 * alpha2))
@@ -6928,18 +6960,31 @@ def _normalize_benchmark_payload(
     original_unit: Optional[str] = None,
     software_version: Optional[str] = None,
     export_date: Optional[str] = None,
+    x_origin_m: float = 0.0,
 ) -> Dict[str, Any]:
     x_arr = _to_1d_float_array(x_values, "benchmark_x")
     subs_arr = _to_1d_float_array(subsidence_values, "benchmark_subsidence")
     if x_arr.size != subs_arr.size:
         raise ValueError(tr("err.benchmark_x_subsidence_length"))
+    try:
+        x_origin_m = float(x_origin_m)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("x_origin_m must be a finite number.") from exc
+    if not np.isfinite(x_origin_m):
+        raise ValueError("x_origin_m must be a finite number.")
+    x_original = x_arr.copy()
+    x_arr = x_arr - x_origin_m
     order = np.argsort(x_arr)
     x_arr = x_arr[order]
+    x_original = x_original[order]
     subs_arr = subs_arr[order]
     unit_name, to_cm = _detect_subsidence_unit(subs_arr, original_unit or "")
     subs_cm = subs_arr * to_cm
     return {
         "x": x_arr,
+        "x_original": x_original,
+        "x_origin_m": x_origin_m,
+        "coordinate_frame": "centered_at_x_origin_m",
         "subsidence": subs_cm,
         "subsidence_cm": subs_cm,
         "subsidence_original": subs_arr,
@@ -6964,6 +7009,12 @@ def load_external_benchmark() -> Optional[Dict[str, Any]]:
     try:
         df = _read_uploaded_table(uploaded)
         x_col, sub_col = _detect_benchmark_columns(df)
+        x_origin_m = st.sidebar.number_input(
+            "Subsidence trough center x (m; 0 if already centered)",
+            value=0.0, step=1.0, key="bench_x_origin_main",
+            help="The app's model uses x=0 at the cavity/trough center. "
+                 "For the supplied profile with center at x=60 m, enter 60.",
+        )
         soft_version = st.sidebar.text_input("Benchmark software version (e.g., FLAC3D 7.0)", key="bench_soft_version")
         export_date = st.sidebar.text_input("Export date (YYYY-MM-DD)", key="bench_export_date")
         payload = _normalize_benchmark_payload(
@@ -6975,6 +7026,7 @@ def load_external_benchmark() -> Optional[Dict[str, Any]]:
             original_unit=sub_col,
             software_version=soft_version if soft_version else None,
             export_date=export_date if export_date else None,
+            x_origin_m=x_origin_m,
         )
         st.sidebar.success(f"Loaded {len(payload['x'])} benchmark points ({payload['unit_detected']} → cm)")
         return payload
@@ -6995,6 +7047,12 @@ def upload_external_benchmark() -> Optional[Dict[str, Any]]:
     try:
         df = _read_uploaded_table(uploaded_file)
         x_col, sub_col = _detect_benchmark_columns(df)
+        x_origin_m = st.sidebar.number_input(
+            "Subsidence trough center x (m; 0 if already centered)",
+            value=0.0, step=1.0, key="bench_x_origin_patent",
+            help="The app's model uses x=0 at the cavity/trough center. "
+                 "For the supplied profile with center at x=60 m, enter 60.",
+        )
         soft_version = st.sidebar.text_input("Software version", key="bench_soft_ver2")
         export_date = st.sidebar.text_input("Export date", key="bench_exp_date2")
         payload = _normalize_benchmark_payload(
@@ -7006,6 +7064,7 @@ def upload_external_benchmark() -> Optional[Dict[str, Any]]:
             original_unit=sub_col,
             software_version=soft_version if soft_version else None,
             export_date=export_date if export_date else None,
+            x_origin_m=x_origin_m,
         )
         st.sidebar.success(f"Loaded {len(payload['x'])} benchmark points ({payload['unit_detected']} → cm)")
         return payload
@@ -9267,7 +9326,8 @@ def element_stiffness_3d(
         Young's modulus in Pa. Must be > 0.
     nu : float
         Poisson's ratio, dimensionless. Must be in [-1, 0.5].
-        nu = 0.5 (incompressible limit) is handled with EPS regularization.
+        The supported isotropic range is -1 < nu < 0.5. The exactly
+        incompressible limit requires a different formulation.
 
     Returns
     -------
@@ -9278,7 +9338,7 @@ def element_stiffness_3d(
     Raises
     ------
     FEMMaterialError
-        If E <= 0 or nu not in [-1, 0.5].
+        If E is non-finite/non-positive or nu is outside (-1, 0.5).
     FEMMeshError
         If node_coords shape is not (8, 3) or contains non-finite values.
 
@@ -9301,11 +9361,16 @@ def element_stiffness_3d(
         )
     if not np.all(np.isfinite(node_coords)):
         raise FEMMeshError(tr("err.fem_node_coords_finite"))
-    if E <= 0:
+    try:
+        E = float(E)
+        nu = float(nu)
+    except (TypeError, ValueError) as exc:
+        raise FEMMaterialError("Young's modulus and Poisson's ratio must be numeric.") from exc
+    if not np.isfinite(E) or E <= 0:
         raise FEMMaterialError(tr("err.fem_E_positive", E=E))
-    if not (-1.0 <= nu <= 0.5):
+    if not np.isfinite(nu) or not (-1.0 < nu < 0.5):
         raise FEMMaterialError(
-            f"Poisson's ratio nu must be in [-1, 0.5], got nu={nu}"
+            f"Poisson's ratio nu must be finite and in (-1, 0.5), got nu={nu}"
         )
 
     # Gauss quadrature points (2x2x2)
@@ -9366,10 +9431,9 @@ def element_stiffness_3d(
              0.125*(1+xi)*(1+eta),  0.125*(1-xi)*(1+eta)
         ])
     
-    # Constitutive matrix D (FIX 26)
-    # EPS_GENERAL qo'shildi — nu=0.5 bo'lganda denominator 0 ga teng bo'lib qoladi (incompressible limit)
-    # Bu regularization near-incompressible materials (nu → 0.5) uchun stabil bo'ladi.
-    lam = E * nu / ((1.0 + nu) * (1.0 - 2.0 * nu + EPS_GENERAL))
+    # Isotropic linear-elastic constitutive matrix. Do not regularize nu=0.5:
+    # that limit is not represented by this displacement-only formulation.
+    lam = E * nu / ((1.0 + nu) * (1.0 - 2.0 * nu))
     mu = E / (2.0 * (1.0 + nu))
     D = np.zeros((6, 6))
     D[0:3, 0:3] = lam * np.ones((3, 3)) + 2 * mu * np.eye(3)
@@ -9407,18 +9471,26 @@ def element_stiffness_3d(
                 # bo'lsa, np.linalg.pinv (Moore-Penrose pseudo-inverse) ishlatamiz va ogohlantirish
                 # qaytaramiz; detJ ni ham musbat qilib qayta hisoblaymiz.
                 detJ = np.linalg.det(J)
-                if detJ < 1e-9:
-                    logger.warning(
-                        "[FEM] Element has degenerate Jacobian (detJ=%.3e). "
-                        "Using pseudo-inverse and clamped detJ=1e-9.", detJ
+                # A non-positive Jacobian means the element is inverted or
+                # degenerate. Clamping det(J) and using a pseudo-inverse hides
+                # invalid geometry and produces physically meaningless stiffness.
+                element_scale = float(np.max(np.ptp(node_coords, axis=0)))
+                det_tolerance = max(
+                    100.0 * np.finfo(float).eps * element_scale**3,
+                    np.finfo(float).tiny,
+                )
+                if not np.isfinite(detJ) or detJ <= det_tolerance:
+                    raise FEMMeshError(
+                        "Hexahedral element has a non-positive or near-singular "
+                        f"Jacobian (detJ={detJ:.6e}, tolerance={det_tolerance:.6e}). "
+                        "Check element node ordering and mesh quality."
                     )
-                    detJ = 1e-9
-                    try:
-                        invJ = np.linalg.inv(J + 1e-12 * np.eye(3))
-                    except np.linalg.LinAlgError:
-                        invJ = np.linalg.pinv(J)
-                else:
+                try:
                     invJ = np.linalg.inv(J)
+                except np.linalg.LinAlgError as exc:
+                    raise FEMMeshError(
+                        "Hexahedral element Jacobian is singular; mesh cannot be solved."
+                    ) from exc
                 
                 # dN/dx, dN/dy, dN/dz (FIX 25: B matrix)
                 dN_dx = np.zeros(8)
@@ -9494,13 +9566,102 @@ def solve_fem_3d_linear_elastic_real(mesh: FEMMesh3D, young_modulus: float, pois
     from scipy.sparse import lil_matrix, csr_matrix
     from scipy.sparse.linalg import spsolve, MatrixRankWarning
 
-    nodes = mesh.nodes
-    elements = mesh.elements
+    try:
+        nodes = np.asarray(mesh.nodes, dtype=float)
+        raw_elements = np.asarray(mesh.elements)
+    except (TypeError, ValueError) as exc:
+        raise FEMMeshError("Mesh nodes and elements must be numeric arrays.") from exc
+    if nodes.ndim != 2 or nodes.shape[1] != 3 or nodes.shape[0] == 0:
+        raise FEMMeshError(f"Mesh nodes must have shape (n, 3), got {nodes.shape}.")
+    if not np.all(np.isfinite(nodes)):
+        raise FEMMeshError("Mesh node coordinates must all be finite.")
+    if raw_elements.ndim != 2 or raw_elements.shape[1] != 8 or raw_elements.shape[0] == 0:
+        raise FEMMeshError(
+            f"Hexahedral connectivity must have shape (m, 8), got {raw_elements.shape}."
+        )
+    if not np.issubdtype(raw_elements.dtype, np.integer):
+        try:
+            numeric_elements = np.asarray(raw_elements, dtype=float)
+        except (TypeError, ValueError) as exc:
+            raise FEMMeshError("Element connectivity must contain integer node indices.") from exc
+        if (not np.all(np.isfinite(numeric_elements))
+                or not np.all(numeric_elements == np.floor(numeric_elements))):
+            raise FEMMeshError("Element connectivity must contain integer node indices.")
+    elements = raw_elements.astype(int, copy=False)
+    if np.any(elements < 0) or np.any(elements >= nodes.shape[0]):
+        raise FEMMeshError("Element connectivity contains an out-of-range node index.")
+    try:
+        raw_shape = np.asarray(mesh.shape, dtype=float)
+        mesh_lengths = tuple(float(value) for value in mesh.lengths)
+    except (TypeError, ValueError) as exc:
+        raise FEMMeshError("Mesh shape and lengths must contain numeric values.") from exc
+    if (raw_shape.shape != (3,) or not np.all(np.isfinite(raw_shape))
+            or not np.all(raw_shape == np.floor(raw_shape))
+            or np.any(raw_shape < 2)):
+        raise FEMMeshError(f"Structured mesh shape must contain three integer dimensions >= 2, got {mesh.shape}.")
+    mesh_shape = tuple(int(value) for value in raw_shape)
+    if int(np.prod(mesh_shape)) != nodes.shape[0]:
+        raise FEMMeshError(
+            f"Structured mesh shape must match "
+            f"the node count; got shape={mesh_shape}, nodes={nodes.shape[0]}."
+        )
+    if (len(mesh_lengths) != 3 or not np.all(np.isfinite(mesh_lengths))
+            or any(value <= 0 for value in mesh_lengths)):
+        raise FEMMeshError(f"Mesh lengths must be three finite positive values, got {mesh_lengths}.")
+    try:
+        young_modulus = float(young_modulus)
+        poisson_ratio = float(poisson_ratio)
+        body_force = float(body_force)
+        body_force_z = float(body_force_z)
+    except (TypeError, ValueError) as exc:
+        raise FEMMaterialError("Material and body-force inputs must be numeric.") from exc
+    if (not np.isfinite(young_modulus) or young_modulus <= 0
+            or not np.isfinite(poisson_ratio) or not (-1.0 < poisson_ratio < 0.5)):
+        raise FEMMaterialError(
+            "Material parameters must be finite, E > 0, and -1 < nu < 0.5. "
+            "The exactly incompressible limit nu=0.5 is not supported by this formulation."
+        )
+    if not np.isfinite(body_force) or not np.isfinite(body_force_z):
+        raise ValueError("Body-force inputs must be finite.")
+
     num_nodes = nodes.shape[0]
     num_elements = elements.shape[0]
     ndof = 3
     K = lil_matrix((num_nodes * ndof, num_nodes * ndof))
     F = np.zeros(num_nodes * ndof)
+
+    def _hex8_shape_and_det(coords: np.ndarray, xi: float, eta: float, zeta: float):
+        """Return Hex8 shape values and a validated positive Jacobian determinant."""
+        N = np.array([
+            0.125 * (1 - xi) * (1 - eta) * (1 - zeta),
+            0.125 * (1 + xi) * (1 - eta) * (1 - zeta),
+            0.125 * (1 + xi) * (1 + eta) * (1 - zeta),
+            0.125 * (1 - xi) * (1 + eta) * (1 - zeta),
+            0.125 * (1 - xi) * (1 - eta) * (1 + zeta),
+            0.125 * (1 + xi) * (1 - eta) * (1 + zeta),
+            0.125 * (1 + xi) * (1 + eta) * (1 + zeta),
+            0.125 * (1 - xi) * (1 + eta) * (1 + zeta),
+        ])
+        dN = 0.125 * np.array([
+            [-(1-eta)*(1-zeta), (1-eta)*(1-zeta), (1+eta)*(1-zeta), -(1+eta)*(1-zeta),
+             -(1-eta)*(1+zeta), (1-eta)*(1+zeta), (1+eta)*(1+zeta), -(1+eta)*(1+zeta)],
+            [-(1-xi)*(1-zeta), -(1+xi)*(1-zeta), (1+xi)*(1-zeta), (1-xi)*(1-zeta),
+             -(1-xi)*(1+zeta), -(1+xi)*(1+zeta), (1+xi)*(1+zeta), (1-xi)*(1+zeta)],
+            [-(1-xi)*(1-eta), -(1+xi)*(1-eta), -(1+xi)*(1+eta), -(1-xi)*(1+eta),
+             (1-xi)*(1-eta), (1+xi)*(1-eta), (1+xi)*(1+eta), (1-xi)*(1+eta)],
+        ])
+        det_j = float(np.linalg.det(dN @ coords))
+        element_scale = float(np.max(np.ptp(coords, axis=0)))
+        det_tolerance = max(
+            100.0 * np.finfo(float).eps * element_scale**3,
+            np.finfo(float).tiny,
+        )
+        if not np.isfinite(det_j) or det_j <= det_tolerance:
+            raise FEMMeshError(
+                "Hexahedral element has a non-positive or near-singular Jacobian "
+                f"(detJ={det_j:.6e}, tolerance={det_tolerance:.6e})."
+            )
+        return N, det_j
     
     # FIX 26: D matrix (constitutive) handled inside element_stiffness_3d
     
@@ -9515,6 +9676,21 @@ def solve_fem_3d_linear_elastic_real(mesh: FEMMesh3D, young_modulus: float, pois
                 for a in range(3):
                     for b in range(3):
                         K[elem[i]*3 + a, elem[j]*3 + b] += Ke[i*3 + a, j*3 + b]
+
+        # Consistent equivalent nodal load for a uniform volumetric gravity
+        # force (N/m^3), integrated with the same 2x2x2 Gauss rule as stiffness.
+        if gravity:
+            gauss_points = (-1.0 / np.sqrt(3.0), 1.0 / np.sqrt(3.0))
+            for xi in gauss_points:
+                for eta in gauss_points:
+                    for zeta in gauss_points:
+                        shape_values, det_j = _hex8_shape_and_det(
+                            node_coords, xi, eta, zeta
+                        )
+                        for local_i, global_i in enumerate(elem):
+                            F[global_i * ndof + 2] += (
+                                shape_values[local_i] * body_force_z * det_j
+                            )
     
     # FIX #2 (v9.11.16) / FIX v9.11.18 #2 / FIX v9.11.19 #1: FEM imzosi (gravity, body_force_z).
     # FIX v9.11.19 #2: To'liq Dirichlet chegara sharti (3 DOF: X, Y, Z).
@@ -9562,15 +9738,24 @@ def solve_fem_3d_linear_elastic_real(mesh: FEMMesh3D, young_modulus: float, pois
             "Cannot solve — system has rigid body modes."
         )
 
-    # FIX #27 (continued): Neumann — top surface load (gravity or external force)
-    z_max = float(np.max(nodes[:, 2]))
-    top_node_indices = [i for i, node in enumerate(nodes) if abs(float(node[2]) - z_max) < 1e-10]
-    if len(top_node_indices) > 0:
-        # body_force_z ni top surface tugunlari orasida taqsimlaymiz
-        total_z_force = body_force_z if gravity else body_force
-        per_node_force = total_z_force / len(top_node_indices)
+    # When gravity=False, body_force is a total vertical resultant (N) applied
+    # to the top boundary. Gravity=True instead uses the volumetric load above.
+    if not gravity:
+        z_max = float(np.max(nodes[:, 2]))
+        z_scale = float(np.ptp(nodes[:, 2]))
+        z_tolerance = max(
+            100.0 * np.finfo(float).eps * max(float(np.max(np.abs(nodes[:, 2]))), z_scale),
+            1e-12 * z_scale,
+        )
+        top_node_indices = [
+            i for i, node in enumerate(nodes)
+            if abs(float(node[2]) - z_max) <= z_tolerance
+        ]
+        if not top_node_indices:
+            raise FEMMeshError("No nodes found on the top boundary for the applied load.")
+        per_node_force = body_force / len(top_node_indices)
         for i in top_node_indices:
-            F[i*3 + 2] += per_node_force
+            F[i * ndof + 2] += per_node_force
 
     # FIX #4 (v9.11.16): Sparse solver fallback to'g'rilangan.
     # v9.11.15 da `K_dense + 1e-12 * I` (Tikhonov regularization) ishlatilgan — bu
@@ -9580,22 +9765,29 @@ def solve_fem_3d_linear_elastic_real(mesh: FEMMesh3D, young_modulus: float, pois
     # (rank-nedDOF > 0 bo'lsa — bu BC xatosi, regularizatsiya emas).
     K_csr = csr_matrix(K)
     u = None
+    solver_method = "scipy.sparse.linalg.spsolve"
     solver_error = None
     try:
         import warnings
         with warnings.catch_warnings():
             warnings.simplefilter("error", MatrixRankWarning)
             u = spsolve(K_csr, F)
+        if not np.all(np.isfinite(u)):
+            solver_error = RuntimeError("Sparse solver returned non-finite displacements.")
+            u = None
     except Exception as e:
         solver_error = e
         logger.warning("[FEM] Sparse solver failed: %s. Running BC diagnostic...", e)
 
     if u is None:
+        solver_method = "scipy.sparse.linalg.splu"
         # BC diagnostic: K ning ranki yetarli emas — bu BC xatosi.
         try:
             from scipy.sparse.linalg import splu
             lu = splu(K_csr.tocsc())
             u = lu.solve(F)
+            if not np.all(np.isfinite(u)):
+                raise RuntimeError("Sparse LU solver returned non-finite displacements.")
             logger.info("[FEM] splu fallback succeeded — solution recovered.")
         except Exception as e2:
             # Haqiqiy muammo: BC noto'g'ri — hech qanday regularizatsiya bilan emas.
@@ -9620,8 +9812,7 @@ def solve_fem_3d_linear_elastic_real(mesh: FEMMesh3D, young_modulus: float, pois
     if _ucf is not None:
         try:
             # Residual R = F - K*u (should be ~0 for converged solution)
-            K_dense_check = K_csr.toarray() if hasattr(K_csr, "toarray") else np.asarray(K_csr.todense())
-            R = F - K_dense_check @ u
+            R = F - K_csr @ u
             R0 = float(np.linalg.norm(F)) + EPS_GENERAL  # initial residual norm
             _convergence_report = _ucf.check_all(R=R, R0=R0, u=u, K=K_csr, F=F)
             if not _convergence_report.get("converged", True):
@@ -9764,7 +9955,7 @@ def solve_fem_3d_linear_elastic_real(mesh: FEMMesh3D, young_modulus: float, pois
         "mesh_quality_max": float(np.max(mesh_quality)),
         # BC audit trail (PhD reproducibility uchun)
         "fixed_dof_count": int(fixed_dof_count),
-        "solver_method": "scipy.sparse.linalg.spsolve",
+        "solver_method": solver_method,
         "num_nodes": int(num_nodes),
         "num_elements": int(num_elements),
         # FIX v9.11.19 #4: UnifiedConvergenceFramework report
@@ -9774,6 +9965,16 @@ def solve_fem_3d_linear_elastic_real(mesh: FEMMesh3D, young_modulus: float, pois
 
 def build_hexahedral_mesh(nx: int = 8, ny: int = 6, nz: int = 5,
                           lengths: Tuple[float, float, float] = (100.0, 60.0, 40.0)) -> FEMMesh3D:
+    for name, value in (("nx", nx), ("ny", ny), ("nz", nz)):
+        if isinstance(value, bool) or not isinstance(value, (int, np.integer)) or value < 2:
+            raise FEMMeshError(f"{name} must be an integer >= 2, got {value!r}.")
+    try:
+        lengths = tuple(float(value) for value in lengths)
+    except (TypeError, ValueError) as exc:
+        raise FEMMeshError("Mesh lengths must contain three numeric values.") from exc
+    if (len(lengths) != 3 or not np.all(np.isfinite(lengths))
+            or any(value <= 0 for value in lengths)):
+        raise FEMMeshError(f"Mesh lengths must be three finite positive values, got {lengths}.")
     lx, ly, lz = lengths
     xs = np.linspace(0.0, lx, nx)
     ys = np.linspace(0.0, ly, ny)
@@ -13098,18 +13299,33 @@ def init_db():
         pressure REAL,
         timestamp TEXT
     );
-    INSERT OR IGNORE INTO sensor_data (temperature, pressure, gas_co, gas_h2, gas_ch4)
-    VALUES (450.5, 2.4, 12.5, 18.2, 5.4);
-    INSERT OR IGNORE INTO rock_properties (rock_type, init_ucs, curr_ucs, temp_exposed)
-    VALUES ('Siltstone', 65.0, 32.4, 600.0);
-    INSERT OR IGNORE INTO predictions (collapse_risk, pinn_accuracy, status)
-    VALUES (15.4, 0.94, 'Safe');
+    INSERT INTO sensor_data (temperature, pressure, gas_co, gas_h2, gas_ch4)
+    SELECT 450.5, 2.4, 12.5, 18.2, 5.4
+    WHERE NOT EXISTS (
+        SELECT 1 FROM sensor_data
+        WHERE temperature = 450.5 AND pressure = 2.4 AND gas_co = 12.5
+          AND gas_h2 = 18.2 AND gas_ch4 = 5.4
+    );
+    INSERT INTO rock_properties (rock_type, init_ucs, curr_ucs, temp_exposed)
+    SELECT 'Siltstone', 65.0, 32.4, 600.0
+    WHERE NOT EXISTS (
+        SELECT 1 FROM rock_properties
+        WHERE rock_type = 'Siltstone' AND init_ucs = 65.0
+          AND curr_ucs = 32.4 AND temp_exposed = 600.0
+    );
+    INSERT INTO predictions (collapse_risk, pinn_accuracy, status)
+    SELECT 15.4, 0.94, 'Safe'
+    WHERE NOT EXISTS (
+        SELECT 1 FROM predictions
+        WHERE collapse_risk = 15.4 AND pinn_accuracy = 0.94 AND status = 'Safe'
+    );
     """)
     conn.commit()
     conn.close()
     logger.info("SQLite3 ma'lumotlar bazasi tayyor: ucg_monitoring.db (WAL mode enabled)")
 
-init_db()
+# Database creation and demo-row seeding are deferred to main(). Importing
+# this module as a library must not modify the caller's filesystem or database.
 
 
 # ── Fizika parametrlari ──────────────────────────────────────────────────
@@ -33743,6 +33959,7 @@ def embedded_files_info() -> Dict[str, Any]:
 
 
 def main():
+    init_db()
     # ════════════════════════════════════════════════════════════════════════
     # [MERGE] Top-level mode selector: v6 Geomechanical vs v7 UCG Reactor
     # ════════════════════════════════════════════════════════════════════════
@@ -38670,7 +38887,7 @@ class ManufacturedSolutionValidator:
 class FEMSolverValidator:
     """
     FIX 8: FEM solver ilmiy validatsiyasi.
-    - Patch test (constant strain recovery, machine precision)
+    - Affine displacement kinematic sanity check (not a solver-level patch test)
     - Mesh independence study (h-refinement with convergence rate)
     - Analytical verification (Kirsch solution for circular cavity)
     """
@@ -38678,8 +38895,12 @@ class FEMSolverValidator:
     @staticmethod
     def patch_test_8node_hexahedron() -> Dict[str, Any]:
         """
-        Patch test: 8-node hexahedral element uchun constant strain field
-        aniq (machine precision ~ 1e-14) qayta tiklanishi kerak.
+        Check affine nodal displacement differences on a unit cube.
+
+        This checks the prescribed nodal field only; it does not call the
+        Hex8 shape functions, element B-matrix, stiffness assembly, or FEM
+        solver. It must therefore not be presented as a solver-level FEM
+        patch test or as evidence that the application solver is verified.
         """
         # Single cube element [0,1]^3
         nodes = np.array([
@@ -38697,18 +38918,24 @@ class FEMSolverValidator:
         eps_xx_computed = (u_exact[1] - u_exact[0]) / 1.0  # ∂u/∂x
         eps_yy_computed = (u_exact[2] - u_exact[1]) / 1.0  # ∂u/∂y
         eps_zz_computed = (u_exact[4] - u_exact[0]) / 1.0  # ∂u/∂z
+        max_relative_error = float(max(
+            abs(eps_xx_computed - eps_xx_exact) / (abs(eps_xx_exact) + 1e-15),
+            abs(eps_yy_computed - eps_yy_exact) / (abs(eps_yy_exact) + 1e-15),
+            abs(eps_zz_computed - eps_zz_exact) / (abs(eps_zz_exact) + 1e-15),
+        ))
         return {
-            "test_name": "Iron patch test (8-node hexahedron)",
+            "test_name": "Affine nodal displacement kinematic sanity check",
             "applied_field": f"u = {a} + {b}*x + {c}*y + {d}*z",
             "exact_strains": {"eps_xx": eps_xx_exact, "eps_yy": eps_yy_exact, "eps_zz": eps_zz_exact},
             "computed_strains": {"eps_xx": float(eps_xx_computed), "eps_yy": float(eps_yy_computed), "eps_zz": float(eps_zz_computed)},
-            "max_relative_error": float(max(
-                abs(eps_xx_computed - eps_xx_exact) / (abs(eps_xx_exact) + 1e-15),
-                abs(eps_yy_computed - eps_yy_exact) / (abs(eps_yy_exact) + 1e-15),
-                abs(eps_zz_computed - eps_zz_exact) / (abs(eps_zz_exact) + 1e-15),
-            )),
-            "patch_test_passed": True,  # Constant field is exactly recovered
-            "machine_precision_achieved": True,
+            "max_relative_error": max_relative_error,
+            "patch_test_passed": bool(max_relative_error < 1e-12),
+            "machine_precision_achieved": bool(max_relative_error < 1e-12),
+            "solver_invoked": False,
+            "scope": (
+                "Nodal affine-field arithmetic only; does not exercise FEM "
+                "shape functions, element stiffness, assembly, or boundary conditions."
+            ),
             "verification_timestamp": _utc_now_iso(),
         }
 
@@ -38837,20 +39064,33 @@ class FEMSolverValidator:
 
     @classmethod
     def full_validation_suite(cls, solver_func: Optional[Callable[[int], np.ndarray]] = None) -> Dict[str, Any]:
-        """Run all three FEM validations."""
+        """
+        Run numerical checks while distinguishing demonstrations from FEM verification.
+
+        The current affine check does not invoke the FEM solver, so this
+        routine cannot truthfully report full solver validation as passed.
+        """
         patch = cls.patch_test_8node_hexahedron()
+        solver_was_supplied = solver_func is not None
         if solver_func is None:
-            # Default: simple linear displacement scaling
+            # Demonstration sequence only; not output from the FEM solver.
             solver_func = lambda n: np.array([0.001 * (1.0 - 0.5 / n)])
         mesh_indep = cls.mesh_independence_study(solver_func)
         kirsch = cls.analytical_verification_kirsch()
         return {
             "patch_test": patch,
             "mesh_independence": mesh_indep,
+            "mesh_independence_input": (
+                "caller_supplied_solver" if solver_was_supplied else "synthetic_demo_sequence"
+            ),
             "analytical_verification": kirsch,
-            "all_passed": bool(patch["patch_test_passed"] and
-                                mesh_indep["mesh_independence_achieved"] and
-                                kirsch["analytical_verification_passed"]),
+            "all_passed": False,
+            "full_solver_validation_passed": False,
+            "validation_limitation": (
+                "A solver-level Hex8 patch test has not been implemented; "
+                "the affine check is kinematic-only. Full FEM validation is "
+                "therefore not established by this suite."
+            ),
             "validation_timestamp": _utc_now_iso(),
         }
 
