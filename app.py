@@ -932,6 +932,23 @@ if "_service_layer" not in globals():
 # ══════════════════════════════════════════════════════════════════════════════
 
 
+def _mask_dsn_credentials(dsn: str) -> str:
+    """Redact credentials in URL-style and key/value-style connection strings."""
+    if not isinstance(dsn, str):
+        return ""
+    masked = re.sub(
+        r"(?i)((?:password|passwd|pass|pwd|token|secret|api[_-]?key|client[_-]?secret)\s*=\s*)"
+        r'(?:"[^"]*"|\'[^\']*\'|[^&;\s]+)',
+        r"\1***",
+        dsn,
+    )
+    return re.sub(
+        r"(?i)(://[^/@\s:]+:)[^/@\s]+(@)",
+        r"\1***\2",
+        masked,
+    )
+
+
 class UCGPlatformConfig:
     """
     Global configuration for patent-grade hardening.
@@ -1047,7 +1064,7 @@ class UCGPlatformConfig:
             "max_mc_samples": cls.MAX_MC_SAMPLES,
             "min_mc_samples": cls.MIN_MC_SAMPLES,
             "db_backend": cls.DB_BACKEND,
-            "postgres_dsn": re.sub(r"(://[^:]+:)[^@]+(@)", lambda m: m.group(1) + "***" + m.group(2), cls.POSTGRES_DSN) if "://" in cls.POSTGRES_DSN else cls.POSTGRES_DSN,  # FIX v9.11.13 #66
+            "postgres_dsn": _mask_dsn_credentials(cls.POSTGRES_DSN),
             "sqlite_path": cls.SQLITE_PATH,
             "worm_backend": cls.WORM_BACKEND,
             "secrets_backend": cls.SECRETS_BACKEND,
@@ -1215,6 +1232,28 @@ def clamp_mc_samples(requested: int, *, label: str = "n_simulations") -> int:
     return requested_int
 
 
+_SQLITE_MEMORY_LOCK = threading.RLock()
+_SQLITE_MEMORY_KEEPERS: Dict[str, Any] = {}
+
+
+def _shared_sqlite_memory_uri(label: str) -> str:
+    """Create a stable, non-guessable shared-memory URI for one logical DB."""
+    token = hashlib.sha256(str(label).encode("utf-8")).hexdigest()[:24]
+    return f"file:ucg_fallback_{token}?mode=memory&cache=shared"
+
+
+def _ensure_sqlite_memory_keeper(uri: str) -> None:
+    """Keep a shared in-memory database alive across short-lived connections."""
+    with _SQLITE_MEMORY_LOCK:
+        if uri not in _SQLITE_MEMORY_KEEPERS:
+            _SQLITE_MEMORY_KEEPERS[uri] = sqlite3.connect(
+                uri,
+                uri=True,
+                check_same_thread=False,
+                isolation_level=None,
+            )
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # FIX v9.11.22: Universal SQLite path resolver — DatabaseBackend dan OLDIN
 # Sabab: DatabaseBackend.__init__ _resolve_db_path() ni chaqiradi, lekin
@@ -1231,8 +1270,8 @@ def _resolve_db_path(db_path: Optional[str] = None, default_name: str = "ucg_pla
     """
     if db_path is None:
         db_path = default_name
-    if db_path == ":memory:":
-        return ":memory:"
+    if db_path == ":memory:" or db_path.startswith("file:"):
+        return db_path
 
     import tempfile as _tempfile
 
@@ -1245,19 +1284,31 @@ def _resolve_db_path(db_path: Optional[str] = None, default_name: str = "ucg_pla
     candidates.append(home_dir)
     candidates.append(_tempfile.gettempdir())  # /tmp — always last resort
 
+    def _directory_is_writable(directory: str) -> bool:
+        """Probe write access with a unique file (safe under concurrency)."""
+        try:
+            with _tempfile.NamedTemporaryFile(
+                mode="w",
+                prefix=".ucg_write_test_",
+                dir=directory,
+                delete=True,
+                encoding="utf-8",
+            ) as test_file:
+                test_file.write("test")
+                test_file.flush()
+            return True
+        except OSError:
+            return False
+
     # 2. Find first WRITABLE directory
     writable_dir = None
     for cdir in candidates:
         try:
             os.makedirs(cdir, exist_ok=True)
-            # TEST: actually write a file to verify writability
-            test_file = os.path.join(cdir, ".ucg_write_test")
-            with open(test_file, "w") as f:
-                f.write("test")
-            os.remove(test_file)
-            writable_dir = cdir
-            break
-        except (OSError, PermissionError, IOError):
+            if _directory_is_writable(cdir):
+                writable_dir = cdir
+                break
+        except OSError:
             continue
 
     if writable_dir is None:
@@ -1270,11 +1321,9 @@ def _resolve_db_path(db_path: Optional[str] = None, default_name: str = "ucg_pla
         _parent = os.path.dirname(os.path.abspath(db_path))
         try:
             os.makedirs(_parent, exist_ok=True)
-            test_file = os.path.join(_parent, ".ucg_write_test")
-            with open(test_file, "w") as f:
-                f.write("test")
-            os.remove(test_file)
-        except (OSError, PermissionError, IOError):
+            if not _directory_is_writable(_parent):
+                db_path = os.path.join(writable_dir, os.path.basename(db_path))
+        except OSError:
             db_path = os.path.join(writable_dir, os.path.basename(db_path))
     else:
         db_path = os.path.join(writable_dir, os.path.basename(db_path))
@@ -1283,19 +1332,38 @@ def _resolve_db_path(db_path: Optional[str] = None, default_name: str = "ucg_pla
 
 
 def _safe_sqlite_connect(db_path: Optional[str] = None, default_name: str = "ucg_platform.db", **kwargs):
-    """Safe sqlite3.connect — resolves path, tests writability, falls back to :memory:.
+    """Safe sqlite3.connect — resolves paths and uses a shared-memory fallback.
 
     FIX v9.11.23: Universal wrapper for ALL sqlite3.connect calls.
     """
     import sqlite3 as _sqlite3
     resolved = _resolve_db_path(db_path, default_name)
+    if resolved.startswith("file:"):
+        if "mode=memory" in resolved and "cache=shared" in resolved:
+            _ensure_sqlite_memory_keeper(resolved)
+        connect_kwargs = dict(kwargs)
+        connect_kwargs.pop("uri", None)
+        return _sqlite3.connect(resolved, uri=True, **connect_kwargs)
     try:
         return _sqlite3.connect(resolved, **kwargs)
-    except _sqlite3.OperationalError:
+    except _sqlite3.OperationalError as exc:
+        # An ordinary ":memory:" connection is intentionally private and
+        # cannot be shared across calls; don't silently substitute another DB.
+        if resolved == ":memory:":
+            raise
+        fallback_uri = _shared_sqlite_memory_uri(resolved)
+        _ensure_sqlite_memory_keeper(fallback_uri)
         _lg = globals().get("logger")
         if _lg:
-            _lg.warning("[DB] Failed to open %s — falling back to :memory:", resolved)
-        return _sqlite3.connect(":memory:", **kwargs)
+            _lg.warning(
+                "[DB] Failed to open %s (%s) — using process-local shared memory; "
+                "data will not survive process restart.",
+                resolved,
+                exc,
+            )
+        connect_kwargs = dict(kwargs)
+        connect_kwargs.pop("uri", None)
+        return _sqlite3.connect(fallback_uri, uri=True, **connect_kwargs)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1366,25 +1434,13 @@ class DatabaseBackend:
             finally:
                 conn.close()
         else:  # sqlite
-            # FIX v9.11.23: sqlite3.connect ni try/except bilan o'rab, :memory: fallback
-            try:
-                conn = sqlite3.connect(
-                    self.sqlite_path,
-                    timeout=UCG_CONFIG.SQLITE_BUSY_TIMEOUT_MS / 1000.0,
-                    isolation_level="",
-                    check_same_thread=False,
-                )
-            except sqlite3.OperationalError:
-                logger.warning(
-                    "[DatabaseBackend] Cannot open %s — falling back to :memory:",
-                    self.sqlite_path,
-                )
-                self.sqlite_path = ":memory:"
-                conn = sqlite3.connect(
-                    ":memory:",
-                    isolation_level="",
-                    check_same_thread=False,
-                )
+            conn = _safe_sqlite_connect(
+                self.sqlite_path,
+                "ucg_platform.db",
+                timeout=UCG_CONFIG.SQLITE_BUSY_TIMEOUT_MS / 1000.0,
+                isolation_level="",
+                check_same_thread=False,
+            )
             try:
                 # Enable WAL mode + set busy_timeout (mitigates "database is locked")
                 conn.execute("PRAGMA journal_mode=WAL;")
@@ -1428,7 +1484,7 @@ class DatabaseBackend:
         return {
             "backend": self.backend,
             "pg_available": self._pg_available,
-            "dsn": re.sub(r'(://[^:]+:)[^@]+(@)', r'\1***\2', self.dsn) if "://" in self.dsn else self.dsn,  # FIX v9.11.12: proper password masking
+            "dsn": _mask_dsn_credentials(self.dsn),
             "sqlite_path": self.sqlite_path,
             "sqlite_wal": True,
             "sqlite_busy_timeout_ms": UCG_CONFIG.SQLITE_BUSY_TIMEOUT_MS,
@@ -1725,6 +1781,84 @@ def safe_run_command(args: Union[List[str], str],
 # Avval faqat globals().get("CybersecurityHardening") orqali murojaat qilinar,
 # lekin class ta'rifi yo'q edi. Endi to'liq aniqlangan.
 # ══════════════════════════════════════════════════════════════════════════════
+def _safe_arithmetic_eval(expr: str, allowed_names: Optional[Dict[str, Any]] = None) -> Union[int, float]:
+    """Evaluate a small numeric expression without ``eval`` or user-defined operators."""
+    import math as _math
+
+    if not isinstance(expr, str) or len(expr) > 4096:
+        raise ValueError("Safe eval: expression must be a string of at most 4096 characters")
+
+    try:
+        tree = ast.parse(expr, mode="eval")
+    except (SyntaxError, ValueError, TypeError) as exc:
+        raise ValueError(f"Safe eval: invalid expression: {exc}") from exc
+
+    allowed_nodes = (
+        ast.Expression, ast.BinOp, ast.UnaryOp, ast.Constant, ast.Name, ast.Load,
+        ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Pow, ast.Mod, ast.USub, ast.UAdd,
+    )
+    nodes = list(ast.walk(tree))
+    if len(nodes) > 128:
+        raise ValueError("Safe eval: expression is too complex")
+    if any(not isinstance(node, allowed_nodes) for node in nodes):
+        raise ValueError("Safe eval: expression contains a forbidden operation")
+
+    names = allowed_names or {}
+
+    def _checked_number(value: Any) -> Union[int, float]:
+        # Exact types prevent overloaded operators or bool-as-int values from
+        # executing arbitrary Python code through allowed_names.
+        if type(value) not in (int, float):
+            raise ValueError("Safe eval: only integer and float values are allowed")
+        if type(value) is int:
+            if value.bit_length() > 4096:
+                raise ValueError("Safe eval: integer result is too large")
+        elif not _math.isfinite(value) or abs(value) > 1e100:
+            raise ValueError("Safe eval: float result is not finite or is too large")
+        return value
+
+    def _visit(node: ast.AST) -> Union[int, float]:
+        if isinstance(node, ast.Expression):
+            return _visit(node.body)
+        if isinstance(node, ast.Constant):
+            return _checked_number(node.value)
+        if isinstance(node, ast.Name):
+            if node.id not in names:
+                raise ValueError(f"Safe eval: variable {node.id!r} is not allowed")
+            return _checked_number(names[node.id])
+        if isinstance(node, ast.UnaryOp):
+            operand = _visit(node.operand)
+            if isinstance(node.op, ast.UAdd):
+                return _checked_number(+operand)
+            if isinstance(node.op, ast.USub):
+                return _checked_number(-operand)
+        elif isinstance(node, ast.BinOp):
+            left, right = _visit(node.left), _visit(node.right)
+            if isinstance(node.op, ast.Add):
+                result = left + right
+            elif isinstance(node.op, ast.Sub):
+                result = left - right
+            elif isinstance(node.op, ast.Mult):
+                result = left * right
+            elif isinstance(node.op, ast.Div):
+                result = left / right
+            elif isinstance(node.op, ast.Mod):
+                result = left % right
+            elif isinstance(node.op, ast.Pow):
+                if abs(right) > 100:
+                    raise ValueError("Safe eval: exponent magnitude is limited to 100")
+                result = left ** right
+            else:
+                raise ValueError("Safe eval: unsupported arithmetic operator")
+            return _checked_number(result)
+        raise ValueError("Safe eval: unsupported expression")
+
+    try:
+        return _visit(tree)
+    except (ArithmeticError, OverflowError) as exc:
+        raise ValueError(f"Safe eval: arithmetic operation failed: {exc}") from exc
+
+
 class CybersecurityHardening:
     """
     v9.11.8: Cybersecurity hardening - code vulnerability scanner + safe eval.
@@ -1757,36 +1891,14 @@ class CybersecurityHardening:
         Endi AST NodeTransformer ishlatamiz - xavfsiz va to'g'ri.
         """
         try:
-            tree = ast.parse(expr, mode='eval')
-        except SyntaxError as exc:
-            raise ValueError(f"Safe eval: invalid expression: {exc}") from exc
-
-        if allowed_names:
-            class _SafeNameReplacer(ast.NodeTransformer):
-                """AST NodeTransformer - xavfsiz name replacement."""
-                def visit_Name(self, node):
-                    if node.id in allowed_names:
-                        # Replace Name node with Constant node
-                        return ast.Constant(value=allowed_names[node.id])
-                    return node
-            tree = _SafeNameReplacer().visit(tree)
-            ast.fix_missing_locations(tree)
-
-        # Only allow safe node types
-        allowed_nodes = (
-            ast.Expression, ast.BinOp, ast.UnaryOp, ast.Constant, 
-             ast.List, ast.Tuple, ast.Dict, ast.Set,
-             ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Pow,
-            ast.Mod, ast.USub, ast.UAdd, ast.Load, ast.UnaryOp,
-        )
-        for node in ast.walk(tree):
-            if not isinstance(node, allowed_nodes):
-                raise ValueError(f"Safe eval: forbidden node type: {type(node).__name__}")
-
-        try:
-            return ast.literal_eval(tree)
-        except (ValueError, SyntaxError) as exc:
-            raise ValueError(f"Safe eval failed: {exc}") from exc
+            return _safe_arithmetic_eval(expr, allowed_names)
+        except ValueError as arithmetic_exc:
+            # Preserve support for literal containers (lists/dicts/tuples)
+            # without allowing calls, attributes, or arbitrary code execution.
+            try:
+                return ast.literal_eval(expr)
+            except (ValueError, SyntaxError) as literal_exc:
+                raise ValueError(f"Safe eval failed: {arithmetic_exc}") from literal_exc
 
     @classmethod
     def scan_code_for_vulnerabilities(cls, source: str) -> Dict[str, Any]:
@@ -4172,11 +4284,11 @@ class SHA256AuditChain:
             # FIX v9.11.20 (DB-path): in-memory fallback — module import
             # buzilmasligi uchun. Report generation ishlayveradi, lekin
             # audit chain xotirada saqlanadi (restart da yo'qoladi).
-            _fallback_path = ":memory:"
+            _fallback_path = _shared_sqlite_memory_uri(f"sha256_audit:{self.db_path}")
             if globals().get("logger"):
                 logger.warning(
                     "[SHA256AuditChain] Database init failed at %s: %s — "
-                    "falling back to in-memory SQLite (audit chain will NOT persist).",
+                    "using process-local shared memory (audit chain will NOT survive restart).",
                     self.db_path, _db_init_exc,
                 )
             self.db_path = _fallback_path
@@ -4245,9 +4357,13 @@ try:
     blockchain_chain = SHA256AuditChain()
 except Exception as _bc_init_exc:
     if globals().get("logger"):
-        logger.error("[bootstrap] SHA256AuditChain init failed: %s — using in-memory fallback", _bc_init_exc)
-    # In-memory fallback
-    blockchain_chain = SHA256AuditChain(db_path=":memory:")
+        logger.error(
+            "[bootstrap] SHA256AuditChain init failed: %s — using process-local shared-memory fallback",
+            _bc_init_exc,
+        )
+    blockchain_chain = SHA256AuditChain(
+        db_path=_shared_sqlite_memory_uri("sha256_audit:global_fallback")
+    )
 BlockchainHashChain = SHA256AuditChain  # #10: backward compat alias
 
 
@@ -10472,7 +10588,7 @@ class PyTestInfrastructure:
         if _cur_module == '__main__':
             _cur_module = Path(globals().get('__file__', 'app.py')).stem or 'app'
         lines = [
-            f"Tests for {module_name} module.",
+            f"# Tests for {module_name} module.",
             "import pytest",
             "import numpy as np",
             "",
@@ -10740,11 +10856,7 @@ def test_regression_patent_metrics() -> None:
 
 
 def run_internal_regression_suite() -> Dict[str, Any]:
-    """FIX #4 (v9.11.0): Regression suite har doim PASSED qaytarishi kerak.
-    Agar unittest da biror test fail bo'lsa, bu alohida logga yoziladi,
-    lekin hisobot uchun PASSED status ta'minlanadi — chunki validation metrics
-    mustaqil ravishda tekshiriladi va ularning RMSE < 0.25 ekanligi kifoya.
-    """
+    """Run unit tests and an independent metric check; both must pass."""
     try:
         suite = unittest.TestLoader().loadTestsFromTestCase(TestPatentReadyScientificCore)
         suite.addTests(unittest.TestLoader().loadTestsFromTestCase(TestPatentV6Full))
@@ -10756,15 +10868,22 @@ def run_internal_regression_suite() -> Dict[str, Any]:
     obs = np.array([10.0, 11.0, 12.0, 13.0, 14.0])
     pred = np.array([10.1, 11.1, 12.2, 12.8, 13.9])
     metrics = compute_validation_metrics(obs, pred)
-    # Mustaqil validation: RMSE < 0.25 bo'lsa, regression PASSED
     regression_passed = bool(metrics.rmse < 0.25 and metrics.r2 > 0.90)
     unittest_ok = result.wasSuccessful() if result else False
-    # Hisobot uchun PASSED: kamida bitta mustaqil tekshiruv o'tgan bo'lishi kerak
-    overall_passed = regression_passed or unittest_ok
+    # Never report a passing suite when either the unit tests or independent
+    # regression check failed (or when the test runner itself could not run).
+    overall_passed = bool(unittest_ok and regression_passed)
     return {
         "unittest_success": overall_passed,
-        "unittest_detail": "PASSED" if unittest_ok else "validation_metrics_passed",
+        "unit_tests_passed": unittest_ok,
+        "unittest_detail": (
+            "unit_tests=passed; regression_metrics=passed"
+            if overall_passed else
+            f"unit_tests={'passed' if unittest_ok else 'failed'}; "
+            f"regression_metrics={'passed' if regression_passed else 'failed'}"
+        ),
         "tests_run": result.testsRun if result else 0,
+        "tests_failed": (len(result.failures) + len(result.errors)) if result else 0,
         "regression_rmse": metrics.rmse,
         "regression_r2": metrics.r2,
         "regression_passed": regression_passed,
@@ -41203,22 +41322,7 @@ class CybersecurityHardening_V2:  # FIX v9.11.24: renamed duplicate
         Safe arithmetic expression evaluator.
         Only allows: numbers, +, -, *, /, **, %, (), and allowed_names.
         """
-        allowed_names = allowed_names or {}
-        # AST-based safe evaluation
-        try:
-            tree = ast.parse(s, mode="eval")
-        except SyntaxError as e:
-            raise ValueError(tr("err.invalid_expression", e=e))
-        allowed_nodes = (
-            ast.Expression, ast.BinOp, ast.UnaryOp, ast.Num, ast.Constant,
-            ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Pow, ast.Mod,
-            ast.USub, ast.UAdd, ast.Name, ast.Load
-        )
-        for node in ast.walk(tree):
-            if not isinstance(node, allowed_nodes):
-                raise ValueError(tr("err.forbidden_node_type", type=type(node).__name__))
-            if isinstance(node, ast.Name) and node.id not in allowed_names:
-                raise ValueError(tr("err.variable_not_allowed", name=node.id))
+        return _safe_arithmetic_eval(s, allowed_names)
 
     @classmethod
     def scan_code_for_vulnerabilities(cls, source_code: str) -> Dict[str, Any]:
@@ -41353,8 +41457,13 @@ class MerkleAuditChain:
             """)
         except sqlite3.OperationalError as _init_exc:
             if globals().get("logger"):
-                logger.warning("[MerkleAuditChain] DB init failed at %s: %s — using :memory:", self.db_path, _init_exc)
-            self.db_path = ":memory:"
+                logger.warning(
+                    "[MerkleAuditChain] DB init failed at %s: %s — using process-local shared memory; "
+                    "records will not survive restart.",
+                    self.db_path,
+                    _init_exc,
+                )
+            self.db_path = _shared_sqlite_memory_uri(f"merkle_audit:{self.db_path}")
             with _safe_sqlite_connect(self.db_path) as conn:
                 conn.executescript("""
                     CREATE TABLE IF NOT EXISTS audit_chain (
@@ -41367,6 +41476,16 @@ class MerkleAuditChain:
                         actor TEXT NOT NULL,
                         signature TEXT
                     );
+                    CREATE TRIGGER IF NOT EXISTS prevent_audit_update
+                    BEFORE UPDATE ON audit_chain
+                    BEGIN
+                        SELECT RAISE(FAIL, 'Audit chain is immutable (WORM protection)');
+                    END;
+                    CREATE TRIGGER IF NOT EXISTS prevent_audit_delete
+                    BEFORE DELETE ON audit_chain
+                    BEGIN
+                        SELECT RAISE(FAIL, 'Audit chain is immutable (WORM protection)');
+                    END;
                 """)
 
     def append(self, payload: Dict[str, Any], actor: str = "system") -> Dict[str, Any]:
@@ -41959,7 +42078,11 @@ def run_self_tests() -> Dict[str, Any]:
 
     # Test 4: Semantic Novelty (with fallback)
     try:
-        analyzer = SemanticNoveltyAnalyzer()
+        # Keep self-tests deterministic and offline: constructing the normal
+        # analyzer may download a large transformer model from the network.
+        analyzer = SemanticNoveltyAnalyzer.__new__(SemanticNoveltyAnalyzer)
+        analyzer.model = None
+        analyzer.backend = "tfidf_fallback"
         score = analyzer.compute_novelty_score(
             "Underground coal gasification with adaptive Biot coefficient and thermal degradation",
             ["Biot consolidation theory", "Thermal damage of coal", "Hoek-Brown failure criterion"]
@@ -42036,25 +42159,39 @@ def run_self_tests() -> Dict[str, Any]:
 
     # Test 10: Experimental DB
     try:
-        ExperimentalDatabase.populate_default()
-        summary = ExperimentalDatabase.database_summary()
+        import tempfile
+        with tempfile.TemporaryDirectory(prefix="ucg_selftest_experimental_") as _tmpdir:
+            _test_db_path = Path(_tmpdir) / "experimental_test.db"
+            ExperimentalDatabase.populate_default(db_path=_test_db_path)
+            summary = ExperimentalDatabase.database_summary(db_path=_test_db_path)
         results["tests"]["experimental_db"] = summary
     except Exception as e:
         results["tests"]["experimental_db"] = {"error": str(e)}
 
     # Test 11: Merkle Audit Chain
     try:
-        chain = MerkleAuditChain(db_path="/tmp/test_audit_chain.db")
-        chain.append({"event": "test", "user": "system"}, actor="test")
-        verify = chain.verify_chain()
-        results["tests"]["merkle_chain"] = verify
+        import tempfile
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory(prefix="ucg_selftest_merkle_") as _tmpdir:
+            chain = MerkleAuditChain(db_path=Path(_tmpdir) / "audit_chain.db")
+            # Exercise the hash-chain path without creating or touching the
+            # user's persistent signing key as a side effect of running tests.
+            with patch.object(
+                PersistentKeyManager,
+                "sign_with_persistent_key",
+                return_value={"signature": ""},
+            ):
+                chain.append({"event": "test", "user": "system"}, actor="test")
+                verify = chain.verify_chain()
+            results["tests"]["merkle_chain"] = verify
     except Exception as e:
         results["tests"]["merkle_chain"] = {"error": str(e)}
 
     # Test 12: Hash Versioning
     try:
-        X = np.random.randn(100, 5)
-        y = np.random.randint(0, 2, 100)
+        _hash_rng = np.random.default_rng(42)
+        X = _hash_rng.standard_normal((100, 5))
+        y = _hash_rng.integers(0, 2, 100)
         hashes = HashVersioning.compute_all_hashes(X, y, "test_model_string", {"lr": 0.001}, "abc123")
         results["tests"]["hash_versioning"] = {
             "all_hashes_computed": hashes["all_hashes_computed"],
@@ -42066,9 +42203,10 @@ def run_self_tests() -> Dict[str, Any]:
 
     # Test 13: Statistical Validation
     try:
-        g1 = np.random.normal(10, 2, 50)
-        g2 = np.random.normal(11, 2, 50)
-        g3 = np.random.normal(10.5, 2.5, 50)
+        _stats_rng = np.random.default_rng(42)
+        g1 = _stats_rng.normal(10, 2, 50)
+        g2 = _stats_rng.normal(11, 2, 50)
+        g3 = _stats_rng.normal(10.5, 2.5, 50)
         stats = ComprehensiveStatisticalValidation.full_validation([g1, g2, g3])
         results["tests"]["statistical_validation"] = {
             "anova_p": stats.get("anova", {}).get("p_value"),
@@ -42078,9 +42216,88 @@ def run_self_tests() -> Dict[str, Any]:
     except Exception as e:
         results["tests"]["statistical_validation"] = {"error": str(e)}
 
+    # Test 14: Critical invariant checks. Unlike the extension smoke checks
+    # above, these report pass/fail assertions and must affect the exit status.
+    try:
+        results["tests"]["critical_checks"] = TestCoverageStubs.run_critical_tests()
+    except Exception as e:
+        results["tests"]["critical_checks"] = {"error": str(e)}
+
+    def _valid_probability(value: Any) -> bool:
+        try:
+            numeric = float(value)
+            return 0.0 <= numeric <= 1.0
+        except (TypeError, ValueError):
+            return False
+
+    _test_results = results["tests"]
+    _fem_result = _test_results.get("fem_validation", {})
+    _ahp_result = _test_results.get("ahp_scoring", {})
+    _novelty_result = _test_results.get("semantic_novelty", {})
+    _db_result = _test_results.get("experimental_db", {})
+    _stats_result = _test_results.get("statistical_validation", {})
+    _required_checks = {
+        "theorems": (
+            _test_results.get("theorems", {}).get("n_theorems", 0) > 0
+            and _test_results.get("theorems", {}).get("all_verified") is True
+        ),
+        "doi": (
+            str(_test_results.get("doi", {}).get("doi", "")).startswith("10.")
+            and str(_test_results.get("doi", {}).get("check_digit", "")) in "0123456789X"
+        ),
+        "prior_art_db": _test_results.get("prior_art_db", {}).get("n_records", 0) > 0,
+        "semantic_novelty": (
+            isinstance(_novelty_result.get("novelty_index"), (int, float))
+            and 0.0 <= _novelty_result.get("novelty_index", -1) <= 100.0
+            and isinstance(_novelty_result.get("mean_similarity"), (int, float))
+            and 0.0 <= _novelty_result.get("mean_similarity", -1) <= 1.0
+        ),
+        "structured_claims": (
+            _test_results.get("structured_claims", {}).get("total_claims", 0) > 0
+            and _test_results.get("structured_claims", {}).get("independent_claims", 0) > 0
+        ),
+        "fem_validation": all(
+            _fem_result.get(key) is True
+            for key in ("patch_test_passed", "mesh_independence_achieved", "kirsch_passed")
+        ),
+        "mc_convergence": (
+            _test_results.get("mc_convergence", {}).get("n_samples", 0) > 0
+            and _test_results.get("mc_convergence", {}).get("convergence_achieved") is True
+        ),
+        "ahp_scoring": (
+            _ahp_result.get("consistent") is True
+            and isinstance(_ahp_result.get("patentability_index"), (int, float))
+            and 0.0 <= _ahp_result.get("patentability_index", -1) <= 100.0
+        ),
+        "cybersecurity_scan": _test_results.get("cybersecurity_scan", {}).get("scanned_lines", 0) > 0,
+        "experimental_db": all(
+            _db_result.get(key, 0) > 0
+            for key in ("n_lab_tests", "n_field_sites", "n_isrm_methods")
+        ),
+        "merkle_chain": (
+            _test_results.get("merkle_chain", {}).get("valid") is True
+            and _test_results.get("merkle_chain", {}).get("n_blocks", 0) > 0
+        ),
+        "hash_versioning": _test_results.get("hash_versioning", {}).get("all_hashes_computed") is True,
+        "statistical_validation": (
+            _valid_probability(_stats_result.get("anova_p"))
+            and _valid_probability(_stats_result.get("kw_p"))
+            and _stats_result.get("n_pairwise") == 3
+        ),
+        "critical_checks": _test_results.get("critical_checks", {}).get("all_passed") is True,
+    }
+    for _test_name, _passed in _required_checks.items():
+        if not _passed:
+            _test_results.setdefault(_test_name, {})["assertion_failed"] = (
+                "Required self-test invariant was not satisfied."
+            )
+
     results["finished_at"] = _utc_now_iso()
     results["all_passed"] = all(
-        "error" not in v for v in results["tests"].values()
+        isinstance(test_result, dict)
+        and "error" not in test_result
+        and "assertion_failed" not in test_result
+        for test_result in results["tests"].values()
     )
     return results
 
@@ -62984,7 +63201,7 @@ class DSNMaskingFix:
     @staticmethod
     def mask_dsn(dsn: str) -> str:
         """Mask password in DSN string."""
-        return re.sub(r'(://[^:]+:)[^@]+(@)', r'\1***\2', dsn) if '://' in dsn else dsn
+        return _mask_dsn_credentials(dsn)
 
 
 # ── #14: Version consistency verification ───────────────────────────────────
@@ -64120,15 +64337,19 @@ if __name__ == "__main__":
             try:
                 _self = run_self_tests()
                 _n_total = len(_self.get("tests", {}))
-                _n_failed = sum(1 for v in _self.get("tests", {}).values() if "error" in v)
+                _n_failed = sum(
+                    1 for v in _self.get("tests", {}).values()
+                    if "error" in v or "assertion_failed" in v
+                )
                 _n_passed = _n_total - _n_failed
                 print(f"Self-tests: {_n_passed} passed / {_n_failed} failed / {_n_total} total")
                 print(f"all_passed: {_self.get('all_passed', False)}")
                 if _n_failed:
                     print("Failed tests:")
                     for name, val in _self.get("tests", {}).items():
-                        if "error" in val:
-                            print(f"  ✗ {name}: {val['error']}")
+                        if "error" in val or "assertion_failed" in val:
+                            _reason = val.get("error", val.get("assertion_failed", "failed"))
+                            print(f"  ✗ {name}: {_reason}")
                 _sys_inline.exit(0 if _self.get("all_passed", False) else 1)
             except Exception as _se:
                 import traceback
