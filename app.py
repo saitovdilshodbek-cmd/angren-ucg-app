@@ -1,11 +1,11 @@
 # ════════════════════════════════════════════════════════════════════════
-# v9.11.36 — TARGETED 16-POINT AUDIT PATCH (2026-10-25)
-# Source v9.11.35 was COMPLETE and passed Python ast.parse/compile.
+# v9.11.37 — SCIENTIFIC INTEGRITY / 16-POINT EXPERT REMEDIATION (2026-10-25)
+# Based on complete v9.11.36; Python syntax checked, targeted tests provided.
 # No fabricated QA pass rates or legal patent FTO clearances are asserted.
 # New safety: exact argv allowlist, deterministic demonstrative FTO,
 # cross-platform RSS fallback, observable exception handlers,
 # multi-output counterfactuals, honest CV failures.
-# Architecture still a large single-file prototype. No field/FEA validation.
+# Research prototype. No independent THCM field validation, legal FTO or verified Abaqus/COMSOL runs.
 # ════════════════════════════════════════════════════════════════════════
 # ══ Expert targeted audit patches: 2026-10-25 ══
 # Source v9.11.35; regression-tested fixes for DI/MC/BCa/LHS/FEM/rate-limit.
@@ -11778,7 +11778,7 @@ def generate_patent_report(
         # endi dinamik: haqiqiy validation_stages natijasiga bog'liq.
         f"Overall Patentability Index: {patentability_ext['patentability_index']:.2f}/100 "
         f"(Patent-ready threshold: 75+). Novelty Index: {patentability_ext['novelty_index']:.2f}/100. "
-        f"FTO Score: {patentability_ext['fto_score']:.2f}/100 (no blocking patents). "
+        f"Automated FTO heuristic: {patentability_ext['fto_score']:.2f}/100 (NOT a legal clearance). "
         f"Claim Strength: {patentability_ext['claim_strength']:.2f}/100. "
         # FIX v9.11.19 #14: dinamik validation status
         f"Validation stages: {_n_pass} of {_n_total} PASSED "
@@ -11897,7 +11897,7 @@ def generate_patent_report(
     cap3.add_run(f"{tbl_num()}. Patentability Score Summary ({_v_str_6})").italic = True
     doc.add_paragraph(
         f"Note: Patentability Index methodology revised in {_v_str_6} based on: (1) comprehensive "
-        "FTO analysis showing no blocking patents, (2) strong claim structure "
+        "INTERNAL FTO screening only, no verified legal clearance; (2) candidate claim structure "
         "(4 independent + 11 dependent), (3) validation across 8 international field sites, "
         "(4) SHA-256 + RSA-4096 audit trail for regulatory compliance."
     )
@@ -12688,11 +12688,11 @@ def generate_patent_report(
         f"The proposed invention demonstrates high novelty (Index={novelty_df.attrs['Novelty Index']:.1f}%) "
         f"and low similarity to prior art (mean similarity={mean_similarity:.3f}). "
         f"Patentability Index = {patentability_ext['patentability_index']:.2f}/100 (AHP-weighted, methodology-revised). "
-        f"FTO Score = {patentability_ext['fto_score']:.2f}/100 (no blocking patents identified). "
+        f"Automated FTO heuristic = {patentability_ext['fto_score']:.2f}/100 (legal FTO NOT_EVALUATED). "
         f"All 10 critical physical inconsistencies from v9.11.0 have been resolved. "
-        f"All 4 validation stages PASSED. Audit trail secured via WORM SHA-256 hash chain "
+        f"Validation stages require independent data review. Audit trail contains a SHA-256 hash chain "
         f"(not 'blockchain' — append-only SHA-256 linked list with RFC-3161 timestamp notarization). "
-        f"The report supports patentability review and is suitable for UzPatent + PCT filing."
+        f"This is a draft for professional review, not an approved patent filing package."
     )
 
     # Validation certificate + signature
@@ -28659,7 +28659,7 @@ def render_v7_patent_grade_panel():
                 try:
                     result = FEMBenchmarkTable.run_benchmark_suite()
                     st.dataframe(result["benchmark_table"], use_container_width=True)
-                    st.success(result["conclusion"])
+                    st.warning(result["conclusion"])
                 except Exception as exc:
                     st.error(f"Benchmark error: {exc}")
 
@@ -31982,35 +31982,64 @@ class FastAPIIntegration:
             self.available = False
 
     def create_app(self, container: Optional[ServiceContainer] = None):
-        """Create a FastAPI app exposing UCG endpoints. Returns None if unavailable."""
+        """Explicit opt-in API; non-health endpoints need secret and rate limits.
+
+        Without UCG_API_KEY a public-facing API is NOT created (fail-closed).
+        """
         if not self.available:
             return None
-        container = container or ServiceContainer.instance()
-        app = self._FastAPI(title="UCG Platform API", version="7.2.0")
-
+        from pydantic import Field
+        from starlette.responses import JSONResponse
+        import hmac
+        key=os.getenv('UCG_API_KEY','')
+        if len(key)<24:
+            logger.warning('API disabled: configure UCG_API_KEY (minimum 24 characters)')
+            return None
+        app=self._FastAPI(title='UCG Platform API',version='9.11.37')
+        limits={}; lock=threading.Lock()
+        max_per_minute=20
+        @app.middleware('http')
+        async def guard_requests(request, call_next):
+            if request.url.path!='/health':
+                provided=request.headers.get('X-UCG-API-Key','')
+                if not hmac.compare_digest(provided,key):
+                    return JSONResponse({'detail':'Unauthorized'},status_code=401)
+                try:
+                    declared_size=int(request.headers.get('content-length','0') or '0')
+                except ValueError:
+                    return JSONResponse({'detail':'Invalid Content-Length'},status_code=400)
+                if request.method=='POST' and (declared_size<0 or declared_size>32768):
+                    return JSONResponse({'detail':'Payload too large'},status_code=413)
+                client=(request.client.host if request.client else 'unknown')
+                now=time.monotonic()
+                with lock:
+                    # shared process guard; production must use a gateway/distributed limits
+                    entry=limits.get(client,(now,0))
+                    epoch,count=(now,0) if now-entry[0]>=60 else entry
+                    if count>=max_per_minute:
+                        return JSONResponse({'detail':'Too many requests'},status_code=429)
+                    limits[client]=(epoch,count+1)
+            return await call_next(request)
         class SimRequest(self._BaseModel):
-            coal_name: str = "Bituminous (Standard)"
-            n_steps: int = 200
-            dt: float = 1.0
-            T0: float = 1200.0
-            P0: float = 10.0
-
-        @app.get("/health")
+            coal_name: str=Field(default='Bituminous (Standard)', min_length=1,max_length=80)
+            n_steps: int=Field(default=200, ge=1,le=1500)
+            dt: float=Field(default=1.0, gt=0,le=30)
+            T0: float=Field(default=1200.0, ge=273.15,le=1800)
+            P0: float=Field(default=10.0, gt=0,le=40)
+        @app.get('/health')
         def health():
-            return {"status": "ok", "config": UCGPlatformConfig.as_dict()}
-
-        @app.get("/modules")
+            return {'status':'ok'}
+        @app.get('/modules')
         def modules():
             return enterprise_modules_registry()
-
-        @app.post("/simulate")
+        @app.post('/simulate')
         def simulate(req: SimRequest):
             try:
-                df, engine, coal = run_simulation(req.coal_name, req.n_steps, req.dt, req.T0, req.P0)
-                return {"final_state": {k: float(v) for k, v in df.iloc[-1].items() if isinstance(v, (int, float))}}
-            except Exception as exc:
-                raise self._HTTPException(status_code=500, detail=str(exc))
-
+                df,engine,coal=run_simulation(req.coal_name,req.n_steps,req.dt,req.T0,req.P0)
+                return {'final_state':{k:float(v) for k,v in df.iloc[-1].items() if isinstance(v,(int,float)) and np.isfinite(float(v))}}
+            except Exception:
+                logger.exception('Protected API simulation failed')
+                raise self._HTTPException(status_code=500, detail='Simulation failed; see server log')
         return app
 
     def info(self) -> Dict[str, Any]:
@@ -33138,7 +33167,7 @@ class FTOAnalyzer:
 
         # Mitigation recommendations
         if fto_score > 0.8:
-            recommendation = "Clear to operate — no blocking patents identified"
+            recommendation = "NOT_EVALUATED — local patent screening cannot establish clearance"
             mitigation = None
         elif fto_score > 0.4:
             recommendation = "Review needed — seek license or design-around"
@@ -33169,7 +33198,9 @@ class FTOAnalyzer:
             },
             "recommendation": recommendation,
             "mitigation_steps": mitigation,
-            "analysis_method": "FIX v9.11.18 #15: Multi-stage professional FTO (semantic + jurisdiction-aware)",
+            "analysis_method": "Illustrative automated overlap screening, NOT a professional legal FTO",
+            "legal_fto_clear": None,
+            "evaluation_status": "NOT_EVALUATED",
             "jurisdictions_analyzed": list(set(b["jurisdiction"] for b in blocking)) if blocking else [],
             "expired_patents_excluded": len(self.active_claims) - len(active_unexpired),
             "reference": "WIPO FTO Guidelines (2019); EPO Guidelines G-VI; Akamai v. Limelight (2014)",
@@ -45487,15 +45518,24 @@ class RealExperimentalValidator:
                 k0 = 8.45
                 beta = 0.15
                 return k0 * np.exp(-beta * sigma_eff)
+        field_model_given = subsidence_func is not None
         if subsidence_func is None:
+            # DO NOT create a linear model fitted to the very same field values.
             def subsidence_func(t_days):
-                # Linear subsidence: 24.1 cm at 365 days → 0.066 cm/day
-                return 0.066 * t_days
+                return float('nan')
 
         results["lab1_triaxial"] = cls.validate_lab1_triaxial(hb_func)
         results["lab2_thermal"] = cls.validate_lab2_thermal(thermal_func)
         results["lab3_permeability"] = cls.validate_lab3_permeability(perm_func)
-        results["field_angren"] = cls.validate_field_angren(subsidence_func)
+        if field_model_given:
+            results["field_angren"] = cls.validate_field_angren(subsidence_func)
+            results["field_angren"]["status"] = "UNVERIFIED_SOURCE — independent holdout required"
+        else:
+            results["field_angren"] = {
+                "experiment":"Angren subsidence — source not verified",
+                "n_data_points":0, "rmse":float('nan'), "r2":float('nan'),
+                "mae":float('nan'), "mape_pct":float('nan'), "status":"NOT_EVALUATED"
+            }
 
         # Summary table
         summary_rows = []
@@ -45512,7 +45552,8 @@ class RealExperimentalValidator:
             "summary_table": pd.DataFrame(summary_rows),
             "detailed_results": results,
             "n_experiments": len(results),
-            "overall_pass": all(v["r2"] > 0.85 for v in results.values()),
+            "overall_pass": False,  # No independent provenance for preset laboratory/field data.
+            "scientific_status": "DEMONSTRATION_ONLY — source authenticity and holdout not verified",
             "generated_at": _utc_now_iso(),
         }
 
@@ -45601,121 +45642,86 @@ class AblationStudy:
                                          random_state=RANDOM_SEED, normalize_y=True)
 
     @classmethod
-    def run_study(cls, n_samples: int = 1000, cv_folds: int = 5) -> Dict[str, Any]:
+    def run_study(cls, n_samples: int=1000, cv_folds: int=5,
+                  X: Optional[np.ndarray]=None, y: Optional[np.ndarray]=None) -> Dict[str,Any]:
+        """Compare unbiased fold-held-out predictions on a labelled DEMO dataset.
+
+        For user-provided field data, grouping/temporal isolation must be provided
+        separately; a random KFold is NOT a site-independent validation.
         """
-        Run the full ablation study.
-
-        Returns a comparison table with R², RMSE, training time, inference
-        time, and statistical significance for each model.
-        """
-        from sklearn.model_selection import cross_val_score, KFold
-        from sklearn.metrics import r2_score, mean_squared_error
-        import time as _time
-
-        X, y = cls._generate_dataset(n_samples)
-        kf = KFold(n_splits=cv_folds, shuffle=True, random_state=RANDOM_SEED)
-
-        results = []
-        models_to_test = [
-            ("Random Forest", cls._train_random_forest),
-            ("XGBoost", cls._train_xgboost),
-            ("ANN (MLP)", cls._train_ann),
-            ("GPR (RBF)", cls._train_gpr),
-        ]
-
-        all_predictions = {}
-
-        for name, factory in models_to_test:
-            model = factory(X, y)
+        from sklearn.model_selection import KFold, cross_val_predict
+        from sklearn.metrics import mean_squared_error, r2_score
+        from sklearn.base import clone
+        from sklearn.pipeline import make_pipeline
+        from sklearn.preprocessing import StandardScaler
+        import pickle, time as _time
+        synthetic=X is None or y is None
+        if (X is None)!=(y is None):
+            raise ValueError('X and y must both be provided or both omitted')
+        if synthetic:
+            X,y=cls._generate_dataset(n_samples)
+        X=np.asarray(X,dtype=float); y=np.asarray(y,dtype=float).reshape(-1)
+        if X.ndim!=2 or len(X)!=len(y) or len(y)<max(10,cv_folds*3) or cv_folds<2:
+            raise ValueError('Invalid paired dataset or CV folds')
+        if not np.isfinite(X).all() or not np.isfinite(y).all():
+            raise ValueError('Nonfinite training data')
+        kf=KFold(n_splits=cv_folds,shuffle=True,random_state=RANDOM_SEED)
+        splits=list(kf.split(X,y))
+        records=[]; heldout={}
+        makers=[('Random Forest',cls._train_random_forest),('XGBoost',cls._train_xgboost),
+                ('ANN (MLP)',cls._train_ann),('GPR (RBF)',cls._train_gpr)]
+        for name,factory in makers:
+            model=factory(X,y)
             if model is None:
-                results.append({
-                    "Model": name, "R² (CV mean)": None, "R² (CV std)": None,
-                    "R² (full)": None, "RMSE": None,
-                    "Training Time (s)": None, "Inference (ms/sample)": None,
-                    "Model Size (KB)": None, "Status": "Not installed",
-                })
+                records.append({'Model':name,'Status':'NOT_INSTALLED','R² (CV mean)':None,'RMSE':None})
                 continue
-
-            # Cross-validated R²
-            t0 = _time.perf_counter()
+            if name in ('ANN (MLP)','GPR (RBF)'):
+                model=make_pipeline(StandardScaler(),model)
             try:
-                cv_scores = cross_val_score(model, X, y, cv=kf, scoring='r2', n_jobs=-1)
-                r2_cv = float(np.mean(cv_scores))
-                r2_std = float(np.std(cv_scores))
+                start=_time.perf_counter()
+                pred=cross_val_predict(model,X,y,cv=splits,n_jobs=1)
+                cv_elapsed=_time.perf_counter()-start
+                if pred.shape!=y.shape or not np.isfinite(pred).all():
+                    raise ValueError('Bad out-of-fold prediction')
+                scores=[float(r2_score(y[test],pred[test])) for _,test in splits]
+                rmse=float(np.sqrt(mean_squared_error(y,pred)))
+                heldout[name]=pred
+                t0=_time.perf_counter(); model.fit(X,y); train_sec=_time.perf_counter()-t0
+                t0=_time.perf_counter(); model.predict(X[:min(len(X),20)])
+                infer_ms=(_time.perf_counter()-t0)*1000/min(len(X),20)
+                records.append({'Model':name, 'R² (CV mean)':round(float(np.mean(scores)),4),
+                        'R² (CV std)':round(float(np.std(scores)),4),
+                        'R² (full)':None,'RMSE':round(rmse,4),
+                        'Training Time (s)':round(train_sec,4), 'CV Time (s)':round(cv_elapsed,4),
+                        'Inference (ms/sample)':round(infer_ms,6),
+                        'Model Size (KB)':round(len(pickle.dumps(model))/1024,2),
+                        'Status':'OOF_EVALUATED_DEMO' if synthetic else 'OOF_EVALUATED_NOT_EXTERNAL'})
             except Exception as exc:
-                r2_cv = None
-                r2_std = None
-                logger.warning("[Ablation] %s cross-validation failed: %s", name, exc)
-            cv_time = _time.perf_counter() - t0
-
-            # Train on full data for inference timing
-            t0 = _time.perf_counter()
-            model.fit(X, y)
-            train_time = _time.perf_counter() - t0
-
-            # Inference time (per sample)
-            t0 = _time.perf_counter()
-            y_pred = model.predict(X)
-            inference_time = (_time.perf_counter() - t0) / n_samples * 1000  # ms
-
-            # Model size
-            import pickle
-            model_size = len(pickle.dumps(model)) / 1024  # KB
-
-            # RMSE
-            rmse = float(np.sqrt(mean_squared_error(y, y_pred)))
-            r2_full = float(r2_score(y, y_pred))
-
-            all_predictions[name] = y_pred
-
-            results.append({
-                "Model": name,
-                "R² (CV mean)": round(r2_cv, 4) if r2_cv is not None else None,
-                "R² (CV std)": round(r2_std, 4) if r2_std is not None else None,
-                "R² (full)": round(r2_full, 4),
-                "RMSE": round(rmse, 4),
-                "Training Time (s)": round(train_time, 4),
-                "Inference (ms/sample)": round(inference_time, 6),
-                "Model Size (KB)": round(model_size, 2),
-                "Status": "✅ Trained" if r2_cv is not None else "CV_FAILED - trained but comparison invalid",
-            })
-
-        # Statistical significance (paired t-test between RF and each other)
-        from scipy import stats as _stats
-        significance = {}
-        if "Random Forest" in all_predictions:
-            rf_pred = all_predictions["Random Forest"]
-            for name, pred in all_predictions.items():
-                if name == "Random Forest":
-                    continue
-                # Paired t-test on absolute errors
-                rf_err = np.abs(rf_pred - y)
-                other_err = np.abs(pred - y)
-                t_stat, p_value = _stats.ttest_rel(rf_err, other_err)
-                significance[f"RF vs {name}"] = {
-                    "t_statistic": round(float(t_stat), 4),
-                    "p_value": round(float(p_value), 6),
-                    "significant (p<0.05)": bool(p_value < 0.05),
-                }
-
-        return {
-            "comparison_table": pd.DataFrame(results),
-            "statistical_significance": significance,
-            "dataset_info": {
-                "n_samples": n_samples,
-                "n_features": 7,
-                "cv_folds": cv_folds,
-                "features": ["T (K)", "P (MPa)", "depth (m)", "GSI",
-                             "UCS (MPa)", "porosity", "dip (°)"],
-                "target": "Factor of Safety (FOS)",
-            },
-            "best_model": (max((r for r in results if r.get("R² (CV mean)") is not None),
-                               key=lambda r: r["R² (CV mean)"], default={}).get("Model")),
-            "synthetic_data": True,
-            "validation_status": "DEMONSTRATION_ONLY - synthetic dataset; in-sample statistical tests are exploratory",
-
-            "generated_at": _utc_now_iso(),
-        }
+                logger.warning('[Ablation] %s failed: %s',name,exc)
+                records.append({'Model':name,'Status':'EVALUATION_FAILED','R² (CV mean)':None,
+                                'RMSE':None,'error_type':type(exc).__name__})
+        significance={}
+        if 'Random Forest' in heldout:
+            from scipy.stats import ttest_rel
+            rf=np.abs(heldout['Random Forest']-y)
+            for name,pred in heldout.items():
+                if name=='Random Forest':continue
+                other=np.abs(pred-y)
+                if np.std(rf-other)<1e-12:
+                    p=1.0; t=0.0
+                else:
+                    t,p=ttest_rel(rf,other)
+                significance['RF vs '+name]={'t_statistic':float(t),'p_value':float(p),
+                        'significant (p<0.05)':bool(p<0.05),
+                        'note':'Exploratory paired OOF comparison; spatial/temporal dependence not addressed'}
+        selected=[r for r in records if r.get('R² (CV mean)') is not None]
+        return {'comparison_table':pd.DataFrame(records),'statistical_significance':significance,
+                'dataset_info':{'n_samples':len(y),'n_features':X.shape[1],'cv_folds':cv_folds,
+                                'target':'FOS (demonstration)' if synthetic else 'User supplied'},
+                'best_model':max(selected,key=lambda x:x['R² (CV mean)'])['Model'] if selected else None,
+                'synthetic_data':synthetic,
+                'validation_status':'DEMONSTRATION_ONLY' if synthetic else 'OOF_ONLY_NOT_INDEPENDENT_FIELD_VALIDATION',
+                'generated_at':_utc_now_iso()}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -46556,17 +46562,17 @@ class CoverageReporter:
             if s.startswith(("import ", "from ", "class ", "def ", "elif ", "else:", "except ", "finally:", "try:", "if __name__")):
                 continue
             executable += 1
-        # Rough estimate: assume ~70% of executable lines are covered
-        # (based on the 36 unit tests + 13 self-tests)
-        estimated_coverage = min(95.0, 40.0 + len(lines) / 1000)
+        # No test execution occurred here. Line counts cannot estimate test coverage.
+        estimated_coverage = None
         return {
             "source_file": source_file,
             "total_lines": total_lines,
             "estimated_executable_lines": executable,
-            "estimated_coverage_pct": round(estimated_coverage, 2),
-            "n_unit_tests": 36,
-            "n_self_tests": 13,
-            "note": "This is a heuristic estimate. Run generate_report() for accurate coverage.",
+            "estimated_coverage_pct": None,
+            "n_unit_tests": None,
+            "n_self_tests": None,
+            "status": "NOT_EVALUATED",
+            "note": "Static line counts cannot determine coverage; run coverage.py and provide its JSON artifact.",
         }
 
 
@@ -47102,143 +47108,34 @@ class MemoryOptimizer:
 # 12. FEM BENCHMARK TABLE — UCG FEM vs ABAQUS vs COMSOL comparison
 # ══════════════════════════════════════════════════════════════════════════════
 class FEMBenchmarkTable:
-    """
-    FIX #12 (PhD-Grade): FEM solver benchmark against commercial solvers.
-
-    Generates a comparison table showing the UCG Platform's FEM solver
-    against ABAQUS, COMSOL, and ANSYS on standard benchmark problems:
-
-      1. Cantilever beam (analytical solution available)
-      2. Plate with hole (Kirsch analytical)
-      3. Thick-walled cylinder (Lamé analytical)
-      4. UCG cavity (no analytical — compare to ABAQUS as reference)
-
-    The table shows: max displacement error %, max stress error %,
-    computation time, memory usage.
-    """
-
-    BENCHMARK_CASES = [
-        "Cantilever Beam (Euler-Bernoulli)",
-        "Plate with Circular Hole (Kirsch)",
-        "Thick-Walled Cylinder (Lamé)",
-        "UCG Cavity (ABAQUS reference)",
-    ]
-
-    SOLVERS = ["UCG FEM", "ABAQUS", "COMSOL", "ANSYS"]
-
+    """FEM-vs-commercial benchmark facade that fails closed without evidence."""
+    BENCHMARK_CASES=['Cantilever Beam (Euler-Bernoulli)', 'Plate with Circular Hole (Kirsch)',
+                     'Thick-Walled Cylinder (Lamé)', 'UCG Cavity (ABAQUS reference)']
+    SOLVERS=['UCG FEM','ABAQUS','COMSOL','ANSYS']
     @classmethod
-    def run_benchmark_suite(cls) -> Dict[str, Any]:
-        """Run all 4 benchmark cases and return comparison table."""
-        results = []
+    def run_benchmark_suite(cls, external_runs: Optional[Dict[str,Any]] = None) -> Dict[str,Any]:
+        """Accepted measurements must include authentic independently reviewed input artifacts."""
+        records=[]
+        external_runs=external_runs or {}
         for case in cls.BENCHMARK_CASES:
-            # Run UCG FEM solver
-            ucg_result = cls._run_ucg_fem(case)
-            # Commercial solver results (pre-computed reference values)
-            abaqus_result = cls._get_commercial_result(case, "ABAQUS")
-            comsol_result = cls._get_commercial_result(case, "COMSOL")
-            ansys_result = cls._get_commercial_result(case, "ANSYS")
-            results.append({
-                "Benchmark Case": case,
-                "UCG FEM Error (%)": ucg_result["error_pct"],
-                "ABAQUS Error (%)": abaqus_result["error_pct"],
-                "COMSOL Error (%)": comsol_result["error_pct"],
-                "ANSYS Error (%)": ansys_result["error_pct"],
-                "UCG FEM Time (s)": ucg_result["time_sec"],
-                "ABAQUS Time (s)": abaqus_result["time_sec"],
-                "COMSOL Time (s)": comsol_result["time_sec"],
-                "UCG FEM RAM (MB)": ucg_result["ram_mb"],
-                "Analytical Solution": ucg_result["has_analytical"],
-            })
-        df = pd.DataFrame(results)
-        return {
-            "benchmark_table": df,
-            "n_cases": len(results),
-            "solvers_compared": cls.SOLVERS,
-            "overall_ucg_avg_error": round(float(df["UCG FEM Error (%)"].mean()), 2),
-            "overall_abaqus_avg_error": round(float(df["ABAQUS Error (%)"].mean()), 2),
-            "overall_comsol_avg_error": round(float(df["COMSOL Error (%)"].mean()), 2),
-            "conclusion": cls._generate_conclusion(df),
-            "generated_at": _utc_now_iso(),
-        }
-
-    @staticmethod
-    def _run_ucg_fem(case: str) -> Dict[str, Any]:
-        """Run the UCG FEM solver on the benchmark case."""
-        import time as _time
-        t0 = _time.perf_counter()
-        # Use the existing FEMBenchmarkSuite
-        try:
-            if "Cantilever" in case:
-                result = FEMBenchmarkSuite.cantilever_benchmark()
-                error = float(result.get("relative_error", 2.1))
-            elif "Plate" in case or "Kirsch" in case:
-                result = FEMBenchmarkSuite.plate_benchmark()
-                error = 2.5  # from plate convergence results
-            elif "Cylinder" in case or "Lamé" in case:
-                error = 1.8
-            elif "UCG" in case:
-                error = 2.3  # vs ABAQUS reference
-            else:
-                error = 2.0
-        except Exception:
-            error = 2.1
-        elapsed = _time.perf_counter() - t0
-        ram_mb = 150  # approximate
-        return {
-            "error_pct": round(error, 2),
-            "time_sec": round(elapsed, 4),
-            "ram_mb": ram_mb,
-            "has_analytical": "UCG" not in case,
-        }
-
-    @staticmethod
-    def _get_commercial_result(case: str, solver: str) -> Dict[str, Any]:
-        """Return pre-computed reference results from commercial solvers.
-        These are literature values from published benchmark studies.
-        """
-        # Reference values from published FEM benchmark studies
-        # (ABAQUS 2024 Documentation, COMSOL Benchmark Library, ANSYS Verification Manual)
-        reference_data = {
-            "Cantilever Beam (Euler-Bernoulli)": {
-                "ABAQUS": {"error_pct": 1.9, "time_sec": 2.4},
-                "COMSOL": {"error_pct": 2.0, "time_sec": 3.1},
-                "ANSYS":  {"error_pct": 1.8, "time_sec": 2.7},
-            },
-            "Plate with Circular Hole (Kirsch)": {
-                "ABAQUS": {"error_pct": 1.5, "time_sec": 4.2},
-                "COMSOL": {"error_pct": 1.7, "time_sec": 5.3},
-                "ANSYS":  {"error_pct": 1.4, "time_sec": 4.8},
-            },
-            "Thick-Walled Cylinder (Lamé)": {
-                "ABAQUS": {"error_pct": 0.9, "time_sec": 1.8},
-                "COMSOL": {"error_pct": 1.1, "time_sec": 2.4},
-                "ANSYS":  {"error_pct": 0.8, "time_sec": 2.1},
-            },
-            "UCG Cavity (ABAQUS reference)": {
-                "ABAQUS": {"error_pct": 0.0, "time_sec": 8.5},  # reference
-                "COMSOL": {"error_pct": 1.2, "time_sec": 9.8},
-                "ANSYS":  {"error_pct": 0.9, "time_sec": 8.9},
-            },
-        }
-        data = reference_data.get(case, {}).get(solver, {"error_pct": 2.0, "time_sec": 3.0})
-        return {
-            "error_pct": data["error_pct"],
-            "time_sec": data["time_sec"],
-        }
-
-    @staticmethod
-    def _generate_conclusion(df: pd.DataFrame) -> str:
-        """Generate a plain-text conclusion from the benchmark table."""
-        ucg_avg = float(df["UCG FEM Error (%)"].mean())
-        abaqus_avg = float(df["ABAQUS Error (%)"].mean())
-        comsol_avg = float(df["COMSOL Error (%)"].mean())
-        return (
-            f"The UCG Platform FEM solver achieves an average error of {ucg_avg:.1f}% "
-            f"across {len(df)} benchmark cases, compared to ABAQUS ({abaqus_avg:.1f}%), "
-            f"COMSOL ({comsol_avg:.1f}%), and ANSYS. The UCG solver is within 0.5% "
-            f"of commercial solvers on all cases with analytical solutions, demonstrating "
-            f"scientific-grade accuracy suitable for PhD dissertation and patent filing."
-        )
+            record=external_runs.get(case,{})
+            all_ok=True
+            row={'Benchmark Case':case}
+            for solver in cls.SOLVERS:
+                measurement=record.get(solver,{})
+                ok, note=UCGResearchEvidence.validate(measurement.get('provenance'),independent=True)
+                val=measurement.get('error_pct')
+                if not ok or not isinstance(val,(float,int)) or not np.isfinite(val) or val<0:
+                    all_ok=False; val=None
+                row[f'{solver} Error (%)']=val
+            row['Status']='USER_SUPPLIED_REVIEW_REQUIRED' if all_ok else 'NOT_EVALUATED'
+            records.append(row)
+        return {'benchmark_table':pd.DataFrame(records),'n_cases':len(records),
+                'solvers_compared':cls.SOLVERS, 'overall_ucg_avg_error':None,
+                'overall_abaqus_avg_error':None,'overall_comsol_avg_error':None,
+                'status':'NOT_EVALUATED',
+                'conclusion':'No independent commercial solver verification or certification performed.',
+                'generated_at':_utc_now_iso()}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -48053,7 +47950,7 @@ class DissertationPDFGenerator:
                     logger.debug("Exception in except Exception as exc:: %s", exc, exc_info=True)
                 except NameError:
                     __import__("logging").getLogger("ucg_platform").debug("Suppressed optional-operation exception", exc_info=True)  # FIX v9.11.36: traceable fallback
-                story.append(Paragraph("Benchmark validation: completed with industry-standard comparison", styles['Normal']))
+                story.append(Paragraph("Benchmark NOT_EVALUATED: independent solver results unavailable", styles['Normal']))
             story.append(PageBreak())
 
             # ── References ──
@@ -52247,23 +52144,23 @@ markers =
                 lines.append(f"def {tc}():")
                 lines.append(f'    """TODO: implement test for {tc}."""')
                 lines.append(f"    # FIX v9.11.18 #8: Test stub — implement actual assertions.")
-                lines.append(f"    assert True  # TODO: replace with real test")
+                lines.append('    pytest.skip("TEMPLATE ONLY: implement real assertions and fixtures")')
                 lines.append("")
                 total_tests += 1
             test_path.write_text("\n".join(lines), encoding="utf-8")
             generated_files.append(str(test_path))
 
         return {
-            "status": "OK",
+            "status": "TEMPLATES_ONLY_NOT_EXECUTED",
             "output_dir": output_dir,
             "generated_files": generated_files,
             "total_test_stubs": total_tests,
+            "n_executable_tests": 0,
             "coverage_target_pct": 80,
             "run_command": f"pytest {output_dir}/ --cov=app --cov-report=html --cov-fail-under=80",
             "note": (
-                "FIX v9.11.18 #8: Test stubs generated. Each stub has `assert True` "
-                "placeholder — replace with actual assertions. Coverage target: ≥80% "
-                "(ASME V&V 10, ISO/IEC 25010)."
+                "Generated tests are SKIPPED templates and count as 0 executable checks. "
+                "Implement real assertions before using coverage for V&V."
             ),
         }
 
@@ -53200,19 +53097,19 @@ S010,Bituminous,1225,8.8,500,50,100,0.35,1.2e-14,98.7,78.9,54.3,10.6,62.1"""
     # Patent FTO raqamlari
     FTO_PATENTS = [
         {'number': 'US 8,109,134', 'holder': 'Ergo Exergy Technologies',
-         'title': 'UCG method with controlled gas flow', 'status': 'Not blocking',
+         'title': 'UCG method with controlled gas flow', 'status': 'UNVERIFIED — legal FTO required',
          'relevant_claims': '1, 3, 7'},
         {'number': 'US 7,708,794', 'holder': 'Lawrence Livermore National Security',
-         'title': 'UCG with environmental monitoring', 'status': 'Not blocking',
+         'title': 'UCG with environmental monitoring', 'status': 'UNVERIFIED — legal FTO required',
          'relevant_claims': '2, 5'},
         {'number': 'EP 1,823,478', 'holder': 'RWE Power AG',
-         'title': 'In-situ coal gasification reactor design', 'status': 'Not blocking',
+         'title': 'In-situ coal gasification reactor design', 'status': 'UNVERIFIED — legal FTO required',
          'relevant_claims': '1, 4, 6'},
         {'number': 'CN 103,075,221', 'holder': 'China University of Mining',
-         'title': 'UCG process optimization method', 'status': 'Not blocking',
+         'title': 'UCG process optimization method', 'status': 'UNVERIFIED — legal FTO required',
          'relevant_claims': '3, 8'},
         {'number': 'AU 200,720,093', 'holder': 'Linc Energy',
-         'title': 'UCG syngas processing system', 'status': 'Not blocking',
+         'title': 'UCG syngas processing system', 'status': 'UNVERIFIED — legal FTO required',
          'relevant_claims': '2, 5, 9'},
     ]
 
@@ -53292,7 +53189,8 @@ S010,Bituminous,1225,8.8,500,50,100,0.35,1.2e-14,98.7,78.9,54.3,10.6,62.1"""
         'passed': True, 'criterion': 'Observed order >= 1.8 (theoretical 2.0)',
     }
 
-    # Angren UCG-1 raw experimental data
+    # UNVERIFIED ILLUSTRATIVE DATA: NOT authenticated Angren field measurements.
+    ANGREN_DATA_STATUS = "UNVERIFIED_SAMPLE_NOT_FOR_PHD_VALIDATION"
     ANGREN_RAW_DATA = [
         {'month': '2018-03', 'T_K': 1180, 'P_MPa': 8.2, 'CO_pct': 18.4, 'H2_pct': 14.2,
          'CO2_pct': 11.5, 'CH4_pct': 2.8, 'syngas_flow_m3h': 4200, 'efficiency_pct': 58.4},
@@ -53320,7 +53218,7 @@ S010,Bituminous,1225,8.8,500,50,100,0.35,1.2e-14,98.7,78.9,54.3,10.6,62.1"""
          'CO2_pct': 10.9, 'CH4_pct': 2.5, 'syngas_flow_m3h': 4440, 'efficiency_pct': 62.0},
     ]
 
-    # Sensor data — real sensor CSV raqamlari (namuna)
+    # Sensor data — UNVERIFIED SAMPLE, not live sensor measurements
     SENSOR_DATA_CSV = """timestamp,sensor_id,T_cavity_K,P_cavity_MPa,CO_pct,H2_pct,CO2_pct,flow_m3h
 2023-06-15T10:00:00,ANG-01,1185,8.2,18.7,14.6,11.3,4280
 2023-06-15T10:15:00,ANG-01,1188,8.2,18.9,14.8,11.2,4300
@@ -53608,7 +53506,7 @@ class ExpertReviewStreamlitRenderer:
         st.header("T.13 Patent FTO - Patent Raqamlari")
         fto_df = pd.DataFrame(C.FTO_PATENTS)
         st.dataframe(fto_df, use_container_width=True)
-        st.success("✅ FTO xulosasi: 5 ta patent tekshirildi, hech biri bloklamaydi. FTO Score = 92/100")
+        st.warning("FTO: NOT_EVALUATED. Raqamlar mahalliy namuna; patentning huquqiy holati va claim to‘qnashuvi tasdiqlanmagan.")
 
         # ── Claim chart ──
         st.header("T.14 Patent Claim Chart (Element-by-Element)")
@@ -53616,16 +53514,17 @@ class ExpertReviewStreamlitRenderer:
         st.dataframe(claim_df, use_container_width=True)
 
         # ── Angren raw data ──
-        st.header("T.15 Angren UCG-1 Raw Eksperiment Ma'lumotlari")
+        st.header("T.15 Angren UCG-1 — manbasi tasdiqlanmagan NAMUNA ma’lumotlar")
+        st.warning("UNVERIFIED SAMPLE DATA — xom dala fayli, uskunalar kalibrlashi va mustaqil test taqsimoti yo‘q. Ilmiy dalil sifatida ishlatmang.")
         angren_df = pd.DataFrame(C.ANGREN_RAW_DATA)
         st.dataframe(angren_df, use_container_width=True)
         st.info(
-            f"Statistik xulosa: T o'rtacha = 1213K, CO = 19.3%, H2 = 15.3%, "
-            f"H2/CO = 0.79 (model: 0.81, R²=0.93)"
+            "Namuna jadvali: bu sonlar haqiqiy dala validatsiyasi yoki mustaqil R² natijasi emas."
         )
 
         # ── Sensor data ──
-        st.header("T.16 Real Sensor Ma'lumotlari (CSV)")
+        st.header("T.16 Sensor CSV — kelib chiqishi tekshirilmagan NAMUNA")
+        st.warning("CSV manbasi mustaqil tekshirilmagan. Real-time sensor dalili sifatida ko‘rsatilmasin.")
         sensor_df = pd.read_csv(io.StringIO(C.SENSOR_DATA_CSV))
         st.dataframe(sensor_df, use_container_width=True)
 
@@ -54477,8 +54376,8 @@ def render_expert_review_to_docx(doc):
         row[3].text = p['status']
         row[4].text = p['relevant_claims']
     doc.add_paragraph(
-        "FTO (Freedom-to-Operate) xulosasi: 5 ta patent tekshirildi, hech biri "
-        "bloklamaydi. Bizning claimlarimiz bilan to'qnashuv yo'q. FTO Score = 92/100."
+        "FTO STATUS: NOT_EVALUATED — beshta patent yozuvi NAMUNA sifatida saqlangan. "
+        "Professional patent attorney, live family/status lookup and claim chart talab etiladi."
     )
 
     # ── 19. Claim Chart ──
@@ -54847,7 +54746,7 @@ def render_expert_review_to_docx(doc):
         "6. Manufactured Solution verification: Code verification MMS orqali "
         "bajarildi, observed order = 1.98 approx theoretical 2.0.\n\n"
         "7. Patent FTO tahlili: 5 ta patent element-by-element claim chart bilan "
-        "tahlil qilindi, hech biri bloklamaydi (FTO Score = 92/100)."
+        "namuna ro‘yxat asosida ko‘rib chiqilgan, lekin FTO huquqiy bahosi NOT_EVALUATED."
     )
 
     doc.add_heading('T.31.2 Amaliy Afzalliklari', level=3)
@@ -56096,6 +55995,48 @@ class CounterfactualExplainer:
 
 
 # ── 19. External Validation (lab data) ──────────────────────────────────────
+# ══ v9.11.37 independent evidence & scientific integrity gate ═══════════════
+class UCGResearchEvidence:
+    """Check user-supplied artifact integrity. Hash does NOT prove authenticity."""
+    REQUIRED = ('artifact_path', 'sha256', 'source', 'acquired_at', 'instrument_or_solver', 'units', 'split')
+
+    @staticmethod
+    def validate(meta, *, independent=False):
+        import hashlib as _hashlib
+        from pathlib import Path as _Path
+        if not isinstance(meta, dict):
+            return False, 'No provenance record'
+        missing = [k for k in UCGResearchEvidence.REQUIRED if not str(meta.get(k, '')).strip()]
+        if missing:
+            return False, 'Missing provenance fields: ' + ', '.join(missing)
+        if independent and meta.get('split') != 'independent_test':
+            return False, 'Independent holdout provenance required'
+        try:
+            path = _Path(meta['artifact_path']).expanduser().resolve(strict=True)
+            if not path.is_file() or path.stat().st_size > 100 * 1024 * 1024:
+                return False, 'Evidence must be an existing file ≤100MB'
+            checksum = _hashlib.sha256(path.read_bytes()).hexdigest()
+            if not __import__('hmac').compare_digest(checksum, str(meta['sha256']).lower()):
+                return False, 'Artifact SHA-256 mismatch'
+        except (OSError, ValueError, TypeError) as exc:
+            return False, f'Evidence artifact unreadable: {type(exc).__name__}'
+        return True, 'Integrity checked; source authenticity remains independently unverified'
+
+    @staticmethod
+    def unexplained(reason, **extra):
+        return dict(status='NOT_EVALUATED', passed=None, reason=reason, **extra)
+
+# The legacy FEM solver is deliberately NOT called a validated THCM solver.
+class THCMReadinessGate:
+    @staticmethod
+    def assess(thermal=False, poroelastic=False, damage=False, cavity=False,
+               verification_evidence=None):
+        required = {'temperature_field': thermal, 'pore_pressure': poroelastic,
+                    'damage_evolution': damage, 'cavity_geometry': cavity}
+        ok_evidence, note = UCGResearchEvidence.validate(verification_evidence, independent=True)
+        return {'status': 'EVIDENCE_SUBMITTED_REVIEW_REQUIRED' if all(required.values()) and ok_evidence else 'NOT_VALIDATED',
+                'has_coupled_physics': required, 'independent_verification': ok_evidence,
+                'note': note, 'certified_thcm_solver': False}
 class ExternalValidator:
     """
     v9.11.5: External Validation with real laboratory data.
@@ -56133,155 +56074,107 @@ class ExternalValidator:
     }
 
     @staticmethod
-    def validate_against_external(model_predictions: np.ndarray,
-                                   dataset_name: str = 'angren_ucg1') -> Dict[str, Any]:
-        """
-        Validate model predictions against external laboratory data.
+    def validate_against_external(model_predictions: np.ndarray, dataset_name: str = 'angren_ucg1',
+                                  observed: Optional[np.ndarray] = None,
+                                  provenance: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Compare paired independent measurements; NEVER synthesize observations.
 
-        Returns validation report with metrics.
+        A supplied checksum only proves that the supplied data did not change.
+        Independent source verification is still the author's responsibility.
+        Both arrays must be in CO percentage points with identical ordered samples.
         """
         if dataset_name not in ExternalValidator.LAB_DATASETS:
-            return {'error': f'Unknown dataset: {dataset_name}'}
-
-        dataset_info = ExternalValidator.LAB_DATASETS[dataset_name]
-
-        # Generate synthetic reference data based on dataset ranges
-        # (In production, load real CSV data)
-        rng = np.random.default_rng(seed=42)
-        n = dataset_info['n_samples']
-        # Parse ranges
-        t_range = [int(x) for x in dataset_info['temperature_range'].replace('K', '').split('-')]
-        co_range = [float(x) for x in dataset_info['co_range'].replace('%', '').split('-')]
-        h2_range = [float(x) for x in dataset_info['h2_range'].replace('%', '').split('-')]
-
-        reference_T = rng.uniform(t_range[0], t_range[1], n)
-        reference_CO = rng.uniform(co_range[0], co_range[1], n)
-        reference_H2 = rng.uniform(h2_range[0], h2_range[1], n)
-
-        # Compare with model predictions
-        pred = np.asarray(model_predictions, dtype=float).flatten()
-        if len(pred) >= n:
-            pred_co = pred[:n]
-        else:
-            pred_co = np.interp(np.linspace(0, 1, n), np.linspace(0, 1, len(pred)), pred)
-
-        # Metrics
-        rmse = float(np.sqrt(np.mean((pred_co - reference_CO) ** 2)))
-        mae = float(np.mean(np.abs(pred_co - reference_CO)))
-        bias = float(np.mean(pred_co - reference_CO))
+            return UCGResearchEvidence.unexplained('Unknown dataset', dataset=dataset_name)
+        if observed is None:
+            return UCGResearchEvidence.unexplained('Measured observations were not supplied', dataset=dataset_name)
+        verified, reason = UCGResearchEvidence.validate(provenance, independent=True)
+        if not verified:
+            return UCGResearchEvidence.unexplained(reason, dataset=dataset_name)
+        if provenance.get('units') != 'CO_pct':
+            return UCGResearchEvidence.unexplained('Required units: CO_pct', dataset=dataset_name)
         try:
-            r_pearson, p_p = pearsonr(pred_co, reference_CO)
-            r_spearman, p_s = spearmanr(pred_co, reference_CO)
-        except Exception:
-            r_pearson, p_p = 0.0, 1.0
-            r_spearman, p_s = 0.0, 1.0
-
-        return {
-            'dataset': dataset_name,
-            'dataset_info': dataset_info,
-            'n_samples': n,
-            'rmse': rmse,
-            'mae': mae,
-            'bias': bias,
-            'pearson_r': float(r_pearson),
-            'pearson_p': float(p_p),
-            'spearman_r': float(r_spearman),
-            'spearman_p': float(p_s),
-            'passed': rmse < 2.0 and abs(bias) < 1.0,
-            'threshold': 'RMSE < 2.0%, |bias| < 1.0%',
-        }
+            pred = np.asarray(model_predictions, dtype=float).reshape(-1)
+            reference = np.asarray(observed, dtype=float).reshape(-1)
+            column = provenance.get('observation_column', 'CO_pct')
+            try:
+                file_data = pd.read_csv(provenance['artifact_path'])
+                if column not in file_data.columns:
+                    raise ValueError('Measured CO_pct column missing from verified artifact')
+                reference_from_file = file_data[column].to_numpy(dtype=float)
+                if reference_from_file.shape != reference.shape or not np.allclose(
+                        reference_from_file, reference, rtol=0, atol=1e-10, equal_nan=False):
+                    raise ValueError('Supplied observations do not match the hashed artifact')
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                raise ValueError('Measurement source mismatch: ' + str(exc)) from exc
+            if len(pred) < 3 or pred.shape != reference.shape:
+                raise ValueError('Matched paired arrays of >=3 observations required')
+            if not np.isfinite(pred).all() or not np.isfinite(reference).all():
+                raise ValueError('Non-finite measurements')
+            rmse = float(np.sqrt(np.mean((pred - reference)**2)))
+            mae = float(np.mean(np.abs(pred - reference)))
+            bias = float(np.mean(pred - reference))
+            pearson, pearson_p, spearman, spearman_p = None, None, None, None
+            if np.std(pred) > 0 and np.std(reference) > 0:
+                from scipy.stats import pearsonr, spearmanr
+                pearson, pearson_p = (float(v) for v in pearsonr(pred, reference))
+                spearman, spearman_p = (float(v) for v in spearmanr(pred, reference))
+            return {'status': 'MEASURED_DATA_SUBMITTED', 'dataset': dataset_name,
+                    'n_samples': len(pred), 'rmse': rmse, 'mae': mae, 'bias': bias,
+                    'pearson_r': pearson, 'pearson_p': pearson_p,
+                    'spearman_r': spearman, 'spearman_p': spearman_p,
+                    'passed': bool(rmse < 2.0 and abs(bias) < 1.0),
+                    'threshold': 'RMSE < 2 CO percentage points; |bias| < 1 pp',
+                    'provenance': dict(provenance), 'provenance_note': reason,
+                    'independently_authenticated': False}
+        except (TypeError, ValueError) as exc:
+            return UCGResearchEvidence.unexplained(str(exc), dataset=dataset_name)
 
 
 # ── 20. ASTM/NAFEMS Benchmark Report ───────────────────────────────────────
 class FEMBenchmarkReport:
-    """
-    v9.11.5: ASTM/NAFEMS benchmark compliance report.
-
-    Patch Test mavjud, lekin ASTM/NAFEMS benchmarklariga mosligini
-    ko'rsatuvchi hisobot zarur.
-    """
-
+    """Independent FEM benchmark evidence gate, not ASTM/NAFEMS certification."""
     NAFEMS_BENCHMARKS = [
-        {
-            'id': 'NAFEMS-T1',
-            'name': 'NAFEMS Test T1: Patch Test (2D)',
-            'standard': 'NAFEMS Test Set',
-            'description': 'Linear stress analysis with constant stress field',
-            'expected': 'Stress = 1000 Pa (uniform)',
-            'tolerance': 0.01,  # 1%
-            'status': 'PASSED',
-        },
-        {
-            'id': 'NAFEMS-T2',
-            'name': 'NAFEMS Test T2: Membrane Patch (2D)',
-            'standard': 'NAFEMS Test Set',
-            'description': 'Membrane element patch test',
-            'expected': 'σx = 1e6 Pa, σy = 0, τxy = 0',
-            'tolerance': 0.02,
-            'status': 'PASSED',
-        },
-        {
-            'id': 'NAFEMS-T3',
-            'name': 'NAFEMS Test T3: Beam Bending (Euler-Bernoulli)',
-            'standard': 'NAFEMS Test Set',
-            'description': 'Simply supported beam under uniform load',
-            'expected': 'δ_max = 5qL⁴/(384EI)',
-            'tolerance': 0.05,
-            'status': 'PASSED',
-        },
-        {
-            'id': 'NAFEMS-T4',
-            'name': 'NAFEMS Test T4: Plate Bending (Kirchhoff)',
-            'standard': 'NAFEMS Test Set',
-            'description': 'Square plate under uniform pressure',
-            'expected': 'δ_center = 0.00406 * q*a⁴/D',
-            'tolerance': 0.05,
-            'status': 'PASSED',
-        },
-        {
-            'id': 'ASTM-E8',
-            'name': 'ASTM E8: Tensile Test Simulation',
-            'standard': 'ASTM E8/E8M',
-            'description': 'Uniaxial tensile test - stress-strain curve',
-            'expected': 'σ_y = 250 MPa, E = 200 GPa',
-            'tolerance': 0.03,
-            'status': 'PASSED',
-        },
-        {
-            'id': 'ASTM-E399',
-            'name': 'ASTM E399: Fracture Toughness (LEFM)',
-            'standard': 'ASTM E399',
-            'description': 'K_IC determination via compact tension specimen',
-            'expected': 'K_IC = 50 MPa·√m',
-            'tolerance': 0.05,
-            'status': 'PASSED',
-        },
-        {
-            'id': 'KIRSCH',
-            'name': 'Kirsch Solution: Circular Hole in Infinite Plate',
-            'standard': 'Analytical (Kirsch 1898)',
-            'description': 'Stress concentration around circular hole',
-            'expected': 'σ_max = 3σ_0 at hole edge',
-            'tolerance': 0.02,
-            'status': 'PASSED',
-        },
+        {'id':'NAFEMS-T1', 'name':'Patch test (suggested)', 'tolerance':0.01},
+        {'id':'NAFEMS-T2', 'name':'Membrane patch test (suggested)', 'tolerance':0.02},
+        {'id':'NAFEMS-T3', 'name':'Beam bending (suggested)', 'tolerance':0.05},
+        {'id':'NAFEMS-T4', 'name':'Plate bending (suggested)', 'tolerance':0.05},
+        {'id':'ASTM-E8', 'name':'Tensile simulation (NOT ASTM certification)', 'tolerance':0.03},
+        {'id':'ASTM-E399', 'name':'Fracture model (NOT ASTM certification)', 'tolerance':0.05},
+        {'id':'KIRSCH', 'name':'Kirsch analytical comparison', 'tolerance':0.02},
     ]
 
     @staticmethod
-    def generate_report() -> Dict[str, Any]:
-        """Generate ASTM/NAFEMS benchmark compliance report."""
-        n_total = len(FEMBenchmarkReport.NAFEMS_BENCHMARKS)
-        n_passed = sum(1 for b in FEMBenchmarkReport.NAFEMS_BENCHMARKS if b['status'] == 'PASSED')
-        return {
-            'standards_covered': ['NAFEMS Test Set', 'ASTM E8/E8M', 'ASTM E399', 'Kirsch analytical'],
-            'n_benchmarks': n_total,
-            'n_passed': n_passed,
-            'n_failed': n_total - n_passed,
-            'pass_rate': n_passed / n_total * 100 if n_total > 0 else 0,
-            'benchmarks': FEMBenchmarkReport.NAFEMS_BENCHMARKS,
-            'overall_status': 'PASSED' if n_passed == n_total else 'PARTIAL',
-            'compliance_note': 'All benchmarks within tolerance. FEM solver verified per NAFEMS and ASTM standards.',
-        }
+    def generate_report(measurements: Optional[Dict[str, Dict[str, Any]]] = None) -> Dict[str, Any]:
+        """Use measured/reference values AND matching provenance for each benchmark."""
+        measurements = measurements or {}
+        rows = []
+        for case in FEMBenchmarkReport.NAFEMS_BENCHMARKS:
+            row = dict(case, status='NOT_EVALUATED', relative_error=None)
+            evidence = measurements.get(case['id'])
+            if evidence:
+                valid, why = UCGResearchEvidence.validate(evidence.get('provenance'), independent=True)
+                if valid:
+                    try:
+                        actual = float(evidence['actual'])
+                        reference = float(evidence['reference'])
+                        if not np.isfinite(actual) or not np.isfinite(reference) or reference == 0:
+                            raise ValueError('Finite nonzero reference required')
+                        err = abs(actual-reference)/abs(reference)
+                        row.update(relative_error=err, status='PASSED' if err <= case['tolerance'] else 'FAILED')
+                    except (ValueError, TypeError, KeyError) as exc:
+                        row['reason'] = str(exc)
+                else:
+                    row['reason'] = why
+            rows.append(row)
+        n_passed = sum(r['status']=='PASSED' for r in rows)
+        n_failed = sum(r['status']=='FAILED' for r in rows)
+        n_unverified = len(rows)-n_passed-n_failed
+        return {'standards_covered': ['Illustrative benchmark identifiers: formal standard compliance NOT claimed'],
+                'n_benchmarks': len(rows), 'n_passed': n_passed, 'n_failed': n_failed,
+                'n_not_evaluated': n_unverified,
+                'pass_rate': n_passed/len(rows)*100 if n_unverified==0 else None,
+                'benchmarks': rows, 'overall_status': 'NOT_EVALUATED' if n_unverified else ('PASSED' if n_failed==0 else 'FAILED'),
+                'compliance_note': 'File integrity checks are not independent solver certification.'}
 
 
 # ── 21. Coverage Report ─────────────────────────────────────────────────────
@@ -56294,49 +56187,18 @@ class CoverageReport:
 
     @staticmethod
     def generate_coverage_report() -> Dict[str, Any]:
-        """Generate test coverage report (estimated)."""
-        # In production, use coverage.py to get real data
-        # This is an estimated report based on code analysis
-        modules = {
-            'core/engine': {'lines': 2500, 'covered': 2450, 'critical': True},
-            'fem/solver': {'lines': 1800, 'covered': 1710, 'critical': True},
-            'validation/metrics': {'lines': 1200, 'covered': 1180, 'critical': True},
-            'patent/analysis': {'lines': 1500, 'covered': 1380, 'critical': True},
-            'ai/explainability': {'lines': 900, 'covered': 855, 'critical': True},
-            'uq/monte_carlo': {'lines': 800, 'covered': 780, 'critical': True},
-            'uq/sobol': {'lines': 400, 'covered': 380, 'critical': True},
-            'database/sqlite': {'lines': 600, 'covered': 570, 'critical': False},
-            'report/docx': {'lines': 1100, 'covered': 1000, 'critical': False},
-            'report/pdf': {'lines': 700, 'covered': 630, 'critical': False},
-            'security/rsa': {'lines': 400, 'covered': 388, 'critical': True},
-            'security/worm': {'lines': 300, 'covered': 285, 'critical': True},
-            'utils/helpers': {'lines': 500, 'covered': 460, 'critical': False},
-        }
-
-        total_lines = sum(m['lines'] for m in modules.values())
-        total_covered = sum(m['covered'] for m in modules.values())
-        overall_pct = total_covered / total_lines * 100 if total_lines > 0 else 0
-
-        critical_lines = sum(m['lines'] for m in modules.values() if m['critical'])
-        critical_covered = sum(m['covered'] for m in modules.values() if m['critical'])
-        critical_pct = critical_covered / critical_lines * 100 if critical_lines > 0 else 0
-
-        return {
-            'tool': 'coverage.py (estimated)',
-            'total_lines': total_lines,
-            'total_covered': total_covered,
-            'overall_coverage_pct': overall_pct,
-            'critical_lines': critical_lines,
-            'critical_covered': critical_covered,
-            'critical_coverage_pct': critical_pct,
-            'meets_patent_threshold': critical_pct >= 95.0,
-            'threshold': 95.0,
-            'modules': modules,
-            'recommendation': (
-                f'Critical module coverage: {critical_pct:.1f}%. '
-                f'{"Meets" if critical_pct >= 95 else "Below"} patent threshold (95%).'
-            ),
-        }
+        """Legacy facade uses measured coverage.json, never estimated percentages."""
+        measured = CodeQualityAnalysis.generate_coverage_report()
+        pct = measured.get('overall_coverage')
+        return {'tool':'coverage.py', 'status':measured.get('status','NOT_EVALUATED'),
+                'total_lines':measured.get('total_lines'),
+                'total_covered':None if pct is None or measured.get('total_lines') is None else round(measured['total_lines']*pct/100),
+                'overall_coverage_pct':pct, 'critical_lines':None,
+                'critical_covered':None, 'critical_coverage_pct':None,
+                'meets_patent_threshold':None, 'threshold':95.0, 'modules':{},
+                'recommendation':'Critical-module coverage NOT MEASURED; no patent compliance implied.',
+                'source_artifact':measured.get('source_artifact'),
+                'measurement_warning':measured.get('evidence_note','No coverage artifact supplied.')}
 
 
 # ── 22. CI/CD Configuration ────────────────────────────────────────────────
@@ -56430,18 +56292,25 @@ jobs:
 
     @staticmethod
     def get_pipeline_status() -> Dict[str, Any]:
-        """Get CI/CD pipeline status (simulated)."""
-        return {
-            'platform': 'GitHub Actions',
-            'config_file': '.github/workflows/ci.yml',
-            'stages': ['test', 'lint', 'security', 'build'],
-            'python_versions': ['3.10', '3.11', '3.12'],
-            'coverage_threshold': 95,
-            'last_run_status': 'passed',
-            'last_run_timestamp': _utc_now_iso() if callable(globals().get('_utc_now_iso')) else '',
-            'test_parallelism': 'pytest-xdist (-n auto)',
-            'code_quality_tools': ['flake8', 'black', 'mypy', 'bandit', 'safety'],
-        }
+        """Read an explicitly provided CI evidence JSON; never invent a last success."""
+        status = {'platform':'GitHub Actions', 'config_file':'.github/workflows/ci.yml',
+                  'stages':['test','lint','security','build'], 'python_versions':['3.10','3.11','3.12'],
+                  'coverage_threshold':95, 'last_run_status':'UNKNOWN',
+                  'last_run_timestamp':None, 'verification':'NOT_EVALUATED',
+                  'test_parallelism':'pytest-xdist (-n auto)',
+                  'code_quality_tools':['flake8','black','mypy','bandit','safety']}
+        path = os.getenv('UCG_CI_STATUS_JSON','').strip()
+        if path:
+            try:
+                with open(path,encoding='utf-8') as f:
+                    evidence=json.load(f)
+                if evidence.get('conclusion') in ('success','failure','cancelled') and evidence.get('run_id') and evidence.get('html_url') and evidence.get('updated_at'):
+                    status.update(last_run_status=evidence['conclusion'], last_run_timestamp=evidence['updated_at'],
+                                  run_id=evidence['run_id'], evidence_url=evidence['html_url'],
+                                  verification='USER_SUPPLIED_CI_ARTIFACT_NOT_INDEPENDENTLY_VERIFIED')
+            except (OSError, ValueError, TypeError) as exc:
+                status['evidence_error'] = type(exc).__name__
+        return status
 
 
 # ── 23. Performance Profiling ───────────────────────────────────────────────
@@ -56649,267 +56518,81 @@ class ScientificTraceability:
 
 # ── 25. Patent Readiness Report (automated) ────────────────────────────────
 class PatentReadinessReport:
-    """
-    v9.11.5: Automated Patent Readiness Report.
-
-    Patent topshirishdan oldin quyidagilarni bitta PDF/DOCX hisobotga jamlash:
-    - Patent yangiligi (Novelty)
-    - FTO (Freedom to Operate)
-    - Similarity Index
-    - Claim Strength
-    - Validation natijalari
-    - Reproducibility
-    - Benchmarklar
-    - AI Explainability
-    - FEM Verification
-    - Digital Signature
-    - Audit Trail
-    """
-
-    @staticmethod
-    def generate_readiness_report(report_payload: Dict[str, Any]) -> bytes:
-        """
-        Generate comprehensive Patent Readiness Report (.docx).
-
-        Returns DOCX bytes.
-        """
-        from docx import Document
-        from docx.shared import Inches, Pt
-        from docx.enum.text import WD_ALIGN_PARAGRAPH
-
-        doc = Document()
-        doc.add_heading("PATENT READINESS REPORT", level=0)
-        doc.add_paragraph(
-            f"Version: {__version__}\n"
-            f"Build: {__build_number__}\n"
-            f"Generated: {_utc_now_iso() if callable(globals().get('_utc_now_iso')) else ''}\n"
-            f"Patent Status: {__patent_status__}"
-        )
-
-        # Traceability
-        trace = build_traceability_bundle(report_payload, object_id="patent-readiness-report")
-        doc.add_heading("Executive Summary", level=1)
-        doc.add_paragraph(
-            "This report consolidates all patent readiness components into a single document. "
-            "It is designed for patent attorneys and PhD committee review."
-        )
-
-        # 1. Novelty Assessment
-        doc.add_heading("1. Patent Novelty (Novelty Index)", level=1)
-        novelty_idx = report_payload.get("novelty_index", 0.0)
-        doc.add_paragraph(
-            f"Novelty Index: {novelty_idx:.1f}%\n"
-            f"Threshold: {ScientificConstants.MIN_NOVELTY_INDEX}%\n"
-            f"Status: {'PASS' if novelty_idx >= ScientificConstants.MIN_NOVELTY_INDEX else 'REVIEW NEEDED'}\n\n"
-            f"Method: TF-IDF + cosine similarity against 115 prior-art documents.\n"
-            f"Novel features: (1) atom balance UCG model, (2) field-calibrated Ea, "
-            f"(3) P-1 radiation, (4) comprehensive UQ, (5) XAI suite, (6) MMS verification, "
-            f"(7) real-time digital twin."
-        )
-
-        # 2. FTO (Freedom to Operate)
-        doc.add_heading("2. Freedom to Operate (FTO)", level=1)
-        fto_score = report_payload.get("fto_score", 0.0)
-        doc.add_paragraph(
-            f"FTO Score: {fto_score * 100:.1f}/100\n"
-            f"Threshold: {ScientificConstants.MIN_FTO_SCORE * 100}%\n"
-            f"Status: {'CLEAR' if fto_score >= ScientificConstants.MIN_FTO_SCORE else 'REVIEW NEEDED'}\n\n"
-            f"Prior-art analyzed: 5 patents (US 8,109,134; US 7,708,794; EP 1,823,478; "
-            f"CN 103,075,221; AU 200,720,093).\n"
-            f"Blocking patents: 0\n"
-            f"FTO method: element-by-element claim comparison."
-        )
-
-        # 3. Similarity Index
-        doc.add_heading("3. Similarity Index", level=1)
-        similarity = report_payload.get("mean_similarity", 0.0)
-        doc.add_paragraph(
-            f"Mean Similarity: {similarity * 100:.1f}%\n"
-            f"Threshold: <25%\n"
-            f"Status: {'PASS' if similarity < 0.25 else 'REVIEW NEEDED'}\n\n"
-            f"Method: Semantic similarity (SciBERT embeddings) against prior-art corpus."
-        )
-
-        # 4. Claim Strength
-        doc.add_heading("4. Claim Strength", level=1)
-        claim_strength = report_payload.get("claim_strength", 0.0)
-        doc.add_paragraph(
-            f"Claim Strength: {claim_strength * 100:.1f}/100\n"
-            f"Threshold: {ScientificConstants.MIN_CLAIM_STRENGTH * 100}%\n"
-            f"Status: {'STRONG' if claim_strength >= ScientificConstants.MIN_CLAIM_STRENGTH else 'MODERATE'}\n\n"
-            f"Independent claims: 7\n"
-            f"Dependent claims: 15\n"
-            f"Method: AHP-weighted evaluation (novelty, inventive step, industrial applicability)."
-        )
-
-        # 5. Validation Results
-        doc.add_heading("5. Validation Results", level=1)
-        validation_stages = report_payload.get("validation_stages", [])
-        n_passed = sum(1 for s in validation_stages if hasattr(s, 'passed') and s.passed)
-        n_total = len(validation_stages)
-        doc.add_paragraph(
-            f"Validation Stages: {n_passed}/{n_total} PASSED\n"
-            f"ASME V&V 10/20 Compliance: {'YES' if n_passed == n_total else 'PARTIAL'}\n\n"
-            f"Note: v9.11.4+ removed forced PASSED status - real results shown."
-        )
-
-        # 6. Reproducibility
-        doc.add_heading("6. Reproducibility", level=1)
-        doc.add_paragraph(
-            f"Random Seed: {ScientificConstants.DEFAULT_RANDOM_SEED}\n"
-            f"Version Control: Git ({__git_commit__})\n"
-            f"Environment: pip freeze hash available\n"
-            f"Dataset Version: SHA-256 hashed\n"
-            f"Model Version: Tracked\n"
-            f"Reproducibility Manager: {globals().get('repro_mgr', 'N/A')}\n\n"
-            f"Status: FULLY REPRODUCIBLE (deterministic with seed=42)"
-        )
-
-        # 7. Benchmarks
-        doc.add_heading("7. Benchmark Results", level=1)
-        fem_report = FEMBenchmarkReport.generate_report()
-        doc.add_paragraph(
-            f"FEM Benchmarks (NAFEMS + ASTM): {fem_report['n_passed']}/{fem_report['n_benchmarks']} PASSED\n"
-            f"Overall Status: {fem_report['overall_status']}\n\n"
-            f"Benchmarks covered:"
-        )
-        for b in fem_report['benchmarks']:
-            doc.add_paragraph(f"  - {b['id']}: {b['name']} [{b['status']}]", style='List Bullet')
-
-        # 8. AI Explainability
-        doc.add_heading("8. AI Explainability", level=1)
-        doc.add_paragraph(
-            "Explainability methods implemented:\n"
-            "  - SHAP (SHapley Additive exPlanations): beeswarm, waterfall, force plots\n"
-            "  - LIME (Local Interpretable Model-agnostic Explanations)\n"
-            "  - PDP (Partial Dependence Plots)\n"
-            "  - ICE (Individual Conditional Expectation)\n"
-            "  - Permutation Importance\n"
-            "  - Counterfactual Explanations (v9.11.5)\n\n"
-            "Model: Random Forest (200 trees, max_depth=15)\n"
-            "R²: 0.829 (5-fold cross-validation)\n"
-            "Status: FULLY EXPLAINABLE (XAI suite complete)"
-        )
-
-        # 9. FEM Verification
-        doc.add_heading("9. FEM Verification", level=1)
-        doc.add_paragraph(
-            "Verification methods:\n"
-            "  - Patch Test (constant stress field): PASSED\n"
-            "  - Mesh Independence Study: converged at mesh=200\n"
-            "  - Time Convergence: converged at dt=0.1 min\n"
-            "  - Code Verification (MMS): observed order=1.98 (theoretical 2.0)\n"
-            "  - NAFEMS Benchmarks: 7/7 PASSED\n"
-            "  - ASTM Standards: E8, E399 PASSED\n\n"
-            "Status: FULLY VERIFIED (ASME V&V 10/20 compliant)"
-        )
-
-        # 10. Digital Signature
-        doc.add_heading("10. Digital Signature", level=1)
-        doc.add_paragraph(
-            "Signature Algorithm: RSA-4096 (PKCS#8)\n"
-            "Key Manager: PersistentKeyManager (PEM file)\n"
-            "Timestamp: RFC-3161 (TSA)\n"
-            "Key Rotation: NIST SP 800-57 (365 days)\n\n"
-            "Status: SIGNED (RSA-4096)"
-        )
-
-        # 11. Audit Trail
-        doc.add_heading("11. Audit Trail", level=1)
-        worm_report = WORMComplianceLabeler.get_compliance_report()
-        doc.add_paragraph(
-            f"Audit Trail: SHA-256 Merkle chain\n"
-            f"WORM Storage: {worm_report['compliance_level']} ({worm_report['current_backend']})\n"
-            f"Blockchain: SQLite fallback, Ethereum mainnet ready\n\n"
-            f"WORM Warning: {worm_report.get('recommendation', 'N/A')}\n\n"
-            f"Status: AUDITABLE (with WORM disclaimer for patent filing)"
-        )
-
-        # 12. Scientific Traceability
-        doc.add_heading("12. Scientific Traceability", level=1)
-        doc.add_paragraph(
-            f"Equations documented: {len(ScientificTraceability.EQUATION_SOURCES)}\n"
-            f"Each equation has: formula, source, DOI, reference, page number\n\n"
-            f"Standards: JCGM 100:2008 (GUM), ASME V&V 10/20, NIST SP 800-57"
-        )
-
-        # 13. Overall Readiness
-        doc.add_heading("13. Overall Patent Readiness", level=1)
-        readiness_score = 0
-        checks = [
-            ('Novelty', novelty_idx >= ScientificConstants.MIN_NOVELTY_INDEX),
-            ('FTO', fto_score >= ScientificConstants.MIN_FTO_SCORE),
-            ('Similarity', similarity < 0.25),
-            ('Claim Strength', claim_strength >= ScientificConstants.MIN_CLAIM_STRENGTH),
-            ('Validation', n_passed == n_total),
-            ('Reproducibility', True),
-            ('Benchmarks', fem_report['n_passed'] == fem_report['n_benchmarks']),
-            ('AI Explainability', True),
-            ('FEM Verification', True),
-            ('Digital Signature', True),
-            ('Audit Trail', True),
-        ]
-        for name, passed in checks:
-            readiness_score += 1 if passed else 0
-            doc.add_paragraph(f"  {name}: {'✓ PASS' if passed else '✗ REVIEW'}", style='List Bullet')
-
-        readiness_pct = readiness_score / len(checks) * 100
-        doc.add_paragraph(
-            f"\nOverall Readiness: {readiness_score}/{len(checks)} ({readiness_pct:.0f}%)\n"
-            f"Status: {'READY FOR PATENT FILING' if readiness_pct == 100 else 'REVIEW NEEDED - see failed items above'}\n\n"
-            f"Recommendation: {'File patent application with confidence.' if readiness_pct == 100 else 'Address failed items before filing.'}"
-        )
-
-        # SHA-256
-        doc.add_heading("Report Integrity", level=1)
-        doc.add_paragraph(
-            f"SHA-256: {trace.sha256}\n"
-            f"Timestamp: {trace.timestamp_utc}\n"
-            f"Git Commit: {trace.git_commit}\n"
-            f"DOI: {report_payload.get('doi', 'N/A')}\n\n"
-            f"This report is cryptographically signed and tamper-evident."
-        )
-
-        # Save to bytes
-        buf = io.BytesIO()
-        doc.save(buf)
-        buf.seek(0)
-        return buf.read()
+    """Single evidence-gated readiness summary and DOCX. Not a legal opinion."""
+    CHECKS = ('novelty', 'fto', 'similarity', 'claim_strength', 'validation',
+              'reproducibility', 'benchmarks', 'ai_explainability',
+              'fem_verification', 'digital_signature', 'audit_trail')
 
     @staticmethod
     def get_readiness_summary(report_payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Get readiness summary as dict (for quick check)."""
-        novelty_idx = report_payload.get("novelty_index", 0.0)
-        fto_score = report_payload.get("fto_score", 0.0)
-        similarity = report_payload.get("mean_similarity", 0.0)
-        claim_strength = report_payload.get("claim_strength", 0.0)
-        validation_stages = report_payload.get("validation_stages", [])
-        n_passed = sum(1 for s in validation_stages if hasattr(s, 'passed') and s.passed)
-        n_total = len(validation_stages)
-        fem_report = FEMBenchmarkReport.generate_report()
+        """Only verified evidence files can satisfy a readiness check.
 
-        checks = {
-            'novelty': novelty_idx >= ScientificConstants.MIN_NOVELTY_INDEX,
-            'fto': fto_score >= ScientificConstants.MIN_FTO_SCORE,
-            'similarity': similarity < 0.25,
-            'claim_strength': claim_strength >= ScientificConstants.MIN_CLAIM_STRENGTH,
-            'validation': n_passed == n_total and n_total > 0,
-            'reproducibility': True,
-            'benchmarks': fem_report['n_passed'] == fem_report['n_benchmarks'],
-            'ai_explainability': True,
-            'fem_verification': True,
-            'digital_signature': True,
-            'audit_trail': True,
-        }
-        n_ready = sum(1 for v in checks.values() if v)
-        return {
-            'checks': checks,
-            'n_ready': n_ready,
-            'n_total': len(checks),
-            'readiness_pct': n_ready / len(checks) * 100,
-            'status': 'READY' if n_ready == len(checks) else 'REVIEW_NEEDED',
-            'timestamp': _utc_now_iso() if callable(globals().get('_utc_now_iso')) else '',
-        }
+        A hash proves local integrity only. External/legal approval must still
+        be independently obtained and cannot be awarded by this function.
+        """
+        payload = report_payload if isinstance(report_payload, dict) else {}
+        evidence = payload.get('evidence', {})
+        statuses = {}
+        reasons = {}
+        for name in PatentReadinessReport.CHECKS:
+            entry = evidence.get(name) if isinstance(evidence, dict) else None
+            meta = entry.get('provenance') if isinstance(entry, dict) else None
+            valid, reason = UCGResearchEvidence.validate(meta, independent=True)
+            passed = bool(valid and entry.get('status') == 'VERIFIED') if isinstance(entry, dict) else False
+            # FTO is jurisdiction- and claim-specific; software cannot certify it.
+            if name == 'fto':
+                passed = False
+                reason = 'FTO requires jurisdiction-specific patent attorney opinion; software cannot grant clearance.'
+            elif name == 'benchmarks':
+                bench = FEMBenchmarkReport.generate_report(payload.get('benchmark_measurements'))
+                passed = passed and bench.get('overall_status') == 'PASSED'
+                if not passed: reason = 'Independent benchmark evidence missing or incomplete'
+            elif name == 'validation':
+                stages=payload.get('validation_stages') or []
+                passed = passed and bool(stages) and all(
+                    (s.get('passed') is True if isinstance(s,dict) else getattr(s,'passed',None) is True) for s in stages)
+                if not passed: reason='No complete independent validation stages'
+            elif name == 'digital_signature':
+                passed = passed and bool(entry.get('signature_verified', False))
+                if not passed: reason='RSA/Ed25519 signature verification evidence absent'
+            elif name == 'fem_verification':
+                passed = passed and bool(entry.get('independent_verification',False))
+                if not passed: reason='Independent solver V&V evidence absent'
+            statuses[name]='EVIDENCE_SUBMITTED_REVIEW_REQUIRED' if passed else 'NOT_EVALUATED'
+            reasons[name] = reason
+        n_submitted=sum(v=='EVIDENCE_SUBMITTED_REVIEW_REQUIRED' for v in statuses.values())
+        return {'checks':{k:False for k in statuses}, 'check_statuses':statuses,
+                'reasons':reasons, 'n_ready':0, 'n_evidence_submitted':n_submitted,
+                'n_total':len(statuses), 'readiness_pct':None,
+                'status':'LEGAL_AND_SCIENTIFIC_REVIEW_REQUIRED',
+                'timestamp':_utc_now_iso() if callable(globals().get('_utc_now_iso')) else '',
+                'disclaimer':'No automated patent readiness or professional FTO clearance is claimed.'}
+
+    @staticmethod
+    def generate_readiness_report(report_payload: Dict[str, Any]) -> bytes:
+        """Compile the same evidence-gated assessment into a candid Word report."""
+        from docx import Document
+        doc = Document()
+        doc.add_heading('UCG RESEARCH / PATENT READINESS — EVIDENCE REVIEW', 0)
+        doc.add_paragraph('NOT a patent clearance, legal opinion, certified V&V or digital signature.')
+        summary=PatentReadinessReport.get_readiness_summary(report_payload)
+        doc.add_heading('Executive summary', 1)
+        doc.add_paragraph('Status: '+summary['status'])
+        doc.add_paragraph(f"Evidence submissions: {summary['n_evidence_submitted']}/{summary['n_total']}; independently certified passes: 0.")
+        for i, item in enumerate(PatentReadinessReport.CHECKS, 1):
+            doc.add_heading(f'{i}. {item.replace("_", " ").title()}', 2)
+            doc.add_paragraph('Assessment: '+summary['check_statuses'][item])
+            doc.add_paragraph('Evidence issue: '+summary['reasons'][item])
+        bench=FEMBenchmarkReport.generate_report(report_payload.get('benchmark_measurements'))
+        doc.add_heading('Benchmark evidence', 1)
+        doc.add_paragraph(f"Verified records submitted: {bench['n_passed']}; not evaluated: {bench['n_not_evaluated']}; status: {bench['overall_status']}")
+        doc.add_heading('Traceability', 1)
+        bundle=build_traceability_bundle(report_payload, object_id='patent-readiness-report')
+        doc.add_paragraph(f'SHA-256 content hash: {bundle.sha256}\nCreated UTC: {bundle.timestamp_utc}')
+        doc.add_paragraph('This is an unkeyed content hash. It is NOT an RSA/Ed25519 digital signature or trusted timestamp.')
+        buf=io.BytesIO()
+        doc.save(buf)
+        return buf.getvalue()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -57698,34 +57381,46 @@ class DOIVerifier:
             return {'doi': doi, 'verified': False, 'reason': str(exc)}
 
     @staticmethod
-    def reverse_lookup(title: str, author: str = None) -> Dict[str, Any]:
-        """Reverse lookup: find DOI from title/author."""
+    def reverse_lookup(title: str, author: str = None, year: Optional[int] = None) -> Dict[str, Any]:
+        """Return a DOI only after bibliographic metadata match; no false high confidence."""
+        import difflib
+        if not isinstance(title,str) or len(title.strip())<8:
+            return {'title':title,'doi':None,'confidence':'none','reason':'Valid title required'}
         if not REQUESTS_AVAILABLE or NetworkMode().is_offline():
-            return {'title': title, 'doi': None, 'reason': 'Offline mode'}
-
+            return {'title':title,'doi':None,'confidence':'none','reason':'Offline mode'}
+        params={'query.bibliographic':title, 'rows':5}
+        if author: params['query.author']=author
+        def normalize(s):
+            return ' '.join(re.findall(r'\w+',str(s).casefold()))
         try:
-            params = {'query.bibliographic': title, 'rows': 5}
-            if author:
-                params['query.author'] = author
-            resp = _requests_module.get(
-                DOIVerifier.CROSSREF_API.rstrip('/'),
-                params=params,
-                timeout=15,
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                items = data.get('message', {}).get('items', [])
-                if items:
-                    return {
-                        'title': title,
-                        'doi': items[0].get('DOI'),
-                        'matched_title': items[0].get('title', [''])[0] if items[0].get('title') else '',
-                        'confidence': 'high' if len(items) > 0 else 'low',
-                        'n_results': len(items),
-                    }
-            return {'title': title, 'doi': None, 'reason': 'No results'}
+            response=_requests_module.get(DOIVerifier.CROSSREF_API.rstrip('/'), params=params,timeout=15)
+            if response.status_code!=200:
+                return {'title':title,'doi':None,'confidence':'none','reason':'Crossref HTTP '+str(response.status_code)}
+            items=response.json().get('message',{}).get('items',[])
+            scored=[]
+            for item in items:
+                candidate=str((item.get('title') or [''])[0])
+                score=difflib.SequenceMatcher(None,normalize(title),normalize(candidate)).ratio()
+                if author:
+                    surnames=[normalize(a.get('family','')) for a in item.get('author',[]) if isinstance(a,dict)]
+                    author_surname=normalize(author).split()[-1]
+                    if author_surname not in surnames:
+                        score=0.0
+                if year is not None:
+                    dates=(item.get('published',{}).get('date-parts') or [])
+                    if not dates or not dates[0] or dates[0][0]!=int(year): score=0.0
+                if item.get('DOI') and score>=0.90:
+                    scored.append((score,item,candidate))
+            if scored:
+                score,item,candidate=max(scored,key=lambda x:x[0])
+                return {'title':title,'doi':item['DOI'], 'matched_title':candidate,
+                        'confidence':'high' if score>=0.97 else 'medium',
+                        'title_similarity':round(score,4), 'n_results':len(items),
+                        'metadata_verified':'CROSSREF_MATCH_REVIEW_RECOMMENDED'}
+            return {'title':title,'doi':None,'confidence':'none', 'n_results':len(items),
+                    'reason':'No sufficiently matching title/author/year; review Crossref manually'}
         except Exception as exc:
-            return {'title': title, 'doi': None, 'reason': str(exc)}
+            return {'title':title,'doi':None,'confidence':'none','reason':type(exc).__name__}
 
 
 # ── 38. Patent Claim Analyzer (tree visualization) ──────────────────────────
@@ -60841,34 +60536,25 @@ class PGNNArchitecture:
             return None
 
     @staticmethod
-    def generate_learning_curve() -> Optional[bytes]:
-        """Generate an ILLUSTRATIVE synthetic curve, NOT measured PGNN training history."""
+    def generate_learning_curve(history: Optional[Dict[str, Any]] = None) -> Optional[bytes]:
+        """Plot actual user-supplied model.fit() history; no synthetic samples."""
+        if not isinstance(history,dict) or 'loss' not in history or 'val_loss' not in history:
+            return None
         try:
-            import matplotlib
-            matplotlib.use('Agg')
+            train=np.asarray(history['loss'],dtype=float).ravel()
+            valid=np.asarray(history['val_loss'],dtype=float).ravel()
+            if len(train)<2 or len(train)!=len(valid) or not np.isfinite(train).all() or not np.isfinite(valid).all():
+                return None
             import matplotlib.pyplot as plt
-
-            epochs = np.arange(1, 48)  # Early stopped at 47
-            rng = np.random.default_rng(42)
-            train_loss = 1.5 * np.exp(-epochs * 0.08) + rng.normal(0, 0.02, len(epochs))
-            val_loss = 1.6 * np.exp(-epochs * 0.06) + rng.normal(0, 0.04, len(epochs)) + 0.1
-
-            fig, ax = plt.subplots(figsize=(8, 5), dpi=150)
-            ax.plot(epochs, train_loss, 'b-', label='Training Loss', linewidth=2)
-            ax.plot(epochs, val_loss, 'r-', label='Validation Loss', linewidth=2)
-            ax.axvline(x=47, color='gray', linestyle='--', alpha=0.7, label='Early Stop (epoch 47)')
-            ax.set_xlabel('Epoch', fontsize=12)
-            ax.set_ylabel('Loss (Categorical Cross-Entropy)', fontsize=12)
-            ax.set_title('PGNN Learning Curve — SIMULATED DEMO, NOT TRAINING DATA', fontsize=11, fontweight='bold')
-            ax.legend(fontsize=10)
-            ax.grid(True, alpha=0.3)
-
-            buf = io.BytesIO()
-            fig.savefig(buf, format='png', bbox_inches='tight', dpi=150)
-            plt.close(fig)
-            buf.seek(0)
-            return buf.read()
-        except Exception:
+            fig,ax=plt.subplots(figsize=(8,5),dpi=150)
+            ax.plot(np.arange(1,len(train)+1),train,label='Training loss')
+            ax.plot(np.arange(1,len(valid)+1),valid,label='Validation loss')
+            ax.set(xlabel='Epoch',ylabel='Loss', title='PGNN training history — USER SUPPLIED (unverified)')
+            ax.legend(); ax.grid(True,alpha=0.3)
+            buf=io.BytesIO(); fig.savefig(buf,format='png',bbox_inches='tight'); plt.close(fig)
+            return buf.getvalue()
+        except (TypeError,ValueError,ImportError) as exc:
+            logger.warning('PGNN history unavailable: %s',exc)
             return None
 
 
@@ -60879,6 +60565,7 @@ class AblationStudy_V2:  # FIX v9.11.24: renamed duplicate
 
     Hisobotda systematic removal of components to quantify individual contribution.
     """
+    # Untrained illustrative results only; not evaluated by model.fit.
     RESULTS = [
         {'config': 'Hoek-Brown only (no AI)', 'accuracy': 0.712, 'auc': 0.685, 'delta': -0.138},
         {'config': 'Hoek-Brown + RF (no PGNN)', 'accuracy': 0.798, 'auc': 0.835, 'delta': -0.052},
@@ -60889,42 +60576,28 @@ class AblationStudy_V2:  # FIX v9.11.24: renamed duplicate
 
     @staticmethod
     def get_results() -> List[Dict[str, Any]]:
-        """Get ablation study results."""
-        return list(AblationStudy.RESULTS)
+        """Only a legacy ILLUSTRATIVE table; not computed ablation performance."""
+        return [dict(record, status='DEMO_ONLY', provenance='STATIC_EXAMPLE_NOT_VALIDATED') for record in AblationStudy_V2.RESULTS]
 
     @staticmethod
     def generate_plot() -> Optional[bytes]:
-        """Generate ablation study bar chart."""
+        """Render an explicitly labelled demonstration plot, not a model comparison."""
         try:
-            import matplotlib
-            matplotlib.use('Agg')
             import matplotlib.pyplot as plt
-
-            results = AblationStudy.RESULTS
-            configs = [r['config'][:30] for r in results]
-            accuracies = [r['accuracy'] for r in results]
-            aucs = [r['auc'] for r in results]
-
-            fig, ax = plt.subplots(figsize=(10, 5), dpi=150)
-            x = np.arange(len(configs))
-            width = 0.35
-            ax.bar(x - width/2, accuracies, width, label='Accuracy', color='steelblue')
-            ax.bar(x + width/2, aucs, width, label='AUC', color='orange')
-            ax.set_xlabel('Configuration')
-            ax.set_ylabel('Score')
-            ax.set_title('Ablation Study: Component Contribution', fontsize=13, fontweight='bold')
+            data=AblationStudy_V2.get_results()
+            fig,ax=plt.subplots(figsize=(10,5),dpi=150)
+            x=np.arange(len(data)); width=0.35
+            ax.bar(x-width/2,[r['accuracy'] for r in data],width,label='Illustrative accuracy')
+            ax.bar(x+width/2,[r['auc'] for r in data],width,label='Illustrative AUC')
             ax.set_xticks(x)
-            ax.set_xticklabels(configs, rotation=30, ha='right', fontsize=8)
-            ax.legend()
-            ax.grid(True, alpha=0.3, axis='y')
-            ax.set_ylim(0.6, 1.0)
-
-            buf = io.BytesIO()
-            fig.savefig(buf, format='png', bbox_inches='tight', dpi=150)
-            plt.close(fig)
-            buf.seek(0)
-            return buf.read()
-        except Exception:
+            ax.set_xticklabels([r['config'][:30] for r in data],rotation=30,ha='right')
+            ax.set_ylabel('Example scores (not measured)')
+            ax.set_title('ABLATION DEMONSTRATION ONLY — NO TRAINED MODELS')
+            ax.legend(); fig.tight_layout()
+            buf=io.BytesIO(); fig.savefig(buf,format='png',dpi=150)
+            plt.close(fig); return buf.getvalue()
+        except Exception as exc:
+            logger.warning('Demo plot unavailable: %s',exc)
             return None
 
 
@@ -61229,56 +60902,44 @@ class FEMBenchmarkComparison:
     ]
 
     @staticmethod
-    def get_comparison() -> List[Dict[str, Any]]:
-        """Get FEM comparison data."""
-        return list(FEMBenchmarkComparison.COMPARISON)
+    def get_comparison(include_demo: bool = False) -> List[Dict[str, Any]]:
+        """Return nothing unless illustrative preset data is explicitly requested."""
+        if not include_demo:
+            return []
+        return [dict(r,status='DEMO_ONLY',verified=False) for r in FEMBenchmarkComparison.COMPARISON]
 
     @staticmethod
-    def get_mesh_convergence() -> List[Dict[str, Any]]:
-        """Get mesh convergence data."""
-        return list(FEMBenchmarkComparison.MESH_CONVERGENCE)
+    def get_mesh_convergence(include_demo: bool = False) -> List[Dict[str, Any]]:
+        """Return nothing unless illustrative preset data is explicitly requested."""
+        if not include_demo:
+            return []
+        return [dict(r,status='DEMO_ONLY',verified=False) for r in FEMBenchmarkComparison.MESH_CONVERGENCE]
 
     @staticmethod
-    def get_solver_performance() -> List[Dict[str, Any]]:
-        """Get solver performance data."""
-        return list(FEMBenchmarkComparison.SOLVER_PERFORMANCE)
+    def get_solver_performance(include_demo: bool = False) -> List[Dict[str, Any]]:
+        """Return nothing unless illustrative preset data is explicitly requested."""
+        if not include_demo:
+            return []
+        return [dict(r,status='DEMO_ONLY',verified=False) for r in FEMBenchmarkComparison.SOLVER_PERFORMANCE]
 
     @staticmethod
-    def generate_comparison_plot() -> Optional[bytes]:
-        """Generate FEM comparison bar chart."""
+    def generate_comparison_plot(include_demo: bool = False) -> Optional[bytes]:
+        """Never produce an apparently real ABAQUS/COMSOL comparison by default."""
+        data=FEMBenchmarkComparison.get_comparison(include_demo=include_demo)
+        if not data:return None
         try:
-            import matplotlib
-            matplotlib.use('Agg')
             import matplotlib.pyplot as plt
-
-            data = FEMBenchmarkComparison.COMPARISON
-            metrics = [d['metric'][:20] for d in data]
-            our = [d['our_model'] for d in data]
-            abaqus = [d['abaqus'] for d in data]
-            comsol = [d['comsol'] for d in data]
-            exp = [d['experiment'] for d in data]
-
-            fig, ax = plt.subplots(figsize=(10, 6), dpi=150)
-            x = np.arange(len(metrics))
-            width = 0.2
-            ax.bar(x - 1.5*width, our, width, label='Our Model', color='steelblue')
-            ax.bar(x - 0.5*width, abaqus, width, label='ABAQUS', color='orange')
-            ax.bar(x + 0.5*width, comsol, width, label='COMSOL', color='green')
-            ax.bar(x + 1.5*width, exp, width, label='Experiment', color='red', alpha=0.7)
-            ax.set_ylabel('Value')
-            ax.set_title('FEM Comparison: Our Solver vs ABAQUS vs COMSOL vs Experiment',
-                        fontsize=12, fontweight='bold')
-            ax.set_xticks(x)
-            ax.set_xticklabels(metrics, rotation=15, ha='right', fontsize=9)
-            ax.legend(fontsize=9)
-            ax.grid(True, alpha=0.3, axis='y')
-
-            buf = io.BytesIO()
-            fig.savefig(buf, format='png', bbox_inches='tight', dpi=150)
-            plt.close(fig)
-            buf.seek(0)
-            return buf.read()
-        except Exception:
+            fig,ax=plt.subplots(figsize=(9,5))
+            labels=[d['metric'] for d in data]; x=np.arange(len(labels))
+            for j,model in enumerate(('our_model','abaqus','comsol')):
+                ax.bar(x+(j-1)*0.25,[d[model] for d in data],0.25,label=model)
+            ax.set_xticks(x); ax.set_xticklabels(labels,rotation=15)
+            ax.set_title('ILLUSTRATIVE ONLY — NOT ABAQUS/COMSOL SOLVER OUTPUT')
+            ax.legend(); fig.tight_layout()
+            b=io.BytesIO(); fig.savefig(b,format='png'); plt.close(fig)
+            return b.getvalue()
+        except Exception as exc:
+            logger.warning('Demo benchmark plot failed: %s',exc)
             return None
 
 
@@ -62001,31 +61662,18 @@ class ABAQUSCOMSOLBenchmark:
     ]
 
     @staticmethod
-    def get_results() -> List[Dict[str, Any]]:
-        """Get benchmark comparison results."""
-        return list(ABAQUSCOMSOLBenchmark.BENCHMARK_RESULTS)
+    def get_results(include_demo: bool = False) -> List[Dict[str, Any]]:
+        """Preset numbers are UNVERIFIED examples; no solver files were supplied."""
+        if not include_demo: return []
+        return [dict(r,status='DEMO_ONLY',passed=None,verified=False) for r in ABAQUSCOMSOLBenchmark.BENCHMARK_RESULTS]
 
     @staticmethod
     def get_summary() -> Dict[str, Any]:
-        """Get benchmark summary."""
-        results = ABAQUSCOMSOLBenchmark.BENCHMARK_RESULTS
-        n_passed = sum(1 for r in results if r['passed'])
-        max_diff_abaqus = max(r['our_vs_abaqus_pct'] for r in results)
-        max_diff_comsol = max(r['our_vs_comsol_pct'] for r in results)
-        max_diff_exp = max(r['our_vs_experiment_pct'] for r in results)
-        return {
-            'n_test_cases': len(results),
-            'n_passed': n_passed,
-            'all_passed': n_passed == len(results),
-            'max_diff_vs_abaqus_pct': max_diff_abaqus,
-            'max_diff_vs_comsol_pct': max_diff_comsol,
-            'max_diff_vs_experiment_pct': max_diff_exp,
-            'conclusion': f'All {len(results)} benchmark cases PASSED. '
-                         f'Max difference: ABAQUS={max_diff_abaqus:.1f}%, '
-                         f'COMSOL={max_diff_comsol:.1f}%, '
-                         f'Experiment={max_diff_exp:.1f}%. '
-                         f'All within tolerance.',
-        }
+        """No valid commercial comparison can be reported without external runs."""
+        return {'n_test_cases':0,'n_passed':0,'all_passed':None,
+                'max_diff_vs_abaqus_pct':None,'max_diff_vs_comsol_pct':None,
+                'max_diff_vs_experiment_pct':None,'status':'NOT_EVALUATED',
+                'conclusion':'No independently sourced Abaqus/COMSOL results provided.'}
 
 
 # ── 11. Patent Search API Rate-Limit and Auth ───────────────────────────────
@@ -63984,9 +63632,7 @@ class FormalReadinessChecklist:
             'n_total': n_total,
             'pct_ready': n_ready / n_total * 100,
             'status': (
-                'READY FOR PATENT FILING' if n_ready == n_total else
-                'PHD-READY (limitations documented)' if n_ready >= 5 else
-                'NOT READY - significant work required'
+                'REVIEW_REQUIRED — patent and doctoral readiness cannot be certified by software'
             ),
             'blocking_items': [k for k, v in checklist.items() if not v.get('ready', False)],
             'ready_items': [k for k, v in checklist.items() if v.get('ready', False)],
