@@ -2697,7 +2697,7 @@ class VersionManager:
     _lock = threading.Lock()
 
     def __init__(self):
-        self.version = '9.11.43'
+        self.version = '9.11.44'
 
     @classmethod
     def get_instance(cls):
@@ -2709,6 +2709,32 @@ class VersionManager:
 
     def get_version(self) -> str:
         return self.version
+
+    @classmethod
+    def render_dashboard_panel(cls) -> Dict[str, str]:
+        """Render the legacy version panel; safe to call outside Streamlit.
+
+        VersionManager_V2 is deliberately not substituted here because its
+        independently maintained version metadata may be stale.
+        """
+        vm = cls.get_instance()
+        metadata = {
+            "version": vm.get_version(),
+            "build": str(globals().get("__build_number__", "unknown")),
+            "git_commit": str(globals().get("__git_commit__", "unknown")),
+        }
+        try:
+            import streamlit as _st_panel
+        except ImportError:
+            logging.getLogger("ucg_platform").info(
+                "VersionManager panel not rendered: Streamlit is unavailable")
+            return metadata
+        _st_panel.subheader("🏷️ Version Manager (#9)")
+        _cols = _st_panel.columns(3)
+        _cols[0].metric("Versiya", metadata["version"])
+        _cols[1].metric("Build", metadata["build"])
+        _cols[2].metric("Git", metadata["git_commit"][:10])
+        return metadata
 
 _version_manager = VersionManager.get_instance()
 version_info = VersionInfo()
@@ -2727,7 +2753,7 @@ class PatentMetadata:
     """Proper dataclass for patent metadata (replaces __dunder__ variables)."""
     patent_status: str = "NOT_VERIFIED (application number required)"
     license_info: str = "Application status: NOT_VERIFIED"
-    version: str = "9.11.43"
+    version: str = "9.11.44"
     build_number: str = "20261025"
     patent_application_number: Optional[str] = None
     pct_application_number: Optional[str] = None
@@ -8176,15 +8202,47 @@ class SimilarityAnalyzer:
         return float(np.mean(self.compute_similarities()["Cosine Similarity"]))
 
 
+# Only log an optional rendering dependency failure once per Python run.
+_PLOTLY_RENDER_FAILURES_LOGGED: Set[str] = set()
+
+
+def _log_plotly_render_problem(kind: str, message: str) -> None:
+    if kind not in _PLOTLY_RENDER_FAILURES_LOGGED:
+        logger.warning("Plotly static image export [%s]: %s", kind, message)
+        _PLOTLY_RENDER_FAILURES_LOGGED.add(kind)
+
+
 def plotly_figure_to_png_bytes(fig: go.Figure, width: int = 1000, height: int = 600) -> Optional[bytes]:
+    """Best-effort Plotly PNG render. Never fabricate chart images.
+
+    Kaleido 1.x needs Plotly >= 6.1.1 AND an installed Chrome/Chromium.
+    A missing backend returns None, so Word exports can still complete while
+    accurately documenting which images are absent.
+    """
+    if fig is None or not isinstance(width, int) or not isinstance(height, int) or width <= 0 or height <= 0:
+        logger.warning("Plotly PNG render skipped: missing figure or invalid dimensions")
+        return None
+    try:
+        import kaleido  # noqa: F401  # required for Plotly static image export
+    except ImportError:
+        _log_plotly_render_problem(
+            "KALEIDO_MISSING",
+            "Install kaleido>=1 and ensure compatible Chrome/Chromium is available."
+        )
+        return None
     try:
         import plotly.io as pio
-        buffer = io.BytesIO()
-        pio.write_image(fig, buffer, format="png", width=width, height=height)
-        buffer.seek(0)
-        return buffer.read()
+        result = pio.to_image(fig, format="png", width=width, height=height)
+        if not isinstance(result, bytes) or not result.startswith(b"\x89PNG\r\n\x1a\n"):
+            _log_plotly_render_problem("INVALID_IMAGE", "Plotly did not return valid PNG bytes")
+            return None
+        return result
     except Exception as exc:
-        logger.warning(f"Plotly figure export error: {exc}")
+        _log_plotly_render_problem(
+            "RENDER_FAILURE",
+            f"{type(exc).__name__}: {exc}. Check Plotly/Kaleido compatibility "
+            "and Chrome/Chromium availability."
+        )
         return None
 
 
@@ -16123,6 +16181,14 @@ def generate_full_iso_report(
     final_run.font.color.rgb = color
 
     doc.add_paragraph("ISO/ISRM: NOT_ASSESSED; reported risk/FOS values are MODEL_OUTPUT, not independently verified geotechnical safety thresholds.")
+    _plotly_status = (results or {}).get('plotly_static_export')
+    if isinstance(_plotly_status, dict):
+        doc.add_paragraph(
+            'Plotly image export: ' + str(_plotly_status.get('status', 'NOT_EVALUATED'))
+            + '; included: ' + str(_plotly_status.get('included_images', 0))
+            + '; not rendered: ' + ', '.join(_plotly_status.get('not_rendered', []))
+            + '. Unrendered figures are NOT_EVALUATED, not omitted scientific findings.'
+        )
     add_phd_patent_sections(doc, results or {})
 
     # ── NOT Patent-Ready (Research Stage)  # FIX v9.11.28 (audit consolidation) sections (20 critical fixes) ──
@@ -31288,8 +31354,11 @@ def main():
             cfl_ok, cfl_val = check_cfl_condition(dt=0.1, dx=dx_val, dz=dz_val, alpha_max=PARAMS.THERMAL_DIFFUSIVITY)
             if not cfl_ok:
                 st.warning(f"[FIX #41] CFL shartini buzildi! CFL={cfl_val:.3f} (> 0.5). dt kichraytirish tavsiya etiladi.")
-            d_trial = phase_field_update(overstress, strain_energy, dx_val, dz_val, dt=0.1)
+            d_trial, _dt_used = phase_field_update(
+                overstress, strain_energy, dx_val, dz_val, dt=0.1
+            )
             d_updated = np.maximum(overstress, d_trial)
+            st.caption(f"Phase-field step: actual Δt = {_dt_used:.4g} (requested 0.1)")
             pf_metrics = compute_phase_field_metrics(d_updated, dx_val, dz_val, Gc=0.01, previous_damage=overstress)
             k_surf_val = float(np.mean(thermal_conductivity(temp_2d[0, :])))
             temp_updated_robin = robin_bc_update(temp_2d, k_surface=k_surf_val, h_conv=50.0, T_air=T_REF_AMBIENT, dz=dz_val)
@@ -31886,28 +31955,25 @@ def main():
                     audit = ScientificAuditTrail()
                     audit.log_change("report_generator", "export", "obj_name", None, obj_name, results['sha256'])
 
-                    import plotly.io as pio
+                    # v9.11.44: all ISO Plotly images use the safe export wrapper.
+                    # A skipped PNG is never described as an included figure.
                     figure_list_2d = []
-                    if 'fig_sub' in locals():
-                        buf2d = io.BytesIO()
-                        pio.write_image(fig_sub, buf2d, format='png', width=800, height=600)
-                        buf2d.seek(0)
-                        figure_list_2d.append(buf2d.getvalue())
-                    if 'fig_h' in locals():
-                        buf2d = io.BytesIO()
-                        pio.write_image(fig_h, buf2d, format='png', width=800, height=600)
-                        buf2d.seek(0)
-                        figure_list_2d.append(buf2d.getvalue())
-                    if 'fig_hb' in locals():
-                        buf2d = io.BytesIO()
-                        pio.write_image(fig_hb, buf2d, format='png', width=800, height=600)
-                        buf2d.seek(0)
-                        figure_list_2d.append(buf2d.getvalue())
-                    if 'fig_tm' in locals():
-                        buf2d = io.BytesIO()
-                        pio.write_image(fig_tm, buf2d, format='png', width=900, height=700)
-                        buf2d.seek(0)
-                        figure_list_2d.append(buf2d.getvalue())
+                    _iso_plotly_missing = []
+                    for _name, _width, _height in (
+                        ('fig_sub', 800, 600),
+                        ('fig_h', 800, 600),
+                        ('fig_hb', 800, 600),
+                        ('fig_tm', 900, 700),
+                    ):
+                        _figure = locals().get(_name)
+                        if _figure is not None:
+                            _png = plotly_figure_to_png_bytes(
+                                _figure, width=_width, height=_height
+                            )
+                            if _png is not None:
+                                figure_list_2d.append(_png)
+                            else:
+                                _iso_plotly_missing.append(_name)
 
                     figure_list_3d = []
                     X_3d = np.linspace(-200, 200, 60)
@@ -31919,10 +31985,25 @@ def main():
                     ) * 100.0
                     fig_3d_subs = go.Figure(data=[go.Surface(z=Z_3d_subs, x=X_3d, y=Y_3d, colorscale='Viridis')])
                     fig_3d_subs.update_layout(template='plotly_dark', title='3D Surface Subsidence')
-                    buf3d = io.BytesIO()
-                    pio.write_image(fig_3d_subs, buf3d, format='png', width=800, height=600)
-                    buf3d.seek(0)
-                    figure_list_3d.append(buf3d.getvalue())
+                    _png_3d = plotly_figure_to_png_bytes(
+                        fig_3d_subs, width=800, height=600
+                    )
+                    if _png_3d is not None:
+                        figure_list_3d.append(_png_3d)
+                    else:
+                        _iso_plotly_missing.append('fig_3d_subs')
+                    results['plotly_static_export'] = {
+                        'status': 'PARTIAL' if _iso_plotly_missing else 'OK',
+                        'included_images': len(figure_list_2d) + len(figure_list_3d),
+                        'not_rendered': list(_iso_plotly_missing),
+                        'note': 'Missing images are NOT_EVALUATED; they are not experimental data.',
+                    }
+                    if _iso_plotly_missing:
+                        st.warning(
+                            'ISO: some Plotly images could not be exported ('
+                            + ', '.join(_iso_plotly_missing)
+                            + '). DOCX remains available; install Kaleido 1.x and Chrome/Chromium.'
+                        )
 
                     docx_bytes = generate_full_iso_report(
                         obj_name=obj_name, lang=iso_lang, layers_data=layers_data,
@@ -43537,14 +43618,29 @@ class ChartExportManager:
     def export_plotly(fig: "go.Figure", filename: str,
                        format: str = "svg", width: int = 1200, height: int = 800,
                        dpi: int = 300) -> Dict[str, Any]:
-        """Export a Plotly figure to SVG, PDF, or PNG."""
+        """Export a real rendered Plotly chart or disclose unavailable renderer."""
+        fmt = str(format).lower().lstrip('.')
+        if fmt not in {'svg', 'pdf', 'png'}:
+            return {'status': 'ERROR', 'error': f'Unsupported Plotly format: {format}'}
+        try:
+            import kaleido  # noqa: F401
+        except ImportError:
+            return {'status': 'SKIP', 'error': 'Kaleido missing; image was NOT generated'}
+        output_path = filename if str(filename).lower().endswith(f'.{fmt}') else f'{filename}.{fmt}'
         try:
             import plotly.io as pio
-            output_path = filename if filename.endswith(f".{format}") else f"{filename}.{format}"
-            pio.write_image(fig, output_path, format=format, width=width, height=height, scale=dpi/72)
-            return {"status": "OK", "path": output_path, "format": format}
+            _data = pio.to_image(fig, format=fmt, width=width, height=height, scale=dpi / 72)
+            if not isinstance(_data, bytes) or not _data:
+                return {'status': 'ERROR', 'error': 'Empty image bytes from Plotly'}
+            Path(output_path).write_bytes(_data)
+            return {'status': 'OK', 'path': output_path, 'format': fmt}
         except Exception as exc:
-            return {"status": "error", "error": str(exc), "note": "Install kaleido: pip install kaleido"}
+            msg = str(exc)
+            unavailable = any(term in msg.lower() for term in ('kaleido', 'chrome', 'chromium', 'browser'))
+            logger.warning('Plotly SVG/PDF/PNG export problem: %s', exc)
+            return {'status': 'SKIP' if unavailable else 'ERROR',
+                    'error': msg, 'error_type': type(exc).__name__,
+                    'note': 'No image written; Chrome/Chromium is required for Kaleido 1.x.'}
 
 
 class ColorblindFriendlyPalette:
@@ -46809,45 +46905,47 @@ class ChartRegressionTesting:
                         threshold: float = 0.02) -> Dict[str, Any]:
         """
         Compare a Plotly figure against a reference image.
-        Uses structural similarity (SSIM) for pixel-level comparison.
+        Uses normalized mean absolute pixel difference (not SSIM).
         """
+        if not os.path.isfile(reference_path):
+            return {
+                "status": "NO_REFERENCE",
+                "note": f"Reference image not found: {reference_path}. No baseline was created.",
+            }
         try:
-            import plotly.io as pio
             from PIL import Image
             import io
-
-            # Render current figure to image
+            try:
+                import kaleido  # noqa: F401
+            except ImportError:
+                return {"status": "SKIP", "note": "Kaleido missing; chart not evaluated"}
+            import plotly.io as pio
             img_bytes = pio.to_image(current_fig, format="png", width=800, height=600)
-            current_img = Image.open(io.BytesIO(img_bytes))
-
-            # Load reference
-            if not os.path.exists(reference_path):
-                return {
-                    "status": "NO_REFERENCE",
-                    "note": f"Reference image not found: {reference_path}. Current chart saved as new reference.",
-                }
-
-            reference_img = Image.open(reference_path)
-
-            # Convert to arrays for comparison
-            current_arr = np.array(current_img)
-            reference_arr = np.array(reference_img)
-
+            with Image.open(io.BytesIO(img_bytes)) as current_img, Image.open(reference_path) as reference_img:
+                # Normalize image channel count before comparing pixels.
+                current_arr = np.asarray(current_img.convert('RGBA'))
+                reference_arr = np.asarray(reference_img.convert('RGBA'))
             if current_arr.shape != reference_arr.shape:
-                return {"status": "SIZE_MISMATCH", "current_shape": current_arr.shape, "reference_shape": reference_arr.shape}
-
-            # Simple pixel difference
-            diff = np.mean(np.abs(current_arr.astype(float) - reference_arr.astype(float))) / 255.0
-            passed = diff < threshold
-
+                return {"status": "SIZE_MISMATCH", "current_shape": current_arr.shape,
+                        "reference_shape": reference_arr.shape}
+            diff = float(np.mean(np.abs(current_arr.astype(float) - reference_arr.astype(float))) / 255.0)
+            passed = diff <= threshold
             return {
                 "status": "PASS" if passed else "FAIL",
-                "pixel_difference": float(diff),
+                "pixel_difference": diff,
                 "threshold": threshold,
-                "note": "PASS" if passed else f"Chart has changed (diff={diff:.4f} > threshold={threshold})",
+                "note": "PASS" if passed else f"Chart differs (diff={diff:.4f}, threshold={threshold})",
             }
-        except ImportError:
-            return {"status": "SKIP", "note": "plotly kaleido or PIL not available"}
+        except ImportError as exc:
+            return {"status": "SKIP", "note": f"Rendering dependency unavailable: {exc}"}
+        except (ValueError, RuntimeError, OSError) as exc:
+            _reason = str(exc)
+            _dependency_issue = any(term in _reason.lower() for term in (
+                "kaleido", "chrome", "chromium", "browser", "plotly version"
+            ))
+            logger.warning("Chart regression rendering failed: %s", exc)
+            return {"status": "SKIP" if _dependency_issue else "ERROR",
+                    "note": _reason, "error_type": type(exc).__name__}
 
 
 class RuleBasedScientificValidator:
