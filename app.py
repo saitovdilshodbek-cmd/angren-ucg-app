@@ -7,6 +7,8 @@
 # multi-output counterfactuals, honest CV failures.
 # Research prototype. No independent THCM field validation, legal FTO or verified Abaqus/COMSOL runs.
 # ════════════════════════════════════════════════════════════════════════
+# ══ Patent Report UI evidence-integrity patch v9.11.39 (2026-10-25) ══
+# v7 Patent Report is now opt-in, provenance-tagged, and excludes unverified patent assertions.
 # ══ Expert targeted audit patches: 2026-10-25 ══
 # Source v9.11.35; regression-tested fixes for DI/MC/BCa/LHS/FEM/rate-limit.
 # This is NOT an external Abaqus/COMSOL benchmark, field validation, or a patent certificate.
@@ -11622,1187 +11624,111 @@ def load_experimental_dataset(csv_path: str, dataset_type: str = "field") -> Opt
 
 
 def generate_patent_report(
-    novelty_df: pd.DataFrame,
-    benchmark_results: List[BenchmarkResult],
-    similarity_df: pd.DataFrame,
-    mean_similarity: float,
+    novelty_df: Optional[pd.DataFrame] = None,
+    benchmark_results: Optional[List[Any]] = None,
+    similarity_df: Optional[pd.DataFrame] = None,
+    mean_similarity: Optional[float] = None,
     invention_title: str = "UCG SCI-Grade Platform",
     keywords: Optional[List[str]] = None,
     report_payload: Optional[Dict[str, Any]] = None,
 ) -> bytes:
-    """v9.11.0: Comprehensive Patent Report with all 10 critical + medium + model fixes."""
-    keywords = keywords or ["UCG", "geomechanics", "patent", "digital twin", "FEM"]
-    report_payload = report_payload or {}
+    """Legacy-compatible, evidence-limited technical patent report.
+
+    A model/benchmark comparison is never legal novelty or FTO clearance.
+    The former legacy generator contained unsupported patent, TRL and field
+    validation claims; this replacement refuses to fabricate those statuses.
+    """
+    if isinstance(novelty_df, dict) and benchmark_results is None:
+        # Backwards compatibility: build_export_package passed payload as
+        # one positional dict without novelty_df/benchmark_results.
+        report_payload = novelty_df
+        novelty_df = None
+    payload = report_payload if isinstance(report_payload, dict) else {}
     doc = Document()
-    _report_version = globals().get("__version__", "unknown")
-    doc.add_heading(f"PATENT NOVELTY AND VALIDATION REPORT (v{_report_version})", 0)
-
-    doi = generate_real_doi({"title": invention_title, "keywords": keywords, "year": datetime.now(timezone.utc).year})
-    trace_bundle = build_traceability_bundle(
-        {
-            "novelty_index": novelty_df.attrs.get("Novelty Index", 0.0),
-            "mean_similarity": mean_similarity,
-            "benchmarks": [asdict(res) for res in benchmark_results],
-            "payload": report_payload,
-        },
-        object_id="patent-report",
+    doc.add_heading("Patent Research — Evidence Summary", level=0)
+    doc.add_paragraph("Research-stage support document; no verified patentability, TRL, or FTO decision.")
+    doc.add_paragraph(f"Invention / project title (user-supplied): {invention_title}")
+    doc.add_paragraph(f"Date (UTC): {datetime.now(timezone.utc).isoformat()}")
+    doc.add_paragraph(f"Platform version: {globals().get('__version__', 'unknown')}")
+    doc.add_heading("1. Verification status", level=1)
+    statuses = (
+        ("Independent experimental benchmark", "NOT_EVALUATED"),
+        ("Legal novelty / inventive step", "NOT_EVALUATED"),
+        ("Legal freedom-to-operate", "NOT_EVALUATED"),
+        ("TRL", "NOT_EVALUATED"),
+        ("Angren field measurements", "NOT_EVALUATED"),
+        ("ISO certification", "NOT_ASSESSED"),
+        ("Official patent application", "NOT_VERIFIED"),
+        ("Registered DOI", "NOT_VERIFIED"),
+        ("Digital signature", "NOT_EVALUATED"),
     )
-    source_urls = PriorArtSearchEngine.build_queries(invention_title, keywords)
-    # FIX v9.11.19 #35: benchmark_results bo'sh bo'lsa ZeroDivisionError /
-    # RuntimeWarning (np.mean([]) → nan). Endi: bo'sh bo'lsa default metrics.
-    if benchmark_results:
-        avg_metrics = ExperimentalMetrics(
-            rmse=float(np.mean([r.rmse for r in benchmark_results])),
-            mae=float(np.mean([r.mae for r in benchmark_results])),
-            r2=float(np.mean([r.r2 for r in benchmark_results])),
-            mape=float(np.mean([r.mape for r in benchmark_results])),
-            nse=float(np.mean([r.nse for r in benchmark_results])),
-            kge=float(np.mean([r.kge for r in benchmark_results])),
-        )
-    else:
-        # FIX v9.11.19 #35: bo'sh benchmark — default zero metrics
-        logger.warning(
-            "[generate_patent_report] benchmark_results is empty — using zero metrics. "
-            "Provide real benchmark data for valid patent report."
-        )
-        avg_metrics = ExperimentalMetrics(rmse=0.0, mae=0.0, r2=0.0, mape=0.0, nse=0.0, kge=0.0)
+    status_table = doc.add_table(rows=1, cols=2)
+    status_table.style = "Table Grid"
+    status_table.rows[0].cells[0].text = "Criteria"
+    status_table.rows[0].cells[1].text = "Evidence status"
+    for label, status in statuses:
+        row = status_table.add_row().cells
+        row[0].text, row[1].text = label, status
 
-    # FIX v9.11.4: SOXTALASHTIRISH OLIB TASHLANDI.
-    # Avval: novelty_index ni majburan 82 ga, patentability_index ni 80 ga ko'tarilar edi.
-    # Bu patent bekor qilinishi va PhD rad etilishi xavfini keltirib chiqarardi.
-    # Endi: REAL novelty_df.attrs.get("Novelty Index", 0.0) ishlatiladi.
-    _real_novelty = float(novelty_df.attrs.get("Novelty Index", 0.0))
-    # FIX v9.11.27 (PhD/Patent audit): `prior_art_count` is documented as an
-    # `int` parameter (see evaluate_patentability_extended signature), but the
-    # previous call wrapped it in `len(...)`. If the payload provides a plain
-    # int (the documented contract), `len(int)` raises TypeError and the
-    # patent report fails to generate — critical for PhD submission. Now we
-    # accept either an int or a list/tuple and normalize to int.
-    _prior_art_raw = report_payload.get("prior_art_count", 5)
-    if isinstance(_prior_art_raw, (list, tuple, set)):
-        _prior_art_count = len(_prior_art_raw)
+    doc.add_heading("2. Caller-supplied comparison records", level=1)
+    if isinstance(novelty_df, pd.DataFrame) and not novelty_df.empty:
+        doc.add_paragraph(f"Input comparison table: {len(novelty_df)} rows, "
+                          f"{len(novelty_df.columns)} columns — SOURCE_UNVERIFIED")
+        doc.add_paragraph("Not a validated patent prior-art or inventive-step analysis.")
     else:
+        doc.add_paragraph("NOT_EVALUATED — no comparison matrix")
+    if isinstance(similarity_df, pd.DataFrame) and not similarity_df.empty:
+        doc.add_paragraph(f"Automated similarity rows supplied: {len(similarity_df)} — "
+                          "AUTOMATED_SCREENING_ONLY; claim mapping and jurisdiction not verified.")
         try:
-            _prior_art_count = int(_prior_art_raw)
-        except (TypeError, ValueError):
-            _prior_art_count = 5
-    patentability_ext = evaluate_patentability_extended(
-        _real_novelty,  # REAL novelty - majburan ko'tarish YO'Q
-        min(mean_similarity, 0.25),  # lower similarity = higher novelty
-        avg_metrics,
-        prior_art_count=_prior_art_count
-    )
-    # FIX v9.11.4: patentability_index ni majburan 80 ga ko'tarish OLIB TASHLANDI.
-    # Agar past bo'lsa - sababini tahlil qilamiz (yashirmaymiz).
-    _pat_idx = patentability_ext['patentability_index']
-    if _pat_idx < 75.0:
-        patentability_ext['_warning_low_patentability'] = (
-            f"Patentability Index = {_pat_idx:.1f}/100 - threshold (75) dan past. "
-            f"Tavsiya: (1) novelty ni oshirish uchun qo'shimcha farqlarni hujjatlashtirish; "
-            f"(2) FTO tahlilini kengaytirish; (3) claim'larni kuchaytirish."
-        )
-
-    uq = decompose_uncertainty(
-        np.array([r.rmse for r in benchmark_results], dtype=float),
-        np.array([r.mae for r in benchmark_results], dtype=float),
-    )
-    validation_stages = run_four_stage_validation(
-        analytical_metrics=validate_against_analytical(),
-        benchmark_metrics=avg_metrics,
-        uq=uq,
-    )
-    # FIX v9.11.4: Validation stage'larni majburan PASSED qilish OLIB TASHLANDI.
-    # Bu ASME V&V 10/20 standartini buzardi (research misconduct).
-    # Endi real natijalar saqlanadi - agar stage FAIL bo'lsa, hisobotda aniq ko'rinadi.
-    _n_failed_stages = sum(1 for s in validation_stages if not s.passed)
-    if _n_failed_stages > 0:
-        for stage in validation_stages:
-            if not stage.passed:
-                stage.details = {**stage.details, 'v9.11.4_note': 'Real validation result - not forced to PASSED (ASME V&V 10/20 compliance)'}
-
-    ranking_df = report_payload.get("ranking_df", pd.DataFrame())
-    methodology_lines = report_payload.get("methodology_lines", [])
-    discussion_text = report_payload.get("discussion_text", "")
-    snapshot_path = report_payload.get("snapshot_path")
-    # FIX v9.11.19 #13: v9.11.16 da `max(score, 0.82)` — soxtalashtirish!
-    # Haqiqiy score past bo'lsa ham 0.82 ga ko'tarilardi. Endi: xom score
-    # ishlatiladi — agar past bo'lsa, hisobotda "validation score LOW" deb
-    # aniq ko'rsatiladi (soxta 0.82 emas).
-    _raw_validation_score = float(report_payload.get("validation_score", 0.0))
-    validation_score = _raw_validation_score  # NO floor — honest reporting
-    if _raw_validation_score < 0.82:
-        logger.warning(
-            "[generate_patent_report] validation_score=%.4f is below 0.82 threshold — "
-            "reporting HONEST value (no artificial floor). "
-            "Improve model validation before patent filing.",
-            _raw_validation_score,
-        )
-    sig_report = report_payload.get("statistical_significance", {})
-    cv_results = report_payload.get("cv_results", {})
-    iso_audit = report_payload.get("iso_audit", {})
-    # FIX v9.11.19 #14: dinamik validation stages count (hardcoded PASSED o'rniga)
-    _validation_stages_list = report_payload.get("validation_stages", [])
-    _n_total = len(_validation_stages_list)
-    _n_pass = sum(1 for s in _validation_stages_list if getattr(s, "passed", False)) if _validation_stages_list else 0
-
-    # ── Equation/Figure/Table numbering counters ──
-    _eq_counter = [0]
-    _fig_counter = [0]
-    _tbl_counter = [0]
-
-    def eq_num():
-        _eq_counter[0] += 1
-        return f"({_eq_counter[0]})"
-
-    def fig_num():
-        _fig_counter[0] += 1
-        return f"Fig. {_fig_counter[0]}"
-
-    def tbl_num():
-        _tbl_counter[0] += 1
-        return f"Table {_tbl_counter[0]}"
-
-    # ════════════════════════════════════════════════════════════════════
-    # SECTION 1: Executive Summary
-    # ════════════════════════════════════════════════════════════════════
-    doc.add_heading("1. Executive Summary", level=1)
-    doc.add_paragraph(
-        f"This Patent Novelty and Validation Report documents the scientific "
-        f"foundation, novelty assessment, and validation results for the "
-        f"{invention_title}. The invention addresses critical gaps in Underground "
-        f"Coal Gasification (UCG) monitoring through an integrated platform "
-        f"combining adaptive Biot poroelasticity, Arrhenius thermal kinetics, "
-        f"AI-driven risk assessment, and patent-grade audit trail."
-    )
-    doc.add_paragraph(
-        # FIX v9.11.19 #14: "All 4 validation stages PASSED" hardcoded edi —
-        # endi dinamik: haqiqiy validation_stages natijasiga bog'liq.
-        f"Overall Patentability Index: {patentability_ext['patentability_index']:.2f}/100 "
-        f"(Patent-ready threshold: 75+). Novelty Index: {patentability_ext['novelty_index']:.2f}/100. "
-        f"Automated FTO heuristic: {patentability_ext['fto_score']:.2f}/100 (NOT a legal clearance). "
-        f"Claim Strength: {patentability_ext['claim_strength']:.2f}/100. "
-        # FIX v9.11.19 #14: dinamik validation status
-        f"Validation stages: {_n_pass} of {_n_total} PASSED "
-        f"({'NOT_EVALUATED' if _n_total == 0 else ('ALL PASSED' if _n_pass == _n_total else f'{_n_total - _n_pass} FAILED — see Section 7')}). "
-        # FIX v9.11.20 #65: TRL Level endi UCG_TRL_LEVEL env var orqali sozlanadi
-        # (hardcoded 6 olib tashlandi). TRL 6 = "System/subsystem prototype
-        # demonstration in relevant environment" (NASA TRL scale).
-        # Reference: NASA Technology Readiness Level definitions.
-        f"TRL Level: {os.getenv('UCG_TRL_LEVEL', '6')} (NASA TRL scale)."
-    )
-
-    # ════════════════════════════════════════════════════════════════════
-    # SECTION 2: Novelty Matrix
-    # ════════════════════════════════════════════════════════════════════
-    doc.add_heading("2. Novelty Matrix", level=1)
-    t = doc.add_table(novelty_df.shape[0]+1, novelty_df.shape[1])
-    t.style = 'Table Grid'
-    set_table_border(t)
-    for i, col in enumerate(novelty_df.columns):
-        t.rows[0].cells[i].text = col
-    for r_idx, row in novelty_df.iterrows():
-        for c_idx, val in enumerate(row):
-            t.rows[r_idx+1].cells[c_idx].text = str(val)
-    cap = doc.add_paragraph()
-    cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    cap.add_run(f"{tbl_num()}. Novelty Matrix — Feature-by-feature comparison").italic = True
-    doc.add_paragraph(f"Novelty Index: {novelty_df.attrs['Novelty Index']:.1f}%")
-    doc.add_paragraph(f"Patent Similarity Index: {novelty_df.attrs.get('Patent Similarity Index', 0.0):.1f}%")
-
-    # ════════════════════════════════════════════════════════════════════
-    # SECTION 3: Benchmark Validation
-    # ════════════════════════════════════════════════════════════════════
-    doc.add_heading("3. Benchmark Validation", level=1)
-    doc.add_paragraph("Comparison with industry-standard software and experimental data:")
-    for res in benchmark_results:
-        p = doc.add_paragraph()
-        p.add_run(f"{res.model_name}: ").bold = True
-        p.add_run(
-            f"RMSE={res.rmse:.3f}, MAE={res.mae:.3f}, R2={res.r2:.3f}, "
-            f"MAPE={res.mape:.2f}%, NSE={res.nse:.3f}, KGE={res.kge:.3f} | "
-            f"ValidationScore={res.validation_score:.2f} | Source={res.source_type} | "
-            f"Bias={res.bias:.3f} | Relative RMSE={res.relative_rmse:.3f}"
-        )
-        if res.p_value < 0.05:
-            p.add_run(" (Statistically significant, p<0.05)").italic = True
-    add_image_bytes_to_doc(doc, report_payload.get("validation_graph_bytes"), f"{fig_num()}. Validation graph")
-    add_image_bytes_to_doc(doc, report_payload.get("error_histogram_bytes"), f"{fig_num()}. Error histogram")
-    add_image_bytes_to_doc(doc, report_payload.get("error_heatmap_bytes"), f"{fig_num()}. Error heatmap")
-    add_image_bytes_to_doc(doc, report_payload.get("validation_surface_bytes"), f"{fig_num()}. 3D validation surface")
-    add_dataframe_to_doc(doc, ranking_df if isinstance(ranking_df, pd.DataFrame) else pd.DataFrame(),
-                         f"{tbl_num()}. Benchmark ranking")
-
-    # ════════════════════════════════════════════════════════════════════
-    # SECTION 4: Statistical Significance + CV
-    # ════════════════════════════════════════════════════════════════════
-    doc.add_heading("4. Statistical Significance and Cross-Validation", level=1)
-    doc.add_paragraph(f"Paired t-test: p-value = {sig_report.get('p_value', 1.0):.4f}    {eq_num()}")
-    doc.add_paragraph(f"Cohen's d (effect size) = {sig_report.get('cohens_d', 0.0):.4f}    {eq_num()}")
-    doc.add_paragraph(f"95% CI for mean difference: [{sig_report.get('ci_low', 0.0):.4f}, {sig_report.get('ci_high', 0.0):.4f}]    {eq_num()}")
-    doc.add_paragraph(f"Significant (p<0.05): {'Yes' if sig_report.get('significant', False) else 'No'}")
-
-    doc.add_heading("4a. Cross-Validation Results", level=2)
-    doc.add_paragraph(f"CV scheme: {cv_results.get('cv', 5)}-fold stratified, repeated 3x")
-    doc.add_paragraph(f"Mean score: {cv_results.get('mean', 0.0):.4f} +/- {cv_results.get('std', 0.0):.4f}")
-    doc.add_paragraph(f"Scoring: {cv_results.get('scoring', 'accuracy')}")
-    cv_scores = cv_results.get('scores', [])
-    if cv_scores:
-        doc.add_paragraph(f"Scores: {', '.join([f'{s:.4f}' for s in cv_scores])}")
-        doc.add_paragraph(f"95% CI: [{np.mean(cv_scores) - 1.96*np.std(cv_scores)/np.sqrt(len(cv_scores)):.4f}, "
-                         f"{np.mean(cv_scores) + 1.96*np.std(cv_scores)/np.sqrt(len(cv_scores)):.4f}]")
-
-    # ════════════════════════════════════════════════════════════════════
-    # SECTION 5: Prior-Art Similarity
-    # ════════════════════════════════════════════════════════════════════
-    doc.add_heading("5. Prior-Art Similarity Analysis", level=1)
-    doc.add_paragraph(f"Mean cosine similarity to prior art: {mean_similarity:.3f}")
-    doc.add_paragraph(f"Patent Similarity Index: {novelty_df.attrs.get('Patent Similarity Index', 0.0):.1f}%")
-    doc.add_paragraph("(Lower values indicate higher novelty)")
-    t2 = doc.add_table(similarity_df.shape[0]+1, 2)
-    t2.style = 'Table Grid'
-    set_table_border(t2)
-    t2.rows[0].cells[0].text = "Prior Art"
-    t2.rows[0].cells[1].text = "Similarity"
-    for i, row in similarity_df.iterrows():
-        t2.rows[i+1].cells[0].text = row["Prior Art"]
-        t2.rows[i+1].cells[1].text = f"{row['Cosine Similarity']:.4f}"
-    cap2 = doc.add_paragraph()
-    cap2.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    cap2.add_run(f"{tbl_num()}. Prior-Art Similarity Scores").italic = True
-
-    # ════════════════════════════════════════════════════════════════════
-    # SECTION 6: Patentability Score
-    # ════════════════════════════════════════════════════════════════════
-    # FIX #74/#98 (v9.11.17): "v9.11.0" hardcoded — endi `__version__` ishlatiladi.
-    # FIX #24 (v9.11.17): "Boosted" so'zi patent examiner uchun qizil bayroq —
-    # "Methodology revised" deb o'zgartirildi.
-    _v_str_6 = globals().get("__version__", "unknown")
-    doc.add_heading(f"6. Patentability Score ({_v_str_6} Methodology Revised)", level=1)
-    pat_tbl = doc.add_table(rows=7, cols=2)
-    pat_tbl.style = 'Table Grid'
-    set_table_border(pat_tbl)
-    pat_data = [
-        ["Metric", "Value"],
-        ["Patentability Index", f"{patentability_ext['patentability_index']:.2f}/100"],
-        ["Novelty Index", f"{patentability_ext['novelty_index']:.2f}/100"],
-        ["Inventive Step", f"{patentability_ext['inventive_step']:.2f}/100"],
-        ["Industrial Applicability", f"{patentability_ext['industrial_applicability']:.2f}/100"],
-        ["FTO Score", f"{patentability_ext['fto_score']:.2f}/100"],
-        ["Claim Strength", f"{patentability_ext['claim_strength']:.2f}/100"],
-    ]
-    for i, (k, v) in enumerate(pat_data):
-        pat_tbl.rows[i].cells[0].text = k
-        pat_tbl.rows[i].cells[1].text = v
-    cap3 = doc.add_paragraph()
-    cap3.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    cap3.add_run(f"{tbl_num()}. Patentability Score Summary ({_v_str_6})").italic = True
-    doc.add_paragraph(
-        f"Note: Patentability Index methodology revised in {_v_str_6} based on: (1) comprehensive "
-        "INTERNAL FTO screening only, no verified legal clearance; (2) candidate claim structure "
-        "(4 independent + 11 dependent), (3) validation across 8 international field sites, "
-        "(4) SHA-256 + RSA-4096 audit trail for regulatory compliance."
-    )
-
-    # ════════════════════════════════════════════════════════════════════
-    # SECTION 7: Verification and Uncertainty (FIX #9 — all PASSED)
-    # ════════════════════════════════════════════════════════════════════
-    # FIX v9.11.27 (PhD/Patent audit): Removed hardcoded "All PASSED" label —
-    # the section heading and per-stage labels are now driven by `stage.passed`.
-    # ASME V&V 10-2019 explicitly forbids "selective reporting" of validation
-    # results; any failure MUST be visible to the patent examiner / PhD committee.
-    _n_pass_v = sum(1 for s in validation_stages if getattr(s, "passed", False))
-    _n_total_v = len(validation_stages)
-    _all_passed_v = (_n_pass_v == _n_total_v) and (_n_total_v > 0)
-    _heading_v = (
-        f"7. Verification and Uncertainty ({_n_pass_v}/{_n_total_v} PASSED"
-        f"{'' if _all_passed_v else ' — see FAILED stages below'})"
-    )
-    doc.add_heading(_heading_v, level=1)
-    for stage in validation_stages:
-        _stage_status = "PASS" if getattr(stage, "passed", False) else "FAIL"
-        doc.add_paragraph(
-            f"{stage.stage}: {_stage_status} | {json.dumps(stage.details, default=_json_default_serializer)}"
-        )
-    doc.add_paragraph(
-        # FIX #23 (v9.11.16): "50,000 simulations" da'vosi haqiqiy emas — bu default
-        # value. Agar haqiqiy simulatsiya o'tkazilmagan bo'lsa, hisobotda "NOT COMPUTED"
-        # deb aniq ko'rsatiladi. Patent examiner bu raqamni soxta deb topishi mumkin.
-        f"Monte Carlo simulations: {report_payload.get('n_simulations', 'NOT COMPUTED — no MC run performed')} | "
-        f"Validation Score: {validation_score:.2f} | Audit Chain: CONSISTENT (v9.11.0)"
-    )
-    if report_payload.get("sensitivity_df") is not None:
-        add_dataframe_to_doc(doc, report_payload["sensitivity_df"],
-                             f"{tbl_num()}. Sensitivity ranking")
-
-    # ════════════════════════════════════════════════════════════════════
-    # SECTION 8: Claims
-    # ════════════════════════════════════════════════════════════════════
-    claims_dict = generate_patent_claim_set(list(novelty_df["Feature"].astype(str)), lang="en")
-    doc.add_heading("8. Patent Claims", level=1)
-    doc.add_heading("8a. Independent Claims", level=2)
-    for claim in claims_dict.get("independent", []):
-        doc.add_paragraph(claim, style="List Bullet")
-    doc.add_heading("8b. Dependent Claims", level=2)
-    for claim in claims_dict.get("dependent", []):
-        doc.add_paragraph(claim, style="List Bullet")
-    doc.add_heading("8c. System Claims", level=2)
-    for claim in claims_dict.get("system", []):
-        doc.add_paragraph(claim, style="List Bullet")
-    doc.add_heading("8d. Method Claims", level=2)
-    for claim in claims_dict.get("method", []):
-        doc.add_paragraph(claim, style="List Bullet")
-    doc.add_heading("8e. Device Claims", level=2)
-    for claim in claims_dict.get("device", []):
-        doc.add_paragraph(claim, style="List Bullet")
-
-    # ════════════════════════════════════════════════════════════════════
-    # SECTION 9: Prior-art Search Endpoints
-    # ════════════════════════════════════════════════════════════════════
-    doc.add_heading("9. Prior-Art Search Endpoints", level=1)
-    for source_name, url in source_urls.items():
-        doc.add_paragraph(f"{source_name}: {url}")
-
-    # ════════════════════════════════════════════════════════════════════
-    # SECTION 10: Traceability
-    # ════════════════════════════════════════════════════════════════════
-    doc.add_heading("10. Traceability", level=1)
-    doc.add_paragraph(
-        f"DOI: {doi}\n"
-        f"SHA256: {trace_bundle.sha256}\n"
-        f"Timestamp (UTC): {trace_bundle.timestamp_utc}\n"
-        f"Version: {trace_bundle.version}\n"
-        f"Git commit: {trace_bundle.git_commit}"
-    )
-    if snapshot_path:
-        doc.add_paragraph(f"Reproducibility snapshot: {snapshot_path}")
-
-    # ════════════════════════════════════════════════════════════════════
-    # SECTION 11: Compliance
-    # ════════════════════════════════════════════════════════════════════
-    doc.add_heading("11. Compliance Matrix", level=1)
-    compliance_df = generate_compliance_matrix()
-    t3 = doc.add_table(compliance_df.shape[0] + 1, compliance_df.shape[1])
-    t3.style = 'Table Grid'
-    set_table_border(t3)
-    for i, col in enumerate(compliance_df.columns):
-        t3.rows[0].cells[i].text = col
-    for r_idx, row in compliance_df.iterrows():
-        for c_idx, val in enumerate(row):
-            t3.rows[r_idx + 1].cells[c_idx].text = str(val)
-    cap4 = doc.add_paragraph()
-    cap4.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    cap4.add_run(f"{tbl_num()}. ISO/ISRM Compliance Matrix").italic = True
-
-    if iso_audit:
-        doc.add_heading("11a. ISO Audit Evidence", level=2)
-        for standard, details in iso_audit.items():
-            doc.add_heading(f"{standard}", level=3)
-            doc.add_paragraph(f"Checklist: {', '.join(details.get('checklist', []))}")
-            doc.add_paragraph(f"Gap Analysis: {details.get('gap_analysis', 'N/A')}")
-            doc.add_paragraph(f"Evidence: {details.get('evidence', 'N/A')}")
-
-    # ════════════════════════════════════════════════════════════════════
-    # SECTION 12: Physical Consistency Checks (FIX #1-8)
-    # ════════════════════════════════════════════════════════════════════
-    # FIX #74 / #98 (v9.11.17): v9.11.16 da "v9.11.0" hardcoded edi — bu
-    # v9.11.15+ da ham "v9.11.0" ko'rsatilardi. Endi: `__version__` ishlatiladi.
-    _current_version = globals().get("__version__", "unknown")
-    doc.add_heading(f"12. Physical Consistency Checks ({_current_version} Critical Fixes)", level=1)
-    doc.add_paragraph(
-        f"All critical physical inconsistencies identified in v9.11.0 have been "
-        f"resolved in {_current_version}. The table below documents each fix."
-    )
-    fix_tbl = doc.add_table(rows=11, cols=4)
-    fix_tbl.style = 'Table Grid'
-    set_table_border(fix_tbl)
-    fix_data = [
-        ["#", "Issue (v9.11.0)", "Root Cause", "Fix (v9.11.0)"],
-        ["1", "Conversion = 1.0000 (100%)", "Numerical drift in ODE solver",
-         "Capped at 0.99 (Applicability Domain max)"],
-        ["2", "T = 458 K (below AI range)", "Initial T0 below 700 K",
-         "Enforced T0 >= 700 K; AI model range 700-1800 K"],
-        ["3", "Permeability = 0.0000 m2", "Default zero value",
-         "Enforced minimum 1e-20 m2 (physical floor)"],
-        ["4", "Carbon Efficiency = 1437%", "Mass balance drift",
-         "Capped at 100% (thermodynamic limit)"],
-        ["5", "CGE = 0% with gas present", "Division by zero in formula",
-         "Recomputed: min 5% if syngas exists, max 100%"],
-        ["6", "Mass balance Pass Rate = 0%", "Stoichiometry errors",
-         "Fixed stoichiometric coefficients; Pass Rate now 95%+"],
-        ["7", "Boudouard unbalanced", "Incorrect coefficient",
-         "Verified: C + CO2 -> 2CO (balanced: 1C, 2O each side)"],
-        ["8", "NaN in Heat Balance (CO/H2 ox)", "trapz on empty array",
-         "Replaced NaN with 0.0; numerical safety check"],
-        ["9", "Audit chain: 'Muammo bor'", "Validation thresholds not met",
-         "Validation stages are reported HONESTLY (PASS or FAIL) per ASME V&V 10-2019; "
-         "the section heading dynamically reflects the actual pass count"],
-        ["10", "Patentability = 57/100", "Low novelty score",
-         # FIX v9.11.27 (PhD/Patent audit): Previously claimed "score recomputed: 80"
-         # — a hardcoded value that masked actual computed score. This is selective
-         # reporting, forbidden by ASME V&V 10-2019 and PhD research integrity rules.
-         # Now: actual `patentability_ext['patentability_index']` is reported in
-         # Section 6 — no hardcoded number appears in this fix table.
-         "Methodology revised (added FTO + claims + validation criteria); "
-         "actual score is reported in Section 6 (Patentability Score) — no hardcoded value"],
-    ]
-    for i, row_data in enumerate(fix_data):
-        for j, val in enumerate(row_data):
-            fix_tbl.rows[i].cells[j].text = val
-    cap5 = doc.add_paragraph()
-    cap5.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    cap5.add_run(f"{tbl_num()}. Critical Physical Consistency Fixes (v9.11.0)").italic = True
-
-    # ════════════════════════════════════════════════════════════════════
-    # SECTION 13: Stoichiometry Verification (FIX v9.11.4 - REAL VALIDATION)
-    # ════════════════════════════════════════════════════════════════════
-    doc.add_heading("13. Stoichiometry Verification (v9.11.4 - Real Validation)", level=1)
-    doc.add_paragraph(
-        "v9.11.4: Stoichiometry endi REAL validatsiya orqali tekshiriladi - "
-        "hardcoded matn olib tashlandi. StoichiometryValidator.validate_all() chaqiriladi."
-    )
-    # REAL stoichiometry validation
-    try:
-        stoich_results = StoichiometryValidator.validate_all() if globals().get('StoichiometryValidator') else []
-        stoich_tbl = doc.add_table(rows=1, cols=5)
-        stoich_tbl.style = 'Table Grid'
-        set_table_border(stoich_tbl)
-        stoich_tbl.rows[0].cells[0].text = "Reaction"
-        stoich_tbl.rows[0].cells[1].text = "Equation"
-        stoich_tbl.rows[0].cells[2].text = "Balanced?"
-        stoich_tbl.rows[0].cells[3].text = "Atoms checked"
-        stoich_tbl.rows[0].cells[4].text = "Status"
-        if stoich_results:
-            for sr in stoich_results:
-                row = stoich_tbl.add_row().cells
-                row[0].text = sr.get('reaction', 'N/A')
-                row[1].text = sr.get('equation', 'N/A')
-                row[2].text = 'Yes' if sr.get('balanced', False) else 'No'
-                row[3].text = ', '.join(sr.get('atoms_checked', ['C', 'O', 'H']))
-                row[4].text = 'PASSED' if sr.get('balanced', False) else 'FAILED'
-        else:
-            # Fallback - clearly marked as fallback
-            stoich_tbl.rows[0].cells[0].text = "Reaction"
-            stoich_tbl.rows[0].cells[1].text = "Equation"
-            stoich_tbl.rows[0].cells[2].text = "Balanced?"
-            stoich_tbl.rows[0].cells[3].text = "Note"
-            stoich_tbl.rows[0].cells[4].text = "Status"
-            for rxn, eq in [
-                ("Gasification", "C + H2O -> CO + H2"),
-                ("Boudouard", "C + CO2 -> 2CO"),
-                ("Combustion", "C + O2 -> CO2"),
-                ("CO oxidation", "2CO + O2 -> 2CO2"),
-                ("H2 oxidation", "2H2 + O2 -> 2H2O"),
-            ]:
-                row = stoich_tbl.add_row().cells
-                row[0].text = rxn
-                row[1].text = eq
-                row[2].text = "Pending"
-                row[3].text = "StoichiometryValidator not available"
-                row[4].text = "VALIDATION PENDING"
-    except Exception as _stoich_exc:
-        doc.add_paragraph(f"Stoichiometry validation error: {_stoich_exc}")
-    cap6 = doc.add_paragraph()
-    cap6.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    cap6.add_run(f"{tbl_num()}. Stoichiometry Verification - Real Validation").italic = True
-
-    # ════════════════════════════════════════════════════════════════════
-    # SECTION 14: Statistical Analysis (v9.11.4 - Real Computation)
-    # ════════════════════════════════════════════════════════════════════
-    doc.add_heading("14. Comprehensive Statistical Analysis (v9.11.4 - Real Data)", level=1)
-    doc.add_paragraph(
-        "v9.11.4: Barcha statistik jadvallar endi REAL hisoblardan olinadi - "
-        "hardcoded raqamlar olib tashlandi. Grafik va jadval bir manbadan."
-    )
-
-    # 14a: Confidence Intervals - REAL comparison_metrics dan
-    doc.add_heading("14a. Confidence Intervals (95%) - Real Metrics", level=2)
-    try:
-        # Real metrics from comparison_metrics or avg_metrics
-        _cm = report_payload.get("comparison_metrics", {})
-        _rmse = float(_cm.get('rmse', avg_metrics.rmse if hasattr(avg_metrics, 'rmse') else 0.0))
-        _mae = float(_cm.get('mae', avg_metrics.mae if hasattr(avg_metrics, 'mae') else 0.0))
-        _r2 = float(_cm.get('r2', avg_metrics.r2 if hasattr(avg_metrics, 'r2') else 0.0))
-        # FIX #22 (v9.11.16): v9.11.15 da CI yo'q bo'lsa ±15% taxminiy formula
-        # ishlatilgan (`_rmse * 0.85` va `_rmse * 1.15`). Bu statistik asossiz —
-        # PhD himoyasida "95% CI qanday hisoblangan?" degan savolga javob yo'q.
-        # Endi: agar CI kalitlari mavjud bo'lmasa, "NOT COMPUTED" deb ko'rsatiladi
-        # va foydalanuvchiga ogohlantirish beriladi. Hech qanday taxminiy CI emas.
-        _ci_warning = None
-        if 'rmse_ci_low' not in _cm or 'rmse_ci_high' not in _cm:
-            _ci_warning = (
-                "WARNING: RMSE CI not provided in comparison_metrics. "
-                "Run BCa bootstrap (n>=30 samples) to compute real CI. "
-                "No ±15% heuristic applied (statistically invalid)."
-            )
-            _rmse_ci_low = float('nan')
-            _rmse_ci_high = float('nan')
-        else:
-            _rmse_ci_low = float(_cm['rmse_ci_low'])
-            _rmse_ci_high = float(_cm['rmse_ci_high'])
-        if 'mae_ci_low' not in _cm or 'mae_ci_high' not in _cm:
-            _mae_ci_low = float('nan')
-            _mae_ci_high = float('nan')
-        else:
-            _mae_ci_low = float(_cm['mae_ci_low'])
-            _mae_ci_high = float(_cm['mae_ci_high'])
-        if 'r2_ci_low' not in _cm or 'r2_ci_high' not in _cm:
-            _r2_ci_low = float('nan')
-            _r2_ci_high = float('nan')
-        else:
-            _r2_ci_low = float(_cm['r2_ci_low'])
-            _r2_ci_high = float(_cm['r2_ci_high'])
-        # ExpertReviewConstants dan (single source of truth)
-        try:
-            _erc_ci = ExpertReviewConstants
-            _cge_typical = _erc_ci.CGE_TYPICAL
-            _cge_ci = _erc_ci.CGE_CI_95
-            _carbon_typical = _erc_ci.CARBON_EFF_TYPICAL
-            _carbon_ci = _erc_ci.CARBON_EFF_CI_95
-        except Exception:
-            _cge_typical = 62.1
-            _cge_ci = "[56.7, 67.5]"
-            _carbon_typical = 78.4
-            _carbon_ci = "[72.2, 84.6]"
-        ci_tbl = doc.add_table(rows=1, cols=4)
-        ci_tbl.style = 'Table Grid'
-        set_table_border(ci_tbl)
-        ci_tbl.rows[0].cells[0].text = "Parameter"
-        ci_tbl.rows[0].cells[1].text = "Mean"
-        ci_tbl.rows[0].cells[2].text = "Std Dev (est.)"
-        ci_tbl.rows[0].cells[3].text = "95% CI"
-        ci_rows = [
-            ("RMSE", f"{_rmse:.4f}",
-             f"{(_rmse_ci_high - _rmse_ci_low)/4:.4f}" if not np.isnan(_rmse_ci_low) else "N/A",
-             f"[{_rmse_ci_low:.4f}, {_rmse_ci_high:.4f}]" if not np.isnan(_rmse_ci_low) else "NOT COMPUTED (run BCa bootstrap)"),
-            ("MAE", f"{_mae:.4f}",
-             f"{(_mae_ci_high - _mae_ci_low)/4:.4f}" if not np.isnan(_mae_ci_low) else "N/A",
-             f"[{_mae_ci_low:.4f}, {_mae_ci_high:.4f}]" if not np.isnan(_mae_ci_low) else "NOT COMPUTED (run BCa bootstrap)"),
-            ("R²", f"{_r2:.4f}",
-             f"{(_r2_ci_high - _r2_ci_low)/4:.4f}" if not np.isnan(_r2_ci_low) else "N/A",
-             f"[{_r2_ci_low:.4f}, {_r2_ci_high:.4f}]" if not np.isnan(_r2_ci_low) else "NOT COMPUTED (run BCa bootstrap)"),
-            ("Carbon Eff (%)", f"{_carbon_typical}", "3.2", _carbon_ci),
-            ("CGE (%)", f"{_cge_typical}", "2.8", _cge_ci),
-        ]
-        for p, m, sd, ci in ci_rows:
-            row = ci_tbl.add_row().cells
-            row[0].text = p
-            row[1].text = m
-            row[2].text = sd
-            row[3].text = ci
-        doc.add_paragraph(
-            f"Manba: comparison_metrics (RMSE, MAE, R²) va ExpertReviewConstants "
-            f"(CGE, Carbon Eff). Real hisoblash - hardcoded emas."
-        )
-        if _ci_warning:
-            warn_para = doc.add_paragraph()
-            warn_run = warn_para.add_run(_ci_warning)
-            warn_run.font.color.rgb = RGBColor(0xFF, 0x00, 0x00)
-            warn_run.bold = True
-    except Exception as _ci_exc:
-        doc.add_paragraph(f"CI jadvali xatosi: {_ci_exc}")
-
-    # 14b: GUM Uncertainty - real formula rendered
-    doc.add_heading("14b. Uncertainty Propagation (GUM)", level=2)
-    doc.add_paragraph(
-        f"Method: JCGM 100:2008 (GUM) law of propagation of uncertainty.    {eq_num()}\n"
-        f"u_c(y) = sqrt(sum[(df/dx_i * u(x_i))^2])    {eq_num()}\n"
-    )
-    # Render LaTeX formula as PNG
-    try:
-        _gum_formula_png = render_latex_formula(
-            r"$u_c(y) = \sqrt{\sum_{i=1}^{n}\left(\frac{\partial f}{\partial x_i} \cdot u(x_i)\right)^2}$",
-            fontsize=14
-        )
-        if _gum_formula_png:
-            add_image_bytes_to_doc(doc, _gum_formula_png, f"{fig_num()}. GUM Uncertainty Formula (rendered)")
-    except Exception:
-        doc.add_paragraph("[GUM formula rendering not available]")
-    doc.add_paragraph(
-        f"Combined uncertainty u_c = {float(_cm.get('u_combined', 0.034)):.4f}\n"
-        f"Expanded uncertainty U (k=2) = {float(_cm.get('u_expanded', 0.068)):.4f} (95% CI)"
-    )
-
-    # 14c: Monte Carlo - REAL from monte_carlo_uncertainty_analysis
-    doc.add_heading("14c. Monte Carlo Validation - Real Convergence", level=2)
-    try:
-        _mc_conv = ExpertReviewConstants.MC_CONVERGENCE if globals().get('ExpertReviewConstants') else {
-            'MCSE': 0.0034, 'geweke_z': 0.82, 'r_hat': 1.002, 'passed': True
-        }
-        _mc_n = ExpertReviewConstants.MC_SAMPLES if globals().get('ExpertReviewConstants') else 50000
-        mc_tbl = doc.add_table(rows=1, cols=3)
-        mc_tbl.style = 'Table Grid'
-        set_table_border(mc_tbl)
-        mc_tbl.rows[0].cells[0].text = "Metric"
-        mc_tbl.rows[0].cells[1].text = "Value"
-        mc_tbl.rows[0].cells[2].text = "Threshold"
-        mc_rows = [
-            ("N samples", f"{_mc_n:,}", ">= 10,000"),
-            ("MCSE", f"{_mc_conv['MCSE']}", "< 0.01"),
-            ("Geweke z-score", f"{_mc_conv['geweke_z']}", "|z| < 2"),
-            ("R-hat (Gelman-Rubin)", f"{_mc_conv['r_hat']}", "< 1.01"),
-            ("Convergence", "PASSED" if _mc_conv['passed'] else "FAILED", "—"),
-        ]
-        for m, v, t in mc_rows:
-            row = mc_tbl.add_row().cells
-            row[0].text = m
-            row[1].text = v
-            row[2].text = t
-        doc.add_paragraph(
-            f"Manba: ExpertReviewConstants.MC_CONVERGENCE (monte_carlo_uncertainty_analysis dan). "
-            f"Real convergence - hardcoded emas."
-        )
-    except Exception as _mc_exc:
-        doc.add_paragraph(f"MC jadvali xatosi: {_mc_exc}")
-
-    # 14d: Sobol - REAL sobol_analysis() chaqiruvi
-    doc.add_heading("14d. Sobol Global Sensitivity - Real Analysis", level=2)
-    try:
-        # Try to get real sobol results from report_payload
-        _sobol_real = report_payload.get("sobol_results", None)
-        if _sobol_real and isinstance(_sobol_real, dict) and 'S1' in _sobol_real:
-            # Real sobol results available
-            sobol_tbl = doc.add_table(rows=1, cols=4)
-            sobol_tbl.style = 'Table Grid'
-            set_table_border(sobol_tbl)
-            sobol_tbl.rows[0].cells[0].text = "Parameter"
-            sobol_tbl.rows[0].cells[1].text = "S1 (First-order)"
-            sobol_tbl.rows[0].cells[2].text = "ST (Total)"
-            sobol_tbl.rows[0].cells[3].text = "Rank"
-            s1_dict = _sobol_real.get('S1', {})
-            st_dict = _sobol_real.get('ST', {})
-            sorted_params = sorted(s1_dict.items(), key=lambda x: x[1], reverse=True)
-            for rank, (param, s1_val) in enumerate(sorted_params, 1):
-                st_val = st_dict.get(param, 0.0)
-                row = sobol_tbl.add_row().cells
-                row[0].text = param
-                row[1].text = f"{s1_val:.4f}"
-                row[2].text = f"{st_val:.4f}"
-                row[3].text = str(rank)
-            doc.add_paragraph(
-                "Manba: sobol_analysis() real chaqiruvi (report_payload['sobol_results']). "
-                "Real sensitivity - hardcoded emas."
-            )
-        else:
-            # No real sobol - clearly state this
-            doc.add_paragraph(
-                "⚠️ Real Sobol natijalari mavjud emas. "
-                "sobol_analysis() report_payload['sobol_results'] ga ulanmagan. "
-                "Tavsiya: generate_all_reports() orqali real sobol natijalarini oling."
-            )
-            # Show placeholder table with NULL values
-            sobol_tbl = doc.add_table(rows=1, cols=4)
-            sobol_tbl.style = 'Table Grid'
-            set_table_border(sobol_tbl)
-            sobol_tbl.rows[0].cells[0].text = "Parameter"
-            sobol_tbl.rows[0].cells[1].text = "S1 (First-order)"
-            sobol_tbl.rows[0].cells[2].text = "ST (Total)"
-            sobol_tbl.rows[0].cells[3].text = "Rank"
-            for param in ["Temperature", "UCS", "GSI", "Pore pressure", "Biot coefficient"]:
-                row = sobol_tbl.add_row().cells
-                row[0].text = param
-                row[1].text = "N/A (run sobol_analysis)"
-                row[2].text = "N/A"
-                row[3].text = "N/A"
-    except Exception as _sobol_exc:
-        doc.add_paragraph(f"Sobol jadvali xatosi: {_sobol_exc}")
-
-    # 14e: Morris - real if available
-    doc.add_heading("14e. Morris Elementary Effects", level=2)
-    try:
-        _morris_real = report_payload.get("morris_results", None)
-        if _morris_real and isinstance(_morris_real, dict) and 'mu_star' in _morris_real:
-            morris_tbl = doc.add_table(rows=1, cols=3)
-            morris_tbl.style = 'Table Grid'
-            set_table_border(morris_tbl)
-            morris_tbl.rows[0].cells[0].text = "Parameter"
-            morris_tbl.rows[0].cells[1].text = "mu* (mean |EE|)"
-            morris_tbl.rows[0].cells[2].text = "sigma (std EE)"
-            for param, mu in _morris_real['mu_star'].items():
-                sigma = _morris_real['sigma'].get(param, 0.0)
-                row = morris_tbl.add_row().cells
-                row[0].text = param
-                row[1].text = f"{mu:.4f}"
-                row[2].text = f"{sigma:.4f}"
-            doc.add_paragraph("Manba: report_payload['morris_results'] - real Morris analysis.")
-        else:
-            doc.add_paragraph(
-                "⚠️ Real Morris natijalari mavjud emas. "
-                "Tavsiya: generate_all_reports() orqali real Morris natijalarini oling."
-            )
-    except Exception:
-        __import__("logging").getLogger("ucg_platform").debug("Suppressed optional-operation exception", exc_info=True)  # FIX v9.11.36: traceable fallback
-
-    # 14f: Residual Analysis - REAL QQ-plot generation
-    doc.add_heading("14f. Residual Analysis and Normality - Real QQ-plot", level=2)
-    try:
-        # Real residual analysis from benchmark_results
-        if benchmark_results:
-            _all_residuals = []
-            for r in benchmark_results:
-                # Try to get residuals - if not available, use synthetic
-                if hasattr(r, 'residuals') and r.residuals is not None:
-                    _all_residuals.extend(r.residuals)
-            if not _all_residuals:
-                # Synthetic residuals based on real RMSE
-                _rng_res = np.random.default_rng(seed=42)
-                _all_residuals = _rng_res.normal(0, _rmse, 100).tolist()
-            _residuals_arr = np.array(_all_residuals)
-            # Real Shapiro-Wilk test
-            from scipy.stats import shapiro, anderson
-            _sw_stat, _sw_p = shapiro(_residuals_arr)
-            try:
-                _ad_result = anderson(_residuals_arr, dist='norm')
-                _ad_stat = _ad_result.statistic
-                _ad_critical = _ad_result.critical_values[2]  # 5% level
-            except Exception:
-                _ad_stat = 0.42
-                _ad_critical = 0.75
-            doc.add_paragraph(
-                # FIX #39 (v9.11.16): Shapiro-Wilk normallik testi hujjatlashtirilgan.
-                # Pearson R va parametrik testlar uchun normallik faraz qilinmoqda —
-                # residual distribution normalligini isbotlash PhD uchun majburiy.
-                # Endi: (1) Shapiro-Wilk va Anderson-Darling ikkala test ham ko'rsatiladi,
-                # (2) agar normallik rad etilsa, aniq tavsiya beriladi (non-parametrik test),
-                # (3) Shapiro-Wilk limiti (n <= 5000) hujjatlashtirilgan.
-                f"Shapiro-Wilk normality test: W = {_sw_stat:.4f}, p-value = {_sw_p:.4f} "
-                f"({'normal' if _sw_p > 0.05 else 'NOT normal'} at p>0.05)\n"
-                f"Anderson-Darling: A² = {_ad_stat:.4f} (critical {_ad_critical:.4f} for 5%) "
-                f"→ {'normal' if _ad_stat < _ad_critical else 'NOT normal'}\n"
-                f"n = {len(_residuals_arr)} residuals analyzed"
-            )
-            # FIX #39: Normallik bo'yicha tavsiya
-            _is_normal_sw = _sw_p > 0.05
-            _is_normal_ad = _ad_stat < _ad_critical
-            if not (_is_normal_sw and _is_normal_ad):
-                _norm_warn = doc.add_paragraph()
-                _norm_warn.add_run(
-                    "WARNING: Residuals are NOT normally distributed. Parametric tests "
-                    "(Pearson r, paired t-test, ANOVA) may be invalid. "
-                    "Use non-parametric alternatives: Spearman rho, Wilcoxon signed-rank, "
-                    "Kruskal-Wallis. Reference: Shapiro & Wilk (1965). Biometrika 52(3-4):591-611."
-                ).font.color.rgb = RGBColor(0xFF, 0x00, 0x00)
-            # Shapiro-Wilk limiti haqida eslatma
-            if len(_residuals_arr) > 5000:
-                doc.add_paragraph(
-                    "NOTE: Shapiro-Wilk is computed on the first 5000 samples (test limit). "
-                    "For larger samples, Anderson-Darling is more reliable."
-                )
-            # Real QQ-plot
-            _qq_png = generate_qq_plot_png(_residuals_arr)
-            if _qq_png:
-                add_image_bytes_to_doc(doc, _qq_png, f"{fig_num()}. QQ-plot of residuals (real data)")
-            else:
-                doc.add_paragraph("[QQ-plot generation not available]")
-        else:
-            doc.add_paragraph("⚠️ Real residual data mavjud emas (benchmark_results bo'sh).")
-    except Exception as _res_exc:
-        doc.add_paragraph(f"Residual analysis xatosi: {_res_exc}")
-
-    # 14g: Cross-Validation - real if available
-    doc.add_heading("14g. Cross-Validation and External Validation", level=2)
-    cv_tbl = doc.add_table(rows=1, cols=4)
-    cv_tbl.style = 'Table Grid'
-    set_table_border(cv_tbl)
-    cv_tbl.rows[0].cells[0].text = "Validation Type"
-    cv_tbl.rows[0].cells[1].text = "Method"
-    cv_tbl.rows[0].cells[2].text = "Score"
-    cv_tbl.rows[0].cells[3].text = "Status"
-    # Real CV from cv_results
-    _cv_mean = cv_results.get('mean', 0.0)
-    _cv_std = cv_results.get('std', 0.0)
-    cv_rows = [
-        ("Internal CV", f"{cv_results.get('cv', 5)}-fold stratified x3",
-         f"{_cv_mean:.4f} ± {_cv_std:.4f}", "PASSED" if _cv_mean > 0.7 else "FAILED"),
-        ("External CV", "Majuba UCG (SA, 2007-2011)",
-         "0.823" if _cv_mean > 0.7 else "N/A", "PASSED" if _cv_mean > 0.7 else "PENDING"),
-        ("Laboratory", "Angren UCG-1 lab (2024)",
-         f"RMSE = {_rmse:.4f}", "PASSED" if _rmse < 0.5 else "REVIEW"),
-        ("Industrial", "Angren UCG-1 field (2018-2024)",
-         f"RMSE = {_rmse*1.1:.4f}", "PASSED" if _rmse < 0.5 else "REVIEW"),
-    ]
-    # FIX v9.11.29: renamed loop var `st` -> `status_val` to avoid
-    # shadowing the Streamlit `st` module import.
-    for vt, m, s, status_val in cv_rows:
-        row = cv_tbl.add_row().cells
-        row[0].text = vt
-        row[1].text = m
-        row[2].text = s
-        row[3].text = status_val
-
-    # 14h: CFD Comparison - REAL or clearly marked as N/A
-    doc.add_heading("14h. CFD Comparison and Experimental Benchmark", level=2)
-    _cfd_real = report_payload.get("cfd_comparison", None)
-    cfd_tbl = doc.add_table(rows=1, cols=4)
-    cfd_tbl.style = 'Table Grid'
-    set_table_border(cfd_tbl)
-    cfd_tbl.rows[0].cells[0].text = "Metric"
-    cfd_tbl.rows[0].cells[1].text = "Our Model"
-    cfd_tbl.rows[0].cells[2].text = "CFD (ANSYS Fluent)"
-    cfd_tbl.rows[0].cells[3].text = "Experiment"
-    if _cfd_real and isinstance(_cfd_real, dict):
-        # Real CFD comparison data
-        for metric, values in _cfd_real.items():
-            row = cfd_tbl.add_row().cells
-            row[0].text = metric
-            row[1].text = str(values.get('model', 'N/A'))
-            row[2].text = str(values.get('cfd', 'N/A'))
-            row[3].text = str(values.get('experiment', 'N/A'))
-        doc.add_paragraph("Manba: report_payload['cfd_comparison'] - real CFD benchmark.")
+            if mean_similarity is not None and np.isfinite(float(mean_similarity)):
+                doc.add_paragraph(f"Mean similarity (heuristic): {float(mean_similarity):.6g}")
+        except (ValueError, TypeError):
+            doc.add_paragraph("Mean similarity: NOT_EVALUATED")
     else:
-        # No real CFD - clearly state this (was hardcoded before)
-        doc.add_paragraph(
-            "⚠️ Real CFD taqqoslash mavjud EMAS. Avval hardcoded raqamlar ishlatilgan edi "
-            "(850, 855, 848) - bu soxtalashtirish edi. Endi: CFD benchmark talab qilinadi. "
-            "Tavsiya: ANSYS Fluent yoki OpenFOAM bilan real CFD simulyatsiya o'tkazing."
-        )
-        cfd_rows = [
-            ("Max Temperature (C)", "N/A (run CFD)", "N/A (run CFD)", "N/A (run experiment)"),
-            ("Max Stress (MPa)", "N/A", "N/A", "N/A"),
-            ("Syngas LHV (MJ/Nm3)", "N/A", "N/A", "N/A"),
-            ("Conversion (%)", "N/A", "N/A", "N/A"),
-        ]
-        for m, om, cfd, exp in cfd_rows:
-            row = cfd_tbl.add_row().cells
-            row[0].text = m
-            row[1].text = om
-            row[2].text = cfd
-            row[3].text = exp
-
-    # ════════════════════════════════════════════════════════════════════
-    # SECTION 15: Extended Model Components (v9.11.4 - Real Status)
-    # ════════════════════════════════════════════════════════════════════
-    doc.add_heading("15. Extended Model Components (v9.11.4 - Real Status)", level=1)
-    doc.add_paragraph(
-        "v9.11.4: Barcha komponentlar endi REAL holatini ko'rsatadi - "
-        "avval 'INCLUDED' deb yozilgan edi, lekin ko'plari kodda yo'q edi. "
-        "Endi har bir komponent uchun real status ko'rsatiladi."
-    )
-    model_tbl = doc.add_table(rows=1, cols=4)
-    model_tbl.style = 'Table Grid'
-    set_table_border(model_tbl)
-    model_tbl.rows[0].cells[0].text = "Component"
-    model_tbl.rows[0].cells[1].text = "Real Status"
-    model_tbl.rows[0].cells[2].text = "Method / Reference"
-    model_tbl.rows[0].cells[3].text = "Code Location"
-    # Real status - har bir komponent uchun haqiqiy holat
-    model_data_real = [
-        ("Tar model", "NOT INCLUDED (planned)",
-         "2-step tar cracking (Serio et al. 1987) - planned for v9.12",
-         "N/A - not in code"),
-        ("Ash chemistry", "NOT INCLUDED (planned)",
-         "Slag viscosity (Urbain 1981) - planned for v9.12",
-         "N/A - not in code"),
-        ("Mineral catalysis", "NOT INCLUDED (planned)",
-         "Ca, Fe, K catalytic effect - planned",
-         "N/A - not in code"),
-        ("Radiation model", "INCLUDED (P-1 approximation)",
-         "P-1 approximation + Stefan-Boltzmann (q_rad = ε·σ·T⁴)",
-         "AIDisclaimerModule.APPLICABILITY_DOMAIN"),
-        ("3D transport", "NOT INCLUDED (1D model only)",
-         "1D lumped parameter - 3D CFD planned for v9.12",
-         "UCGKineticModel (1D ODE)"),
-        ("Moisture evaporation", "PARTIAL (H2O as species)",
-         "H2O tracked as species, but no phase change model",
-         "UCGReaction species tracking"),
-        ("Pyrolysis model", "SIMPLIFIED (not 3-step)",
-         "Single-step devolatilization - 3-step AHS planned",
-         "UCGReaction 'Devolatiliz.'"),
-        ("Cavity growth model", "NOT INCLUDED (planned)",
-         "VOF + shrinking core - planned for v9.12",
-         "N/A - not in code"),
-        ("Roof collapse model", "NOT INCLUDED (planned)",
-         "Voussoir beam + Hoek-Brown - planned",
-         "N/A - not in code"),
-        ("Groundwater interaction", "PARTIAL (Darcy only)",
-         "Darcy flow - chemical transport planned",
-         "ApplicabilityDomainEnforcer"),
-    ]
-    for comp, status, method, location in model_data_real:
-        row = model_tbl.add_row().cells
-        row[0].text = comp
-        row[1].text = status
-        row[2].text = method
-        row[3].text = location
-    doc.add_paragraph(
-        "v9.11.4 xulosa: 10 ta komponentdan faqat 1 tasi to'liq INCLUDED (Radiation), "
-        "2 tasi PARTIAL, 7 tasi NOT INCLUDED yoki planned. Bu ilmiy halollik uchun "
-        "muhim - avval 'INCLUDED' deb yozilgan edi, lekin kodda yo'q edi."
-    )
-
-    # ════════════════════════════════════════════════════════════════════
-    # SECTION 16: Methodology
-    # ════════════════════════════════════════════════════════════════════
-    doc.add_heading("16. Methodology", level=1)
-    if methodology_lines:
-        for line in methodology_lines:
-            doc.add_paragraph(str(line), style="List Bullet")
+        doc.add_paragraph("Prior-art comparison: NOT_EVALUATED")
+    doc.add_heading("3. Supplied numerical benchmark metrics", level=1)
+    benchmarks = benchmark_results or []
+    if benchmarks:
+        for idx, result in enumerate(benchmarks, 1):
+            label = str(getattr(result, "model_name", f"Benchmark {idx}"))
+            info = [f"{label}: PROVIDED_METRICS_UNVERIFIED"]
+            for metric in ("rmse", "mae", "r2", "nse", "kge"):
+                try:
+                    value = float(getattr(result, metric))
+                    if np.isfinite(value):
+                        info.append(f"{metric.upper()}={value:.6g}")
+                except (AttributeError, ValueError, TypeError):
+                    continue
+            doc.add_paragraph(" | ".join(info))
+        doc.add_paragraph("Source files, solver settings, units, independence and residuals "
+                          "must be verified before external-validation claims.")
     else:
-        doc.add_paragraph(
-            "CSV/XLSX/TXT import -> auto mapping -> unit conversion -> "
-            "overlap-checked interpolation -> validation metrics -> "
-            "uncertainty propagation -> Monte Carlo -> Sobol -> ranking."
-        )
-
-    # ════════════════════════════════════════════════════════════════════
-    # SECTION 17: Results
-    # ════════════════════════════════════════════════════════════════════
-    doc.add_heading("17. Results", level=1)
-    doc.add_paragraph(
-        f"Composite validation score = {validation_score:.2f}. "
-        f"Benchmark type = {report_payload.get('benchmark_type', 'unknown')} | "
-        f"RMSE = {report_payload.get('rmse', 0.0):.4f} | "
-        f"MAE = {report_payload.get('mae', 0.0):.4f} | "
-        f"R2 = {report_payload.get('r2', 0.0):.4f} | "
-        f"Bias = {report_payload.get('bias', 0.0):.4f}"
-    )
-
-    # ════════════════════════════════════════════════════════════════════
-    # SECTION 18: Discussion
-    # ════════════════════════════════════════════════════════════════════
-    doc.add_heading("18. Discussion", level=1)
-    doc.add_paragraph(
-        discussion_text
-        or "Validation engine combines deterministic metrics, Monte Carlo uncertainty, "
-        "confidence intervals, heatmap inspection and ranking, improving scientific "
-        "defensibility for patent and SCI reporting. v9.11.0 resolves all 10 critical "
-        "physical inconsistencies identified in v9.11.0."
-    )
-
-    # ════════════════════════════════════════════════════════════════════
-    # SECTION 19: Nomenclature and Symbol List
-    # ════════════════════════════════════════════════════════════════════
-    doc.add_heading("19. Nomenclature and Symbol List", level=1)
-
-    doc.add_heading("19a. Latin Symbols", level=2)
-    latin_tbl = doc.add_table(rows=11, cols=3)
-    latin_tbl.style = 'Table Grid'
-    set_table_border(latin_tbl)
-    latin_data = [
-        ["Symbol", "Description", "SI Unit"],
-        ["A", "Pre-exponential factor", "1/s"],
-        ["C", "Carbon concentration", "mol"],
-        ["Ea", "Activation energy", "J/mol"],
-        ["FOS", "Factor of Safety", "dimensionless"],
-        ["GSI", "Geological Strength Index", "dimensionless [0-100]"],
-        ["k", "Permeability", "m2 (min 1e-20)"],
-        ["P", "Pressure", "Pa or MPa"],
-        ["R", "Universal gas constant", "J/(mol*K) = 8.314"],
-        ["T", "Temperature", "K (range 700-1800)"],
-        ["t", "Time", "s"],
-    ]
-    for i, row_data in enumerate(latin_data):
-        for j, val in enumerate(row_data):
-            latin_tbl.rows[i].cells[j].text = val
-
-    doc.add_heading("19b. Greek Symbols", level=2)
-    greek_tbl = doc.add_table(rows=9, cols=3)
-    greek_tbl.style = 'Table Grid'
-    set_table_border(greek_tbl)
-    greek_data = [
-        ["Symbol", "Description", "SI Unit"],
-        ["alpha", "Biot coefficient", "dimensionless [0, 1]"],
-        ["beta", "Thermal damage coefficient", "1/C"],
-        ["gamma", "Unit weight", "N/m3"],
-        ["epsilon", "Strain", "dimensionless"],
-        ["phi", "Porosity", "dimensionless [0, 0.4]"],
-        ["kappa", "Thermal diffusivity", "m2/s"],
-        ["mu", "Dynamic viscosity", "Pa*s"],
-        ["sigma", "Stress", "Pa or MPa"],
-    ]
-    for i, row_data in enumerate(greek_data):
-        for j, val in enumerate(row_data):
-            greek_tbl.rows[i].cells[j].text = val
-
-    doc.add_heading("19c. Abbreviations", level=2)
-    abbrev_tbl = doc.add_table(rows=11, cols=2)
-    abbrev_tbl.style = 'Table Grid'
-    set_table_border(abbrev_tbl)
-    abbrev_data = [
-        ["Abbreviation", "Full Form"],
-        ["UCG", "Underground Coal Gasification"],
-        ["FOS", "Factor of Safety"],
-        ["PGNN", "Physics-Guided Neural Network"],
-        ["SHAP", "SHapley Additive exPlanations"],
-        ["FTO", "Freedom To Operate"],
-        ["TRL", "Technology Readiness Level"],
-        ["CGE", "Cold Gas Efficiency"],
-        ["LHV", "Lower Heating Value"],
-        ["HHV", "Higher Heating Value"],
-        ["WORM", "Write-Once-Read-Many"],
-    ]
-    for i, (k, v) in enumerate(abbrev_data):
-        abbrev_tbl.rows[i].cells[0].text = k
-        abbrev_tbl.rows[i].cells[1].text = v
-
-    # ════════════════════════════════════════════════════════════════════
-    # SECTION 20: Assumptions Table
-    # ════════════════════════════════════════════════════════════════════
-    doc.add_heading("20. Assumptions Table", level=1)
-    assum_tbl = doc.add_table(rows=8, cols=3)
-    assum_tbl.style = 'Table Grid'
-    set_table_border(assum_tbl)
-    assum_data = [
-        ["#", "Assumption", "Justification"],
-        ["A1", "Coal composition uniform within seam", "Validated at Angren UCG-1 (2024 lab)"],
-        ["A2", "First-order Arrhenius kinetics", "Anthony & Howard (1976)"],
-        ["A3", "Isotropic rock mass (GSI captures quality)", "Hoek & Brown (2018)"],
-        ["A4", "Small strain linear elasticity", "Valid for FOS > 0.5"],
-        ["A5", "Pore pressure uniformly distributed", "Standard Biot assumption"],
-        ["A6", "No chemical reaction in roof/floor rock", "Coal-only gasification"],
-        ["A7", "Steady-state gas flow in cavity", "Burn duration >> gas residence time"],
-    ]
-    for i, row_data in enumerate(assum_data):
-        for j, val in enumerate(row_data):
-            assum_tbl.rows[i].cells[j].text = val
-
-    # ════════════════════════════════════════════════════════════════════
-    # SECTION 21: References (with DOI)
-    # ════════════════════════════════════════════════════════════════════
-    doc.add_heading("21. References (with DOI)", level=1)
-    refs = [
-        "Biot, M.A. (1941). J. Appl. Phys., 12(2), 155-164. DOI: 10.1063/1.1713685",
-        "Hoek, E., & Brown, E.T. (2018). JRMGE, 11(3), 445-463. DOI: 10.1016/j.jrmge.2018.06.001",
-        "Anthony, D.B., & Howard, J.B. (1976). AIChE J., 22(4), 625-656. DOI: 10.1002/aic.690220410",
-        "Serio, M.A. et al. (1987). Science, 237, 1387-1393. DOI: 10.1126/science.237.4819.1387",
-        "Solomon, P.R. et al. (1992). Energy & Fuels, 6(1), 7-19. DOI: 10.1021/ef00031a002",
-        "Yang, D. (2010). PhD Thesis, TU Delft. DOI: 10.4233/uuid:12345678",
-        "Shao, J.F. et al. (2003). IJRMMS, 40(7), 927-937. DOI: 10.1016/S1365-1609(03)00050-1",
-        "Lundberg, S.M. & Lee, S.I. (2017). NeurIPS. DOI: 10.48550/arXiv.1705.07874",
-        "Saaty, T.L. (1980). AHP. DOI: 10.1007/978-3-642-60065-2",
-        "JCGM 100:2008 (GUM). DOI: 10.59161/JCGM100-2008E",
-        "Saltelli, A. et al. (2010). DOI: 10.1016/j.cmpb.2009.07.004",
-        "Morris, M.D. (1991). Technometrics, 33(2), 161-174. DOI: 10.1080/00401706.1991.10484804",
-        "Efron, B. (1979). Ann. Statist., 7(1), 1-26. DOI: 10.1214/aos/1176344552",
-        "Urbain, G. (1981). Steel Research, 52(1), 21-25. DOI: 10.1002/srin.198100022",
-        "Blinderman, R.J. & Jones, R.M. (2002). Fuel Proc. Tech. DOI: 10.1016/j.fuproc.2002.07.001",
-    ]
-    for r in refs:
-        doc.add_paragraph(r, style="List Bullet")
-
-    # ════════════════════════════════════════════════════════════════════
-    # SECTION 22: Conclusion
-    # ════════════════════════════════════════════════════════════════════
-    doc.add_heading("22. Conclusion", level=1)
-    doc.add_paragraph(
-        # FIX v9.11.18 #12: "boosted" so'zi claim dan olib tashlandi — bu patent
-        # examiner uchun qizil bayroq edi. Endi: "methodology-revised" (aniq, ilmiy).
-        f"The proposed invention demonstrates high novelty (Index={novelty_df.attrs['Novelty Index']:.1f}%) "
-        f"and low similarity to prior art (mean similarity={mean_similarity:.3f}). "
-        f"Patentability Index = {patentability_ext['patentability_index']:.2f}/100 (AHP-weighted, methodology-revised). "
-        f"Automated FTO heuristic = {patentability_ext['fto_score']:.2f}/100 (legal FTO NOT_EVALUATED). "
-        f"All 10 critical physical inconsistencies from v9.11.0 have been resolved. "
-        f"Validation stages require independent data review. Audit trail contains a SHA-256 hash chain "
-        f"(not 'blockchain' — append-only SHA-256 linked list with RFC-3161 timestamp notarization). "
-        f"This is a draft for professional review, not an approved patent filing package."
-    )
-
-    # Validation certificate + signature
-    # FIX v9.11.32 (3-version unfixed issue): cert_data was computed but never
-    # saved to disk or embedded in the report. For 3 versions (v9.11.29, 30, 31)
-    # this was claimed as "fixed" but the code never changed. Now:
-    #   1. Save the PDF certificate to disk in DEFAULT_REPORT_DIR
-    #   2. Embed certificate metadata (hash, path, size) in the DOCX report
-    #   3. Include the cert_data bytes in the report payload for downstream use
-    cert_data = generate_validation_certificate(
-        {"metrics": {"rmse": report_payload.get('rmse', 0), "r2": report_payload.get('r2', 0), "score": validation_score},
-         "hash": trace_bundle.sha256}, invention_title
-    )
-
-    # FIX v9.11.32: Save the PDF certificate to disk
-    _cert_filename = f"validation_certificate_{invention_title.replace(' ', '_')[:50]}_{_utc_now_iso().replace(':', '-').replace('.', '')}.pdf"
-    _cert_path = os.path.join(DEFAULT_REPORT_DIR, _cert_filename)
-    try:
-        os.makedirs(DEFAULT_REPORT_DIR, exist_ok=True)
-        with open(_cert_path, 'wb') as _cert_f:
-            _cert_f.write(cert_data)
-        _cert_saved = True
-    except Exception as _cert_save_exc:
-        logger.warning("[generate_patent_report] Failed to save validation certificate PDF: %s", _cert_save_exc)
-        _cert_saved = False
-        _cert_path = "(save failed)"
-
-    # FIX v9.11.32: Embed certificate metadata in the DOCX report
-    doc.add_heading("Validation Certificate", level=2)
-    if _cert_saved:
-        doc.add_paragraph(
-            f"Validation Certificate (PDF) has been generated and saved:\n"
-            f"  File: {_cert_filename}\n"
-            f"  Path: {_cert_path}\n"
-            f"  Size: {len(cert_data):,} bytes\n"
-            f"  SHA-256: {trace_bundle.sha256}\n"
-            f"  Generated: {_utc_now_iso()}\n"
-            f"  Version: {__version__} (Build {__build_number__})\n\n"
-            f"The certificate contains: validation metrics, SHA-256 hash, "
-            f"RSA-4096 digital signature, and QR code for verification."
-        )
+        doc.add_paragraph("NOT_EVALUATED — no benchmark metrics supplied")
+    doc.add_heading("4. Submitted metadata and methodological notes", level=1)
+    for label in ("benchmark_type", "source_path", "methodology_lines", "discussion_text"):
+        v=payload.get(label)
+        if v:
+            doc.add_paragraph(f"{label}: {str(v)[:1500]} (USER_OR_PIPELINE_SUPPLIED; NOT_VERIFIED)")
+    stages = payload.get("validation_stages")
+    if isinstance(stages, (list, tuple)) and len(stages):
+        doc.add_paragraph(f"Validation stage records supplied: {len(stages)} "
+                          "(individual evidence not independently checked)")
     else:
-        doc.add_paragraph(
-            f"Validation Certificate (PDF) was generated ({len(cert_data):,} bytes) "
-            f"but could not be saved to disk. The certificate data is included "
-            f"in the report payload for programmatic access."
-        )
+        doc.add_paragraph("Validation stages: NOT_EVALUATED")
+    doc.add_heading("5. Research and filing limitations", level=1)
+    for sentence in (
+        "A reactor-model novelty_index is not a patent novelty finding.",
+        "A high similarity score or a numerical benchmark alone does not establish legal FTO.",
+        "Any field measurements require source file, date, units and documented residuals.",
+        "Patent readiness and ISO compliance cannot be inferred from code presence.",
+        "No fabricated or demonstration statistics are reported as independent evidence.",
+    ):
+        doc.add_paragraph(sentence, style="List Bullet")
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    return buffer.getvalue()
 
-    # FIX v9.11.32: Include cert_data in the report payload (was previously discarded)
-    report_payload["validation_certificate_bytes"] = cert_data
-    report_payload["validation_certificate_path"] = _cert_path if _cert_saved else None
-    report_payload["validation_certificate_sha256"] = trace_bundle.sha256
-
-    # FIX v9.11.33 (4-version unfixed issue): Embed the PDF certificate bytes
-    # DIRECTLY into the DOCX report as base64. Previously (v9.11.29-v9.11.32)
-    # only TEXT METADATA was added to the DOCX — the actual PDF content was
-    # not "written into" the report. Now the PDF is embedded as a base64
-    # paragraph so the certificate travels WITH the DOCX (not just on disk).
-    # This addresses the user's complaint: "PDF hisobotga yozilmaydi".
-    #
-    # FIX v9.11.34 (render bug): python-docx does NOT render `\n` inside
-    # run.text as a line break in Microsoft Word — this is a known limitation
-    # of the library (the `\n` is silently dropped or shown as a space).
-    # The previous version used `'\n'.join(lines)` + single `add_run()`,
-    # which produced one long unreadable line in Word. Now we use
-    # `run.add_break()` between 76-char chunks — this creates REAL line
-    # breaks that Word renders correctly.
-    import base64 as _b64_mod
-    try:
-        _cert_b64 = _b64_mod.b64encode(cert_data).decode('ascii')
-        # Split into 76-char lines for readability (RFC 2045 style)
-        _b64_lines = [_cert_b64[i:i+76] for i in range(0, len(_cert_b64), 76)]
-        doc.add_heading("Validation Certificate (Embedded PDF — Base64)", level=3)
-        doc.add_paragraph(
-            f"The validation certificate PDF is embedded below as base64-encoded data. "
-            f"To extract the PDF: decode the base64 block and save as .pdf. "
-            f"Size: {len(cert_data):,} bytes | Base64 length: {len(_cert_b64):,} chars. "
-            f"SHA-256: {trace_bundle.sha256}"
-        )
-        # FIX v9.11.34: Use run.add_break() for real line breaks in Word.
-        # Each 76-char chunk is a separate run, followed by add_break().
-        _b64_para = doc.add_paragraph()
-        for _idx, _line in enumerate(_b64_lines):
-            _b64_run = _b64_para.add_run(_line)
-            _b64_run.font.size = Pt(6)  # small font for base64 block
-            _b64_run.font.name = 'Courier New'  # monospace for base64
-            # Add a line break after each chunk EXCEPT the last one
-            if _idx < len(_b64_lines) - 1:
-                _b64_run.add_break()  # ← REAL Word line break (not \n)
-    except Exception as _b64_exc:
-        logger.warning("[generate_patent_report] Failed to embed cert PDF as base64: %s", _b64_exc)
-
-    if CRYPTO_AVAILABLE:
-        sig = generate_digital_signature(trace_bundle.sha256.encode())
-        doc.add_paragraph(f"Digital Signature (RSA-4096): {sig.hex()[:32]}...")
-
-    _chain_hash = trace_bundle.sha256 or '0' * 64
-    # FIX v9.11.20 (DB-path): try/except — DB xatosi report ni to'xtatmasligi kerak
-    try:
-        blockchain_chain.append({'report': invention_title, 'hash': _chain_hash})
-    except Exception as _chain_exc:
-        logger.warning("[generate_patent_report] blockchain_chain.append failed: %s — report continues without chain entry", _chain_exc)
-    chain_preview = (trace_bundle.sha256 or "0" * 64)[:16]
-    doc.add_paragraph(f"Blockchain Hash Chain: {chain_preview}... (Audit: CONSISTENT)")
-
-    buf = io.BytesIO()
-    doc.save(buf)
-    buf.seek(0)
-    return buf.read()
 
 
 def patent_analysis_ui(ucg_subsidence_cm: np.ndarray, x_axis: np.ndarray):
@@ -28359,6 +27285,177 @@ def render_v7_patent_grade_panel():
 
 
 
+# ============================================================================
+# v9.11.39 — Evidence-based v7 Patent Report (no implicit simulations or claims)
+# This report summarizes a simplified reactor MODEL OUTPUT. No independent
+# experimental validation, patent novelty, legal FTO, or ISO audit is implied.
+# ============================================================================
+
+def _v7_patent_finite(value, label: str) -> float:
+    """Validate scalar numeric model output; never invent zero for missing data."""
+    number = float(value)
+    if not np.isfinite(number):
+        raise ValueError(f"Patent Report: {label} has non-finite value")
+    return number
+
+
+def build_v7_patent_evidence_bundle(
+    df: pd.DataFrame, coal_name: str, n_steps: int, dt: float,
+    T0: float, P0: float, *, gibbs: Optional[Dict[str, float]] = None,
+    generated_at: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build evidence-typed, JSON-safe report from ONE actual model run.
+
+    All simulation outputs are MODEL_OUTPUT, not field measurements. The
+    internal reactor `novelty_index` is *not* patent novelty and is excluded.
+    """
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        raise ValueError("Patent Report requires a non-empty simulation DataFrame")
+    required = ("time_elapsed", "temperature", "pressure", "char_conversion", "porosity")
+    absent = [k for k in required if k not in df.columns]
+    if absent:
+        raise ValueError(f"Patent Report missing model outputs: {', '.join(absent)}")
+    for col in required:
+        numeric = pd.to_numeric(df[col], errors="coerce")
+        if not np.isfinite(numeric.to_numpy(dtype=float)).all():
+            raise ValueError(f"Patent Report: invalid numeric values in {col}")
+    if len(df) != int(n_steps):
+        raise ValueError(f"Patent Report: expected {n_steps} rows, received {len(df)}")
+    if (df["temperature"].to_numpy(dtype=float) <= 0).any():
+        raise ValueError("Patent Report: temperature must be positive Kelvin")
+    if (df["pressure"].to_numpy(dtype=float) < 0).any():
+        raise ValueError("Patent Report: pressure must not be negative")
+    for frac in ("char_conversion", "porosity"):
+        values = df[frac].to_numpy(dtype=float)
+        if (values < 0).any() or (values > 1).any():
+            raise ValueError(f"Patent Report: {frac} must stay in [0, 1]")
+    if not np.isfinite([float(dt), float(T0), float(P0)]).all() or dt <= 0 or T0 <= 0 or P0 <= 0:
+        raise ValueError("Patent Report: invalid simulation inputs")
+
+    import hashlib as _patent_hashlib
+    final = df.iloc[-1]
+    metric_units = {
+        "time_elapsed": "model time (dt units)",
+        "temperature": "K", "pressure": "MPa", "char_conversion": "fraction",
+        "porosity": "fraction", "permeability": "m²", "CO": "model mole fraction",
+        "H2": "model mole fraction", "CO2": "model mole fraction", "CH4": "model mole fraction",
+        "heat_exo": "model units", "heat_endo": "model units",
+    }
+    metrics = {}
+    for name, unit in metric_units.items():
+        if name in df.columns:
+            metrics[name] = {"value": _v7_patent_finite(final[name], name),
+                             "unit": unit, "source_status": "MODEL_OUTPUT"}
+    gibbs_metrics = {}
+    for name, val in (gibbs or {}).items():
+        gibbs_metrics[str(name)] = {"value": _v7_patent_finite(val, name),
+                                    "unit": "J/mol", "source_status": "MODEL_OUTPUT"}
+    params = {"coal_type": str(coal_name), "n_steps": int(n_steps),
+              "dt": float(dt), "T0_K": float(T0), "P0_MPa": float(P0)}
+    # Include the full modeled trajectory in the fingerprint; hashing alone is
+    # not an authentic signature nor proof of data provenance.
+    ordered = df.sort_index(axis=1).to_csv(index=False, float_format="%.16g", lineterminator="\n")
+    payload = json.dumps(params, sort_keys=True, ensure_ascii=False, allow_nan=False)
+    digest = _patent_hashlib.sha256((payload + "\n" + ordered).encode("utf-8")).hexdigest()
+    trajectory_sha = _patent_hashlib.sha256(ordered.encode("utf-8")).hexdigest()
+    return {
+        "report_type": "UCG_SIMULATION_EVIDENCE_SUMMARY",
+        "report_revision": "9.11.39",
+        "platform_version": str(globals().get("__version__", "9.11.39")),
+        "generated_at_utc": generated_at or datetime.now(timezone.utc).isoformat(),
+        "run_sha256": digest, "trajectory_sha256": trajectory_sha,
+        "hash_note": "Integrity fingerprint only; not a digital signature",
+        "data_status": "MODEL_OUTPUT", "model_validation": "NOT_EVALUATED",
+        "input_parameters": params, "model_rows": int(len(df)),
+        "final_metrics": metrics,
+        "gibbs_metrics": gibbs_metrics,
+        "evidence": {
+            "independent_field_data": "NOT_EVALUATED",
+            "angren_experiment": "NOT_EVALUATED",
+            "independent_fem_benchmark": "NOT_EVALUATED",
+            "patent_prior_art_search": "NOT_EVALUATED",
+            "patent_novelty": "NOT_EVALUATED",
+            "inventive_step": "NOT_EVALUATED",
+            "freedom_to_operate_legal": "NOT_EVALUATED",
+            "filing_status": "NOT_VERIFIED",
+            "trl": "NOT_EVALUATED",
+            "iso_certification": "NOT_ASSESSED",
+            "digital_signature": "NOT_EVALUATED",
+        },
+        "limitations": [
+            "Results are simplified UCG reactor calculations, not field measurements.",
+            "Internal model-profile difference (novelty_index) is NOT patent novelty.",
+            "No legal FTO or granted/pending patent status has been verified.",
+            "No independent Angren measurements or ABAQUS/COMSOL runs are supplied.",
+            "Coal preset parameters are not verified site-specific laboratory measurements.",
+            "Gibbs calculations use a simplified DeltaG = DeltaH - T*DeltaS approximation.",
+            "SHA-256 is a checksum; it is not a cryptographic signature or certified audit trail.",
+        ],
+    }
+
+
+def create_v7_patent_report_docx(bundle: Dict[str, Any]) -> bytes:
+    """Export ONLY provided evidence, with explicit status on every result."""
+    if bundle.get("data_status") != "MODEL_OUTPUT" or not bundle.get("run_sha256"):
+        raise ValueError("Report must come from a validated model-output bundle")
+    report = Document()
+    report.add_heading("UCG — Patent Research Evidence Report", level=0)
+    report.add_paragraph("Research-stage technical report — NOT an issued patent or FTO opinion.")
+    report.add_paragraph(f"Created (UTC): {bundle['generated_at_utc']}")
+    report.add_paragraph(f"Software version: {bundle['platform_version']}")
+    report.add_heading("1. Model inputs and provenance", level=1)
+    report.add_paragraph("Source status: MODEL_OUTPUT (simulation only; no experimental validation)")
+    for key, val in bundle["input_parameters"].items():
+        report.add_paragraph(f"{key}: {val}")
+    report.add_paragraph(f"Run record count: {bundle['model_rows']}")
+    report.add_paragraph(f"Run SHA-256 (inputs + canonical trajectory): {bundle['run_sha256']}")
+    report.add_paragraph(f"Downloaded trajectory CSV SHA-256: {bundle['trajectory_sha256']}")
+    report.add_paragraph(bundle["hash_note"])
+
+    report.add_heading("2. Computed model results", level=1)
+    table = report.add_table(rows=1, cols=4)
+    table.style = "Table Grid"
+    for cell, name in zip(table.rows[0].cells, ("Quantity", "Value", "Units", "Evidence source")):
+        cell.text = name
+    for name, measure in bundle["final_metrics"].items():
+        cells = table.add_row().cells
+        cells[0].text = name
+        cells[1].text = f"{measure['value']:.8g}"
+        cells[2].text = measure["unit"]
+        cells[3].text = measure["source_status"]
+    report.add_heading("3. Simplified Gibbs energy calculation", level=1)
+    if bundle.get("gibbs_metrics"):
+        for name, measure in bundle["gibbs_metrics"].items():
+            report.add_paragraph(f"{name}: {measure['value']:.7g} {measure['unit']} — MODEL_OUTPUT")
+    else:
+        report.add_paragraph("NOT_EVALUATED — Gibbs data unavailable")
+
+    report.add_heading("4. Patent, validation and certification evidence", level=1)
+    table = report.add_table(rows=1, cols=2)
+    table.style = "Table Grid"
+    table.rows[0].cells[0].text = "Criterion"
+    table.rows[0].cells[1].text = "Status"
+    for name, status in bundle["evidence"].items():
+        cells = table.add_row().cells
+        cells[0].text = name.replace("_", " ").title()
+        cells[1].text = status
+    report.add_heading("5. Limitations and recommended verification", level=1)
+    for item in bundle["limitations"]:
+        report.add_paragraph(item, style="List Bullet")
+    report.add_paragraph("No patent novelty or freedom-to-operate conclusion may be derived from a reactor simulation profile.")
+    output = io.BytesIO()
+    report.save(output)
+    return output.getvalue()
+
+
+def create_v7_patent_report_json(bundle: Dict[str, Any]) -> bytes:
+    """Stable JSON representation; prohibit NaN and Infinity."""
+    if bundle.get("data_status") != "MODEL_OUTPUT":
+        raise ValueError("Missing model evidence for JSON export")
+    return json.dumps(bundle, ensure_ascii=False, sort_keys=True, indent=2,
+                      allow_nan=False).encode("utf-8")
+
+
 def run_v7_app():
     """UCG Platform v7.0 Streamlit UI — sidebar menu + page dispatcher."""
     st.sidebar.title("🏭 UCG Platform v7.0")
@@ -28383,9 +27480,9 @@ def run_v7_app():
     P0 = st.sidebar.slider("Boshlang'ich bosim (MPa)", 0.5, 30.0, 10.0, 0.5)
 
     st.sidebar.markdown("---")
-    st.sidebar.markdown("**Versiya:** 9.4.0")
+    st.sidebar.markdown("**Versiya (v7 UI):** 9.11.39 — Patent Report audit")
     st.sidebar.markdown(f"**Sana:** {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-    st.sidebar.markdown("**Status:** Patent Pending")
+    st.sidebar.markdown("**Patent maqomi:** NOT_VERIFIED — rasmiy ariza dalili kiritilmagan")
 
     # ─── Dashboard ─────────────────────────────────────────────────────────
     if menu == "Dashboard":
@@ -28559,11 +27656,11 @@ def run_v7_app():
     elif menu == "About":
         st.title("📌 About")
         st.markdown("""
-        ## UCG SCI-Grade Platform v7.8.0
+        ## UCG SCI-Grade Platform — v7 reactor UI (Patent Report audit v9.11.39)
 
         **Muallif:** Saitov Dilshodbek
-        **Status:** Patent Pending (UzPatent + WIPO PCT)
-        **Litsenziya:** Patent Pending — O'zbekiston 00XXXX + WIPO
+        **Patent maqomi:** NOT_VERIFIED — rasmiy ariza yoki ro‘yxat dalili kiritilmagan
+        **Huquqiy izoh:** kod va hisobot patent berilganini yoki ariza topshirilganini tasdiqlamaydi
 
         ### Texnologiyalar:
         - Python 3.12
@@ -28580,1525 +27677,116 @@ def run_v7_app():
         | v5.0.0 | 2026-06-21 | 20 critical fixes |
         | v6.1.0 | 2026-06-22 | 20 patent-grade fixes |
         | v7.0.0 | 2026-06-23 | Streamlit + 12 grafik + Monte Carlo + Gibbs |
-        | v7.8.0 | 2026-06-26 | Patent-ready core + BUG-N01..N05, ISS-N01..N10 tuzatildi |
+        | v7.8.0 | 2026-06-26 | Research-stage code fixes + BUG-N01..N05, ISS-N01..N10 |
         """)
 
-    # ─── Patent Report ─────────────────────────────────────────────────────
+    # ─── Patent Report (v9.11.39 evidence integrity) ─────────────────────
     elif menu == "Patent Report":
-        st.title("📄 Patent Hisoboti")
+        st.title("📄 Patent tadqiqoti hisoboti — MODEL OUTPUT")
+        st.info("Bu bo‘lim reaktor SIMULYATSIYASI natijalarini hujjatlashtiradi. "
+                "Patent yangiligi, huquqiy FTO, Angren dala validatsiyasi va ISO sertifikati "
+                "bu sahifada tasdiqlanmaydi.")
+        patent_inputs = (coal_name, int(n_steps), float(dt), float(T0), float(P0))
+        patent_run_key = "v7_patent_report_run_v39"
+        patent_docx_key = "v7_patent_report_docx_v39"
+        patent_frame_key = "v7_patent_report_frame_v39"
 
-        with st.spinner("Simulyatsiya hisoblanmoqda..."):
-            df, engine, coal = run_simulation(coal_name, n_steps, dt, T0, P0)
-
-        final = df.iloc[-1]
-
-        st.subheader("Patentability Natijalari")
-        p1, p2, p3, p4 = st.columns(4)
-        p1.metric("Novelty Index", f"{final.get('novelty_index', 0):.1f}%")
-        p2.metric("Konversiya", f"{final['char_conversion']*100:.2f}%")
-        p3.metric("Porozlik", f"{final['porosity']:.4f}")
-        p4.metric("Harorat (K)", f"{final['temperature']:.1f}")
-
-        st.markdown("---")
-        st.subheader("Gibbs Free Energy (Yakuniy)")
-        gibbs_data = GibbsEnergyCalculator.compute_all(UCGConfig(), final['temperature'])
-        gibbs_df = pd.DataFrame([
-            {"Reaksiya": k, "ΔG (kJ/mol)": f"{v/1000:.1f}",
-             "Spontan": "✅ Ha" if v < 0 else "❌ Yo'q"}
-            for k, v in gibbs_data.items()
-        ])
-        st.dataframe(gibbs_df, use_container_width=True)
-
-        st.markdown("---")
-        st.subheader("Grafiklar")
-        tab_a, tab_b, tab_c = st.tabs(["Konversiya + Issiqlik", "Gaz + Porozlik", "3D Surface"])
-        with tab_a:
-            plot_coal_conversion(df)
-            plot_heat_source(df)
-        with tab_b:
-            plot_gas_composition(df)
-            plot_porosity(df)
-        with tab_c:
-            plot_3d_surface(df)
-
-        st.markdown("---")
-        st.subheader("📥 Eksport")
-        export_col1, export_col2 = st.columns(2)
-
-        if export_col1.button("📄 DOCX Hisobotni Yuklash"):
+        if st.button("▶️ Hisobot uchun simulyatsiyani hisoblash", key="v7_patent_explicit_sim"):
+            # Clear old data BEFORE a new calculation so a failed run cannot show
+            # the last successful report as if it matched current inputs.
+            st.session_state.pop(patent_run_key, None)
+            st.session_state.pop(patent_docx_key, None)
+            st.session_state.pop(patent_frame_key, None)
             try:
-                from docx.shared import Inches as DocxInches, Pt as DocxPt, RGBColor
-                from docx.enum.text import WD_ALIGN_PARAGRAPH
-                from docx.enum.table import WD_TABLE_ALIGNMENT
+                with st.spinner("Reaktor modeli hisoblanmoqda..."):
+                    patent_df, _patent_engine, patent_coal = run_simulation(
+                        coal_name, n_steps, dt, T0, P0)
+                    patent_gibbs = GibbsEnergyCalculator.compute_all(
+                        UCGConfig(coal=patent_coal, T0=T0, P0=P0 * 1e6),
+                        float(patent_df.iloc[-1]["temperature"]))
+                    patent_bundle = build_v7_patent_evidence_bundle(
+                        patent_df, coal_name, n_steps, dt, T0, P0,
+                        gibbs=patent_gibbs)
+                    st.session_state[patent_run_key] = {
+                        "inputs": patent_inputs, "bundle": patent_bundle}
+                    st.session_state[patent_frame_key] = patent_df
+                st.success("Model hisoblandi. Patent va ilmiy dalillar alohida maqomda ko‘rsatiladi.")
+            except Exception as exc:
+                logger.exception("Patent Report simulation/evidence preparation failed")
+                st.error(f"Hisoblash xatosi: {exc}")
 
-                doc = Document()
-                doc.add_heading('UCG Platform v9.11.0 — Patent Hisoboti', level=0)
-                doc.add_paragraph(f'Sana: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
-                doc.add_paragraph(f"Ko'mir turi: {coal.name}")
+        patent_saved = st.session_state.get(patent_run_key)
+        if not patent_saved or patent_saved.get("inputs") != patent_inputs:
+            st.info("Joriy parametrlar uchun natija yo‘q. Hisoblash tugmasini bosing. "
+                    "Parametrlar o‘zgarsa, oldingi hisobot avtomatik qayta ishlatilmaydi.")
+        else:
+            bundle = patent_saved["bundle"]
+            model_df = st.session_state[patent_frame_key]
+            metrics = bundle["final_metrics"]
+            st.caption("Manba: MODEL_OUTPUT — mustaqil eksperimental tasdiq EMAS. "
+                       "Profil farqi ko‘rsatkichi patent Novelty Index hisoblanmaydi.")
+            st.subheader("Simulyatsiyaning yakuniy natijalari")
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Konversiya (model)", f"{metrics['char_conversion']['value'] * 100:.2f}%")
+            m2.metric("Porozlik (model)", f"{metrics['porosity']['value']:.4f}")
+            m3.metric("Harorat (K)", f"{metrics['temperature']['value']:.1f}")
+            m4.metric("Bosim (MPa)", f"{metrics['pressure']['value']:.3f}")
+            st.subheader("Gibbs erkin energiyasi (soddalashtirilgan model)")
+            if bundle["gibbs_metrics"]:
+                st.dataframe(pd.DataFrame([
+                    {"Reaksiya": name, "ΔG (J/mol)": val["value"], "Manba": val["source_status"]}
+                    for name, val in bundle["gibbs_metrics"].items()
+                ]), use_container_width=True)
+            else:
+                st.info("NOT_EVALUATED — Gibbs ko‘rsatkichlari mavjud emas")
 
-                # v9.11.0: Comprehensive Scientific Introduction
-                doc.add_page_break()
+            st.subheader("Patent / validatsiya dalillari")
+            st.dataframe(pd.DataFrame([
+                {"Tekshiruv": name.replace("_", " "), "Maqom": status}
+                for name, status in bundle["evidence"].items()
+            ]), use_container_width=True)
+            st.caption(f"Traektoriya SHA-256: {bundle['run_sha256']} — bu raqamli imzo EMAS.")
 
-                # 0. Scientific Contribution
-                doc.add_heading("0. Ilmiy Yangilik (Scientific Contribution)", level=1)
-                doc.add_paragraph(
-                    "Ushbu tadqiqotning asosiy ilmiy yangiligi quyidagi 10 ta innovatsion "
-                    "elementda namoyon boladi. Har bir yangilik nashr etilgan adabiyot "
-                    "bilan taqqoslangan va patent darajasidagi yangilik ekanligi tasdiqlangan."
-                )
-                contrib_table = doc.add_table(rows=11, cols=3, style="Light Shading Accent 1")
-                contrib_table.rows[0].cells[0].text = "#"
-                contrib_table.rows[0].cells[1].text = "Ilmiy Yangilik"
-                contrib_table.rows[0].cells[2].text = "Adabiyotdan Farqi"
-                contributions = [
-                    ("1", "Adaptive Biot coefficient (Sr-phi coupling)", "Biot (1941) constant alpha=1, bizda dynamic alpha(Sr,phi)"),
-                    ("2", "3-step Arrhenius thermal degradation", "Shao (2003) single-step, bizda 3-step Anthony-Howard-Serio"),
-                    ("3", "Physics-Guided Neural Network (PGNN)", "Standard RF, bizda physics-informed features + SHAP"),
-                    ("4", "SHAP explainability with domain fallback", "Black-box AI, bizda interpretable + literature-calibrated"),
-                    ("5", "Monte Carlo UQ with multi-distribution (50k LHS)", "Single-point FOS, bizda probabilistic with Normal/Lognormal/Beta"),
-                    ("6", "Sobol global sensitivity (S1 + ST)", "Local (OAT), bizda global variance decomposition"),
-                    ("7", "Comprehensive FTO analysis (5 prior art patents)", "No FTO, bizda element-by-element claim comparison"),
-                    ("8", "SHA-256 + RSA-4096 audit chain (WORM)", "Manual logging, bizda tamper-evident blockchain"),
-                    ("9", "5x5 Industrial Risk Matrix (ISO 31000)", "Academic FOS, bizda industrial decision-making tool"),
-                    ("10", "Real field validation (Angren + Shurtan, 2018-2024)", "Synthetic only, bizda 8 international field sites"),
-                ]
-                for i, (num, novelty, diff) in enumerate(contributions):
-                    row = contrib_table.add_row().cells
-                    row[0].text = num
-                    row[1].text = novelty
-                    row[2].text = diff
+            with st.expander("Model grafiklari (faqat MODEL_OUTPUT)", expanded=False):
+                t1, t2, t3 = st.tabs(["Konversiya va issiqlik", "Gaz va porozlik", "3D model"])
+                with t1:
+                    plot_coal_conversion(model_df)
+                    plot_heat_source(model_df)
+                with t2:
+                    plot_gas_composition(model_df)
+                    plot_porosity(model_df)
+                with t3:
+                    plot_3d_surface(model_df)
 
-                # 0a. Why Angren Lignite
-                doc.add_heading("0a. Nima Uchun Angren Lignite?", level=2)
-                doc.add_paragraph(
-                    "Angren lignit koni (Toshkent viloyati, Ozbekiston) ushbu tadqiqot uchun "
-                    "tanlangan sabablar:"
-                )
-                reasons = [
-                    "1. Strategik ahamiyat: Angren - Ozbekistondagi eng yirik komir koni (1.8 mlrd tonna zaxira).",
-                    "2. Lignite xususiyatlari: yuqori uchunchi modda (45-50%), past UCS (15-25 MPa) - UCG uchun ideal.",
-                    "3. Mavjud infratuzilma: Angren UCG pilot loyihasi 2018-yildan beri ishlamoqda.",
-                    "4. Geologik shartlar: 350-400 m chuqurlik, 2-4 m qatlam qalinligi - UCG uchun mos.",
-                    "5. Davlat qollab-quvvatlash: Ozbekiston Respublikasi UCG ni strategik yonalish deb belgilagan.",
-                    "6. Mahalliy ekspertiza: Toshkent Davlat Texnika Universiteti UCG boyicha tadqiqot olib boradi.",
-                    "7. Xalqaro tajriba: Ergo Exergy (Kanada) bilan hamkorlikda Angren UCG-1 loyihasi.",
-                    "8. Malumotlar mavjudligi: 2018-2024 yillar davomida toplangan sensor malumotlari.",
-                ]
-                for r in reasons:
-                    doc.add_paragraph(r, style="List Bullet")
-
-                # 0b. UCG Principle Introduction
-                doc.add_heading("0b. Underground Coal Gasification (UCG) - Ishlash Prinsipi", level=2)
-                doc.add_paragraph(
-                    "Underground Coal Gasification (UCG) - bu komirni yer ostida gazlashtirish "
-                    "teknologiyasi bolib, komirni yer yuzasiga chiqarmasdan togridan-togri "
-                    "yer ostida kimyoviy reaksiyalar orqali sintez gazga (syngas) aylantirish "
-                    "jarayonidir. Syngas tarkibida CO, H2, CO2, CH4 va boshqa gazlar mavjud "
-                    "bolib, u elektr energetikasi, kimyo sanoati va suv ishlab chiqarishda "
-                    "qollanilishi mumkin."
-                )
-                doc.add_paragraph("UCG jarayoni quyidagi bosqichlardan iborat:")
-                ucg_steps = [
-                    "1. Injection well: Havo yoki kislorod yer yuzasidan komir qatlamiga beriladi.",
-                    "2. Ignition: Komir qatlamida yonish boshlanadi (taxminan 700-1200C).",
-                    "3. Gasification zone: C + O2 -> CO2 (ekzotermik), C + CO2 -> 2CO (Boudouard), C + H2O -> CO + H2 (steam gasification).",
-                    "4. Production well: Hosil bolgan syngas yer yuzasiga chiqariladi.",
-                    "5. Processing: Syngas tozalangan va foydalanish uchun tayyorlanadi.",
-                    "6. Monitoring: Real-vaqtda harorat, bosim, gaz tarkibi kuzatiladi.",
-                ]
-                for step in ucg_steps:
-                    doc.add_paragraph(step, style="List Bullet")
-                doc.add_paragraph(
-                    "UCG ning afzalliklari: (1) yer ostida ishlovchi konchilik xavfsiz, "
-                    "(2) ananaviy konchilikka qaraganda arzon (CAPEX 40% past), "
-                    "(3) chuqur va nostategik komir qatlamlarini ishlatish mumkin, "
-                    "(4) CO2 kam chiqindisi. Kamchiliklari: (1) yer osti suvlari ifloslanish xavfi, "
-                    "(2) subsidens, (3) geomekanik barqarorlik."
-                )
-
-                # 0c. Assumptions Table
-                doc.add_heading("0c. Model Farazlari (Assumptions)", level=2)
-                assum_table = doc.add_table(rows=9, cols=3, style="Light Shading Accent 1")
-                assum_table.rows[0].cells[0].text = "#"
-                assum_table.rows[0].cells[1].text = "Faraz"
-                assum_table.rows[0].cells[2].text = "Asoslash"
-                assumptions = [
-                    ("A1", "Komir tarkibi bir hil (seam ichida)", "Angren UCG-1 lab tekshiruvi (2024)"),
-                    ("A2", "Birinchi tartib Arrhenius kinetikasi", "Anthony & Howard (1976)"),
-                    ("A3", "Izotrop tosh massasi (GSI orqali)", "Hoek & Brown (2018)"),
-                    ("A4", "Kichik deformatsiya chiziqli elastiklik", "FOS > 0.5 uchun amal qiladi"),
-                    ("A5", "Govak bosim bir hil taqsimlangan", "Standart Biot farazi"),
-                    ("A6", "Shif/tabida kimyoviy reaksiya yoq", "Faqat komir gazlanadi"),
-                    ("A7", "Steady-state gaz oqimi (kav ernada)", "Yonish vaqti >> gaz yashash vaqti"),
-                    ("A8", "T >= 700K (AI model chegarasi)", "Applicability Domain (Jaworska 2005)"),
-                ]
-                for i, (num, a, j) in enumerate(assumptions):
-                    row = assum_table.add_row().cells
-                    row[0].text = num
-                    row[1].text = a
-                    row[2].text = j
-
-                # 0d. Physics Laws Sequence
-                doc.add_heading("0d. Qollanilgan Fizik Qonunlar", level=2)
-                doc.add_paragraph("Model quyidagi fundamental fizik qonunlarga asoslangan:")
-                laws = [
-                    "1. Massa saqlanishi (Lavoisier, 1789): Yopiq sistemada massa yoqolmaydi. Atom darajasida: sum(C atoms)in = sum(C atoms)out.",
-                    "2. Energiya saqlanishi (Birinchi termodinamika qonuni): dE = dQ - dW. Yopiq sistemada energiya yoqolmaydi.",
-                    "3. Darcy qonuni (Darcy 1856): v = -(k/mu)*grad(P). Gaz oqimi govakli muhitda bosim gradienti orqali.",
-                    "4. Arrhenius qonuni (Arrhenius 1889): k = A*exp(-Ea/RT). Reaksiya tezligi haroratga eksponensial bogliq.",
-                    "5. Biot poroelastiklik (Biot 1941): sigma_eff = sigma - alpha*p. Effective stress = total stress - Biot*pore pressure.",
-                    "6. Hoek-Brown failure criterion (Hoek & Brown 2018): sigma1 = sigma3 + sigma_ci*(mb*sigma3/sigma_ci + s)^a.",
-                    "7. Fourier qonuni (Fourier 1822): q = -k*grad(T). Issiqlik oqimi harorat gradienti orqali.",
-                    "8. Stefan-Boltzmann qonuni (Boltzmann 1884): q_rad = epsilon*sigma*T^4. Radiatsion issiqlik uzatilishi.",
-                ]
-                for law in laws:
-                    doc.add_paragraph(law, style="List Bullet")
-
-                doc.add_page_break()
-
-                # II. Arrhenius Model Detailed
-                doc.add_heading("II. Arrhenius Modeli - Batafsil Tahlil", level=1)
-
-                doc.add_heading("II.1 Formula va Birliklar Tahlili", level=2)
-                doc.add_paragraph("Arrhenius tenglamasi (1):")
-                doc.add_paragraph("k(T) = A * exp(-Ea / (R*T))    ... (1)", style="Quote")
-                doc.add_paragraph("Birliklar tahlili (dimensional analysis):")
-                dim_table = doc.add_table(rows=6, cols=3, style="Light Shading Accent 1")
-                dim_table.rows[0].cells[0].text = "Simvol"
-                dim_table.rows[0].cells[1].text = "Mano"
-                dim_table.rows[0].cells[2].text = "SI Birlik"
-                dim_data = [
-                    ("k", "Reaksiya tezlik konstantasi", "1/s (birinchi tartib)"),
-                    ("A", "Pre-eksponensial faktor", "1/s (k bilan bir hil)"),
-                    ("Ea", "Aktivatsiya energiyasi", "J/mol (yoki kJ/mol)"),
-                    ("R", "Universal gaz konstantasi", "8.314 J/(mol*K)"),
-                    ("T", "Absolyut harorat", "K (Kelvin)"),
-                ]
-                for i, (s, m, u) in enumerate(dim_data):
-                    row = dim_table.add_row().cells
-                    row[0].text = s
-                    row[1].text = m
-                    row[2].text = u
-
-                doc.add_paragraph(
-                    "Fizik manosisi: Ea - reaksiya yuzaga kelishi uchun yengib otilishi kerak "
-                    "bolgan energiya tosigi (activation barrier). Yuqori Ea = reaksiya sekin, "
-                    "past Ea = reaksiya tez. exp(-Ea/RT) - Boltzmann taqsimoti."
-                )
-
-                doc.add_heading("II.2 Aktivatsiya Energiyasi Tanlash Sababi (v9.11.1 - Yagona Manba)", level=2)
-                doc.add_paragraph(
-                    "v9.11.1 ekspert tahlili: barcha bo'limlarda bir xil Ea qiymatlari ishlatiladi. "
-                    "Yagona manba: UCGReaction.REACTIONS (line 15325-15330). "
-                    "Adabiyotdagi qiymatlar faqat taqqoslash uchun keltirilgan."
-                )
-                ea_table = doc.add_table(rows=6, cols=5, style="Light Shading Accent 1")
-                ea_table.rows[0].cells[0].text = "Reaksiya"
-                ea_table.rows[0].cells[1].text = "Ea model (kJ/mol)"
-                ea_table.rows[0].cells[2].text = "Ea adabiyot (kJ/mol)"
-                ea_table.rows[0].cells[3].text = "Manba"
-                ea_table.rows[0].cells[4].text = "Izoh"
-                ea_data = [
-                    ("Oxidation (C+O2)", "120", "100-130", "Perkins & Sahajwalla (2006); Dufaux (1990)",
-                     "UCG uchun kalibrlangan: 120 kJ/mol (model), adabiyot 100-130"),
-                    ("Boudouard (C+CO2)", "248", "210-260", "Yang et al. (2014), Fuel 116",
-                     "Yuqori Ea - endotermik, 800C+ kerak"),
-                    ("Steam Gasif. (C+H2O)", "228", "130-240", "Perkins & Sahajwalla (2006)",
-                     "UCG field data bilan kalibrlangan (228); TGA-only qiymat 135 kJ/mol"),
-                    ("CO ox (2CO+O2)", "100", "80-110", "Khadse et al. (2007)",
-                     "Gaz fazasi, tez reaksiya"),
-                    ("H2 ox (2H2+O2)", "95", "70-100", "Self et al. (2012)",
-                     "Eng past Ea - eng tez reaksiya"),
-                ]
-                for i, (r, ea_m, ea_l, src, reason) in enumerate(ea_data):
-                    row = ea_table.add_row().cells
-                    row[0].text = r
-                    row[1].text = ea_m
-                    row[2].text = ea_l
-                    row[3].text = src
-                    row[4].text = reason
-                doc.add_paragraph(
-                    "Muhim: hisobotning boshqa barcha bo'limlarida (modul parametrlari, "
-                    "grafiklar, sensitivity tahlil) aynan UCGReaction.REACTIONS dagi "
-                    "'Ea model' qiymatlari ishlatiladi. Adabiyot qiymatlari faqat "
-                    "taqqoslash uchun keltirilgan."
-                )
-
-                doc.add_heading("II.3 Temperature Sensitivity Tahlili", level=2)
-                doc.add_paragraph("Arrhenius modelining haroratga sezgirlik tahlili:")
-                doc.add_paragraph("dk/dT = k * Ea / (R * T^2)    ... (2)")
-                doc.add_paragraph(
-                    "Misol: T=1000K, Ea=150 kJ/mol uchun: dk/dT/k = 150000/(8.314*1000^2) = 0.018/K "
-                    "- har 1K uchun reaksiya tezligi 1.8% oshadi."
-                )
-                sens_table = doc.add_table(rows=4, cols=4, style="Light Shading Accent 1")
-                sens_table.rows[0].cells[0].text = "T (K)"
-                sens_table.rows[0].cells[1].text = "k (1/s) [Ea=150 kJ/mol]"
-                sens_table.rows[0].cells[2].text = "dk/dT (1/s/K)"
-                sens_table.rows[0].cells[3].text = "Sensitivity (%/K)"
-                import math as _math
-                A_test = 1e10
-                Ea_test = 150000
-                R_test = 8.314
-                for i, T_test in enumerate([700, 1000, 1300]):
-                    k_test = A_test * _math.exp(-Ea_test / (R_test * T_test))
-                    dkdT = k_test * Ea_test / (R_test * T_test**2)
-                    sens = dkdT / k_test * 100
-                    row = sens_table.add_row().cells
-                    row[0].text = str(T_test)
-                    row[1].text = f"{k_test:.2e}"
-                    row[2].text = f"{dkdT:.2e}"
-                    row[3].text = f"{sens:.2f}%"
-
-                doc.add_heading("II.4 Arrhenius Grafigi (ln k vs 1/T)", level=2)
-                doc.add_paragraph(
-                    "Arrhenius grafigi (ln k vs 1/T) har bir reaksiya uchun togri chiziq "
-                    "bolib, chiziqning qiyaligi -Ea/R ga teng."
-                )
+            st.subheader("📥 Hujjatlar eksporti")
+            d1, d2 = st.columns(2)
+            if d1.button("📄 DOCX hujjatini tayyorlash", key="v7_patent_prepare_docx_v39"):
                 try:
-                    import matplotlib
-                    matplotlib.use("Agg")
-                    import matplotlib.pyplot as plt
-                    import numpy as np
-
-                    fig, ax = plt.subplots(figsize=(8, 5), constrained_layout=True)
-                    T_range = np.linspace(700, 1500, 50)
-                    reactions_arr = [
-                        ("Oxidation", 1.5e5, 113000, "#e74c3c"),
-                        ("Boudouard", 3.6e6, 248000, "#3498db"),
-                        ("Steam Gasif.", 1.5e8, 146000, "#2ecc71"),
-                        ("CO ox", 1.0e3, 89000, "#f39c12"),
-                        ("H2 ox", 5.0e6, 60000, "#9b59b6"),
-                    ]
-                    for name, A, Ea, color in reactions_arr:
-                        k_vals = A * np.exp(-Ea / (8.314 * T_range))
-                        inv_T = 1000.0 / T_range
-                        ax.plot(inv_T, np.log(k_vals), color=color, linewidth=2, label=name)
-                    ax.set_xlabel("1000/T (1/K)", fontsize=11)
-                    ax.set_ylabel("ln k", fontsize=11)
-                    ax.set_title("Arrhenius Plot: ln k vs 1/T (all 5 reactions)", fontsize=12)
-                    ax.legend()
-                    ax.grid(True, alpha=0.3)
-                    buf_arr = io.BytesIO()
-                    plt.savefig(buf_arr, format="png", dpi=150, bbox_inches="tight")
-                    buf_arr.seek(0)
-                    plt.close()
-                    doc.add_picture(buf_arr, width=DocxInches(5.5))
-                    doc.add_paragraph("Source status: MODEL_OUTPUT — computed or parameterized figure; independent field validation NOT_EVALUATED")
-                    cap = doc.add_paragraph()
-                    cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                    cap.add_run("Fig. 1. Arrhenius Plot - ln k vs 1000/T (qiyalik = -Ea/R)").italic = True
-                except Exception:
-                    doc.add_paragraph("[Arrhenius grafik]")
-
-                doc.add_page_break()
-
-                # III. Gibbs Energy Detailed
-                doc.add_heading("III. Gibbs Erkin Energiyasi - Batafsil", level=1)
-
-                doc.add_heading("III.1 Formula va Hisoblash Usuli", level=2)
-                doc.add_paragraph("Gibbs erkin energiyasi (3):")
-                doc.add_paragraph("dG(T) = dH - T*dS    ... (3)", style="Quote")
-                doc.add_paragraph("dH (entalpiya) va dS (entropiya) ning hisoblash usuli:")
-                doc.add_paragraph(
-                    "1. dH (reaksiya entalpiyasi): Standart holatda (T_ref = 298.15 K) "
-                    "reaktantlar va mahsulotlarning standart entalpiyalari ayirmasi:"
-                )
-                doc.add_paragraph("dH_rxn = sum(nu_i * dH_f(products)) - sum(nu_i * dH_f(reactants))    ... (4)")
-                doc.add_paragraph("Manba: NIST Chemistry WebBook. Misol: C + O2 -> CO2 uchun dH = -393.5 kJ/mol.")
-                doc.add_paragraph("2. dS (reaksiya entropiyasi): Xuddi shunday, standart entropiyalar ayirmasi:")
-                doc.add_paragraph("dS_rxn = sum(nu_i * S(products)) - sum(nu_i * S(reactants))    ... (5)")
-                doc.add_paragraph("3. Haroratga bogliqlik (Kirchhoff qonuni):")
-                doc.add_paragraph("dH(T) = dH + integral(dCp dT)    ... (6)")
-                doc.add_paragraph("dS(T) = dS + integral(dCp/T dT)    ... (7)")
-                doc.add_paragraph(
-                    "Bizning modelda soddalashtirish: dCp = 0 (doimiy), ya'ni dH va dS "
-                    "haroratga bogliq emas. Bu 700-1500 K oraligida makuliy xato (~5%)."
-                )
-
-                doc.add_heading("III.2 Reference Temperature", level=2)
-                doc.add_paragraph(
-                    "Reference (standart) harorat: T_ref = 298.15 K (25C, 1 atm). "
-                    "Barcha termodinamik malumotlar (dH, dS, dG) shu harorat uchun "
-                    "NIST WebBook dan olingan."
-                )
-
-                doc.add_heading("III.3 dG(T) Grafigi va Spontanlik", level=2)
-                try:
-                    fig2, ax2 = plt.subplots(figsize=(8, 5), constrained_layout=True)
-                    T_range2 = np.linspace(700, 1500, 50)
-                    reactions_gibbs = [
-                        ("Oxidation (C+O2)", -393500, 3.0, "#e74c3c"),
-                        ("Boudouard (C+CO2)", 172000, 176.0, "#3498db"),
-                        ("Steam Gasif. (C+H2O)", 131300, 133.0, "#2ecc71"),
-                        ("Methanation", -75000, -232.5, "#f39c12"),
-                        ("WGS", -41200, -42.4, "#9b59b6"),
-                    ]
-                    for name, dH, dS, color in reactions_gibbs:
-                        dG = (dH - T_range2 * dS) / 1000
-                        ax2.plot(T_range2, dG, color=color, linewidth=2, label=name)
-                    ax2.axhline(0, color="black", linestyle="--", alpha=0.5)
-                    ax2.set_xlabel("Temperature (K)", fontsize=11)
-                    ax2.set_ylabel("dG (kJ/mol)", fontsize=11)
-                    ax2.set_title("Gibbs Free Energy vs Temperature", fontsize=12)
-                    ax2.legend()
-                    ax2.grid(True, alpha=0.3)
-                    buf_gibbs = io.BytesIO()
-                    plt.savefig(buf_gibbs, format="png", dpi=150, bbox_inches="tight")
-                    buf_gibbs.seek(0)
-                    plt.close()
-                    doc.add_picture(buf_gibbs, width=DocxInches(5.5))
-                    doc.add_paragraph("Source status: MODEL_OUTPUT — computed or parameterized figure; independent field validation NOT_EVALUATED")
-                    cap2 = doc.add_paragraph()
-                    cap2.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                    cap2.add_run("Fig. 2. dG(T) - Gibbs Free Energy vs Temperature. dG < 0 = spontan.").italic = True
-                except Exception:
-                    doc.add_paragraph("[Gibbs grafik]")
-
-                doc.add_heading("III.4 Spontan va Nospontan Reaksiyalar (v9.11.1 - Harorat Ko'rsatilgan)", level=2)
-                doc.add_paragraph(
-                    "v9.11.1 ekspert tahlili: dG haroratga bog'liq (dG = dH - T*dS), shuning uchun "
-                    "har bir qiymat yoniga harorat aniq ko'rsatiladi. Avvalgi hisobotda "
-                    "1000K va 1800K aralash ishlatilgan edi - endi ikkalasi ham ko'rsatiladi."
-                )
-                doc.add_paragraph(
-                    "dG < 0 bo'lgan reaksiyalar termodinamik jihatdan spontan. "
-                    "dG > 0 bo'lganlar nospontan (tashqi energiya kerak). "
-                    "Formulalar: dG(T) = dH - T·dS, yagona manba: UCGReaction.REACTIONS."
-                )
-                spont_table = doc.add_table(rows=6, cols=5, style="Light Shading Accent 1")
-                spont_table.rows[0].cells[0].text = "Reaksiya"
-                spont_table.rows[0].cells[1].text = "dG @ 1000K (kJ/mol)"
-                spont_table.rows[0].cells[2].text = "dG @ 1800K (kJ/mol)"
-                spont_table.rows[0].cells[3].text = "Spontan? (@ 1000K)"
-                spont_table.rows[0].cells[4].text = "Izoh"
-                # v9.11.1: computed from UCGReaction.REACTIONS (dH, dS)
-                # Steam Gasif: dH=+131000, dS=133.8 → dG(1000)=131000-1000*133.8=-2800 J/mol ≈ -2.8 kJ/mol
-                # Steam Gasif: dG(1800)=131000-1800*133.8=-109840 J/mol ≈ -109.8 kJ/mol
-                # Oxidation: dH=-393500, dS=2.9 → dG(1000)=-396400 ≈ -396.4 kJ/mol
-                # Boudouard: dH=+172000, dS=176.0 → dG(1000)=-4000 ≈ -4.0 kJ/mol; dG(1800)=-144800 ≈ -144.8
-                # Methanation: dH=-75000, dS=-232.5 → dG(1000)=157500 ≈ +157.5; dG(1800)=343500 ≈ +343.5
-                # WGS: dH=-41200, dS=-42.4 → dG(1000)=1200 ≈ +1.2; dG(1800)=35120 ≈ +35.1
-                spont_data = [
-                    ("Oxidation (C+O2)", "-396.4", "-399.2", "Ha (juda)", "Kuchli ekzotermik - UCG energiya manbai"),
-                    ("Boudouard (C+CO2)", "-4.0", "-144.8", "Ha (zaif)", "T>1000K da spontanligi ortadi"),
-                    ("Steam Gasif.", "-2.8", "-109.8", "Ha (zaif)", "Endotermik lekin entropiya tufayli spontan; T=1800K da kuchli spontan"),
-                    ("Methanation", "+157.5", "+343.5", "Yoq", "Yuqori T da nospontan"),
-                    ("WGS", "+1.2", "+35.1", "Muvozanat", "1000K yaqinida muvozanat"),
-                ]
-                for i, (r, dg1, dg2, sp, note) in enumerate(spont_data):
-                    row = spont_table.add_row().cells
-                    row[0].text = r
-                    row[1].text = dg1
-                    row[2].text = dg2
-                    row[3].text = sp
-                    row[4].text = note
-                doc.add_paragraph(
-                    "Muhim (v9.11.1): Patentability Natijalari bo'limidagi dG qiymatlari "
-                    "final['temperature'] (odatda ~1800K) da hisoblangan. U yerdagi "
-                    "Steam Gasif dG ≈ -109.8 kJ/mol qiymati T=1800K da to'g'ri. "
-                    "Yuqoridagi jadvalda dG @ 1000K va @ 1800K ikkalasi ham ko'rsatilgan. "
-                    "Hisobot barcha bo'limlarida yagona manba: UCGReaction.REACTIONS."
-                )
-
-                doc.add_page_break()
-
-                # IV. ODE Model Detailed
-                doc.add_heading("IV. ODE Kinetik Model - Batafsil", level=1)
-
-                doc.add_heading("IV.1 Differensial Tenglamalar (Toliq)", level=2)
-                doc.add_paragraph("7 ozgaruvchili ODE tizimi (C, O2, H2O, CO, CO2, H2, T):")
-                ode_eqs = [
-                    "dC/dt = -r1 - r2 - r3    ... (8)",
-                    "dO2/dt = -r3 - 0.5*r4 - 0.5*r5    ... (9)",
-                    "dH2O/dt = -r1 + r5    ... (10)",
-                    "dCO/dt = r1 + 2*r2 - r4    ... (11)",
-                    "dCO2/dt = r3 - r2 + r4    ... (12)",
-                    "dH2/dt = r1 - r5    ... (13)",
-                    "dT/dt = sum(-dH_i * r_i) / (n_total * Cp)    ... (14)",
-                ]
-                for eq in ode_eqs:
-                    doc.add_paragraph(eq, style="Quote")
-                doc.add_paragraph("Reaksiya tezliklari (Langmuir-Hinshelwood modeli):")
-                doc.add_paragraph("r1 = k1*C*H2O / (1 + 0.1*H2O)    ... (15)  [Steam Gasif.]")
-                doc.add_paragraph("r2 = k2*C*CO2 / (1 + 0.1*CO2)    ... (16)  [Boudouard]")
-                doc.add_paragraph("r3 = k3*C*O2    ... (17)  [Oxidation]")
-                doc.add_paragraph("r4 = k4*CO*sqrt(O2)    ... (18)  [CO oxidation]")
-                doc.add_paragraph("r5 = k5*H2*sqrt(O2)    ... (19)  [H2 oxidation]")
-
-                doc.add_heading("IV.2 Jacobian Tahlili", level=2)
-                doc.add_paragraph(
-                    "ODE tizimining Jacobian matritsasi J[7x7] - qattiqlik (stiffness) tahlili uchun. "
-                    "Stifflik darajasi: max|lambda|/min|lambda| > 1000 -> stiff tizim. "
-                    "Bizning tizim uchun: reaksiya tezliklari 1e-3 dan 1e+3 gacha (6 daraja farq) -> JUDA STIFF."
-                )
-
-                doc.add_heading("IV.3 Solver Tanlash Sababi", level=2)
-                solver_table = doc.add_table(rows=5, cols=3, style="Light Shading Accent 1")
-                solver_table.rows[0].cells[0].text = "Solver"
-                solver_table.rows[0].cells[1].text = "Turi"
-                solver_table.rows[0].cells[2].text = "Tanlandimi? Sababi"
-                solver_data = [
-                    ("RK45", "Explicit Runge-Kutta", "Yoq - stiff tizim uchun sekin"),
-                    ("LSODA", "Adams/BDF auto-switch", "Mumkin - lekin Radau dan sekin"),
-                    ("Radau", "Implicit Runge-Kutta (5th order)", "TANLANDI - stiff tizimlar uchun optimal"),
-                    ("BDF", "Backward Differentiation Formula", "Mumkin - lekin Radau dan kam aniqlik"),
-                ]
-                for i, (s, t, r) in enumerate(solver_data):
-                    row = solver_table.add_row().cells
-                    row[0].text = s
-                    row[1].text = t
-                    row[2].text = r
-
-                doc.add_heading("IV.4 Numerik Barqarorlik Tahlili", level=2)
-                doc.add_paragraph(
-                    "Radau solver ning barqarorlik regioni butun chap yarim tekislikni qamrab oladi (A-stable). "
-                    "Aniqlik uchun rtol=1e-8, atol=1e-10 qollaniladi. "
-                    "Barqarorlik tekshiruvi: 100 ta mustaqil simulyasiya, natijalar o rtasidagi maksimal nisbiy farq < 1%."
-                )
-
-                doc.add_heading("IV.5 Step Size Sensitivity", level=2)
-                ss_table = doc.add_table(rows=5, cols=4, style="Light Shading Accent 1")
-                ss_table.rows[0].cells[0].text = "t_eval_n"
-                ss_table.rows[0].cells[1].text = "dt (min)"
-                ss_table.rows[0].cells[2].text = "Final CO (mol)"
-                ss_table.rows[0].cells[3].text = "Rel. Error (%)"
-                ss_data = [
-                    ("50", "1.20", "4.85", "2.1"),
-                    ("100", "0.60", "4.95", "0.1"),
-                    ("300", "0.20", "4.96", "reference"),
-                    ("1000", "0.06", "4.96", "0.0"),
-                ]
-                for i, (n, dt, co, err) in enumerate(ss_data):
-                    row = ss_table.add_row().cells
-                    row[0].text = n
-                    row[1].text = dt
-                    row[2].text = co
-                    row[3].text = err
-                doc.add_paragraph("Xulosa: t_eval_n=300 (dt=0.2 min) yetarli aniqlik beradi (rel. error < 0.1%).")
-
-                doc.add_page_break()
-
-                # V. Heat Balance Detailed
-                doc.add_heading("V. Issiqlik Balansi - Batafsil", level=1)
-
-                doc.add_heading("V.1 Reaksiyalar Boyicha Issiqlik", level=2)
-                doc.add_paragraph("Har bir reaksiya uchun ajralgan/yutilgan issiqlik (Q_i):")
-                doc.add_paragraph("Q_i = integral(r_i * dH_i, dt)    ... (20)")
-                heat_detail_table = doc.add_table(rows=6, cols=5, style="Light Shading Accent 1")
-                heat_detail_table.rows[0].cells[0].text = "Reaksiya"
-                heat_detail_table.rows[0].cells[1].text = "dH (kJ/mol)"
-                heat_detail_table.rows[0].cells[2].text = "Turi"
-                heat_detail_table.rows[0].cells[3].text = "Q_integral (kJ)"
-                heat_detail_table.rows[0].cells[4].text = "Ulushi (%)"
-                # FIX v9.11.29: kin_Q was undefined here — it is only computed at
-                # line ~29206 in a later try block. Initialize to zeros so the
-                # heat detail table renders zeros instead of crashing. The real
-                # values are filled in by the later block if it runs successfully.
-                kin_Q = [0.0] * 5  # placeholder; real values computed later
-                try:
-                    heat_reactions = list(UCGKineticModel.REACTIONS.items())
-                    total_Q = sum(abs(kin_Q[i]) for i in range(5)) + 1e-9
-                    for i, (key, p) in enumerate(heat_reactions):
-                        row = heat_detail_table.add_row().cells
-                        row[0].text = p["label"]
-                        row[1].text = f"{p['dH']/1000:.1f}"
-                        row[2].text = p["type"]
-                        row[3].text = f"{kin_Q[i]:.1f}"
-                        row[4].text = f"{abs(kin_Q[i])/total_Q*100:.1f}%"
-                except Exception:
-                    __import__("logging").getLogger("ucg_platform").debug("Suppressed optional-operation exception", exc_info=True)  # FIX v9.11.36: traceable fallback
-
-                doc.add_heading("V.2 Heat Loss Modeli", level=2)
-                doc.add_paragraph("Heat loss (issiqlik yoqotish) modeli (21):")
-                doc.add_paragraph("Q_loss = h_loss * A * (T - T_rock)    ... (21)")
-                doc.add_paragraph(
-                    "h_loss = 15 W/(m2*K) (tabiiy konvektsiya koeffitsienti), "
-                    "A = kavern devori yuzasi (m2), T_rock = atrofdagi tosh harorati (~50C). "
-                    "Heat loss hisobga olingan: dt da cooling = 0.002*(T - T_amb)."
-                )
-
-                doc.add_heading("V.3 Radiatsion Issiqlik Uzatilishi", level=2)
-                doc.add_paragraph("Radiatsion issiqlik (Stefan-Boltzmann, 22):")
-                doc.add_paragraph("Q_rad = epsilon * sigma * A * (T^4 - T_rock^4)    ... (22)")
-                doc.add_paragraph(
-                    "epsilon = 0.8 (komir emissivitesi), sigma = 5.67e-8 W/(m2*K^4). "
-                    "Yuqori T (>1000C) da radiatsion issiqlik muhim. Modelda P-1 approximation."
-                )
-
-                doc.add_heading("V.4 Konvektiv Issiqlik Uzatilishi", level=2)
-                doc.add_paragraph("Konvektiv issiqlik (Newton sovutish qonuni, 23):")
-                doc.add_paragraph("Q_conv = h * A * (T_gas - T_wall)    ... (23)")
-                doc.add_paragraph(
-                    "h = Nu*k_gas/L (Nusselt number orqali), k_gas = Sutherland viscosity formula, "
-                    "L = kavern xarakteristik olchami. Reynolds Re = rho*v*L/mu, Prandtl Pr = cp*mu/k."
-                )
-
-                doc.add_page_break()
-
-                # ═══ 1. KPI Natijalari ═══
-                doc.add_heading('1. KPI Natijalari', level=1)
-                kpi_table = doc.add_table(rows=1, cols=2, style='Light Shading Accent 1')
-                kpi_table.rows[0].cells[0].text = "Ko'rsatkich"
-                kpi_table.rows[0].cells[1].text = 'Qiymat'
-                # v9.11.0 FIX #2: scientific notation for small values (permeability)
-                for kpi_key, kpi_label in [('char_conversion', 'Konversiya'), ('temperature', 'Harorat (K)'),
-                                            ('porosity', 'Porozlik'), ('novelty_index', 'Novelty Index (%)'),
-                                            ('pressure', 'Bosim (MPa)'), ('permeability', 'Permeability (m2)')]:
-                    if kpi_key in df.columns:
-                        row = kpi_table.add_row().cells
-                        row[0].text = kpi_label
-                        val = final[kpi_key]
-                        # v9.11.0: Use scientific notation for very small/large values
-                        if isinstance(val, float):
-                            if abs(val) < 1e-3 and abs(val) > 0:
-                                row[1].text = f'{val:.2e}'  # e.g. 1.00e-20
-                            elif kpi_key == 'char_conversion':
-                                row[1].text = f'{min(val, 0.99):.4f}'  # v9.11.0: cap at 0.99
-                            elif kpi_key == 'temperature':
-                                row[1].text = f'{max(val, 700.0):.2f}'  # v9.11.0: min 700K
-                            else:
-                                row[1].text = f'{val:.4f}'
-                        else:
-                            row[1].text = str(val)
-
-                # ═══ 2. Reaksiya Kinetikasi Parametrlari ═══
-                doc.add_heading('2. Reaksiya Kinetikasi Parametrlari (UCGConfig)', level=1)
-                rxn_table = doc.add_table(rows=1, cols=6, style='Light Shading Accent 1')
-                headers = ['Reaksiya', 'A (1/s)', 'Ea (kJ/mol)', 'dH (kJ/mol)', 'dS (J/mol*K)', 'dG_ref (kJ/mol)']
-                for i, h in enumerate(headers):
-                    rxn_table.rows[0].cells[i].text = h
-                for name, rxn in UCGConfig.REACTIONS.items():
-                    row = rxn_table.add_row().cells
-                    row[0].text = name
-                    row[1].text = f'{rxn.A:.1e}'
-                    row[2].text = f'{rxn.Ea/1000:.0f}'
-                    row[3].text = f'{rxn.dH/1000:.1f}'
-                    row[4].text = f'{rxn.dS:.1f}'
-                    row[5].text = f'{rxn.dG_ref/1000:.1f}'
-
-                doc.add_paragraph("")
-                doc.add_heading('2.1 Arrhenius Tenglamasi', level=2)
-                doc.add_paragraph('k = A * exp(-Ea / RT)', style='List Bullet')
-                doc.add_paragraph('Bu yerda: k - reaksiya tezlik konstantasi, A - pre-eksponensial faktor, Ea - aktivatsiya energiyasi, R - universal gaz konstantasi (8.314 J/(mol*K)), T - absolyut harorat (K).', style='List Bullet')
-
-                # ═══ 3. Gibbs Free Energy ═══
-                doc.add_heading('3. Gibbs Free Energy', level=1)
-                doc.add_paragraph('Gibbs erkin energiyasi formulasi: dG(T) = dH - T * dS')
-                gibbs_data = GibbsEnergyCalculator.compute_all(UCGConfig(), final['temperature'])
-                gibbs_table = doc.add_table(rows=1, cols=4, style='Light Shading Accent 1')
-                gibbs_headers = ['Reaksiya', 'dG (kJ/mol)', 'Spontan', 'Formula']
-                for i, h in enumerate(gibbs_headers):
-                    gibbs_table.rows[0].cells[i].text = h
-                for k, v in gibbs_data.items():
-                    rxn = UCGConfig.REACTIONS.get(k)
-                    row = gibbs_table.add_row().cells
-                    row[0].text = k
-                    row[1].text = f'{v/1000:.1f}'
-                    row[2].text = 'Ha' if v < 0 else "Yo\u2019q"
-                    row[3].text = rxn.name if rxn else ''
-
-                # ═══ 4. ODE Kinetik Model Parametrlari ═══
-                doc.add_heading('4. ODE Kinetik Model Parametrlari (5 Reaksiya)', level=1)
-                doc.add_paragraph("ODE tizimi: 7 ta o'zgaruvchi (C, O2, H2O, CO, CO2, H2, T), 5 ta Arrhenius reaksiyasi.")
-                doc.add_paragraph('Yechish usuli: solve_ivp (Radau implicit Runge-Kutta)', style='List Bullet')
-                doc.add_paragraph('Langmuir-Hinshelwood adsorbsiya modeli: r = k*C*X / (1 + 0.1*X)', style='List Bullet')
-
-                ode_table = doc.add_table(rows=1, cols=7, style='Light Shading Accent 1')
-                ode_headers = ['Reaksiya', 'A (1/s)', 'Ea (kJ/mol)', 'dH (kJ/mol)', 'dS (J/mol*K)', 'Turi', 'Adabiyot Manbasi']
-                for i, h in enumerate(ode_headers):
-                    ode_table.rows[0].cells[i].text = h
-                for key, p in UCGKineticModel.REACTIONS.items():
-                    row = ode_table.add_row().cells
-                    row[0].text = p['label']
-                    row[1].text = f"{p['A']:.1e}"
-                    row[2].text = f"{p['Ea']/1000:.1f}"
-                    row[3].text = f"{p['dH']/1000:.1f}"
-                    row[4].text = f"{p['dS']:.1f}"
-                    row[5].text = p['type']
-                    row[6].text = UCGKineticModel.LITERATURE_REFS.get(key, '')
-
-                # ═══ 5. Issiqlik Balansi Jadvali ═══
-                doc.add_heading('5. Issiqlik Balansi', level=1)
-                doc.add_paragraph('Issiqlik integratsiyasi: Q_i = integral(r_i * dH_i, dt) — np.trapezoid orqali hisoblanadi.')
-                if 'heat_exo' in df.columns and 'heat_endo' in df.columns:
-                    heat_table = doc.add_table(rows=1, cols=3, style='Light Shading Accent 1')
-                    heat_table.rows[0].cells[0].text = 'Turi'
-                    heat_table.rows[0].cells[1].text = "Yig'ilgan (J)"
-                    heat_table.rows[0].cells[2].text = 'Ulushi (%)'
-                    exo_val = float(df['heat_exo'].iloc[-1])
-                    endo_val = float(df['heat_endo'].iloc[-1])
-                    total_heat = exo_val + endo_val + 1e-9
-                    row1 = heat_table.add_row().cells
-                    row1[0].text = 'Ekzotermik'
-                    row1[1].text = f'{exo_val:.2f}'
-                    row1[2].text = f'{exo_val/total_heat*100:.1f}%'
-                    row2 = heat_table.add_row().cells
-                    row2[0].text = 'Endotermik'
-                    row2[1].text = f'{endo_val:.2f}'
-                    row2[2].text = f'{endo_val/total_heat*100:.1f}%'
-
-                # ═══ 6. Samaradorlik Formulalari ═══
-                doc.add_heading('6. Samaradorlik Formulalari', level=1)
-                formulas = [
-                    'Cold Gas Efficiency: CGE = (n_CO * LHV_CO + n_H2 * LHV_H2) / (n_C0 * LHV_C) * 100%',
-                    'Carbon Efficiency: CE = (n_CO + n_CO2) / n_C0 * 100%',
-                    'H2/CO Nisbati: ratio = n_H2 / n_CO',
-                    'Syngas LHV: LHV_gas = (CO * 283.0 + H2 * 241.8) / (CO + H2) kJ/mol',
-                    'Gibbs Erkin Energiyasi: dG = dH - T * dS',
-                    'Arrhenius: k = A * exp(-Ea / RT)',
-                    'RMSE = sqrt(mean((y - y_hat)^2))',
-                    'MAE = mean(|y - y_hat|)',
-                    'R2 = 1 - sum((y - y_hat)^2) / sum((y - mean(y))^2)',
-                ]
-                for f_item in formulas:
-                    doc.add_paragraph(f_item, style='List Bullet')
-
-                # ═══ 7. Gaz Tarkibi Jadvali ═══
-                doc.add_heading('7. Gaz Tarkibi (Yakuniy)', level=1)
-                gas_table = doc.add_table(rows=1, cols=2, style='Light Shading Accent 1')
-                gas_table.rows[0].cells[0].text = 'Gaz'
-                gas_table.rows[0].cells[1].text = 'Mole ulushi'
-                for gas_name in ['CO', 'H2', 'CO2', 'CH4']:
-                    if gas_name in df.columns:
-                        row = gas_table.add_row().cells
-                        row[0].text = gas_name
-                        row[1].text = f'{final[gas_name]:.4f}'
-
-                # ═══ 8. Adabiyot Manbalari ═══
-                doc.add_heading('8. Adabiyot Manbalari', level=1)
-                references = [
-                    "[1] Perkins, G. & Sahajwalla, V. (2006). A Numerical Study of the Effects of Operating Conditions on Underground Coal Gasification. Energy & Fuels, 20(6), 2359-2372.",
-                    "[2] Yang, L. et al. (2014). Kinetic Analysis of Underground Coal Gasification with Different Coals. Fuel, 116, 49-55.",
-                    "[3] Dufaux, A. et al. (1990). Modelling of Underground Coal Gasification. Fuel, 69(5), 632-639.",
-                    "[4] Khadse, A. et al. (2007). Reactor and Process Design for Underground Coal Gasification. Chemical Engineering Research and Design, 85(2), 221-231.",
-                    "[5] Self, S. et al. (2012). Review of Underground Coal Gasification Technologies and Carbon Capture. Energy & Environmental Science, 5(7), 9119-9137.",
-                    "[6] Blevins, L.G. et al. (2003). CFD Simulation of Underground Coal Gasification. Proceedings of the Combustion Institute, 29, 473-479.",
-                    "[7] Britten, J.A. & Thorsness, C.B. (1989). A Model for Cavity Growth and Resource Recovery During Underground Coal Gasification. In Situ, 13(1), 1-47.",
-                    "[8] Park, K.Y. & Edgar, T.F. (1987). Modeling of Early Cavity Growth for Underground Coal Gasification. Industrial & Engineering Chemistry Research, 26(2), 237-246.",
-                    "[9] Daggupati, S. et al. (2010). Laboratory Studies on Combustion and Gasification of Two Indian Coals. Energy & Fuels, 24(12), 6432-6440.",
-                    "[10] Liu, S.Q. et al. (2006). Underground Coal Gasification and Its Strategic Significance to Sustainable Development of Coal Industry in China. Journal of China Coal Society, 31(4), 497-502.",
-                ]
-                for ref in references:
-                    doc.add_paragraph(ref, style='List Number')
-
-                # ═══ 9. Grafiklarni DOCX ga qo'shish ═══
-                doc.add_heading('9. Grafiklar', level=1)
-                doc.add_paragraph('Quyidagi grafiklar UCG Engine simulyatsiyasi natijalaridan olingan:')
-
-                # Helper: save matplotlib fig to bytes and add to doc
-                import tempfile as _tempfile
-                import os as _os
-
-                chart_functions = [
-                    ("Komi'r Konversiyasi", plot_coal_conversion_to_fig),
-                    ('Gaz Tarkibi', plot_gas_composition_to_fig),
-                    ('Harorat Evolyutsiyasi', plot_temperature_to_fig),
-                    ('Issiqlik Manbalari', plot_heat_source_to_fig),
-                    ("Porozlik O'zgarishi", plot_porosity_to_fig),
-                    ('Bosim Evolyutsiyasi', plot_pressure_to_fig),
-                    ('Reaksiya Tezliklari', plot_reaction_rates_to_fig),
-                    ('Entalpiyalar (dH)', plot_delta_H_bar_to_fig),
-                    ('UCG Jarayon Zonalari', plot_ucg_zones_to_fig),
-                    ('Permeability', plot_permeability_to_fig),
-                    ('Issiqlik Ulushi', plot_heat_share_pie_to_fig),
-                    ('Novelty Index', plot_novelty_index_to_fig),
-                    ('3D Surface', plot_3d_surface_to_fig),
-                ]
-                for chart_title, chart_fn in chart_functions:
-                    try:
-                        fig = chart_fn(df)
-                        if fig is not None:
-                            with _tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
-                                fig.savefig(tmp.name, dpi=150, bbox_inches='tight')
-                                import matplotlib.pyplot as _plt
-                                _plt.close(fig)
-                                doc.add_heading(chart_title, level=2)
-                                doc.add_picture(tmp.name, width=DocxInches(5.5))
-                                doc.add_paragraph("Source status: MODEL_OUTPUT — computed or parameterized figure; independent field validation NOT_EVALUATED")
-                                _os.unlink(tmp.name)
-                    except Exception as _chart_exc:
-                        doc.add_paragraph(f'{chart_title}: grafik yaratilmadi ({_chart_exc})')
-
-                # ═══ 10. ODE Kinetik Dashboard Natijalari (v9.11.2) ═══
-                doc.add_heading('10. ODE Kinetik Dashboard Natijalari (v9.11.2)', level=1)
-                # v9.11.2: Harorat KPI izohi KPI yonida ko'rsatiladi
-                try:
-                    _erc_T = ExpertReviewConstants
-                    doc.add_paragraph(
-                        f"⚠️ Harorat KPI izohi (v9.11.2): Yakuniy harorat = "
-                        f"{_erc_T.T_FINAL_OPERATIONAL}K (operatsion maksimal, Applicability Domain "
-                        f"chegarasi: {_erc_T.T_MODEL_MIN}-{_erc_T.T_MODEL_MAX}K). "
-                        f"Gazifikatsiya zonasi uchun optimal harorat: "
-                        f"{_erc_T.T_OPTIMAL_MIN}-{_erc_T.T_OPTIMAL_MAX}K. "
-                        f"Izoh: 1800K — oksidlan zonasi (oxidation zone) uchun, "
-                        f"1000-1200K — gazifikatsiya zonasi (gasification zone) uchun. "
-                        f"Ikkalasi ham to'g'ri - turli zonalar uchun."
-                    )
-                except Exception:
-                    __import__("logging").getLogger("ucg_platform").debug("Suppressed optional-operation exception", exc_info=True)  # FIX v9.11.36: traceable fallback
-                try:
-                    kin_model = UCGKineticModel()
-                    kin_sol, kin_rates, kin_Q = kin_model.solve()
-                    kin_t = kin_sol.t
-                    kin_C, kin_O2, kin_H2O, kin_CO, kin_CO2, kin_H2, kin_T = kin_sol.y
-
-                    # Reaksiya tezliklari
-                    doc.add_heading('10.1 Reaksiya Tezliklari', level=2)
-                    fig_kin_rates, ax_kin = plt.subplots(figsize=(10, 5))
-                    kin_labels = [UCGKineticModel.REACTIONS[k]['label'] for k in UCGKineticModel.REACTIONS]
-                    kin_colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
-                    for i in range(5):
-                        ax_kin.plot(kin_t, kin_rates[i, :], color=kin_colors[i], linewidth=1.8, label=kin_labels[i])
-                    ax_kin.set_title('Reaksiya Tezliklari Dinamikasi (ODE)')
-                    ax_kin.set_xlabel('Vaqt (min)'); ax_kin.set_ylabel('Tezlik (mol/min)')
-                    ax_kin.legend(fontsize=8); ax_kin.grid(True, linestyle=':')
-                    with _tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
-                        fig_kin_rates.savefig(tmp.name, dpi=150, bbox_inches='tight')
-                        plt.close(fig_kin_rates)
-                        doc.add_picture(tmp.name, width=DocxInches(5.5))
-                        doc.add_paragraph("Source status: MODEL_OUTPUT — computed or parameterized figure; independent field validation NOT_EVALUATED")
-                        _os.unlink(tmp.name)
-
-                    # Uglerod konversiyasi
-                    doc.add_heading('10.2 Uglerod Konversiyasi', level=2)
-                    X_c_kin = (kin_C[0] - kin_C) / kin_C[0] * 100
-                    fig_kin_conv, ax_kin2 = plt.subplots(figsize=(10, 5))
-                    ax_kin2.plot(kin_t, X_c_kin, color='#2ca02c', linewidth=2.5)
-                    ax_kin2.fill_between(kin_t, 0, X_c_kin, alpha=0.15, color='#2ca02c')
-                    ax_kin2.set_title('Uglerod Konversiyasi (ODE)'); ax_kin2.set_xlabel('Vaqt (min)'); ax_kin2.set_ylabel('Konversiya (%)')
-                    ax_kin2.grid(True, linestyle=':')
-                    with _tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
-                        fig_kin_conv.savefig(tmp.name, dpi=150, bbox_inches='tight')
-                        plt.close(fig_kin_conv)
-                        doc.add_picture(tmp.name, width=DocxInches(5.5))
-                        doc.add_paragraph("Source status: MODEL_OUTPUT — computed or parameterized figure; independent field validation NOT_EVALUATED")
-                        _os.unlink(tmp.name)
-
-                    # Gibbs erkin energiyasi
-                    doc.add_heading('10.3 Gibbs Erkin Energiyasi', level=2)
-                    T_range_kin, gibbs_kin = kin_model.compute_gibbs()
-                    fig_kin_gibbs, ax_kin3 = plt.subplots(figsize=(10, 5))
-                    gibbs_cols = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
-                    for idx, (key, dG) in enumerate(gibbs_kin.items()):
-                        ax_kin3.plot(T_range_kin, dG, color=gibbs_cols[idx], linewidth=1.8, label=UCGKineticModel.REACTIONS[key]['label'])
-                    ax_kin3.axhline(y=0, color='black', linewidth=0.8, linestyle='--')
-                    ax_kin3.set_title('Termodinamik Muvozanat (dG vs T)'); ax_kin3.set_xlabel('Harorat (K)'); ax_kin3.set_ylabel('dG (kJ/mol)')
-                    ax_kin3.legend(fontsize=8); ax_kin3.grid(True, linestyle=':')
-                    with _tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
-                        fig_kin_gibbs.savefig(tmp.name, dpi=150, bbox_inches='tight')
-                        plt.close(fig_kin_gibbs)
-                        doc.add_picture(tmp.name, width=DocxInches(5.5))
-                        doc.add_paragraph("Source status: MODEL_OUTPUT — computed or parameterized figure; independent field validation NOT_EVALUATED")
-                        _os.unlink(tmp.name)
-
-                    # Issiqlik balansi
-                    doc.add_heading('10.4 Issiqlik Balansi', level=2)
-                    heat_balance_table = doc.add_table(rows=1, cols=4, style='Light Shading Accent 1')
-                    heat_balance_table.rows[0].cells[0].text = 'Reaksiya'
-                    heat_balance_table.rows[0].cells[1].text = 'Turi'
-                    heat_balance_table.rows[0].cells[2].text = 'dH (kJ/mol)'
-                    heat_balance_table.rows[0].cells[3].text = 'Q integral (kJ)'
-                    for i, (key, p) in enumerate(UCGKineticModel.REACTIONS.items()):
-                        row = heat_balance_table.add_row().cells
-                        row[0].text = p['label']
-                        row[1].text = p['type']
-                        row[2].text = f"{p['dH']/1000:.1f}"
-                        row[3].text = f"{kin_Q[i]:.1f}"
-
-                    # Syngas sifati
-                    # v9.11.2: Yagona manba (ExpertReviewConstants) dan foydalanish -
-                    # bu eski simulyatsiya natijalari (CGE=0%, Carbon=100%, H2/CO=0.003) bilan
-                    # zidlilikni bartaraf etadi.
-                    doc.add_heading('10.5 Syngas Sifati va Samaradorlik (v9.11.2 - Yagona Manba)', level=2)
-                    try:
-                        _erc_kpi = ExpertReviewConstants
-                        doc.add_paragraph(
-                            "v9.11.2 ekspert tahlili: Barcha KPI qiymatlari ExpertReviewConstants "
-                            "(yagona manba) dan olinadi. Eski simulyatsiya natijalari "
-                            "(CGE=0%, Carbon=100%, H2/CO=0.003) hisobotdan butunlay olib tashlandi. "
-                            "Quyidagi qiymatlar 50000 Monte Carlo simulyatsiyasi va Angren UCG-1 "
-                            "(2018-2024) maydon ma'lumotlari asosida statistik tarzda hisoblangan."
-                        )
-                        syngas_table = doc.add_table(rows=1, cols=4, style='Light Shading Accent 1')
-                        syngas_table.rows[0].cells[0].text = "Ko'rsatkich"
-                        syngas_table.rows[0].cells[1].text = 'Qiymat'
-                        syngas_table.rows[0].cells[2].text = '95% CI'
-                        syngas_table.rows[0].cells[3].text = 'Manba/Izoh'
-                        for label, val, ci, note in [
-                            ('Cold Gas Efficiency (%)', f"{_erc_kpi.CGE_TYPICAL:.2f}",
-                             _erc_kpi.CGE_CI_95, 'Yagona manba: ExpertReviewConstants'),
-                            ('Carbon Efficiency (%)', f"{_erc_kpi.CARBON_EFF_TYPICAL:.2f}",
-                             _erc_kpi.CARBON_EFF_CI_95, 'Yagona manba: ExpertReviewConstants'),
-                            ('H2/CO Nisbati', f"{_erc_kpi.H2_CO_TIPIK:.3f}",
-                             '[1.17, 1.49]', 'Yagona manba: ExpertReviewConstants'),
-                            ('CGE Fizik Minimum (%)', f"{_erc_kpi.CGE_PHYSICAL_MIN:.1f}",
-                             '—', 'Gaz mavjud bo\'lsa kafolatlangan'),
-                            ('Fischer-Tropsch Optimal H2/CO', f"{_erc_kpi.H2_CO_FT_OPTIMAL:.1f}",
-                             '—', 'FT uchun maqbul nisbat'),
-                        ]:
-                            row = syngas_table.add_row().cells
-                            row[0].text = label
-                            row[1].text = val
-                            row[2].text = ci
-                            row[3].text = note
-
-                        # v9.11.2: Angren UCG-1 statistik ma'lumotlari
-                        doc.add_paragraph(
-                            "Angren UCG-1 (2018-2024) maydon ma'lumotlari asosida:\n"
-                            f"  - T o'rtacha: 1213K (95% CI: [1198, 1228])\n"
-                            f"  - CO o'rtacha: 19.3% (95% CI: [18.8, 19.8])\n"
-                            f"  - H2 o'rtacha: 15.3% (95% CI: [14.9, 15.7])\n"
-                            f"  - H2/CO o'rtacha: 0.79 (model bashorati: 0.81, R²=0.93)\n"
-                            f"  - Samaradorlik o'rtacha: 61.2% (model: 62.1%, R²=0.91)"
-                        )
-                    except Exception as _kpi_exc:
-                        doc.add_paragraph(f"KPI jadvali xatosi: {_kpi_exc}")
-
-                    # Validatsiya metrikalari - v9.11.2: parametr izohlari bilan
-                    doc.add_heading('10.6 Validatsiya Metrikalari (v9.11.2 - Parametr Izohlari Bilan)', level=2)
-                    try:
-                        _erc_val = ExpertReviewConstants
-                        val_table = doc.add_table(rows=1, cols=5, style='Light Shading Accent 1')
-                        val_table.rows[0].cells[0].text = 'Metrika'
-                        val_table.rows[0].cells[1].text = 'Qiymat'
-                        val_table.rows[0].cells[2].text = 'Birligi'
-                        val_table.rows[0].cells[3].text = 'Parametr/Izoh'
-                        val_table.rows[0].cells[4].text = 'Formula'
-                        for label, val, unit, param, formula in [
-                            ('RMSE', f"{_erc_val.RMSE_VALUE:.2f}", 'mol',
-                             _erc_val.RMSE_PARAMETER, 'Eq.14'),
-                            ('MAE', f"{_erc_val.MAE_VALUE:.2f}", 'mol',
-                             _erc_val.MAE_PARAMETER, 'Eq.15'),
-                            ('R²', f"{_erc_val.R2_VALUE:.4f}", 'dimensionless',
-                             _erc_val.R2_REGRESSION, 'Eq.16'),
-                        ]:
-                            row = val_table.add_row().cells
-                            row[0].text = label
-                            row[1].text = val
-                            row[2].text = unit
-                            row[3].text = param
-                            row[4].text = formula
-                        doc.add_paragraph(
-                            "v9.11.2 izoh: RMSE, MAE va R² ning parametr izohlari asosiy "
-                            "validatsiya jadvaliga qo'shildi. Eski hisobotda faqat qiymat "
-                            "ko'rsatilgan, qaysi parametr uchun ekani yo'q edi."
-                        )
-                    except Exception as _val_exc:
-                        doc.add_paragraph(f"Validatsiya jadvali xatosi: {_val_exc}")
-
-                except Exception as _kin_exc:
-                    doc.add_paragraph(f'ODE Kinetik Dashboard natijalari: xatolik ({_kin_exc})')
-
-                # ═══ 11. Massa Balansi Audit (#26) — v9.11.2: FAQAT JORIY NATIJA ═══
-                # Eski simulyatsiya natijalari (Pass Rate=0.3%, 299 buzilish, False)
-                # BUTUNLAY OLIB TASHLANDI. Endi faqat ExpertReviewConstants dan
-                # olingan joriy (v9.11.2) audit natijalari ko'rsatiladi.
-                doc.add_heading('11. Massa Balansi Audit (v9.11.2 - Faqat Joriy Natija)', level=1)
-                try:
-                    _erc_mb = ExpertReviewConstants
-                    doc.add_paragraph(
-                        "v9.11.2 ekspert tahlili: Eski simulyatsiya audit natijalari "
-                        "(Pass Rate=0.3%, 299 buzilish, Hammasi o'tdi=False) BUTUNLAY "
-                        "OLIB TASHLANDI. Quyida FAQAT joriy audit (atom balance asosida) "
-                        "natijalari ko'rsatiladi. Hisobotda boshqa hech qayerda eski "
-                        "audit qiymatlari takrorlanmaydi."
-                    )
-                    mb_table = doc.add_table(rows=1, cols=3, style='Light Shading Accent 1')
-                    mb_table.rows[0].cells[0].text = 'Ko\'rsatkich'
-                    mb_table.rows[0].cells[1].text = 'Qiymat (v9.11.2)'
-                    mb_table.rows[0].cells[2].text = 'Holat'
-                    for label, val, status in [
-                        ('Pass Rate (%)', '95%+', 'PASSED'),
-                        ('Max RNMSE', '< 1e-3 (atom balance)', 'PASSED'),
-                        ('Buzilishlar (joriy simulyatsiya)', '0', 'PASSED'),
-                        ('Hammasi o\'tdi', 'True', 'PASSED'),
-                        ('C/H/O atom balance', 'Saqlanadi', 'PASSED'),
-                    ]:
-                        row = mb_table.add_row().cells
-                        row[0].text = label
-                        row[1].text = val
-                        row[2].text = status
-                    doc.add_paragraph(
-                        "v9.11.2 yakuniy eslatma: Bu audit joriy simulyatsiya uchun "
-                        "olinaqidigan natijadir. Avvalgi versiyalardagi eskirgan "
-                        "(0.3%, 299 buzilish, False) qiymatlar BU HISOBOTDA "
-                        "ko'rsatilmaydi - ular faqat tarixiy ma'lumot sifatida "
-                        "ekspert tahlil bo'limida qisqacha tilga olingan."
-                    )
-                except Exception as _mb_exc:
-                    doc.add_paragraph(f"Massa balansi auditi: xatolik ({_mb_exc})")
-
-                # ═══ 12. Stoixiometrik Tekshiruv (#33) ═══
-                doc.add_heading('12. Stoixiometrik Tekshiruv', level=1)
-                stoich_checks = StoichiometryValidator.validate_all()
-                for sc in stoich_checks:
-                    status = "Balanslangan" if sc['balanced'] else "BALANSLANMAGAN"
-                    doc.add_paragraph(f"{sc['reaction']}: {status}", style='List Bullet')
-
-                # ═══ 13. Fizik Cheklovlar (#48) ═══
-                doc.add_heading('13. Fizik Cheklovlar Tekshiruvi', level=1)
-                constraints = HardPhysicalConstraints.CONSTRAINTS
-                pc_table = doc.add_table(rows=1, cols=4, style='Light Shading Accent 1')
-                pc_table.rows[0].cells[0].text = 'Parametr'
-                pc_table.rows[0].cells[1].text = 'Min'
-                pc_table.rows[0].cells[2].text = 'Max'
-                pc_table.rows[0].cells[3].text = 'Birlik'
-                for key, c in constraints.items():
-                    row = pc_table.add_row().cells
-                    row[0].text = key
-                    row[1].text = f"{c['min']}" if c['min'] != float('inf') else '-inf'
-                    row[2].text = f"{c['max']}" if c['max'] != float('inf') else 'inf'
-                    row[3].text = c['unit']
-
-                # ═══ 14. Arrhenius Manbalari (#28) — v9.11.2: Adabiyot vs Model ajratildi ═══
-                # Eski jadvalda 135/160/80 kJ/mol (adabiyot qiymatlari) 228/248/120 (model)
-                # bilan aralash edi. Endi aniq ajratilgan.
-                doc.add_heading('14. Arrhenius Parametrlari - Adabiyot vs Model (v9.11.2)', level=1)
-                try:
-                    _erc_arr = ExpertReviewConstants
-                    doc.add_paragraph(
-                        "v9.11.2 ekspert tahlili: Eski hisobotda adabiyot qiymatlari "
-                        "(135, 160, 80 kJ/mol) va model qiymatlari (228, 248, 120 kJ/mol) "
-                        "aralash ko'rsatilgan edi. Endi ular aniq ajratilgan: 'Model qiymati' "
-                        "(UCGReaction.REACTIONS dan) hisoblashlarda ishlatiladi; "
-                        "'Adabiyot qiymati' (Perkins, Yang, Dufaux, Khadse, Self) faqat "
-                        "taqqoslash uchun keltirilgan."
-                    )
-                    arr_table = doc.add_table(rows=1, cols=5, style='Light Shading Accent 1')
-                    arr_table.rows[0].cells[0].text = 'Reaksiya'
-                    arr_table.rows[0].cells[1].text = 'Model Ea (kJ/mol)'
-                    arr_table.rows[0].cells[2].text = 'Adabiyot Ea (kJ/mol)'
-                    arr_table.rows[0].cells[3].text = 'Manba (adabiyot)'
-                    arr_table.rows[0].cells[4].text = 'Holat'
-                    arr_data = [
-                        ('Oxidation (C+O2→CO2)', _erc_arr.EA_OXIDATION, '100-130',
-                         'Perkins & Sahajwalla (2006); Dufaux (1990)', 'Model = 120 (UCG-calibrated)'),
-                        ('Boudouard (C+CO2→2CO)', _erc_arr.EA_BOUDOUARD, '210-260',
-                         'Yang et al. (2014), Fuel 116', 'Model = 248 (UCG-calibrated)'),
-                        ('Steam Gasif. (C+H2O→CO+H2)', _erc_arr.EA_STEAM_GASIF, '130-160',
-                         'Perkins & Sahajwalla (2006) - TGA only', 'Model = 228 (UCG field)'),
-                        ('Methanation (CO+3H2→CH4+H2O)', _erc_arr.EA_METHANATION, '110-140',
-                         'Self et al. (2012)', 'Model = 125'),
-                        ('WGS (CO+H2O→CO2+H2)', _erc_arr.EA_WGS, '70-90',
-                         'Khadse et al. (2007)', 'Model = 83'),
-                        ('CO oxidation (2CO+O2→2CO2)', _erc_arr.EA_CO_OX, '80-110',
-                         'Khadse et al. (2007)', 'Model = 100'),
-                        ('H2 oxidation (2H2+O2→2H2O)', _erc_arr.EA_H2_OX, '70-100',
-                         'Self et al. (2012)', 'Model = 95'),
-                    ]
-                    for rxn, ea_m, ea_l, src, status in arr_data:
-                        row = arr_table.add_row().cells
-                        row[0].text = rxn
-                        row[1].text = str(ea_m)
-                        row[2].text = ea_l
-                        row[3].text = src
-                        row[4].text = status
-                    doc.add_paragraph(
-                        "Muhim (v9.11.2): Hisobotning barcha hisoblashlarida faqat 'Model Ea' "
-                        "ustuni ishlatiladi. 'Adabiyot Ea' ustuni faqat taqqoslash uchun. "
-                        "Eski 135/160/80 qiymatlari endi 'Adabiyot Ea' ustunida, model "
-                        "qiymatlari (228/248/120) esa 'Model Ea' ustunida aniq ko'rsatilgan."
-                    )
-                except Exception as _arr_exc:
-                    doc.add_paragraph(f'Arrhenius jadvali: xatolik ({_arr_exc})')
-
-                # ═══ 15. SI Birliklar Tekshiruvi (#30) ═══
-                doc.add_heading('15. SI Birliklar Tekshiruvi', level=1)
-                si_params = {'A': 1.5e5, 'Ea': 135000, 'dH': 131300, 'dS': 133.0, 'T': 700.0, 'P': 10e6}
-                si_issues = SIUnitsValidator.validate_all_params(si_params)
-                if si_issues:
-                    for issue in si_issues:
-                        doc.add_paragraph(f"Birlik xatosi: {issue['message']}", style='List Bullet')
-                else:
-                    doc.add_paragraph('Barcha birliklar SI standartlariga mos.', style='List Bullet')
-
-                # ═══ 16. Mole/Mass Fraction (#32) ═══
-                doc.add_heading('16. Mole va Mass Fraction Ajratish', level=1)
-                doc.add_paragraph('Mole fraction: x_i = n_i / n_total')
-                doc.add_paragraph('Mass fraction: w_i = m_i / m_total = x_i * M_i / M_avg')
-                try:
-                    mole_fr = {'CO': 0.3, 'H2': 0.25, 'CO2': 0.25, 'CH4': 0.2}
-                    mass_fr = MoleMassFractionSeparator.mole_to_mass_fraction(mole_fr)
-                    mf_table = doc.add_table(rows=1, cols=3, style='Light Shading Accent 1')
-                    mf_table.rows[0].cells[0].text = 'Gaz'
-                    mf_table.rows[0].cells[1].text = 'Mole fraction'
-                    mf_table.rows[0].cells[2].text = 'Mass fraction'
-                    for gas in mole_fr:
-                        row = mf_table.add_row().cells
-                        row[0].text = gas
-                        row[1].text = f"{mole_fr[gas]:.4f}"
-                        row[2].text = f"{mass_fr.get(gas, 0):.4f}"
-                except Exception:
-                    doc.add_paragraph('Mole/Mass fraction: hisoblash xatosi')
-
-                # ═══ 17. AI Cheklovlar (#49) ═══
-                doc.add_heading('17. AI Cheklovlar va Disclaimer', level=1)
-                doc.add_paragraph(AIDisclaimerModule.get_disclaimer())
-                domain = AIDisclaimerModule.get_applicability()
-                doc.add_paragraph(f"Harorat oralig\'i: {domain['temperature_range']}")
-                doc.add_paragraph(f"Bosim oralig\'i: {domain['pressure_range']}")
-                for lim in domain.get('limitations', []):
-                    doc.add_paragraph(lim, style='List Bullet')
-
-                # ═══ 18. Audit Zanjiri (#50) ═══
-                doc.add_heading('18. Audit Zanjiri (Formula->Hisob->Grafik->AI->Eksport)', level=1)
-                try:
-                    audit = AuditChainTracker()
-                    for key, p in UCGKineticModel.REACTIONS.items():
-                        audit.add_formula(f"k = A*exp(-Ea/RT); {p['name']}", ArrheniusParameterSources.get_source(key, 'A'), 'ODE')
-                    audit.add_computation('ODE Radau', {'y0': 'default'}, {'n_points': '300'}, 'solve_ivp')
-                    audit.add_chart('Reaction Rates', 'ODE solution', 'ODE Radau')
-                    audit.add_export('DOCX', 'Patent Report', ['formulas', 'charts', 'tables', 'references'])
-                    chain_report = audit.get_chain_report()
-                    doc.add_paragraph(f"Zanjir elementlari: {chain_report['total_entries']}")
-                    doc.add_paragraph(f"Izchillik: {'Ha' if chain_report['chain_complete'] else 'Yo\'q'}")
-                    trace = audit.verify_traceability()
-                    doc.add_paragraph(f"Izchillik tekshiruvi: {'O\'tdi' if trace['traceable'] else 'Muammo bor'}")
-                except Exception as _audit_exc:
-                    doc.add_paragraph(f"Audit zanjiri: xatolik ({_audit_exc})")
-
-                # v9.11.0: Experimental Validation + Patent Claims
-
-                # 19a. Experimental Validation
-                doc.add_heading("19a. Eksperimental Validatsiya va Adabiyot Taqqoslashi", level=1)
-                doc.add_paragraph("Independent comparison NOT_EVALUATED: source measurements, units, dates and paired residuals are required.")
-                exp_val_table = doc.add_table(rows=1, cols=5, style="Light Shading Accent 1")
-                exp_val_table.rows[0].cells[0].text = "Manba"
-                exp_val_table.rows[0].cells[1].text = "Joy"
-                exp_val_table.rows[0].cells[2].text = "Yil"
-                exp_val_table.rows[0].cells[3].text = "Model RMSE"
-                exp_val_table.rows[0].cells[4].text = "CO (%)"
-                exp_val_data = [
-                    ("Blinderman & Jones", "Chinchilla, AU", "2002", "NOT_EVALUATED", "NOT_EVALUATED"),
-                    ("Pershad et al.", "Majuba, SA", "2009", "NOT_EVALUATED", "NOT_EVALUATED"),
-                    ("Kudelko et al.", "Wieczorek, PL", "2012", "NOT_EVALUATED", "NOT_EVALUATED"),
-                    ("Blinderman et al.", "Linc Energy, AU", "2008", "NOT_EVALUATED", "NOT_EVALUATED"),
-                    ("Saitov (unverified)", "Angren UCG-1, UZ", "2024", "NOT_EVALUATED", "NOT_EVALUATED"),
-                ]
-                for i, (src, loc, yr, rmse, co) in enumerate(exp_val_data):
-                    row = exp_val_table.add_row().cells
-                    row[0].text = src
-                    row[1].text = loc
-                    row[2].text = yr
-                    row[3].text = rmse
-                    row[4].text = co
-                doc.add_paragraph("No independently verified paired source-vs-prediction data. RMSE and CO comparison are NOT_EVALUATED. Angren measurements require file, acquisition date, units, data source and residuals.")
-
-                # 19b. Patent Claims
-                doc.add_heading("19b. Patent Claims (Batafsil)", level=1)
-                doc.add_paragraph("Mustaqil davolar (Independent Claims):")
-                claims_ind = [
-                    "Claim 1 (METHOD): UCG monitoring usuli: (a) sensor malumotlarini qabul qilish; "
-                    "(b) adaptive Biot koeffitsienti hisoblash; (c) Arrhenius thermal degradation; "
-                    "(d) AI model orqali risk bashorati; (e) SHAP explainability.",
-
-                    "Claim 2 (SYSTEM): UCG digital twin tizimi: SCADA/MQTT/OPC-UA konnektorlar, "
-                    "edge AI moduli, bulut hisoblash, SHA-256+RSA-4096 audit chain.",
-
-                    "Claim 3 (APPARATUS): Sensor array - termoparalar, vibrating wire stress cells, "
-                    "extensometerlar, fiber optic DTS - bilan edge AI qurilmasi.",
-
-                    "Claim 4 (CRM): Kompyuterda oqiladigan medium, unda UCG monitoringi ko rsatmalari.",
-                ]
-                for claim in claims_ind:
-                    doc.add_paragraph(claim, style="List Bullet")
-                doc.add_paragraph("Bogliq davolar (Dependent Claims):")
-                claims_dep = [
-                    "Claim 5: Claim 1 ga kora, SHAP o rnina permutation importance fallback.",
-                    "Claim 6: Claim 1 ga kora, Monte Carlo 50,000 sample bilan UQ.",
-                    "Claim 7: Claim 1 ga kora, Sobol global sensitivity (S1+ST).",
-                    "Claim 8: Claim 2 ga kora, WORM storage protection.",
-                    "Claim 9: Claim 2 ga kora, IPFS distributed ledger.",
-                    "Claim 10: Claim 3 ga kora, fiber optic DTS sensorlar.",
-                    "Claim 11: Claim 3 ga kora, vibrating wire stress cells.",
-                    "Claim 12: Claim 4 ga kora, PCT filing ko rsatmalari.",
-                    "Claim 13: Claim 4 ga kora, multi-language (UZ/EN/RU) support.",
-                    "Claim 14: Claim 4 ga kora, GPU (CUDA) acceleration.",
-                    "Claim 15: Claim 4 ga kora, post-quantum crypto (CRYSTALS-Kyber).",
-                ]
-                for claim in claims_dep:
-                    doc.add_paragraph(claim, style="List Bullet")
-
-                # 19c. Industrial Application Schematic
-                doc.add_heading("19c. Industrial Application Sxemasi", level=1)
-                doc.add_paragraph("Texnologiyaning amaliy qollanish sxemasi (block-diagram):")
-                doc.add_paragraph(
-                    "1. SENSOR LAYER -> 2. EDGE AI -> 3. CLOUD PLATFORM -> 4. SECURITY & AUDIT -> 5. OUTPUT\\n"
-                    "Sensors: Thermocouples, Vibrating wire, Extensometers, Fiber optic DTS\\n"
-                    "Edge: OPC-UA, MQTT, PGNN inference, Local SQLite\\n"
-                    "Cloud: Streamlit, FEM Solver, SHAP, Monte Carlo, Sobol, Bootstrap\\n"
-                    "Security: RSA-4096, SHA-256 Merkle, PQC, IPFS\\n"
-                    "Output: Real-time FOS, Risk classification, Optimal design, Compliance report"
-                )
-
-                # 19d. Novelty Index Formula
-                doc.add_heading("19d. Novelty Index Formulasi", level=1)
-                doc.add_paragraph("Novelty Index (24) - AHP-weighted composite score:")
-                doc.add_paragraph("NI = 0.45*S_novelty + 0.35*S_inventive + 0.20*S_industrial    ... (24)", style="Quote")
-                doc.add_paragraph(
-                    "S_novelty = novelty features soni * 12 + 55 (cap 100). "
-                    "S_inventive = inventive steps * 15 + 50 (cap 100). "
-                    "S_industrial = industrial apps * 12 + 60 (cap 100). "
-                    "AHP weights (Saaty 1980): 0.45/0.35/0.20 - CR < 0.10 (consistent)."
-                )
-
-                # 19e. Patentability Formula
-                doc.add_heading("19e. Patentability Formulasi", level=1)
-                doc.add_paragraph("Patentability Index (25):")
-                doc.add_paragraph("PI = 0.40*NI + 0.25*FTO + 0.20*CS + 0.15*VS    ... (25)", style="Quote")
-                doc.add_paragraph(
-                    "NI = Novelty Index, FTO = Freedom To Operate score, "
-                    "CS = Claim Strength, VS = Validation Score. Patentable: PI >= 75."
-                )
-
-                # 19f. TRL Methodology
-                doc.add_heading("19f. TRL Hisoblash Metodikasi", level=1)
-                doc.add_paragraph("Technology Readiness Level (TRL) - NASA standarti (TRL 1-9):")
-                trl_table = doc.add_table(rows=10, cols=3, style="Light Shading Accent 1")
-                trl_table.rows[0].cells[0].text = "TRL"
-                trl_table.rows[0].cells[1].text = "Tavsif"
-                trl_table.rows[0].cells[2].text = "Bizning Holatimiz"
-                trl_data = [
-                    ("1", "Basic principles observed", "-"),
-                    ("2", "Technology concept formulated", "-"),
-                    ("3", "Experimental proof of concept", "-"),
-                    ("4", "Technology validated in lab", "Lab tests (Angren 2024)"),
-                    ("5", "Technology validated in relevant environment", "-"),
-                    ("6", "System demonstrated in relevant environment", "FIELD (Angren UCG-1, 2018-2024)"),
-                    ("7", "System prototype in operational environment", "Keyingi bosqich"),
-                    ("8", "System complete and qualified", "-"),
-                    ("9", "Actual system proven in operational environment", "-"),
-                ]
-                for i, (lvl, desc, status) in enumerate(trl_data):
-                    row = trl_table.add_row().cells
-                    row[0].text = lvl
-                    row[1].text = desc
-                    row[2].text = status
-                doc.add_paragraph(
-                    "Joriy TRL: 6 (Technology Readiness Level = 6/9) — Angren UCG-1 (2018-2024) "
-                    "maydon sharoitida validated. TRL bahosi 1-9 shkalasida, "
-                    "1 = asosiy tamoyillar kuzatilgan, 9 = real tizim operatsion muhitda isbotlangan."
-                )
-
-                # 19g. Mass Balance Audit (v9.11.1: ONLY LATEST audit result kept; legacy v9.9.0 data removed)
-                doc.add_heading("19g. Massa Balansi Audit (Joriy Holat)", level=1)
-                doc.add_paragraph(
-                    "Eslatma (v9.11.1 ekspert tahlili): avvalgi versiyalardagi (v9.9.0) "
-                    "eskirgan audit natijalari (Pass Rate = 0.3%, 299 buzilish) "
-                    "hisobotdan to'liq olib tashlandi. Quyida FAQAT joriy audit natijasi ko'rsatiladi."
-                )
-                doc.add_paragraph(
-                    "v9.11.0 holatiga: Pass Rate = 95%+ (atom balance asosida). "
-                    "Barcha reaksiyalar C, H, O atom balansini qanoatlantiradi. "
-                    "Qolgan <5% - chekka nuqtalardagi kichik numerik xatolar (Radau implicit, rtol=1e-8)."
-                )
-                viol_table = doc.add_table(rows=6, cols=3, style="Light Shading Accent 1")
-                viol_table.rows[0].cells[0].text = "Tahlil qilindi"
-                viol_table.rows[0].cells[1].text = "Natija (v9.11.0)"
-                viol_table.rows[0].cells[2].text = "Holat"
-                viol_data = [
-                    ("Pass Rate", "95%+", "PASSED"),
-                    ("Buzilishlar", "0 (joriy simulyatsiya)", "PASSED"),
-                    ("Max RNMSE", "< 1e-3 (atom balance)", "PASSED"),
-                    ("C/H/O atom balance", "Saqlanadi", "PASSED"),
-                    ("Hammasi o'tdi", "True", "PASSED"),
-                ]
-                for i, (c, d, f) in enumerate(viol_data):
-                    row = viol_table.add_row().cells
-                    row[0].text = c
-                    row[1].text = d
-                    row[2].text = f
-                doc.add_paragraph(
-                    "Eski buzilish sabablari (ma'lumot uchun): mole balance -> atom balance, "
-                    "tolerance 1e-6 -> 1e-3, Boudouard LHS {C:1}->{C:2} tuzatildi, NaN->0.0. "
-                    "Bu eski ma'lumotlar faqat tarixiy ma'lumot sifatida keltirilgan va "
-                    "joriy audit hisoblanmaydi."
-                )
-
-                # 19h. Sensitivity Analysis Summary
-                doc.add_heading("19h. Sensitivity Analysis va Noaniqlik", level=1)
-                doc.add_paragraph("Sobol global sensitivity (50,000 Monte Carlo samples):")
-                sens_sum_table = doc.add_table(rows=6, cols=4, style="Light Shading Accent 1")
-                sens_sum_table.rows[0].cells[0].text = "Parametr"
-                sens_sum_table.rows[0].cells[1].text = "S1 (First-order)"
-                sens_sum_table.rows[0].cells[2].text = "ST (Total)"
-                sens_sum_table.rows[0].cells[3].text = "Reyting"
-                sens_sum_data = [
-                    ("Temperature", "0.342", "0.387", "1 (dominant)"),
-                    ("UCS", "0.218", "0.245", "2"),
-                    ("GSI", "0.156", "0.182", "3"),
-                    ("Pore pressure", "0.089", "0.112", "4"),
-                    ("Biot coefficient", "0.067", "0.089", "5"),
-                ]
-                for i, (p, s1, s_total, r) in enumerate(sens_sum_data):
-                    row = sens_sum_table.add_row().cells
-                    row[0].text = p
-                    row[1].text = s1
-                    row[2].text = s_total
-                    row[3].text = r
-                doc.add_paragraph(
-                    "Noaniqlik tahlili (Bootstrap, 10,000 resamples): "
-                    "FOS design 95% CI = [0.78, 0.92]. P(failure) 95% CI = [98.5%, 99.9%]."
-                )
-
-                # ═══ 19. Yakuniy Xulosa ═══
-                doc.add_heading('19. Yakuniy Xulosa', level=1)
-                
-                # ═══ v9.3.0: Additional Report Sections (#76-100) ═══
-                doc.add_heading('Applicability Domain (Majburiy)', level=1)
-                doc.add_paragraph('Model quyidagi sharoitlarda qo\'llanilishi mumkin:')
-                for key, spec in ApplicabilityDomainEnforcer.DOMAIN.items():
-                    if 'min' in spec:
-                        doc.add_paragraph(f'{key}: [{spec["min"]}, {spec["max"]}] {spec.get("unit", "")} — {spec.get("note", "")}', style='List Bullet')
-                    else:
-                        doc.add_paragraph(f'{key}: {spec.get("valid", [])} — {spec.get("note", "")}', style='List Bullet')
-
-                doc.add_heading('Reaksiya Bibliografiyasi', level=1)
-                for rxn_key in ReactionBibliography.get_all_reaction_keys():
-                    refs = ReactionBibliography.get_references(rxn_key)
-                    for ref in refs:
-                        doc.add_paragraph(ReactionBibliography.format_reference(ref), style='List Bullet')
-
-                doc.add_heading('Model Cheklovlari (Avtomatik)', level=1)
-                limitations = AutoLimitationsGenerator.generate_limitations(['ode_1d', 'kinetic_model', 'ai_model'])
-                for lim in limitations:
-                    doc.add_paragraph(f'[{lim["model_type"]}] {lim["limitation"]}', style='List Bullet')
-
-                doc.add_heading('Patent Scoring', level=1)
-                scores = PatentScoringDashboard.compute_scores()
-                doc.add_paragraph(f'Novelty: {scores["novelty"]["score"]:.0f}/100', style='List Bullet')
-                doc.add_paragraph(f'Inventive Step: {scores["inventive_step"]["score"]:.0f}/100', style='List Bullet')
-                doc.add_paragraph(f'Industrial Applicability: {scores["industrial_applicability"]["score"]:.0f}/100', style='List Bullet')
-                doc.add_paragraph(f'Overall Patentability: {scores["overall_patentability"]:.0f}/100', style='List Bullet')
-
-                doc.add_heading('TRL Bahosi', level=1)
-                # v9.11.1 FIX: TRL criteria to'liqroq ko'rsatildi — 4/9 emas, 6/9 (Angren UCG-1 field data bilan).
-                trl = TRLAssessmentModule.assess([
-                    'has_mathematical_model',
-                    'has_numerical_implementation',
-                    'has_validation_with_experimental_data',
-                    'has_benchmark_comparison',
-                    'has_uncertainty_quantification',
-                    'has_field_data_comparison',  # Angren UCG-1 (2018-2024) maydon ma'lumotlari
-                ])
-                doc.add_paragraph(f'TRL Level: {trl["trl_level"]}/9 — {trl["trl_name"]}', style='List Bullet')
-                doc.add_paragraph(
-                    f"Izoh: TRL = 6/9 'Technology demonstrated in relevant environment' — "
-                    f"Angren UCG-1 (2018-2024) maydon sharoitida validated. "
-                    f"Barcha hisobot bo'limlarida TRL qiymati bir xil: 6/9.", style='List Bullet'
-                )
-
-                doc.add_heading('Mustaqil Ilmiy Validatsiya', level=1)
-                sci_score = IndependentScientificValidator.get_current_score()
-                doc.add_paragraph(f'Ilmiy ishonchlilik bahosi: {sci_score["score"]:.0f}/100', style='List Bullet')
-                doc.add_paragraph(f'{sci_score["message"]}', style='List Bullet')
-
-                doc.add_heading('Environment Snapshot', level=1)
-                env_snap = EnvironmentSnapshot.capture()
-                doc.add_paragraph(f'Python: {env_snap["python_version"]}', style='List Bullet')
-                for pkg, ver in sorted(env_snap['packages'].items()):
-                    if ver != 'NOT_INSTALLED':
-                        doc.add_paragraph(f'{pkg}: {ver}', style='List Bullet')
-
-                # ═══ v9.11.0: Parameter Sweep + Sensitivity Graphs + Figure Captions ═══
-                doc.add_heading('20. Parameter Sweep Tahlili', level=1)
-                doc.add_paragraph(
-                    "Parameter sweep - bitta parametrning keng oraligida model natijasini "
-                    "tekshirish. Har bir grafik uchun confidence interval (95% CI) ko'rsatilgan."
-                )
-                try:
-                    # Parameter sweep: Temperature vs Conversion
-                    fig_ps1, ax_ps1 = plt.subplots(figsize=(8, 5), constrained_layout=True)
-                    T_sweep = np.linspace(700, 1500, 20)
-                    conv_sweep = 1 - np.exp(-0.003 * (T_sweep - 700))
-                    conv_sweep = np.clip(conv_sweep, 0, 0.99)
-                    # Confidence band
-                    conv_lower = conv_sweep - 0.05
-                    conv_upper = conv_sweep + 0.05
-                    ax_ps1.fill_between(T_sweep, conv_lower, conv_upper, alpha=0.2, color='#2196F3', label='ILLUSTRATIVE RANGE (NOT verified 95% CI)')
-                    ax_ps1.plot(T_sweep, conv_sweep, 'b-o', linewidth=2, markersize=6, label='Mean')
-                    ax_ps1.set_xlabel('Temperature (K)')
-                    ax_ps1.set_ylabel('Carbon Conversion')
-                    ax_ps1.set_title('Parameter Sweep: Temperature vs Conversion')
-                    ax_ps1.legend()
-                    ax_ps1.grid(True, alpha=0.3)
-                    buf_ps1 = io.BytesIO()
-                    plt.savefig(buf_ps1, format='png', dpi=150, bbox_inches='tight')
-                    buf_ps1.seek(0)
-                    plt.close()
-                    doc.add_picture(buf_ps1, width=DocxInches(5.5))
-                    doc.add_paragraph("Source status: SYNTHETIC_DEMO — illustration only; not an empirical confidence interval or observed result")
-                    cap_ps1 = doc.add_paragraph()
-                    cap_ps1.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                    cap_ps1.add_run('Fig. 10. Parameter Sweep: Temperature vs Carbon Conversion. '
-                                    'SYNTHETIC_DEMO — curve and band illustrative; NOT verified 95% CI.').italic = True
-                except Exception:
-                    doc.add_paragraph('[Parameter Sweep: Temperature]')
-
-                try:
-                    # Parameter sweep: Pressure vs Syngas LHV
-                    fig_ps2, ax_ps2 = plt.subplots(figsize=(8, 5), constrained_layout=True)
-                    P_sweep = np.linspace(0.5, 5.0, 20)  # MPa
-                    LHV_sweep = 8.0 + 0.5 * np.log(P_sweep) + np.random.default_rng(42).normal(0, 0.2, 20)
-                    LHV_lower = LHV_sweep - 0.3
-                    LHV_upper = LHV_sweep + 0.3
-                    ax_ps2.fill_between(P_sweep, LHV_lower, LHV_upper, alpha=0.2, color='#4CAF50', label='ILLUSTRATIVE RANGE (NOT verified 95% CI)')
-                    ax_ps2.plot(P_sweep, LHV_sweep, 'g-s', linewidth=2, markersize=6, label='Mean LHV')
-                    ax_ps2.set_xlabel('Pressure (MPa)')
-                    ax_ps2.set_ylabel('Syngas LHV (MJ/Nm3)')
-                    ax_ps2.set_title('Parameter Sweep: Pressure vs Syngas LHV')
-                    ax_ps2.legend()
-                    ax_ps2.grid(True, alpha=0.3)
-                    buf_ps2 = io.BytesIO()
-                    plt.savefig(buf_ps2, format='png', dpi=150, bbox_inches='tight')
-                    buf_ps2.seek(0)
-                    plt.close()
-                    doc.add_picture(buf_ps2, width=DocxInches(5.5))
-                    doc.add_paragraph("Source status: SYNTHETIC_DEMO — illustration only; not an empirical confidence interval or observed result")
-                    cap_ps2 = doc.add_paragraph()
-                    cap_ps2.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                    cap_ps2.add_run('Fig. 11. Parameter Sweep: Pressure vs Syngas LHV. '
-                                    'Higher pressure slightly increases LHV (Le Chatelier effect).').italic = True
-                except Exception:
-                    doc.add_paragraph('[Parameter Sweep: Pressure]')
-
-                doc.add_heading('20a. Sensitivity Analysis Grafigi (Tornado)', level=2)
-                try:
-                    fig_torn, ax_torn = plt.subplots(figsize=(8, 5), constrained_layout=True)
-                    params_t = ['Temperature', 'UCS', 'GSI', 'Pore p', 'Biot', 'Pillar w', 'Ea']
-                    s1_vals = [0.342, 0.218, 0.156, 0.089, 0.067, 0.045, 0.023]
-                    st_vals = [0.387, 0.245, 0.182, 0.112, 0.089, 0.063, 0.041]
-                    y_pos = np.arange(len(params_t))
-                    ax_torn.barh(y_pos - 0.15, s1_vals, 0.3, label='S1 (First-order)', color='#2196F3')
-                    ax_torn.barh(y_pos + 0.15, st_vals, 0.3, label='ST (Total)', color='#FF9800')
-                    ax_torn.set_yticks(y_pos)
-                    ax_torn.set_yticklabels(params_t)
-                    ax_torn.set_xlabel('Sensitivity Index')
-                    ax_torn.set_title('Sobol Sensitivity Tornado Diagram')
-                    ax_torn.legend()
-                    ax_torn.invert_yaxis()
-                    ax_torn.grid(True, alpha=0.3, axis='x')
-                    buf_torn = io.BytesIO()
-                    plt.savefig(buf_torn, format='png', dpi=150, bbox_inches='tight')
-                    buf_torn.seek(0)
-                    plt.close()
-                    doc.add_picture(buf_torn, width=DocxInches(5.5))
-                    doc.add_paragraph("Source status: SYNTHETIC_DEMO — illustration only; not an empirical confidence interval or observed result")
-                    cap_torn = doc.add_paragraph()
-                    cap_torn.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                    cap_torn.add_run('Fig. 12. Sobol Sensitivity Tornado Diagram. '
-                                     'SYNTHETIC_DEMO — illustrative Sobol values, NOT computed from supplied data.').italic = True
-                except Exception:
-                    doc.add_paragraph('[Tornado Diagram]')
-
-                doc.add_heading('20b. Confidence Interval Grafigi (FOS vs Time)', level=2)
-                try:
-                    fig_ci, ax_ci = plt.subplots(figsize=(8, 5), constrained_layout=True)
-                    t_ci = np.linspace(0, 60, 50)
-                    fos_mean = 1.2 + 0.3 * np.sin(t_ci / 10) + 0.01 * t_ci
-                    fos_std = 0.1 + 0.005 * t_ci
-                    fos_lower = fos_mean - 1.96 * fos_std
-                    fos_upper = fos_mean + 1.96 * fos_std
-                    ax_ci.fill_between(t_ci, fos_lower, fos_upper, alpha=0.3, color='#2196F3', label='ILLUSTRATIVE RANGE (NOT verified 95% CI)')
-                    ax_ci.plot(t_ci, fos_mean, 'b-', linewidth=2, label='Mean FOS')
-                    ax_ci.axhline(1.0, color='r', linestyle='--', label='FOS=1.0 (failure)')
-                    ax_ci.axhline(1.5, color='g', linestyle=':', label='FOS=1.5 (safe)')
-                    ax_ci.set_xlabel('Time (min)')
-                    ax_ci.set_ylabel('Factor of Safety (FOS)')
-                    ax_ci.set_title('FOS Evolution with 95% Confidence Interval')
-                    ax_ci.legend()
-                    ax_ci.grid(True, alpha=0.3)
-                    buf_ci = io.BytesIO()
-                    plt.savefig(buf_ci, format='png', dpi=150, bbox_inches='tight')
-                    buf_ci.seek(0)
-                    plt.close()
-                    doc.add_picture(buf_ci, width=DocxInches(5.5))
-                    doc.add_paragraph("Source status: SYNTHETIC_DEMO — illustration only; not an empirical confidence interval or observed result")
-                    cap_ci = doc.add_paragraph()
-                    cap_ci.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                    cap_ci.add_run('Fig. 13. FOS Evolution with 95% Confidence Interval. '
-                                   'SYNTHETIC_DEMO — NOT a measured FOS history, no reliability inference.').italic = True
-                except Exception:
-                    doc.add_paragraph('[CI Graph]')
-
-                # 20c. Figure Interpretations
-                doc.add_heading('20c. Grafiklarning Ilmiy Izohi (Physical Interpretation)', level=2)
-                interp_table = doc.add_table(rows=14, cols=3, style="Light Shading Accent 1")
-                interp_table.rows[0].cells[0].text = "Figura"
-                interp_table.rows[0].cells[1].text = "Nima Ko'rsatadi"
-                interp_table.rows[0].cells[2].text = "Ilmiy Izoh"
-                interp_data = [
-                    ("Fig. 1", "Arrhenius: ln k vs 1/T", "Chiziqlar - togri chiziq (Arrhenius qonuni). Pastki qatordagi reaksiyalar sekinroq (yuqori Ea)."),
-                    ("Fig. 2", "Gibbs: dG vs T", "dG < 0 = spontan reaksiya. Oxidation doimo spontan. Boudouard 950K dan yuqorida spontan."),
-                    ("Fig. 3", "Konversiya vs Vaqt", "S-shaped curve - shrinking core model. Boshlanishida sekin, keyin tezlashadi."),
-                    ("Fig. 4", "Harorat vs Vaqt", "Ekzotermik reaksiyalar T ni oshiradi. 1000-1200K - optimal gasification oralig'i."),
-                    ("Fig. 5", "Gaz tarkibi vs Vaqt", "Boshida CO2 dominant (oxidation), keyin CO/H2 oshadi (Boudouard + steam gasif)."),
-                    ("Fig. 6", "Porozlik vs Vaqt", "Char consumption porozlikni oshiradi. 0.05 -> 0.30 tipik."),
-                    ("Fig. 7", "Permeability vs Vaqt", "Kozeny-Carman: k ~ phi^3. Porozlik oshishi bilan k keskin oshadi."),
-                    ("Fig. 8", "Issiqlik balansi", "Ekzotermik (oxidation) > endotermik (Boudouard). Net Q > 0 - tizim isiydi."),
-                    ("Fig. 9", "3D Surface (T-Vaqt-Konv)", "Yuqori T + uzoq vaqt = yuqori konversiya. Optimal zona: 1000-1200K."),
-                    ("Fig. 10", "Parameter Sweep: T vs Conv", "T=700K da conv~0, T=1200K da conv~0.8. 95% CI ±5%."),
-                    ("Fig. 11", "Parameter Sweep: P vs LHV", "Yuqori P = yuqori LHV (Le Chatelier: CO2+H2 -> CO+H2O shift)."),
-                    ("Fig. 12", "Tornado: Sobol Sensitivity", "Temperature dominant (S1=0.342). UCS ikkinchi (0.218)."),
-                    ("Fig. 13", "FOS + 95% CI", "FOS > 1.0 butun simulyatsiya davomida. CI kengaymaydi - barqaror."),
-                ]
-                for i, (fig, what, interp) in enumerate(interp_data):
-                    row = interp_table.add_row().cells
-                    row[0].text = fig
-                    row[1].text = what
-                    row[2].text = interp
-
-                doc.add_paragraph(f'Ushbu hisobot UCG Platform v9.11.0 tomonidan avtomatik generatsiya qilingan.')
-
-                doc.add_paragraph(f'Simulyatsiya: {n_steps} qadam, dt={dt}, T0={T0}K, P0={P0}MPa')
-                doc.add_paragraph(f"Ko'mir turi: {coal.name}")
-                doc.add_paragraph('Hisobot quyidagi audit bosqichlaridan o\'tgan: Massa balansi (#26), Energiya balansi (#27), Stoixiometriya (#33), Fizik cheklovlar (#48), SI birliklar (#30), AI Disclaimer (#49), Audit zanjiri (#50).')
-
-                # ════════════════════════════════════════════════════════════════════
-                # v9.11.1: EKSPERT TAHLILI TUZATISHLARI BO'LIMINI QO'SHISH
-                # 40 ta muammoning barchasi shu yerda batafsil tuzatiladi.
-                # ════════════════════════════════════════════════════════════════════
-                try:
-                    render_expert_review_to_docx(doc)
-                    doc.add_paragraph(
-                        "v9.11.1 ekspert tahlili yakunlandi: 40 ta muammoning barchasi "
-                        "bartaraf etildi. Yagona manba (Single Source of Truth) prinsipi "
-                        "joriy etildi - barcha qiymatlar (Ea, TRL, CGE, H2/CO, va boshqalar) "
-                        "faqat bitta joyda (ExpertReviewConstants) aniqlanadi va hisobot "
-                        "bo'ylab bir xil ishlatiladi."
-                    )
-                except Exception as _expert_review_exc:
-                    doc.add_paragraph(
-                        f"[Ekspert tahlili bo'limi xatosi: {_expert_review_exc}]"
-                    )
-
-                buf = io.BytesIO()
-                doc.save(buf)
-                buf.seek(0)
+                    st.session_state[patent_docx_key] = {
+                        "sha256": bundle["run_sha256"],
+                        "content": create_v7_patent_report_docx(bundle)}
+                except Exception as exc:
+                    logger.exception("Patent Report DOCX export failed")
+                    st.error(f"DOCX yaratilmadi: {exc}")
+            ready_docx = st.session_state.get(patent_docx_key)
+            if ready_docx and ready_docx.get("sha256") == bundle["run_sha256"]:
                 st.download_button(
-                    "⬇️ DOCX yuklab olish", buf.getvalue(),
-                    file_name="ucg_v9_2_patent_report.docx",
+                    "⬇️ Patent tadqiqoti DOCX hisobotini yuklab olish",
+                    data=ready_docx["content"],
+                    file_name="UCG_Patent_Research_Evidence_v9_11_39.docx",
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                )
-            except ImportError:
-                st.error(tr("msg.python_docx_not_installed"))
-            except Exception as _docx_exc:
-                st.error(f"DOCX generatsiya xatosi: {_docx_exc}")
-
-        if export_col2.button("📋 JSON Hisobotni Yuklash"):
-            report = {
-                "version": "7.0.0",
-                "timestamp": datetime.now().isoformat(),
-                "coal_type": coal.name,
-                "final_state": {k: float(v) for k, v in final.items() if not isinstance(v, dict)},
-                "gibbs": {k: float(v) for k, v in gibbs_data.items()},
-            }
-            json_str = json.dumps(report, ensure_ascii=False, indent=2, default=str)
+                    key="v7_patent_download_docx_v39")
+            d2.download_button(
+                "⬇️ Dalillar JSON faylini yuklab olish",
+                data=create_v7_patent_report_json(bundle),
+                file_name="UCG_Patent_Evidence_v9_11_39.json",
+                mime="application/json", key="v7_patent_download_json_v39")
             st.download_button(
-                "⬇️ JSON yuklab olish", json_str,
-                file_name="ucg_v7_report.json", mime="application/json",
-            )
+                "⬇️ Simulyatsiya trayektoriyasi CSV",
+                data=model_df.sort_index(axis=1).to_csv(index=False, float_format="%.16g",
+                                                           lineterminator="\n").encode("utf-8"),
+                file_name="UCG_Model_Trajectory_v9_11_39.csv", mime="text/csv",
+                key="v7_patent_download_csv_v39")
 
     # ─── ISO Report ────────────────────────────────────────────────────────
     elif menu == "ISO Report":
@@ -63430,5 +61118,3 @@ if __name__ == "__main__":
 
 # ══════════════════════════════════════════════════════════════════════════════
 # FIX v9.11.26: ComprehensiveStatusReport — halol holat hisoboti
-
-                                                              
