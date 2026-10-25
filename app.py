@@ -1,3 +1,4 @@
+# v9.11.40: Patent Scientific Methodology + full citation/figure/analysis traceability.
 # ════════════════════════════════════════════════════════════════════════
 # v9.11.37 — SCIENTIFIC INTEGRITY / 16-POINT EXPERT REMEDIATION (2026-10-25)
 # Based on complete v9.11.36; Python syntax checked, targeted tests provided.
@@ -11725,6 +11726,9 @@ def generate_patent_report(
         "No fabricated or demonstration statistics are reported as independent evidence.",
     ):
         doc.add_paragraph(sentence, style="List Bullet")
+    doc.add_heading('Scientific methodology appendix (source code audit)', level=1)
+    doc.add_paragraph('All theoretical expressions are source-code mapped; no unexecuted chart is asserted as a verified measurement.')
+    _v7_patent_append_science_sections(doc, {'scientific_traceability': v7_patent_scientific_catalog()}, trajectory=None)
     buffer = io.BytesIO()
     doc.save(buffer)
     return buffer.getvalue()
@@ -19374,6 +19378,10 @@ class UCGConfig:
         self.coal = coal or COAL_DATABASE["Bituminous (Standard)"]
         self.T0 = max(T0, 700.0)  # v9.11.0 FIX #2: enforce T >= 700K (AI model range)
         self.P0 = P0  # Pa
+        # Each run must own independent mutable kinetic settings. Monte Carlo
+        # must never rewrite UCGConfig.REACTIONS global baseline Ea values.
+        import copy as _copy_v7_reactions
+        self.REACTIONS = _copy_v7_reactions.deepcopy(type(self).REACTIONS)
 
 
 class GibbsEnergyCalculator:
@@ -27291,6 +27299,510 @@ def render_v7_patent_grade_panel():
 # experimental validation, patent novelty, legal FTO, or ISO audit is implied.
 # ============================================================================
 
+# ═════ v9.11.40 Patent Scientific Traceability: evidence-linked mathematics ═════
+# Independent validation, patents, ISO approval, and numerical certificates are NOT implied.
+# Source-line inventory is generated from AST of v9.11.39, rather than fabricated.
+V7_PATENT_CODE_BIBLIOGRAPHY = [{'class': 'BibliographyReferences', 'id': 'zienkiewicz2000', 'bibliographic_text': 'Zienkiewicz, O. C., & Taylor, R. L. (2000). The finite element method (5th ed.). Butterworth-Heinemann.', 'code_declared_doi': None, 'mapping_status': 'NOT_MAPPED_OR_INDEPENDENTLY_VERIFIED'}, {'class': 'BibliographyReferences', 'id': 'hughes2000', 'bibliographic_text': 'Hughes, T. J. R. (2000). The finite element method: Linear static and dynamic finite element analysis. Dover Publications.', 'code_declared_doi': None, 'mapping_status': 'NOT_MAPPED_OR_INDEPENDENTLY_VERIFIED'}, {'class': 'BibliographyReferences', 'id': 'hoek2002', 'bibliographic_text': 'Hoek, E., Carranza-Torres, C., & Corkum, B. (2002). Hoek-Brown failure criterion — 2002 edition. Proceedings of NARMS-TAC, 267-273.', 'code_declared_doi': None, 'mapping_status': 'NOT_MAPPED_OR_INDEPENDENTLY_VERIFIED'}, {'class': 'BibliographyReferences', 'id': 'kirsch1898', 'bibliographic_text': 'Kirsch, G. (1898). Die Theorie der Elastizität und die Bedürfnisse der Festigkeitslehre. Zeitschrift des Vereins Deutscher Ingenieure, 42, 797-807.', 'code_declared_doi': None, 'mapping_status': 'NOT_MAPPED_OR_INDEPENDENTLY_VERIFIED'}, {'class': 'BibliographyReferences', 'id': 'saltelli2010', 'bibliographic_text': 'Saltelli, A., Annoni, P., Azzini, I., Campolongo, F., Ratto, M., & Tarantola, S. (2010). Variance based sensitivity analysis of model output. Computer Physics Communications, 181(4), 897-916.', 'code_declared_doi': '10.1016/j.cpc.2010.12.039', 'mapping_status': 'NOT_MAPPED_OR_INDEPENDENTLY_VERIFIED'}, {'class': 'BibliographyReferences', 'id': 'sobol2001', 'bibliographic_text': 'Sobol, I. M. (2001). Global sensitivity indices for nonlinear mathematical models and their Monte Carlo estimates. Mathematics and Computers in Simulation, 55(1-3), 271-280.', 'code_declared_doi': '10.1016/S0378-4754(00)00270-6', 'mapping_status': 'NOT_MAPPED_OR_INDEPENDENTLY_VERIFIED'}, {'class': 'BibliographyReferences', 'id': 'gelman1992', 'bibliographic_text': 'Gelman, A., & Rubin, D. B. (1992). Inference from iterative simulation using multiple sequences. Statistical Science, 7(4), 457-472.', 'code_declared_doi': '10.1214/ss/1177011136', 'mapping_status': 'NOT_MAPPED_OR_INDEPENDENTLY_VERIFIED'}, {'class': 'BibliographyReferences', 'id': 'benjamini1995', 'bibliographic_text': 'Benjamini, Y., & Hochberg, Y. (1995). Controlling the false discovery rate: A practical and powerful approach to multiple testing. Journal of the Royal Statistical Society: Series B, 57(1), 289-300.', 'code_declared_doi': '10.1111/j.2517-6161.1995.tb02031.x', 'mapping_status': 'NOT_MAPPED_OR_INDEPENDENTLY_VERIFIED'}, {'class': 'BibliographyReferences', 'id': 'efron1993', 'bibliographic_text': 'Efron, B., & Tibshirani, R. J. (1993). An introduction to the bootstrap. Chapman & Hall/CRC.', 'code_declared_doi': None, 'mapping_status': 'NOT_MAPPED_OR_INDEPENDENTLY_VERIFIED'}, {'class': 'BibliographyReferences', 'id': 'cohens1988', 'bibliographic_text': 'Cohen, J. (1988). Statistical power analysis for the behavioral sciences (2nd ed.). Lawrence Erlbaum Associates.', 'code_declared_doi': None, 'mapping_status': 'NOT_MAPPED_OR_INDEPENDENTLY_VERIFIED'}, {'class': 'BibliographyReferences', 'id': 'roache1994', 'bibliographic_text': 'Roache, P. J. (1994). Perspective: A method for uniform reporting of grid refinement studies. Journal of Fluids Engineering, 116(3), 405-413.', 'code_declared_doi': '10.1115/1.2910291', 'mapping_status': 'NOT_MAPPED_OR_INDEPENDENTLY_VERIFIED'}, {'class': 'BibliographyReferences', 'id': 'asme2009', 'bibliographic_text': 'ASME. (2009). Standard for verification and validation in computational fluid dynamics and heat transfer (ASME V&V 20-2009). American Society of Mechanical Engineers.', 'code_declared_doi': None, 'mapping_status': 'NOT_MAPPED_OR_INDEPENDENTLY_VERIFIED'}, {'class': 'BibliographyReferences', 'id': 'saaty1980', 'bibliographic_text': 'Saaty, T. L. (1980). The analytic hierarchy process. McGraw-Hill.', 'code_declared_doi': '10.1007/978-3-642-60065-2', 'mapping_status': 'NOT_MAPPED_OR_INDEPENDENTLY_VERIFIED'}, {'class': 'BibliographyReferences', 'id': 'ribeiro2016', 'bibliographic_text': "Ribeiro, M. T., Singh, S., & Guestrin, C. (2016). 'Why should I trust you?': Explaining the predictions of any classifier. Proceedings of the 22nd ACM SIGKDD, 1135-1144.", 'code_declared_doi': '10.1145/2939672.2939778', 'mapping_status': 'NOT_MAPPED_OR_INDEPENDENTLY_VERIFIED'}, {'class': 'BibliographyReferences', 'id': 'lundberg2017', 'bibliographic_text': 'Lundberg, S. M., & Lee, S.-I. (2017). A unified approach to interpreting model predictions. Proceedings of the 31st NeurIPS, 4765-4774.', 'code_declared_doi': None, 'mapping_status': 'NOT_MAPPED_OR_INDEPENDENTLY_VERIFIED'}, {'class': 'BibliographyReferences', 'id': 'rasmussen2006', 'bibliographic_text': 'Rasmussen, C. E., & Williams, C. K. I. (2006). Gaussian processes for machine learning. MIT Press.', 'code_declared_doi': None, 'mapping_status': 'NOT_MAPPED_OR_INDEPENDENTLY_VERIFIED'}, {'class': 'BibliographyReferences', 'id': 'biot1941', 'bibliographic_text': 'Biot, M. A. (1941). General theory of three-dimensional consolidation. Journal of Applied Physics, 12(2), 155-164.', 'code_declared_doi': '10.1063/1.1712886', 'mapping_status': 'NOT_MAPPED_OR_INDEPENDENTLY_VERIFIED'}, {'class': 'BibliographyReferences', 'id': 'arrhenius1889', 'bibliographic_text': 'Arrhenius, S. (1889). Über die Reaktionsgeschwindigkeit bei der Inversion von Rohrzucker durch Säuren. Zeitschrift für Physikalische Chemie, 4(1), 226-248.', 'code_declared_doi': '10.1515/zpch-1889-0416', 'mapping_status': 'NOT_MAPPED_OR_INDEPENDENTLY_VERIFIED'}, {'class': 'ReferenceManager', 'id': 'biot1941', 'bibliographic_text': 'Generalized theory of acoustic propagation in porous dissipative media', 'code_declared_doi': '10.1121/1.1916160', 'mapping_status': 'NOT_MAPPED_OR_INDEPENDENTLY_VERIFIED'}, {'class': 'ReferenceManager', 'id': 'hoek2018', 'bibliographic_text': 'The Hoek-Brown failure criterion and GSI — 2018 edition', 'code_declared_doi': '10.1016/j.jrmge.2018.08.001', 'mapping_status': 'NOT_MAPPED_OR_INDEPENDENTLY_VERIFIED'}, {'class': 'ReferenceManager', 'id': 'kirsch1898', 'bibliographic_text': 'Die Theorie der Elastizität und die Bedürfnisse der Festigkeitslehre', 'code_declared_doi': None, 'mapping_status': 'NOT_MAPPED_OR_INDEPENDENTLY_VERIFIED'}, {'class': 'ReferenceManager', 'id': 'kolmogorov1933', 'bibliographic_text': 'Grundbegriffe der Wahrscheinlichkeitsrechnung', 'code_declared_doi': '10.1007/978-3-642-49888-6', 'mapping_status': 'NOT_MAPPED_OR_INDEPENDENTLY_VERIFIED'}, {'class': 'ReferenceManager', 'id': 'merkle1979', 'bibliographic_text': 'A Certified Digital Signature', 'code_declared_doi': None, 'mapping_status': 'NOT_MAPPED_OR_INDEPENDENTLY_VERIFIED'}, {'class': 'ReferenceManager', 'id': 'satty1980', 'bibliographic_text': 'The Analytic Hierarchy Process', 'code_declared_doi': None, 'mapping_status': 'NOT_MAPPED_OR_INDEPENDENTLY_VERIFIED'}, {'class': 'ReferenceManager', 'id': 'anthony1976', 'bibliographic_text': 'Coal devolatilization', 'code_declared_doi': '10.1002/aic.690220403', 'mapping_status': 'NOT_MAPPED_OR_INDEPENDENTLY_VERIFIED'}, {'class': 'ReferenceManager', 'id': 'richardson1911', 'bibliographic_text': 'The approximate arithmetical solution by finite differences', 'code_declared_doi': '10.1098/rsta.1911.0009', 'mapping_status': 'NOT_MAPPED_OR_INDEPENDENTLY_VERIFIED'}, {'class': 'ReferenceManager', 'id': 'roache1994', 'bibliographic_text': 'Perspective: a method for uniform reporting of grid refinement studies', 'code_declared_doi': '10.1115/1.2910291', 'mapping_status': 'NOT_MAPPED_OR_INDEPENDENTLY_VERIFIED'}, {'class': 'ReferenceManager', 'id': 'li2021fno', 'bibliographic_text': 'Fourier Neural Operator for Parametric PDEs', 'code_declared_doi': '10.48550/arXiv.2010.08895', 'mapping_status': 'NOT_MAPPED_OR_INDEPENDENTLY_VERIFIED'}, {'class': 'ReferenceManager', 'id': 'mcmahan2017', 'bibliographic_text': 'Communication-Efficient Learning of Deep Networks from Decentralized Data', 'code_declared_doi': '10.48550/arXiv.1602.05629', 'mapping_status': 'NOT_MAPPED_OR_INDEPENDENTLY_VERIFIED'}, {'class': 'ReferenceManager', 'id': 'shen2020', 'bibliographic_text': 'Experimental study on triaxial compression of coal', 'code_declared_doi': '10.1007/s00603-020-02188-4', 'mapping_status': 'NOT_MAPPED_OR_INDEPENDENTLY_VERIFIED'}, {'class': 'ReferenceManager', 'id': 'lee2020patentbert', 'bibliographic_text': 'PatentBERT: Patent Classification with Fine-Tuning a pre-trained BERT Model', 'code_declared_doi': '10.48550/arXiv.1906.02124', 'mapping_status': 'NOT_MAPPED_OR_INDEPENDENTLY_VERIFIED'}]
+
+V7_PATENT_SOURCE_FUNCTION_INVENTORY = [
+    {'line': 698, 'function': 'run_fem_analysis', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 743, 'function': 'run_monte_carlo', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 899, 'function': 'export_audit_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 1928, 'function': 'get_security_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 2349, 'function': 'status_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 2444, 'function': 'format_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 3163, 'function': 'evaluate', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 3379, 'function': 'bootstrap_decomposition', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 3715, 'function': 'format_similarity_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 5340, 'function': 'generate_signed_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 5385, 'function': 'export_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 5517, 'function': 'compute_validation_metrics', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 5537, 'function': 'compute_validation_metrics_extended', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 5600, 'function': 'load_benchmark_dataset', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 5633, 'function': 'export_benchmark_dataset', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 6219, 'function': 'evaluate_patentability_ahp', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 6243, 'function': 'evaluate_patentability', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 6264, 'function': 'evaluate_patentability_extended', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 6304, 'function': 'run_four_stage_validation', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 6401, 'function': 'bootstrap_prediction_interval', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 6432, 'function': 'bca_bootstrap_ci', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 6569, 'function': 'calculate_comparison_metrics', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 6738, 'function': 'benchmark_model', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 6785, 'function': 'load_flac3d_benchmark_data', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 6807, 'function': 'load_rs2_benchmark_data', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 7022, 'function': '_detect_benchmark_columns', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 7049, 'function': '_normalize_benchmark_payload', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 7096, 'function': 'load_external_benchmark', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 7133, 'function': 'upload_external_benchmark', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 7193, 'function': 'monte_carlo_uncertainty_analysis_parallel', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 7261, 'function': 'monte_carlo_uncertainty_analysis', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 7392, 'function': 'sobol_analysis', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 7440, 'function': 'fast_analysis', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 7579, 'function': 'calculate_validation_score', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 7594, 'function': 'perform_validation_sensitivity_analysis', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 7966, 'function': 'build_benchmark_ranking', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 8178, 'function': 'plotly_figure_to_png_bytes', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 8257, 'function': 'generate_qq_plot_png', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 8371, 'function': 'generate_iso_compliance_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 8577, 'function': 'generate_all_reports', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 9029, 'function': 'compute_mandatory_explainability_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 9214, 'function': 'lime_explain', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 9258, 'function': 'partial_dependence_plot', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 9636, 'function': 'solve_fem_3d_linear_elastic_real', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 10136, 'function': 'generate_convergence_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 10176, 'function': 'generate_patch_test_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 10189, 'function': 'generate_full_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 10235, 'function': 'beam_benchmark', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 10288, 'function': 'plate_benchmark', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 10351, 'function': 'cantilever_benchmark', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 10369, 'function': 'run_all_benchmarks', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 10378, 'function': 'configure_multi_gpu', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 10601, 'function': 'test_validation_metrics_shape', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 10626, 'function': 'test_monte_carlo_fos', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 10693, 'function': 'test_ahp_evaluate_patentability', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 10747, 'function': 'test_beam_benchmark', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 10752, 'function': 'test_cantilever_benchmark', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 10756, 'function': 'test_plate_benchmark', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 10815, 'function': 'test_semantic_benchmark_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 10825, 'function': 'test_validation_metrics_shape_V2', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 10831, 'function': 'test_monte_carlo_fos_V2', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 11244, 'function': 'generate_validation_certificate', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 11345, 'function': 'generate_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 11519, 'function': 'global_sensitivity_analysis', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 11626, 'function': 'generate_patent_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 11734, 'function': 'patent_analysis_ui', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 13715, 'function': 'compute_sensitivity_matrix', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 13995, 'function': 'monte_carlo_fos', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 14402, 'function': '_generate_v97_report_figures', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 14441, 'function': 'close_figures', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 14476, 'function': 'close_figures', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 17593, 'function': 'generate_full_iso_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 18009, 'function': 'sensitivity_analysis', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 18336, 'function': 'calculate_live_metrics', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 19045, 'function': 'prior_art_analysis_table', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 19578, 'function': 'run_monte_carlo_V2', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 19656, 'function': 'run_monte_carlo', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 19679, 'function': 'plot_coal_conversion', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 19690, 'function': 'plot_gas_composition', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 19705, 'function': 'plot_temperature', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 19716, 'function': 'plot_heat_source', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 19728, 'function': 'plot_porosity', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 19739, 'function': 'plot_pressure', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 19750, 'function': 'plot_reaction_rates', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 19768, 'function': 'plot_delta_H_bar', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 19787, 'function': 'plot_permeability', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 19798, 'function': 'plot_heat_share_pie', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 19812, 'function': 'plot_ucg_zones', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 19826, 'function': 'plot_3d_surface', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 19844, 'function': 'plot_novelty_index', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 19866, 'function': '_capture_pyplot', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 19876, 'function': 'plot_coal_conversion_to_fig', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 19887, 'function': 'plot_gas_composition_to_fig', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 19900, 'function': 'plot_temperature_to_fig', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 19911, 'function': 'plot_heat_source_to_fig', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 19923, 'function': 'plot_porosity_to_fig', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 19934, 'function': 'plot_pressure_to_fig', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 19945, 'function': 'plot_reaction_rates_to_fig', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 19960, 'function': 'plot_delta_H_bar_to_fig', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 19977, 'function': 'plot_ucg_zones_to_fig', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 19991, 'function': 'plot_permeability_to_fig', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 20002, 'function': 'plot_heat_share_pie_to_fig', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 20014, 'function': 'plot_novelty_index_to_fig', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 20026, 'function': 'plot_3d_surface_to_fig', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 20046, 'function': 'plot_monte_carlo', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 20372, 'function': 'analyze_reaction', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 20662, 'function': 'generate_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 20782, 'function': 'compare_with_fem', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 21016, 'function': 'bootstrap_prediction_interval_V2', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 21297, 'function': 'apply_to_plotly', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 21320, 'function': 'apply_to_matplotlib', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 21331, 'function': 'get_matplotlib_cmap', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 21366, 'function': 'bootstrap_ci', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 21381, 'function': 'add_confidence_band_to_plotly', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 21434, 'function': 'test_plot_functions', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 21683, 'function': 'add_chart', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 21716, 'function': 'get_chain_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 22327, 'function': 'configure_root', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 22895, 'function': 'analyze_file', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 23722, 'function': 'enforce_in_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 23895, 'function': 'propagate_monte_carlo', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 24043, 'function': 'check_figure', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 24119, 'function': 'format_bibliography', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 24674, 'function': 'standardize_figure', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 24752, 'function': 'generate_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 25030, 'function': 'run_all_validations', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 25539, 'function': 'compute_validation', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 27397, 'function': 'create_v7_patent_report_docx', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 27451, 'function': 'create_v7_patent_report_json', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 29207, 'function': '_cmd_monte_carlo', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 29213, 'function': '_cmd_patent_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 30214, 'function': 'analyze', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 30936, 'function': 'explain', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 31254, 'function': 'get_angren_validation_dataset', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 31265, 'function': 'calculate_angren_station_metrics', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 31286, 'function': 'render_angren_validation_panel', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 31331, 'function': 'run_ucg_reference_benchmark', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 31363, 'function': 'render_ucg_reference_benchmarks', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 36454, 'function': 'full_validation_suite', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 37005, 'function': 'full_validation', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 37253, 'function': 'evaluate_patentability', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 37967, 'function': 'export_bibliography', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 38340, 'function': 'run_benchmark', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 38486, 'function': 'get_security_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 39018, 'function': 'patched_evaluate_patentability', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 39550, 'function': 'novelty_analyzer', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 39571, 'function': 'evaluate', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 39706, 'function': 'generate_patent_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 39925, 'function': 'safe_shap_explain', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 40067, 'function': 'safe_lime_explain', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 42575, 'function': 'full_validation_suite', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 43562, 'function': 'generate_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 44103, 'function': 'safe_monte_carlo', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 44201, 'function': 'run_benchmark_suite', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 44589, 'function': 'export_plotly', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 44649, 'function': 'apply_to_plotly', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 44740, 'function': 'compare_reports', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 44866, 'function': 'configure_plotly', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 45497, 'function': 'step_1_run_fem', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 45783, 'function': 'plot_correlation', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 45920, 'function': 'parity_plot', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 45981, 'function': 'residual_plot', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 46066, 'function': 'calculate', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 46554, 'function': 'sensitivity_analysis', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 46869, 'function': 'time_complexity_analysis', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 46887, 'function': 'space_complexity_analysis', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 46903, 'function': 'formal_verification_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 47004, 'function': 'fairness_analysis', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 47055, 'function': 'external_validation', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 47110, 'function': 'benchmark_comparison_full', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 47163, 'function': 'sample_size_analysis', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 47196, 'function': 'missing_value_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 47204, 'function': 'residual_analysis', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 47216, 'function': 'qq_plot_data', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 47278, 'function': 'bootstrap_convergence', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 47595, 'function': 'full_quality_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 47648, 'function': 'generate_quality_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 47664, 'function': 'report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 47681, 'function': 'report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 47707, 'function': 'analyze', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 47859, 'function': 'compare_charts', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 47982, 'function': 'morris_sensitivity', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 48186, 'function': 'analyze', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 48902, 'function': 'coverage_report_hint', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 52892, 'function': 'get_compliance_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 53111, 'function': 'unexplained', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 53232, 'function': 'generate_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 53274, 'function': 'generate_coverage_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 53462, 'function': 'profile_monte_carlo', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 53594, 'function': 'generate_bibliography', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 53657, 'function': 'generate_readiness_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 53832, 'function': 'get_reproducibility_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 54160, 'function': 'generate_unified_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 54520, 'function': 'analyze_claims', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 54561, 'function': '_calculate_max_depth', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 54575, 'function': 'visualize_claim_tree', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 55950, 'function': '_run_fem', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 56352, 'function': 'generate_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 56434, 'function': 'generate_ranking_plot', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 56626, 'function': 'format_benchmark', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 56701, 'function': 'analyze_fto_depth', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 56901, 'function': 'next_figure', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 56923, 'function': 'get_bibliography', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 56937, 'function': 'export_graph', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 56953, 'function': 'create_publication_figure', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 56982, 'function': 'generate_coverage_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 57027, 'function': 'run_static_analysis', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 57037, 'function': 'generate_full_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 57668, 'function': 'generate_plot', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 57809, 'function': 'generate_heatmap', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 57947, 'function': 'get_sensitivity', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 58011, 'function': 'generate_comparison_plot', 'category': 'GRAFIK', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 58390, 'function': 'run_all_validations', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 58411, 'function': 'calculate_budget', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 58605, 'function': 'verify_theorem_4_pinn_uniqueness', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 58612, 'function': 'verify_theorem_5_fem_stability', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 58922, 'function': 'get_analysis', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 59189, 'function': 'evaluate_patentability_dynamic', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 59907, 'function': 'get_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 60291, 'function': 'get_database_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 60392, 'function': 'get_models_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 60422, 'function': 'get_compliance_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+    {'line': 60892, 'function': 'scan_and_report', 'category': 'TAHLIL', 'source_status': 'NOT_EVALUATED_IN_THIS_REPORT', 'reference_status': 'NOT_MAPPED'},
+]
+
+# These publications establish GENERAL principles only, not the fitted coal settings,
+# source-specific coefficients, or a validated Angren UCG digital twin.
+V7_PATENT_SCIENCE_REFERENCES = {
+ 'R01': {'text':'Arrhenius, S. (1889). Über die Reaktionsgeschwindigkeit bei der Inversion von Rohrzucker durch Säuren. Zeitschrift für Physikalische Chemie, 4U(1), 226–248.', 'doi':'10.1515/zpch-1889-0416','scope':'Arrhenius temperature dependence; NOT fitted UCG coefficients'},
+ 'R02': {'text':'OpenStax. Chemistry 2e, Section 16.4, Free Energy.','url':'https://openstax.org/books/chemistry/pages/16-4-free-energy','scope':'Gibbs relation at constant temperature and pressure'},
+ 'R03': {'text':'Hommel, J., Coltman, E., & Class, H. (2018). Porosity–Permeability Relations for Evolving Pore Space: A Review. Transport in Porous Media.','doi':'10.1007/s11242-018-1086-2','scope':'Kozeny–Carman family; not coal-site calibration'},
+ 'R04': {'text':'Roache, P. J. (1994). Perspective: A Method for Uniform Reporting of Grid Refinement Studies. Journal of Fluids Engineering, 116, 405–413.','doi':'10.1115/1.2910291','scope':'FEM grid-refinement methodology only; NO grid convergence performed here'},
+ 'R05': {'text':'Hoek, E., & Brown, E. T. (2019). The Hoek–Brown failure criterion and GSI – 2018 edition. Journal of Rock Mechanics and Geotechnical Engineering, 11(3), 445–463.','doi':'10.1016/j.jrmge.2018.08.001','scope':'Rock mass failure in separate platform module; NOT evaluated in v7 reactor run'},
+ 'R06': {'text':'Raissi, M., Perdikaris, P., & Karniadakis, G. E. (2019). Physics-informed neural networks. Journal of Computational Physics, 378, 686–707.','doi':'10.1016/j.jcp.2018.10.045','scope':'PINN methodology in separate modules; NOT evaluated here'},
+ 'R07': {'text':'Anthony, D. B., Howard, J. B., Hottel, H. C., & Meissner, H. P. (1976). Rapid devolatilization and hydrogasification of bituminous coal. Fuel, 55(2), 121–128.','doi':'10.1016/0016-2361(76)90008-9','scope':'General coal conversion context, NOT these reaction constants'},
+ 'R08': {'text':'Efron, B., & Tibshirani, R. J. (1993). An Introduction to the Bootstrap. Chapman & Hall.','scope':'Bootstrap principles, NOT an executed bootstrap in this report'},
+ 'R09': {'text':'UCG Platform v9.11.39 source code (user-supplied), UCGEngine.step(), UCGConfig, and GibbsEnergyCalculator.','scope':'Internal model heuristics, preset parameters and empirical coefficients; SOURCE CODE ONLY'},
+ 'R10': {'text':'Lundberg, S. M., & Lee, S.-I. (2017). A Unified Approach to Interpreting Model Predictions. NeurIPS 30.', 'doi':'10.48550/arXiv.1705.07874', 'scope':'SHAP theoretical attribution in separate modules; NOT evaluated in this report'},
+}
+
+V7_PATENT_FORMULA_TRACE = [
+ {'id':'F01','name':'Arrhenius reaksiya kinetikasi','expression':'k_i(T) = A_i exp[-E_ai / (R T)] · r_coal',
+  'derivation':'Haroratga bog‘liq aktivatsiya energiyasi orqali Arrhenius qonuni. Kod T>=1 K himoyasi va exp chegarasini qo‘llaydi; A_i, E_ai va r_coal jadvalda berilgan.',
+  'code':'UCGReaction.rate; UCGConfig.REACTIONS','refs':['R01','R09'],'status':'MODEL_IMPLEMENTED; COEFFICIENTS_UNVERIFIED'},
+ {'id':'F02','name':'Ko‘mirning konversiyasi','expression':'X_(n+1) = min(0.99, X_n + Δt·10^-3·(k_ox+k_b+k_steam+k_devol)·sqrt(1-X_n))',
+  'derivation':'Euler vaqt qadami bilan empirik qisqaruvchi reaktiv ulush sqrt(1-X). 10^-3 va daraja 1/2 dastur tanlovi; alohida tajribada kalibrlanmagan.',
+  'code':'UCGEngine.step [char_conversion]','refs':['R07','R09'],'status':'MODEL_HEURISTIC; UNCALIBRATED'},
+ {'id':'F03','name':'Gaz generatsiyasi va tarkibning silliqlanishi','expression':'g_CO=2k_b+k_steam-k_wgs-k_meth; y_(n+1)=(1-0.05)y_n+0.05·g*_i/Σ(g*_j)',
+  'derivation':'Reaksiya stexiometriyasi ilhomida tuzilgan proksi generatsiya; g* qiymatlar min/max floor va cap bilan o‘zgartiriladi. To‘liq element balansi yoki Gibbs muvozanati yechilmaydi.',
+  'code':'UCGEngine.step [gen_CO, gen_H2, gen_CO2, gen_CH4, alpha]','refs':['R09'],'status':'MODEL_HEURISTIC; MASS_BALANCE_NOT_VERIFIED'},
+ {'id':'F04','name':'Ekzo-/endotermik issiqlik proksisi','expression':'Q_exo^(n+1)=Q_exo^n+Δt·Σ_exo k_i·|ΔH_i|; Q_endo^(n+1)=Q_endo^n+Δt·Σ_endo k_i·|ΔH_i|',
+  'derivation':'Reaksiya tezligi koeffitsiyentlari va entalpiyalar ko‘paytmasi. Haqiqiy mol oqimi/reaktor hajmi hisobga olinmagan: bu J emas, modelning masshtablangan proksi yig‘indisi.',
+  'code':'UCGEngine.step [dQ_exo, dQ_endo]','refs':['R02','R09'],'status':'MODEL_PROXY; PHYSICAL_ENERGY_UNITS_NOT_VERIFIED'},
+ {'id':'F05','name':'Haroratning vaqt bo‘yicha yangilanishi','expression':'T_(n+1)=clip[700,1800](T_n + ΔT_proxy + 0.05(1100-T_n)·I[X>0.01] - 0.001·max(0,T_n-1100)·Δt)',
+  'derivation':'Masshtablangan issiqlik proksisi, 1100 K maqsadga empirik tortilish va sovish. Termal diffuziya PDE yoki real energiya saqlanishi isboti EMAS.',
+  'code':'UCGEngine.step [dQ_net, dT, heating_to_target, cooling]','refs':['R09'],'status':'MODEL_HEURISTIC; THERMAL_PDE_NOT_SOLVED'},
+ {'id':'F06','name':'Porozlik rivojlanishi','expression':'φ0=0.05+0.30(VM+moisture); φ_(n+1)=min(0.85, φ_n + 0.6·ΔX·(φ0+0.1))',
+  'derivation':'Ko‘mir konversiyasi bo‘shliq hosil bo‘lishi bilan empirik bog‘langan; koeffitsiyentlar tajriba asosida tasdiqlanmagan.',
+  'code':'UCGEngine.__init__; UCGEngine.step [d_phi]','refs':['R09'],'status':'MODEL_HEURISTIC; UNCALIBRATED'},
+ {'id':'F07','name':'Kozeny–Carman tipidagi o‘tkazuvchanlik','expression':'k/k0=(φ/φ0)^3 · ((1-φ0)/(1-φ))^2',
+  'derivation':'k ∝ φ^3/(1-φ)^2 umumiy ko‘rinishini dastlabki holatga nisbatlash. Zarracha diametri, g‘ovak geometriyasi va Angren kalibrovkasi berilmagan.',
+  'code':'UCGEngine.step [permeability]','refs':['R03','R09'],'status':'MODEL_APPROXIMATION; SITE_CALIBRATION_MISSING'},
+ {'id':'F08','name':'Ideal gaz asosidagi bosim','expression':'n0=P0·V0/(R·T0); n=n0(1+2X); V=V0(1+φ); P=max(0.1 MPa, nRT/V)',
+  'derivation':'PV=nRT ideal gaz tenglamasi; n(X) va V(φ) qo‘shimcha empirik taxminlar, 0.1 MPa quyi chegara model cheklovi.',
+  'code':'UCGEngine.step [n_total, V, P]','refs':['R09'],'status':'PHYSICAL_LAW_WITH_UNVERIFIED_CLOSURES'},
+ {'id':'F09','name':'Gibbs erkin energiyasi','expression':'ΔG_i(T)=ΔH_i - T·ΔS_i',
+  'derivation':'G=H-TS dan doimiy T,P sharoitida kelib chiqadi; kod ΔCp(T), aktivlik, bosim va tarkib tuzatishlarini hisoblamaydi.',
+  'code':'GibbsEnergyCalculator.compute_all','refs':['R02','R09'],'status':'MODEL_APPROXIMATION'},
+ {'id':'F10','name':'Ichki profil farqi (patent yangiligi emas)','expression':'I_profile = clip[0,100](100·[0.3|T-1200|/1200 + 0.4|X-0.5| + 0.3|φ-0.3|/0.3])',
+  'derivation':'Koddagi masofa-vazn indikatorini algebraik qayta yozish. Ilmiy hamda huquqiy patent yangiligi ko‘rsatkichi emas.',
+  'code':'UCGEngine.step [typical_match, novelty_index]','refs':['R09'],'status':'MODEL_HEURISTIC; NOT_PATENT_NOVELTY'},
+ {'id':'F11','name':'Monte Carlo: o‘rtacha va CI yaqinlashuvi','expression':'mean(t)=Σ x_s(t)/N; CI95_mean ≈ mean ±1.96·s/sqrt(N)',
+  'derivation':'Mustaqil namunalar va normal yaqinlashuvdagi o‘rtacha ishonch oralig‘i, percentil intervali emas. Patent Report v7 joriy bajariishda Monte Carlo ishga tushirilmaydi.',
+  'code':'run_monte_carlo_V2','refs':['R09'],'status':'NOT_EVALUATED_IN_THIS_REPORT'},
+ {'id':'F12','name':'FEM mesh konvergentsiyasi (platforma doirasi)','expression':'GCI: grid-refinement xatosini baholash usuli (solver natijalari shart)',
+  'derivation':'Roache mezoni alohida FEM grid refinement talab qiladi. Reaktor Patent Report bu hisobni bajarmaydi.',
+  'code':'FEMConvergenceDiagnostics; mesh_convergence_test','refs':['R04'],'status':'NOT_EVALUATED_IN_THIS_REPORT'},
+ {'id':'F13','name':'Hoek–Brown qattiqlik mezoni (platforma doirasi)','expression':'σ1=σ3+σci·(mb·σ3/σci+s)^a',
+  'derivation':'Tog‘ jinsi massasi uchun empirik mustahkamlik mezoni, GSI va D parametrlariga bog‘liq; reaktor Patent Reportga bog‘lanmagan.',
+  'code':'Hoek–Brown / rock-strength modules (separate)','refs':['R05'],'status':'NOT_EVALUATED_IN_THIS_REPORT'},
+ {'id':'F14','name':'PINN fizik qoldiqlar yo‘qotishi (platforma doirasi)','expression':'L = λ_data L_data + Σ_j λ_j ||R_j(uθ,Tθ,...)||²',
+  'derivation':'Fizik PDE qoldiqlarini yo‘qotish funksiyasiga kiritish g‘oyasi. Joriy reaktor Patent Reportda haqiqiy PDE qoldiqlari hisobotga olinmaydi.',
+  'code':'physics_informed_loss_with_conservation; PGNN/PINN modules','refs':['R06'],'status':'NOT_EVALUATED_IN_THIS_REPORT'},
+ {'id':'F15','name':'Bootstrap va SHAP (platforma doirasi)','expression':'Bootstrap: T*_b=T(x*_b); SHAP: f(x)=φ0+Σ_i φ_i(x)',
+  'derivation':'Resampling va additiv izohlash umumiy g‘oyalari; ushbu Patent Reportda mustaqil test yoki SHAP hisoblangan degan xulosa berilmaydi.',
+  'code':'bca_bootstrap_ci; SHAP explainability modules','refs':['R08','R10'],'status':'NOT_EVALUATED_IN_THIS_REPORT'},
+]
+
+V7_PATENT_ANALYSIS_TRACE = [
+ ('A01','Reaksiya kinetikasi','6 ta reaksiya k_i(T) va oxirgi vaqt qadamidagi qiymatlar','F01','MODEL_OUTPUT'),
+ ('A02','Ko‘mir konversiyasi','Euler stepping va empirik shrinking-core ko‘rinishi','F02','MODEL_OUTPUT'),
+ ('A03','Gaz tarkibi','Stexiometrik proksi + floor/cap + α=0.05 silliqlash','F03','MODEL_OUTPUT; NOT_MASS_BALANCE_VALIDATION'),
+ ('A04','Issiqlik tarixi','Yig‘ilgan proksi issiqlik va yopiq maqsadga tortish modeli','F04,F05','MODEL_OUTPUT; NOT_THERMAL_PDE'),
+ ('A05','Porozlik / permeability','Konversiya bog‘lanishi va nisbiy Kozeny–Carman','F06,F07','MODEL_OUTPUT'),
+ ('A06','Gaz bosimi','Ideal gaz qonuni + empirik mol va hajm closure','F08','MODEL_OUTPUT'),
+ ('A07','Gibbs potensiali','6 ta reaksiya uchun ΔH−TΔS','F09','MODEL_OUTPUT'),
+ ('A08','Profil farqi','Normallashtirilgan masofa, patent balli emas','F10','MODEL_OUTPUT; NOT_LEGAL_PATENT_NOVELTY'),
+ ('A09','Monte Carlo noaniqlik','Mustaqil simulyatsiya kerak','F11','NOT_EVALUATED'),
+ ('A10','FEM / mesh verifikatsiyasi','Solver, test va o‘lcham talab etiladi','F12','NOT_EVALUATED'),
+ ('A11','Geomekanika / Hoek–Brown','Massa va dalalar asosida mustaqil hisob zarur','F13','NOT_EVALUATED'),
+ ('A12','PINN / konservatsiya','Qoldiqlar va mustaqil trening tarixini talab qiladi','F14','NOT_EVALUATED'),
+ ('A13','Bootstrap / AI tushuntirish','Dala data va o‘qitilgan model talab etiladi','F15','NOT_EVALUATED'),
+ ('A14','Patent prior art / FTO','Patent claims, vaqt, hudud va mutaxassis yuridik ekspertizasi kerak','—','NOT_EVALUATED'),
+]
+
+V7_PATENT_GRAPH_TRACE = [
+ ('G01','Ko‘mir konversiyasi','plot_coal_conversion_to_fig','time_elapsed,char_conversion','F02','MODEL_OUTPUT'),
+ ('G02','Gaz fraksiyalari','plot_gas_composition_to_fig','time_elapsed,CO,H2,CO2,CH4','F03','MODEL_OUTPUT'),
+ ('G03','Harorat evolyutsiyasi','plot_temperature_to_fig','time_elapsed,temperature','F05','MODEL_OUTPUT'),
+ ('G04','Ekzo/endo issiqlik','plot_heat_source_to_fig','time_elapsed,heat_exo,heat_endo','F04','MODEL_PROXY'),
+ ('G05','Porozlik','plot_porosity_to_fig','time_elapsed,porosity','F06','MODEL_OUTPUT'),
+ ('G06','Bosim','plot_pressure_to_fig','time_elapsed,pressure','F08','MODEL_OUTPUT'),
+ ('G07','Reaksiya tezliklari','plot_reaction_rates_to_fig','time_elapsed,rate_oxidation,rate_boudouard,rate_steam,rate_methanation,rate_wgs,rate_devol','F01','MODEL_OUTPUT'),
+ ('G08','Reaksiya entalpiyalari','plot_delta_H_bar_to_fig','UCGConfig.REACTIONS.dH','F04,F09','MODEL_PRESET; NOT_MEASURED'),
+ ('G09','O‘tkazuvchanlik','plot_permeability_to_fig','time_elapsed,permeability','F07','MODEL_OUTPUT'),
+ ('G10','Issiqlik ulushlari','plot_heat_share_pie_to_fig','heat_exo,heat_endo','F04','MODEL_PROXY'),
+ ('G11','UCG zonalari','plot_ucg_zones_to_fig','time_elapsed,char_conversion','F02','HEURISTIC_THRESHOLDS'),
+ ('G12','3D reaktor trayektoriyasi','plot_3d_surface_to_fig','time_elapsed,char_conversion,temperature','F02,F05','MODEL_TRAJECTORY_NOT_SPATIAL_3D'),
+ ('G13','Ichki profil farqi (NOT patent novelty)','plot_novelty_index_to_fig','time_elapsed,novelty_index','F10','MODEL_HEURISTIC_NOT_PATENT'),
+ ('G14','Monte Carlo UQ (alohida funksiya)','plot_monte_carlo','MC summary','F11','NOT_EVALUATED'),
+]
+
+def v7_patent_scientific_catalog() -> Dict[str, Any]:
+    """Static, auditable methodology; explicit unverified and unmapped flags."""
+    return {
+       'equations':[dict(x) for x in V7_PATENT_FORMULA_TRACE],
+       'analyses':[{'id':a,'name':b,'description':c,'formula_ids':d,'status':e} for a,b,c,d,e in V7_PATENT_ANALYSIS_TRACE],
+       'figures':[{'id':a,'name':b,'source_function':c,'source_data':d,'formula_ids':e,'status':f} for a,b,c,d,e,f in V7_PATENT_GRAPH_TRACE],
+       'references':{k:dict(v) for k,v in V7_PATENT_SCIENCE_REFERENCES.items()},
+       'code_embedded_bibliography':list(V7_PATENT_CODE_BIBLIOGRAPHY),
+       'platform_inventory':list(V7_PATENT_SOURCE_FUNCTION_INVENTORY),
+       'methodology_status':'SOURCE_AUDITED; NOT_INDEPENDENTLY_VALIDATED',
+    }
+
+
+def _v7_patent_add_table(doc, headers, rows):
+    table=doc.add_table(rows=1,cols=len(headers))
+    table.style='Table Grid'
+    for cell,label in zip(table.rows[0].cells,headers): cell.text=str(label)
+    for values in rows:
+        cells=table.add_row().cells
+        for cell,value in zip(cells,values): cell.text=str(value)
+    return table
+
+
+def _v7_patent_make_graph(df: 'pd.DataFrame', graph_id: str):
+    """Build figures ONLY from actual v7 model trajectory (never synthetic data)."""
+    import matplotlib.pyplot as _plt
+    from mpl_toolkits.mplot3d import Axes3D as _Axes3D  # noqa: F401
+    x=df['time_elapsed'].to_numpy(dtype=float)
+    fig=_plt.figure(figsize=(7.0,3.6),dpi=120)
+    ax=fig.add_subplot(111,projection='3d') if graph_id=='G12' else fig.add_subplot(111)
+    def series(column,scale=1.0, label=None):
+        if column not in df.columns: raise KeyError(f'Chart {graph_id}: missing column {column}')
+        y=df[column].to_numpy(dtype=float)*scale
+        if not np.isfinite(y).all(): raise ValueError(f'Chart {graph_id}: non-finite column {column}')
+        ax.plot(x,y,label=label or column)
+    if graph_id=='G01': series('char_conversion',100); ax.set_ylabel('Conversion (%)')
+    elif graph_id=='G02':
+        for k in ('CO','H2','CO2','CH4'): series(k)
+        ax.set_ylabel('Model mole fraction (proxy)'); ax.legend(fontsize=7)
+    elif graph_id=='G03': series('temperature');ax.set_ylabel('T (K)')
+    elif graph_id=='G04':
+        for k in ('heat_exo','heat_endo'):series(k)
+        ax.set_ylabel('Accumulated MODEL proxy (not J)');ax.legend(fontsize=7)
+    elif graph_id=='G05': series('porosity');ax.set_ylabel('Porosity fraction')
+    elif graph_id=='G06': series('pressure');ax.set_ylabel('P (MPa)')
+    elif graph_id=='G07':
+        for k in ('rate_oxidation','rate_boudouard','rate_steam','rate_methanation','rate_wgs','rate_devol'):series(k)
+        ax.set_ylabel('Arrhenius rate coefficient (1/s)');ax.set_yscale('log');ax.legend(fontsize=6,ncol=2)
+    elif graph_id=='G08':
+        data=UCGConfig.REACTIONS
+        ax.bar(range(len(data)),[v.dH/1000 for v in data.values()])
+        ax.set_xticks(range(len(data)),list(data.keys()),rotation=35,ha='right',fontsize=7)
+        ax.set_ylabel('Preset ΔH (kJ/mol; unverified)')
+    elif graph_id=='G09':series('permeability'); ax.set_yscale('log');ax.set_ylabel('k (m²)')
+    elif graph_id=='G10':
+        q=[max(0,float(df[k].iloc[-1])) for k in ('heat_exo','heat_endo')]
+        if not any(q):raise ValueError('No model heat proxy to graph')
+        ax.pie(q,labels=['exo','endo'],autopct='%1.1f%%'); ax.set_xlabel('MODEL proxy contributions, not calorimetry')
+    elif graph_id=='G11':
+        series('char_conversion');ax.set_ylabel('Conversion fraction')
+        for y in (0.3,0.7):ax.axhline(y,ls='--',lw=1)
+        ax.set_title('Heuristic zones: 0.3 and 0.7 are NOT field-validated')
+    elif graph_id=='G12':
+        # 1-D parametric trajectory in 3 variables; surface interpolation would
+        # fabricate an independent spatial dimension and may fail QHull collinearity.
+        ax.plot(x,df['char_conversion'].to_numpy(float),df['temperature'].to_numpy(float))
+        ax.set_ylabel('Conversion fraction');ax.set_zlabel('T (K)')
+        ax.set_title('3D PARAMETRIC TRAJECTORY (NOT 3D geomechanics)',fontsize=8)
+    elif graph_id=='G13':
+        series('novelty_index');ax.set_ylabel('Model profile difference (%)')
+        ax.set_title('Internal heuristic, NOT legal patent novelty')
+    else:
+        _plt.close(fig)
+        raise ValueError(f'Graph {graph_id} NOT_EVALUATED in this report')
+    ax.set_xlabel('Model time (dt units)')
+    if graph_id not in ('G02','G07','G10'):
+        try: ax.grid(alpha=.3)
+        except Exception: pass
+    fig.tight_layout()
+    return fig
+
+
+def _v7_patent_append_science_sections(doc, bundle: Dict[str, Any], trajectory=None, include_figures=True):
+    """Add source-to-formula-to-analysis-to-figure-to-citation chain."""
+    science=bundle.get('scientific_traceability') or v7_patent_scientific_catalog()
+    doc.add_page_break()
+    doc.add_heading('6. Formulalar va matematik kelib chiqishi',level=1)
+    doc.add_paragraph('Har bir formula kodning konkret funksiyasi bilan bog‘langan. '
+       'Rxx havolalari qonuniyatni tushuntiradi; koddagi empirik parametrlarning '
+       'Angren uchun o‘lchanganligini yoki model validatsiyasini tasdiqlamaydi.')
+    for eq in science['equations']:
+        doc.add_heading(f"{eq['id']} — {eq['name']}",level=2)
+        doc.add_paragraph(eq['expression'])
+        doc.add_paragraph('Kelib chiqishi: '+eq['derivation'])
+        doc.add_paragraph('Kod: '+eq['code']+' | Adabiyot: '+', '.join(eq['refs']))
+        doc.add_paragraph('Maqom: '+eq['status'])
+    doc.add_heading('7. Har bir tahlilning hisoblash holati',level=1)
+    _v7_patent_add_table(doc,('ID','Tahlil','Formula','Maqom'),
+        ((a['id'],a['name'],a['formula_ids'],a['status']) for a in science['analyses']))
+    for a in science['analyses']:
+        doc.add_paragraph(f"{a['id']} — {a['name']}: {a['description']}")
+    doc.add_heading('8. Grafiklarning to‘liq reyestri va dalil manbasi',level=1)
+    _v7_patent_add_table(doc,('ID','Grafik / kod funksiyasi','Formula','Maqom'),
+        ((g['id'],g['source_function'],g['formula_ids'],g['status']) for g in science['figures']))
+    doc.add_paragraph('Grafik manbasi: MODEL_OUTPUT, agar bu hisobotning sha256 qiymatiga '
+         'mos trayektoriya berilgan bo‘lsa. G08: parametr jadvali. G14: NOT_EVALUATED. '
+         'G12: uch o‘zgaruvchili parametric curve, fizik 3D mexanik model EMAS.')
+    if trajectory is not None and include_figures:
+        if not isinstance(trajectory,pd.DataFrame) or trajectory.empty:
+            raise ValueError('Graph source must be a non-empty DataFrame')
+        p=bundle['input_parameters']
+        check=build_v7_patent_evidence_bundle(trajectory,p['coal_type'],p['n_steps'],p['dt'],p['T0_K'],p['P0_MPa'],generated_at=bundle['generated_at_utc'])
+        if check['run_sha256'] != bundle['run_sha256']:
+            raise ValueError('Graph trajectory does not match model run SHA-256')
+        doc.add_heading('8.1 Grafiklar: REAL model trayektoriyasidan yaratildi',level=2)
+        import matplotlib.pyplot as _plt
+        for graph in science['figures']:
+            label=graph['id']
+            doc.add_heading(f"{label}: {graph['name']}",level=3)
+            doc.add_paragraph(f"Kod: {graph['source_function']} | Formula: {graph['formula_ids']} | "
+                 f"Manba: {graph['source_data']} | Maqom: {graph['status']}")
+            if graph['status']=='NOT_EVALUATED':
+                doc.add_paragraph('NOT_EVALUATED — ushbu hisoblash bajarilmadi.');continue
+            fig=None
+            try:
+                fig=_v7_patent_make_graph(trajectory,label)
+                image_stream=io.BytesIO()
+                fig.savefig(image_stream,format='png',dpi=115,bbox_inches='tight')
+                image_stream.seek(0)
+                from docx.shared import Inches as _Inches
+                doc.add_picture(image_stream,width=_Inches(5.95))
+            except Exception as graph_exc:
+                doc.add_paragraph(f'NOT_EVALUATED — grafik yaratilmadi ({type(graph_exc).__name__}: {str(graph_exc)[:100]})')
+                logger.warning('Patent science figure %s failed',label,exc_info=True)
+            finally:
+                if fig is not None: _plt.close(fig)
+    else:
+        doc.add_paragraph('NOT_EVALUATED — DOCXga trayektoriya berilmagan; grafiklar kiritilmadi.')
+    doc.add_heading('9. Formula ↔ grafik ↔ adabiyot matritsasi',level=1)
+    mapped={e['id']:e for e in science['equations']}
+    rows=[]
+    for g in science['figures']:
+        ids=g['formula_ids'].split(',')
+        refs=sorted({r for fid in ids for r in mapped.get(fid,{}).get('refs',[])})
+        rows.append((g['id'],g['formula_ids'],','.join(refs) or 'NOT_MAPPED',g['source_data']))
+    _v7_patent_add_table(doc,('Grafik','Formula','Adabiyot ID','Koddan ma’lumot'),rows)
+    doc.add_heading('10. Kod bo‘ylab grafik/analiz funksiyalari inventari',level=1)
+    doc.add_paragraph('AST orqali v9.11.39 manba kodidan olingan katalog: '
+         'barcha yozuvlar joriy Patent Reportdan tashqarida NOT_EVALUATED_IN_THIS_REPORT. '
+         'Matnga muallif yoki DOI taxminan biriktirilmagan. Qator raqamlari dastlabki v9.11.39 fayliga tegishli.')
+    _v7_patent_add_table(doc,('Qator (v39)','Funksiya','Tur','Manba / status'),
+        ((x['line'],x['function'],x['category'],x['source_status'])
+          for x in science['platform_inventory']))
+    doc.add_heading('11. Adabiyotlar va foydalanish chegaralari',level=1)
+    for refid, ref in science['references'].items():
+        pointer = 'DOI: https://doi.org/'+ref['doi'] if ref.get('doi') else ref.get('url','DOI berilmagan')
+        doc.add_paragraph(f"[{refid}] {ref['text']} {pointer}")
+        doc.add_paragraph('Qo‘llanish doirasi: '+ref['scope'])
+    doc.add_heading('11.1 Dastur ichidagi boshqa bibliografiya yozuvlari',level=2)
+    doc.add_paragraph('Quyidagi yozuvlar v9.11.39 dasturining BibliographyReferences va ReferenceManager '
+       'sinflaridan AST yordamida aynan olingan. Koddagi DOI satrlari mustaqil tekshirilmagan; '
+       'ularni ushbu formulalar yoki grafiklarning manbasi sifatida avtomatik ko‘rsatmaymiz.')
+    _v7_patent_add_table(doc,('Kod bibliografiyasi','Identifikator','DOI (kodda)','Maqom'),
+         ((r['class'],r['id'],r['code_declared_doi'] or 'YO‘Q',r['mapping_status'])
+           for r in science.get('code_embedded_bibliography',[])))
+    doc.add_heading('12. Tadqiqot uchun qolgan majburiy ishlar',level=1)
+    for item in (
+       'Angren laboratoriya/dala ma’lumotlari: fayl, asbob, birlik, vaqt, kalibrovka va xom residual.',
+       'Arrhenius A_i va E_ai, reaksiyalar termokimyosi va ko‘mir tarkibi uchun provenance.',
+       'Stexiometrik massa balansi, gaz tarkibi normalizatsiyasi va fizik issiqlik energiyasi balansi.',
+       'THCM / FEM qatlam nazorati, mesh konvergentsiyasi va mustaqil benchmarklar.',
+       'Monte Carlo/Bootstrap/PINN/SHAP alohida bajarilishlari va raqamli test protokollari.',
+       'Patent claim chart, davlat kesimidagi prior-art/FTO tekshiruvi va yuridik baho.',
+    ):doc.add_paragraph(item,style='List Bullet')
+
+
 def _v7_patent_finite(value, label: str) -> float:
     """Validate scalar numeric model output; never invent zero for missing data."""
     number = float(value)
@@ -27360,7 +27872,7 @@ def build_v7_patent_evidence_bundle(
     trajectory_sha = _patent_hashlib.sha256(ordered.encode("utf-8")).hexdigest()
     return {
         "report_type": "UCG_SIMULATION_EVIDENCE_SUMMARY",
-        "report_revision": "9.11.39",
+        "report_revision": "9.11.40",
         "platform_version": str(globals().get("__version__", "9.11.39")),
         "generated_at_utc": generated_at or datetime.now(timezone.utc).isoformat(),
         "run_sha256": digest, "trajectory_sha256": trajectory_sha,
@@ -27369,6 +27881,7 @@ def build_v7_patent_evidence_bundle(
         "input_parameters": params, "model_rows": int(len(df)),
         "final_metrics": metrics,
         "gibbs_metrics": gibbs_metrics,
+        "scientific_traceability": v7_patent_scientific_catalog(),
         "evidence": {
             "independent_field_data": "NOT_EVALUATED",
             "angren_experiment": "NOT_EVALUATED",
@@ -27394,7 +27907,7 @@ def build_v7_patent_evidence_bundle(
     }
 
 
-def create_v7_patent_report_docx(bundle: Dict[str, Any]) -> bytes:
+def create_v7_patent_report_docx(bundle: Dict[str, Any], trajectory: Optional[pd.DataFrame] = None, *, include_figures: bool = True) -> bytes:
     """Export ONLY provided evidence, with explicit status on every result."""
     if bundle.get("data_status") != "MODEL_OUTPUT" or not bundle.get("run_sha256"):
         raise ValueError("Report must come from a validated model-output bundle")
@@ -27443,6 +27956,7 @@ def create_v7_patent_report_docx(bundle: Dict[str, Any]) -> bytes:
     for item in bundle["limitations"]:
         report.add_paragraph(item, style="List Bullet")
     report.add_paragraph("No patent novelty or freedom-to-operate conclusion may be derived from a reactor simulation profile.")
+    _v7_patent_append_science_sections(report, bundle, trajectory, include_figures=include_figures)
     output = io.BytesIO()
     report.save(output)
     return output.getvalue()
@@ -27480,7 +27994,7 @@ def run_v7_app():
     P0 = st.sidebar.slider("Boshlang'ich bosim (MPa)", 0.5, 30.0, 10.0, 0.5)
 
     st.sidebar.markdown("---")
-    st.sidebar.markdown("**Versiya (v7 UI):** 9.11.39 — Patent Report audit")
+    st.sidebar.markdown("**Versiya (v7 UI):** 9.11.40 — Ilmiy Patent Report")
     st.sidebar.markdown(f"**Sana:** {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     st.sidebar.markdown("**Patent maqomi:** NOT_VERIFIED — rasmiy ariza dalili kiritilmagan")
 
@@ -27682,7 +28196,7 @@ def run_v7_app():
 
     # ─── Patent Report (v9.11.39 evidence integrity) ─────────────────────
     elif menu == "Patent Report":
-        st.title("📄 Patent tadqiqoti hisoboti — MODEL OUTPUT")
+        st.title("📄 Patent Report — formulalar, grafiklar va adabiyotlar")
         st.info("Bu bo‘lim reaktor SIMULYATSIYASI natijalarini hujjatlashtiradi. "
                 "Patent yangiligi, huquqiy FTO, Angren dala validatsiyasi va ISO sertifikati "
                 "bu sahifada tasdiqlanmaydi.")
@@ -27758,13 +28272,27 @@ def run_v7_app():
                 with t3:
                     plot_3d_surface(model_df)
 
+            with st.expander("📚 Ilmiy metodologiya: formulalar, grafiklar, adabiyotlar", expanded=False):
+                science=bundle['scientific_traceability']
+                st.write(f"Formulalar: {len(science['equations'])}; grafiklar: {len(science['figures'])}; "
+                         f"butun platformadagi analiz/grafik funksiyalari: {len(science['platform_inventory'])}.")
+                st.dataframe(pd.DataFrame([
+                    {'ID': f['id'], 'Formula': f['name'], 'Kod': f['code'],
+                     'Manbalar': ', '.join(f['refs']), 'Maqom': f['status']}
+                    for f in science['equations']]), use_container_width=True)
+                st.dataframe(pd.DataFrame([
+                    {'Grafik': g['id'], 'Nomi': g['name'], 'Formula': g['formula_ids'],
+                     'Manba': g['source_data'], 'Holat': g['status']}
+                    for g in science['figures']]), use_container_width=True)
+                st.caption("Ilmiy qonuniyatga havola empirik koeffitsiyentni tasdiqlamaydi.")
+
             st.subheader("📥 Hujjatlar eksporti")
             d1, d2 = st.columns(2)
             if d1.button("📄 DOCX hujjatini tayyorlash", key="v7_patent_prepare_docx_v39"):
                 try:
                     st.session_state[patent_docx_key] = {
                         "sha256": bundle["run_sha256"],
-                        "content": create_v7_patent_report_docx(bundle)}
+                        "content": create_v7_patent_report_docx(bundle, trajectory=model_df)}
                 except Exception as exc:
                     logger.exception("Patent Report DOCX export failed")
                     st.error(f"DOCX yaratilmadi: {exc}")
@@ -27773,7 +28301,7 @@ def run_v7_app():
                 st.download_button(
                     "⬇️ Patent tadqiqoti DOCX hisobotini yuklab olish",
                     data=ready_docx["content"],
-                    file_name="UCG_Patent_Research_Evidence_v9_11_39.docx",
+                    file_name="UCG_Patent_Scientific_Report_v9_11_40.docx",
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                     key="v7_patent_download_docx_v39")
             d2.download_button(
