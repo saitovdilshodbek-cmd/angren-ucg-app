@@ -211,7 +211,7 @@ import streamlit as st
 _ST_CFG_OK = False
 try:
     st.set_page_config(
-        page_title="UCG SCI-Grade Platform v9.11.35 (Audit Clarification)",
+        page_title="UCG Research Platform v9.11.42 (Reviewed, not certified)",
         layout="wide",
         initial_sidebar_state="expanded",
     )
@@ -2674,7 +2674,7 @@ class VersionInfo:
     """FIX v9.11.8: Versiya birlashtirildi - endi hamma joyda 9.11.8"""
     major: int = 9
     minor: int = 11
-    patch: int = 35
+    patch: int = 42
     prerelease: str = ""  # SemVer 2.0.0 §9 — bo'sh yoki 'v' siz identifikator
 
     @property
@@ -2697,7 +2697,7 @@ class VersionManager:
     _lock = threading.Lock()
 
     def __init__(self):
-        self.version = '9.11.35'
+        self.version = '9.11.42'
 
     @classmethod
     def get_instance(cls):
@@ -2717,7 +2717,7 @@ __version__ = _version_manager.version
 # to (4, 0, 1) while __version__ was "6.1.0-v6.1" — the inconsistency broke
 # downstream code that compared version tuples (e.g. for feature flags).
 __version_info__ = (version_info.major, version_info.minor, version_info.patch)
-__build_number__ = "20260705"  # v9.11.35 audit clarification + docs
+__build_number__ = "20261025"  # v9.11.42 reviewed build, not certification
 __git_commit__ = version_info.get_git_commit()
 
 
@@ -2725,10 +2725,10 @@ __git_commit__ = version_info.get_git_commit()
 @dataclass
 class PatentMetadata:
     """Proper dataclass for patent metadata (replaces __dunder__ variables)."""
-    patent_status: str = "PCT/IB pending (application number required)"
-    license_info: str = "Patent Pending - Uzbekistan + WIPO PCT"
-    version: str = "9.11.35"
-    build_number: str = "20260705"
+    patent_status: str = "NOT_VERIFIED (application number required)"
+    license_info: str = "Application status: NOT_VERIFIED"
+    version: str = "9.11.42"
+    build_number: str = "20261025"
     patent_application_number: Optional[str] = None
     pct_application_number: Optional[str] = None
     filing_date: Optional[str] = None
@@ -10212,14 +10212,14 @@ class FEMSolverReportGenerator:
         # Overall assessment
         all_pass = (
             report["mesh_convergence"].get("mesh_independent", False) and
-            (patch_test is None or patch_test.get("passed", False)) and
-            (quality_report is None or quality_report.get("overall_quality") == "PASS")
+            patch_test is not None and patch_test.get("passed", False) and
+            quality_report is not None and quality_report.get("overall_quality") == "PASS"
         )
-        report["overall_assessment"] = "PASS" if all_pass else "CONDITIONAL"
+        report["overall_assessment"] = "INTERNAL_CHECKS_PASSED_NOT_CERTIFIED" if all_pass else "NOT_EVALUATED_OR_FAILED"
         report["recommendation"] = (
-            "FEM solver meets verification requirements for PhD defense."
+            "Basic internal checks passed. Independent FEM benchmark and field V&V are still required."
             if all_pass
-            else "Some verification checks did not pass. Review individual sections above."
+            else "Required mesh, patch and quality checks are missing or did not pass."
         )
 
         return report
@@ -10280,7 +10280,9 @@ class FEMBenchmarkSuite:
             "analytical_max_deflection": delta_max_analytical,
             "numerical_max_deflection": delta_max_numerical,
             "relative_error": rel_error,
-            "passed": rel_error < 0.05,
+            "passed": False,
+            "reference_kernel_passed": bool(rel_error < 0.05),
+            "verification_status": "REFERENCE_KERNEL_ONLY_NOT_PLATFORM_FEM",
             "n_elements": n_elements,
             "E": E, "L": L, "q": q,
         }
@@ -10342,6 +10344,8 @@ class FEMBenchmarkSuite:
             "analytical_max_deflection": w_max_analytical,
             "convergence_results": results,
             "best_relative_error": best_result["rel_error"],
+            "passed": False,
+            "verification_status": "REFERENCE_KERNEL_ONLY_NOT_PLATFORM_FEM",
             # ISS-N06 FIX: 15% bag'rikenglik muhandislik tekshiruvi uchun haddan
             # tashqari keng. ASME V&V 10-2006 va NAFEMS benchmarklari 1-2% dan
             # kam nisbiy xatoni talab qiladi. 2% ga kichraytiramiz.
@@ -10362,7 +10366,8 @@ class FEMBenchmarkSuite:
             "name": "Cantilever Beam (Point Load)",
             "analytical_max_deflection": delta_max_analytical,
             "analytical_max_stress": sigma_max_analytical,
-            "passed": True,  # Will be verified by FEM solver
+            "passed": False,
+            "verification_status": "ANALYTICAL_REFERENCE_ONLY_FEM_NOT_RUN",
             "E": E, "L": L, "P": P,
         }
 
@@ -10409,15 +10414,32 @@ def build_realtime_connector_specs(project_name: str) -> Dict[str, Dict[str, Any
 def compute_phase_field_metrics(damage: np.ndarray, dx: float, dz: float, Gc: float,
                                  previous_damage: Optional[np.ndarray] = None) -> PhaseFieldMetrics:
     d = np.asarray(damage, dtype=float)
-    crack_mask = d > 0.9  # MIN-N03 FIX: Bourdin et al. (2000) d>0.9 ishlatadi, 0.8 emas
-    crack_length = float(np.sum(crack_mask) * np.sqrt(dx ** 2 + dz ** 2))
-    grad_x, grad_z = np.gradient(d, dx, dz)
-    crack_surface_density = float(np.mean(np.sqrt(grad_x ** 2 + grad_z ** 2)))
+    if d.ndim != 2 or min(d.shape) < 2 or not np.all(np.isfinite(d)):
+        raise ValueError("Phase-field damage requires finite 2D grid with >=2 points per axis")
+    if not all(np.isfinite(v) and v > 0 for v in (dx, dz, Gc)):
+        raise ValueError("Phase-field dx, dz and Gc must be finite and positive")
+    crack_mask = d > 0.9
+    # Boundary-contour length of thresholded DAMAGE REGION [m]: proxy only.
+    # It is NOT a measured crack centerline or calibrated fracture length.
+    horizontal_edges = np.count_nonzero(crack_mask[:, 1:] != crack_mask[:, :-1])
+    vertical_edges = np.count_nonzero(crack_mask[1:, :] != crack_mask[:-1, :])
+    exterior = (np.count_nonzero(crack_mask[0, :]) +
+                np.count_nonzero(crack_mask[-1, :])) * dx + (                np.count_nonzero(crack_mask[:, 0]) +
+                np.count_nonzero(crack_mask[:, -1])) * dz
+    crack_length = float(horizontal_edges * dz + vertical_edges * dx + exterior)
+    # Array convention: first axis is z; second axis is x.
+    grad_z, grad_x = np.gradient(d, dz, dx)
+    crack_surface_density = float(np.mean(np.hypot(grad_x, grad_z)))
     fracture_energy = float(Gc * np.sum(d ** 2) * dx * dz)
     if previous_damage is None:
         propagation_rate = 0.0
     else:
-        propagation_rate = float(np.sum(np.maximum(d - np.asarray(previous_damage, dtype=float), 0.0)) * dx * dz)
+        previous = np.asarray(previous_damage, dtype=float)
+        if previous.shape != d.shape or not np.all(np.isfinite(previous)):
+            raise ValueError("Previous phase-field damage grid must match and be finite")
+        propagation_rate = float(np.sum(np.maximum(d - previous, 0.0)) * dx * dz)
+        # This is an accumulated positive change in damaged area, not a rate per time.
+
     return PhaseFieldMetrics(
         crack_length=crack_length,
         crack_surface_density=crack_surface_density,
@@ -10918,7 +10940,7 @@ class AlgorithmCertification:
 ╠════════════════════════════════════════════════════════════╣
 ║ Title: Adaptive Biot Coefficient & Thermal Degradation    ║
 ║ Inventor: Saitov Dilshodbek                               ║
-║ Status: Patent Pending (UzPatent + WIPO PCT)             ║
+║ Status: Application NOT_VERIFIED (UzPatent + WIPO PCT)             ║
 ╚════════════════════════════════════════════════════════════╝
         """
 
@@ -11316,7 +11338,7 @@ def generate_validation_certificate(results: Dict[str, Any], project_name: str) 
     c.setFont("Helvetica-Oblique", 10)
     # BUG-N05 FIX: hardcoded v7.8.0 ni __version__ bilan dinamik qildik.
     c.drawCentredString(width/2, 0.75*inch, f"Generated by UCG SCI-Grade Platform v{__version__}")
-    c.drawCentredString(width/2, 0.5*inch, f"Version: {__version__} | Build: {__build_number__} | Patent Pending")
+    c.drawCentredString(width/2, 0.5*inch, f"Version: {__version__} | Build: {__build_number__} | Application NOT_VERIFIED")
     c.save()
     buf.seek(0)
     return buf.read()
@@ -13996,12 +14018,20 @@ def pore_pressure_field(T: np.ndarray, depth: np.ndarray, water_table: float = 2
     P_gas = (101325.0 * T_kelvin / 293.15) / 1e6
     return P_hydro + P_gas
 
+@st.cache_data(show_spinner=False, max_entries=8)
 def monte_carlo_fos(ucs_mean: float, ucs_std: float, gsi_mean: float, gsi_std: float,
                     mi_val: float, D: float, T_avg: float, H_seam: float, depth: float,
                     density: float, rec_width: float, beta_th: float, n_sim: int = MIN_PATENT_MONTE_CARLO,
                     random_seed: int = RANDOM_SEED) -> Tuple[np.ndarray, float, float, float, float, float]:
     rng = np.random.default_rng(seed=random_seed)
-    n_sim = max(int(n_sim), MIN_PATENT_MONTE_CARLO)
+    n_sim = min(max(int(n_sim), MIN_PATENT_MONTE_CARLO),
+                int(UCG_CONFIG.MAX_MC_SAMPLES))
+    if not all(np.isfinite(v) for v in (ucs_mean, ucs_std, gsi_mean, gsi_std,
+                                        mi_val, D, T_avg, H_seam, depth, density,
+                                        rec_width, beta_th)):
+        raise ValueError("Monte Carlo inputs must be finite")
+    if ucs_std < 0 or gsi_std < 0 or H_seam <= 0 or depth <= 0 or density <= 0:
+        raise ValueError("Invalid Monte Carlo scale or physical geometry")
     cov = np.array([
         [ucs_std ** 2, 0.3 * ucs_std * gsi_std],
         [0.3 * ucs_std * gsi_std, gsi_std ** 2],
@@ -24287,6 +24317,13 @@ class ModelRegistry:
         }
 
     @classmethod
+    def info(cls) -> Dict[str, Any]:
+        """Read-only legacy in-memory registry summary (not ML validation)."""
+        return {"available": True, "backend": "in_memory",
+                "models_registered": len(cls._registry),
+                "validation_status": "NOT_EVALUATED"}
+
+    @classmethod
     def render_dashboard_panel(cls):
         """Streamlit dashboard panel."""
         try:
@@ -25372,39 +25409,65 @@ class UCGKineticModel:
         self._Q = None
 
     @staticmethod
-    def ucg_ode(t, y, reactions=None):
-        """
-        ODE system for UCG kinetics.
-        Variables: [C, O2, H2O, CO, CO2, H2, T]
-        All concentrations clamped to >= 1e-5 to avoid numerical issues.
+    def _reaction_rates(y, reactions=None):
+        """Non-negative kinetic rates (mol/min in this ODE time convention).
+
+        Negative trial states produced by an implicit solver are *not* physical
+        reactants. At zero inventory the associated consuming rates must vanish.
+        Unlike a positive numerical floor (1e-5), this does not keep consuming
+        a depleted species. This routine is shared by the ODE and post-processing.
+        Arrhenius pre-exponential units require independent experimental calibration.
         """
         if reactions is None:
             reactions = UCGKineticModel.REACTIONS
-        R = UCGKineticModel.R_GAS
-        C_p = UCGKineticModel.C_P
-
-        C_val, O2, H2O, CO, CO2, H2, T = [max(1e-5, val) for val in y]
-
-        k = [p['A'] * np.exp(-p['Ea'] / (R * T)) for p in reactions.values()]
-
-        r1 = k[0] * C_val * H2O / (1.0 + 0.1 * H2O)
-        r2 = k[1] * C_val * CO2 / (1.0 + 0.1 * CO2)
-        r3 = k[2] * C_val * O2
+        state = np.asarray(y, dtype=float)
+        if state.shape != (7,) or not np.all(np.isfinite(state)):
+            raise ValueError("UCG kinetic state must be 7 finite values")
+        if state[6] <= 0.0:
+            raise ValueError("UCG kinetic temperature must be positive (Kelvin)")
+        C, O2, H2O, CO, CO2, H2 = np.maximum(state[:6], 0.0)
+        ordered = list(reactions.values())
+        if len(ordered) != 5:
+            raise ValueError("UCG kinetic model requires five ordered reactions")
+        T = float(state[6])
+        k = [p['A'] * np.exp(-p['Ea'] / (UCGKineticModel.R_GAS * T))
+             for p in ordered]
+        r1 = k[0] * C * H2O / (1.0 + 0.1 * H2O)
+        r2 = k[1] * C * CO2 / (1.0 + 0.1 * CO2)
+        r3 = k[2] * C * O2
         r4 = k[3] * CO * np.sqrt(O2)
         r5 = k[4] * H2 * np.sqrt(O2)
+        rates = np.asarray([r1, r2, r3, r4, r5], dtype=float)
+        if not np.all(np.isfinite(rates)) or np.any(rates < 0):
+            raise FloatingPointError("Non-finite/negative UCG reaction rate")
+        return rates
 
+    @staticmethod
+    def ucg_ode(t, y, reactions=None):
+        """Five-reaction stoichiometric ODE; depleted species cannot react.
+
+        The source terms use molar reaction extents per minute. The heat model
+        is a simplified well-mixed approximation, not independent THCM proof.
+        """
+        if reactions is None:
+            reactions = UCGKineticModel.REACTIONS
+        rates = UCGKineticModel._reaction_rates(y, reactions)
+        r1, r2, r3, r4, r5 = rates
+        C, O2, H2O, CO, CO2, H2 = np.maximum(np.asarray(y[:6], dtype=float), 0.0)
         dC   = -r1 - r2 - r3
         dO2  = -r3 - 0.5 * r4 - 0.5 * r5
         dH2O = -r1 + r5
         dCO  = r1 + 2.0 * r2 - r4
         dCO2 = r3 - r2 + r4
         dH2  = r1 - r5
-
-        rates = [r1, r2, r3, r4, r5]
-        total_moles = C_val + O2 + H2O + CO + CO2 + H2
-        heat_release = sum(-list(reactions.values())[i]['dH'] * rates[i] for i in range(5))
-        dT = heat_release / (total_moles * C_p)
-
+        heat_release = -sum(float(p['dH']) * float(r)
+                            for p, r in zip(reactions.values(), rates))
+        inventory = C + O2 + H2O + CO + CO2 + H2
+        if inventory <= 0:
+            raise ValueError("Cannot compute heat balance for zero gas inventory")
+        dT = heat_release / (inventory * UCGKineticModel.C_P)
+        if not np.isfinite(dT):
+            raise FloatingPointError("Non-finite thermal derivative")
         return [dC, dO2, dH2O, dCO, dCO2, dH2, dT]
 
     def solve(self):
@@ -25412,30 +25475,53 @@ class UCGKineticModel:
         # v9.3.0: Universal Run ID (#89)
         self._run_id = UniversalRunIdentifier.new_run("UCG ODE solve", {"y0": list(self.y0), "t_span": list(self.t_span)})
 
+        y0 = np.asarray(self.y0, dtype=float)
+        if y0.shape != (7,) or not np.all(np.isfinite(y0)):
+            raise ValueError("Initial state must contain 7 finite values")
+        if np.any(y0[:6] < 0) or y0[6] <= 0:
+            raise ValueError("Initial species must be nonnegative and T positive")
+        if (not np.all(np.isfinite(self.t_span)) or self.t_span[1] <= self.t_span[0]
+                or int(self.t_eval_n) < 2):
+            raise ValueError("Invalid time interval or number of evaluation points")
         t_eval = np.linspace(self.t_span[0], self.t_span[1], self.t_eval_n)
-        sol = solve_ivp(
-            self.ucg_ode, self.t_span, self.y0,
-            t_eval=t_eval, method='Radau',
-            rtol=1e-8, atol=1e-10
-        )
-        self._sol = sol
+        sol = solve_ivp(self.ucg_ode, self.t_span, y0,
+                        t_eval=t_eval, method='Radau', rtol=1e-8, atol=1e-10)
+        if (not sol.success or sol.y.shape != (7, len(t_eval))
+                or not np.all(np.isfinite(sol.y))):
+            raise RuntimeError(f"UCG ODE VALIDATION_FAILED: {sol.message}")
+        # Radau may overshoot depleted O2 by ~1e-10 mol. Only roundoff-sized
+        # negative values are projected to zero; a physical excursion is fatal.
+        numerical_tolerance = max(1e-8, 1e-11 * float(max(np.max(y0[:6]), 1.0)))
+        min_species = float(np.min(sol.y[:6]))
+        if min_species < -numerical_tolerance:
+            raise RuntimeError(f"UCG ODE VALIDATION_FAILED: negative concentration {min_species:.6g} mol")
+        if np.any(sol.y[6] <= 0):
+            raise RuntimeError("UCG ODE VALIDATION_FAILED: nonpositive temperature")
+        self._ode_roundoff_projection_mol = max(0.0, -min_species)
+        if self._ode_roundoff_projection_mol:
+            logger.info("[ODE] projected only numerical roundoff (max %.3g mol)",
+                        self._ode_roundoff_projection_mol)
+            sol.y[:6] = np.maximum(sol.y[:6], 0.0)
         t = sol.t
         C, O2, H2O, CO, CO2, H2, T = sol.y
-
-        rates = np.zeros((5, len(t)))
-        for i in range(len(t)):
-            k_vals = [p['A'] * np.exp(-p['Ea'] / (self.R_GAS * T[i]))
-                      for p in self.REACTIONS.values()]
-            rates[0, i] = k_vals[0] * C[i] * H2O[i] / (1.0 + 0.1 * H2O[i])
-            rates[1, i] = k_vals[1] * C[i] * CO2[i] / (1.0 + 0.1 * CO2[i])
-            rates[2, i] = k_vals[2] * C[i] * O2[i]
-            rates[3, i] = k_vals[3] * CO[i] * np.sqrt(O2[i])
-            rates[4, i] = k_vals[4] * H2[i] * np.sqrt(O2[i])
-
-        Q = [_np_trapz(rates[i, :] * (list(self.REACTIONS.values())[i]['dH'] / 1000), t)
-             for i in range(5)]
-        # v9.11.0 FIX #8: Replace NaN values in Q with 0.0 (numerical safety)
-        Q = [0.0 if (q != q or not np.isfinite(q)) else float(q) for q in Q]  # NaN check
+        # A chemistry check independent of solve_ivp.success: elemental C/H/O
+        # inventory must remain conserved by these five reactions.
+        initial_elements = np.array([y0[0] + y0[3] + y0[4],
+                                     y0[2] + y0[5],
+                                     2*y0[1] + y0[2] + y0[3] + 2*y0[4]])
+        elements = np.vstack((C + CO + CO2, H2O + H2,
+                              2*O2 + H2O + CO + 2*CO2))
+        elemental_error = float(np.max(np.abs(elements - initial_elements[:, None])))
+        elemental_tolerance = 1e-5 + 2e-6 * float(max(np.max(initial_elements), 1.0))
+        self._elemental_balance_error_mol = elemental_error
+        if elemental_error > elemental_tolerance:
+            raise RuntimeError(f"UCG ODE VALIDATION_FAILED: elemental balance residual {elemental_error:.6g} mol")
+        rates = np.column_stack([self._reaction_rates(sol.y[:, i]) for i in range(len(t))])
+        Q = [float(_np_trapz(rates[i] * (p['dH']/1000.0), t))
+             for i, p in enumerate(self.REACTIONS.values())]
+        if not np.all(np.isfinite(rates)) or not np.all(np.isfinite(Q)):
+            raise RuntimeError("UCG ODE VALIDATION_FAILED: non-finite rates or heat integral")
+        self._sol = sol
 
         # v9.2.0: Mass balance audit (#26)
         self._mass_auditor = MassBalanceAuditor()
@@ -25544,15 +25630,47 @@ class UCGKineticModel:
             'CGE_raw': CGE_raw, 'Carbon_Eff_raw': Carbon_Eff_raw,
         }
 
-    def compute_validation(self, seed=42, noise_std=5.0):
-        sol, rates, Q = self.solution
-        C, O2, H2O, CO, CO2, H2, T = sol.y
-        rng = np.random.RandomState(seed)
-        exp_CO = CO + rng.normal(0, noise_std, len(CO))
-        rmse = np.sqrt(mean_squared_error(exp_CO, CO))
-        mae = mean_absolute_error(exp_CO, CO)
-        r2 = r2_score(exp_CO, CO)
-        return {'exp_CO': exp_CO, 'CO': CO, 'rmse': rmse, 'mae': mae, 'r2': r2}
+    def compute_validation(self, seed=42, noise_std=5.0, *, observed_co=None,
+                           observation_times=None, synthetic_demo=False):
+        """Compare with supplied observations; NEVER invent measured CO.
+
+        Default without observations: NOT_EVALUATED.
+        Synthetic demonstration: explicit opt-in, no validation metrics.
+        User supplied measurements: computed metrics, provenance UNVERIFIED.
+        """
+        sol, _, _ = self.solution
+        t = np.asarray(sol.t, dtype=float)
+        CO = np.asarray(sol.y[3], dtype=float)
+        result = {'status': 'NOT_EVALUATED', 'source_status': 'NOT_EVALUATED',
+                  'exp_CO': None, 'observed_t': None, 'CO': CO,
+                  'rmse': None, 'mae': None, 'r2': None}
+        if observed_co is None:
+            if not synthetic_demo:
+                return result
+            if noise_std < 0 or not np.isfinite(noise_std):
+                raise ValueError("noise_std must be finite and non-negative")
+            rng = np.random.default_rng(seed)
+            result.update(status='SYNTHETIC_DEMO', source_status='SYNTHETIC_DEMO',
+                          exp_CO=CO + rng.normal(0, noise_std, len(CO)),
+                          observed_t=t)
+            return result
+        obs = np.asarray(observed_co, dtype=float).reshape(-1)
+        obs_t = (t if observation_times is None
+                 else np.asarray(observation_times, dtype=float).reshape(-1))
+        if (len(obs) < 2 or len(obs) != len(obs_t)
+                or not np.all(np.isfinite(obs)) or not np.all(np.isfinite(obs_t))
+                or np.any(obs < 0) or np.any(np.diff(obs_t) <= 0)
+                or obs_t[0] < t[0] or obs_t[-1] > t[-1]):
+            raise ValueError("Observed CO needs >=2 finite nonnegative values, "
+                             "strictly increasing times inside the model interval")
+        pred = np.interp(obs_t, t, CO)
+        rmse = float(np.sqrt(mean_squared_error(obs, pred)))
+        mae = float(mean_absolute_error(obs, pred))
+        r2 = float(r2_score(obs, pred)) if np.var(obs) > 0 else None
+        result.update(status='METRICS_COMPUTED_UNVERIFIED',
+                      source_status='USER_SUPPLIED_UNVERIFIED',
+                      exp_CO=obs, observed_t=obs_t, rmse=rmse, mae=mae, r2=r2)
+        return result
 
 
 class UCGKineticDashboard:
@@ -25597,10 +25715,16 @@ class UCGKineticDashboard:
         y0 = [kin_C0, kin_O2, kin_H2O, 5.0, 5.0, 5.0, kin_T0]
         t_span = (0, kin_t_end)
 
-        with st.spinner("ODE yechilmoqda (Radau usuli)..."):
-            sol, rates, Q, model = UCGKineticDashboard._run_ode_simulation(
-                tuple(y0), tuple(t_span), kin_n_pts
-            )
+        try:
+            with st.spinner("ODE yechilmoqda (Radau usuli)..."):
+                sol, rates, Q, model = UCGKineticDashboard._run_ode_simulation(
+                    tuple(y0), tuple(t_span), kin_n_pts
+                )
+        except (ValueError, RuntimeError, FloatingPointError) as ode_error:
+            st.error(f"ODE VALIDATION_FAILED: {ode_error}")
+            st.warning("Bu modelning grafigi/validatsiyasi ilmiy dalil emas. Parametrlar va massa balansini tekshiring.")
+            return
+        st.caption("ODE: MODEL_OUTPUT — elementar massa balansi va sonli musbatlik tekshirildi; mustaqil eksperimental validatsiya emas.")
 
         t = sol.t
         C, O2_arr, H2O, CO, CO2, H2, T = sol.y
@@ -25740,19 +25864,41 @@ class UCGKineticDashboard:
                 fig_3d.update_layout(scene=dict(xaxis_title="Vaqt (min)", yaxis_title="Harorat (K)", zaxis_title="CO (mol)"), title="3D: Vaqt x Harorat x CO")
                 st.plotly_chart(fig_3d, use_container_width=True)
             with col2:
-                st.markdown("**Validatsiya: Model vs Eksperiment**")
-                val = model.compute_validation()
-                exp_CO = val['exp_CO']
+                st.markdown("**CO taqqoslash: manba aniq ko'rsatiladi**")
+                obs_file = st.file_uploader("CO kuzatuv CSV (time_min,CO_mol) — manba tasdiqlanmagan",
+                                            type=['csv'], key='ode_observed_co_upload')
+                demo_co = st.checkbox("Faqat namoyish uchun sintetik CO nuqtalarini ko'rsatish",
+                                      value=False, key='ode_co_synthetic_demo')
+                try:
+                    if obs_file is not None:
+                        observations = pd.read_csv(obs_file)
+                        if not {'time_min', 'CO_mol'}.issubset(observations.columns):
+                            raise ValueError("CSV ustunlari: time_min, CO_mol")
+                        val = model.compute_validation(
+                            observed_co=observations['CO_mol'].to_numpy(),
+                            observation_times=observations['time_min'].to_numpy())
+                    else:
+                        val = model.compute_validation(synthetic_demo=demo_co)
+                except (ValueError, TypeError, KeyError, pd.errors.ParserError) as val_error:
+                    st.warning(f"CO kuzatuvi tekshiruvdan o'tmadi: {val_error}")
+                    val = model.compute_validation()
                 fig_val = go.Figure()
-                fig_val.add_trace(go.Scatter(x=t, y=CO, mode='lines', name="Model CO", line=dict(color='#1f77b4', width=2)))
-                fig_val.add_trace(go.Scatter(x=t, y=exp_CO, mode='markers', name="Eksperiment CO", marker=dict(color='red', size=4, opacity=0.6)))
-                fig_val.update_layout(title="Model Validatsiyasi (CO ishlab chiqarish)", xaxis_title="Vaqt (min)", yaxis_title="CO (mol)")
+                fig_val.add_trace(go.Scatter(x=t, y=CO, mode='lines', name="MODEL_OUTPUT — CO", line=dict(color='#1f77b4', width=2)))
+                if val['exp_CO'] is not None:
+                    other_label = ("SYNTHETIC_DEMO — CO (tajriba emas)" if val['source_status']=='SYNTHETIC_DEMO'
+                                   else "USER_SUPPLIED_UNVERIFIED — CO")
+                    fig_val.add_trace(go.Scatter(x=val['observed_t'], y=val['exp_CO'],
+                                      mode='markers', name=other_label,
+                                      marker=dict(color='red', size=4, opacity=0.6)))
+                fig_val.update_layout(title=f"CO: {val['source_status']}",
+                                      xaxis_title="Vaqt (min)", yaxis_title="CO (mol)")
                 st.plotly_chart(fig_val, use_container_width=True)
+                st.caption(f"Ma'lumot maqomi: {val['status']}. CSV yuklash dalilning mustaqil tasdig'i emas.")
                 st.markdown("#### 📏 Validatsiya Metrikalari")
                 m1, m2, m3 = st.columns(3)
-                m1.metric("RMSE", f"{val['rmse']:.2f} mol")
-                m2.metric("MAE", f"{val['mae']:.2f} mol")
-                m3.metric("R2", f"{val['r2']:.4f}")
+                m1.metric("RMSE", f"{val['rmse']:.2f} mol" if val['rmse'] is not None else "NOT_EVALUATED")
+                m2.metric("MAE", f"{val['mae']:.2f} mol" if val['mae'] is not None else "NOT_EVALUATED")
+                m3.metric("R2", f"{val['r2']:.4f}" if val['r2'] is not None else "NOT_EVALUATED")
                 st.markdown("---")
                 st.markdown("#### 📐 Validatsiya Formulalari")
                 st.latex(r"\\text{RMSE} = \\sqrt{\\frac{1}{n}\\sum_{i=1}^{n}(y_i - \\hat{y}_i)^2}")
@@ -26047,7 +26193,10 @@ class UCGKineticDashboard:
             UnifiedLoggerFactory.render_dashboard_panel()
 
             # #9: Version Manager
-            VersionManager.render_dashboard_panel()
+            st.subheader("🏷️ Version Manager (#9)")
+            st.metric("Joriy tuzatish versiyasi", "9.11.41")
+            st.caption(f"Legacy core version: {VersionManager.get_instance().get_version()}; "
+                       "u dastur bo'ylab hali birlashtirilmagan. Patent holati: NOT_VERIFIED.")
 
             # #10: Class Splitter
             ClassSplitter.render_dashboard_panel()
@@ -27994,7 +28143,7 @@ def run_v7_app():
     P0 = st.sidebar.slider("Boshlang'ich bosim (MPa)", 0.5, 30.0, 10.0, 0.5)
 
     st.sidebar.markdown("---")
-    st.sidebar.markdown("**Versiya (v7 UI):** 9.11.40 — Ilmiy Patent Report")
+    st.sidebar.markdown("**Versiya (v7 UI):** 9.11.41 — Dashboard ODE/CO tuzatishlari")
     st.sidebar.markdown(f"**Sana:** {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     st.sidebar.markdown("**Patent maqomi:** NOT_VERIFIED — rasmiy ariza dalili kiritilmagan")
 
@@ -28534,7 +28683,7 @@ def run_v7_app():
         registry = enterprise_modules_registry()
         rows = []
         for name, info in registry.items():
-            status_str = "✅" if any(info.values()) else "⚠️"
+            status_str = "LOADED_NOT_VERIFIED" if info.get("available") else "NOT_VERIFIED"
             rows.append({
                 "Module": name,
                 "Status": status_str,
@@ -28568,7 +28717,7 @@ def run_v7_app():
             st.json(BayesianNeuralNetwork().info())
         with col_a2:
             st.json(MLflowTracker().info())
-            st.json(ModelRegistry().info())
+            st.json(ModelRegistry.info())
             st.json(ExplainabilityDashboard().info())
 
         st.markdown("---")
@@ -31596,7 +31745,7 @@ def enterprise_modules_registry() -> Dict[str, Dict[str, Any]]:
     registry["M20_AdaptiveTimeIntegrator"] = AdaptiveTimeIntegrator().info()
     # Block 3: AI
     registry["M21_MLflowTracker"] = MLflowTracker().info()
-    registry["M22_ModelRegistry"] = ModelRegistry().info()
+    registry["M22_ModelRegistry"] = ModelRegistry.info()
     registry["M23_PINN"] = PINNModule().info()
     registry["M24_HyperparameterOpt"] = HyperparameterOptimizer().info()
     registry["M26_DriftDetector"] = DriftDetector().info()
@@ -31685,35 +31834,73 @@ def get_embedded_file_content(name: str) -> Optional[bytes]:
         return None
 
 
+def _ucg_safe_export_root() -> Path:
+    """Restrict export to the explicit configured base or the working directory."""
+    return Path(os.environ.get("UCG_EXPORT_ROOT", str(Path.cwd()))).expanduser().resolve()
+
+
+def _ucg_safe_export_path(path: str, root: Optional[Path] = None) -> Path:
+    """Reject paths outside export root, including existing symlinks."""
+    root = (root or _ucg_safe_export_root()).resolve()
+    target = Path(path).expanduser().resolve(strict=False)
+    if not target.is_relative_to(root):
+        raise ValueError(f"Export refused outside UCG_EXPORT_ROOT ({root})")
+    if target == root or target.is_dir():
+        raise ValueError("Export destination must be a file under export root")
+    return target
+
+
+def _ucg_safe_embedded_name(name: str) -> Path:
+    """Keep only manifest relative POSIX paths (no ../, drive, or absolutes)."""
+    from pathlib import PurePosixPath, PureWindowsPath
+    if (not isinstance(name, str) or not name or "\\" in name or
+            PurePosixPath(name).is_absolute() or PureWindowsPath(name).is_absolute() or
+            ":" in name or any(part in ("", ".", "..") for part in name.split("/"))):
+        raise ValueError("Unsafe embedded file name")
+    if name not in EMBEDDED_FILES_BASE64:
+        raise ValueError("Not in embedded-file manifest")
+    return Path(name)
+
+
 def extract_embedded_file(name: str, output_path: str) -> bool:
-    """Extract a single embedded file to the given path. Returns True on success."""
+    """Extract a manifest item only within export root; never silently overwrite."""
+    relative = _ucg_safe_embedded_name(name)
+    target = _ucg_safe_export_path(output_path)
+    if target.name != relative.name:
+        raise ValueError("Embedded filename must be preserved")
     content = get_embedded_file_content(name)
     if content is None:
         return False
-    out = Path(output_path)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    with open(out, "wb") as f:
-        f.write(content)
-    logger.info(f"Extracted {name} -> {output_path} ({len(content)} bytes)")
+    expected = EMBEDDED_FILES_BASE64[name].get("size")
+    if isinstance(expected, int) and len(content) != expected:
+        raise ValueError("Embedded-file size does not match the manifest")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    # Re-resolve after mkdir to catch parent symlinks created meanwhile.
+    target = _ucg_safe_export_path(str(target))
+    try:
+        with target.open("xb") as fh:
+            fh.write(content)
+    except FileExistsError:
+        logger.warning("Refusing to overwrite existing export %s", target)
+        return False
+    logger.info("Extracted %s -> %s (%d bytes)", name, target, len(content))
     return True
 
 
 def extract_all_embedded_files(output_dir: str = ".") -> Dict[str, Any]:
-    """
-    Extract ALL embedded files to the given directory, preserving relative paths.
-    Returns a dict {filename: {"ok": bool, "path": str, "size": int}}.
-    """
-    out_root = Path(output_dir)
+    """Extract manifest files within allowed root, with per-file outcomes."""
+    root = _ucg_safe_export_root()
+    out_root = Path(output_dir).expanduser().resolve(strict=False)
+    if not out_root.is_relative_to(root):
+        raise ValueError(f"Export directory must be inside UCG_EXPORT_ROOT ({root})")
     out_root.mkdir(parents=True, exist_ok=True)
     results = {}
-    for name in EMBEDDED_FILES_BASE64.keys():
-        out_path = out_root / name
+    for name in EMBEDDED_FILES_BASE64:
+        relative = _ucg_safe_embedded_name(name)
+        out_path = out_root / relative
         ok = extract_embedded_file(name, str(out_path))
-        results[name] = {
-            "ok": ok,
-            "path": str(out_path),
-            "size": EMBEDDED_FILES_BASE64[name]["size"],
-        }
+        results[name] = {"ok": ok, "path": str(out_path),
+                         "size": EMBEDDED_FILES_BASE64[name]["size"]}
     return results
 
 
@@ -31937,8 +32124,8 @@ def main():
             ExpertReviewStreamlitRenderer.render()
         except Exception as _expert_render_exc:
             st.error(f"Ekspert tahlilini ko'rsatishda xato: {_expert_render_exc}")
-            import traceback as _expert_tb
-            st.code(_expert_tb.format_exc())
+            logger.exception("Expert-analysis UI failed")
+            st.caption("Detailed traceback is stored in the server log, not publicly displayed.")
         return
 
     # ── v6 Geomechanical flow continues below ────────────────────────────────
@@ -32190,12 +32377,15 @@ def main():
     sigma_thermal_pa = PARAMS.CONFINEMENT * E_field * alpha_field * delta_T / (1.0 - nu_poisson + EPS_GENERAL)
     sigma_thermal = sigma_thermal_pa / 1e6
 
-    dT_dx, dT_dz = np.gradient(temp_2d, dx_val, dz_val)
+    dT_dz, dT_dx = np.gradient(temp_2d, dz_val, dx_val)
     dT_deviatoric = (dT_dx - dT_dz) / 2.0
-    tau_thermal = (
-        PARAMS.CONFINEMENT * E_field * alpha_field * dT_deviatoric * nu_poisson
-    ) / (2.0 * (1.0 - nu_poisson ** 2) + EPS_GENERAL) / 1e6
-    tau_rt += tau_thermal
+    # REVIEW v9.11.42: E*alpha*grad(T) has units Pa/m, not stress (Pa).
+    # A constitutive PDE with boundary conditions is required for thermal shear.
+    # Do not add a dimensionally incorrect pseudo-shear to Kirsch stresses.
+    tau_thermal = np.zeros_like(temp_2d)
+    # dT_dz and dT_dx remain available as K/m diagnostic gradients.
+    # Thermal shear: NOT_EVALUATED (zero omitted term, not a validated prediction).
+    # Thermal normal stress above is still an approximation, not independent THCM FE validation.
 
     sigma_x_total = sigma_rr - sigma_thermal
     sigma_z_total = sigma_tt - sigma_thermal
@@ -32224,15 +32414,15 @@ def main():
     K_bulk = E_field / (3.0 * (1.0 - 2.0 * nu_poisson) + EPS_GENERAL)
     volumetric_strain = sigma_thermal * 1e6 / (K_bulk + EPS_GENERAL)
     perm = 1e-15 * safe_exp(np.clip(3.5 * overstress + 15.0 * volumetric_strain, -20.0, 20.0))
-    perm_x = perm * 5.0
-    perm_z = perm
     perm = np.clip(perm, 1e-16, 1e-10)
+    perm_x = np.clip(perm * 5.0, 1e-16, 1e-10)
+    perm_z = perm
 
     T_kelvin = temp_2d + 273.15
     pressure_field = 1e5 + 50.0 * (T_kelvin - 293.15)
     M_syngas = dynamic_molar_mass()
     gas_density = ideal_gas_density(pressure_field, M_syngas, T_kelvin, PARAMS.R_UNIVERSAL)
-    dp_dx, dp_dz = np.gradient(pressure_field, dx_val, dz_val)
+    dp_dz, dp_dx = np.gradient(pressure_field, dz_val, dx_val)
     mu_field = gas_viscosity_temperature(T_kelvin, gas_type='CO')
     vx = -perm_x * dp_dx / (mu_field + EPS_GENERAL)
     vz = -perm_z * dp_dz / (mu_field + EPS_GENERAL)
@@ -34357,7 +34547,7 @@ def main():
 
             LICENSE_TEXT = f"""
 **UCG SCI-Grade Platform v{__version__}**
-**Litsenziya:** Patent Pending UZ-XXXX (UZBEK PATENT), PCT/US20XX-XXXXX (WIPO)
+**Litsenziya:** Application NOT_VERIFIED UZ-XXXX (UZBEK PATENT), PCT/US20XX-XXXXX (WIPO)
 
 ✓ **RUXSAT BERILGAN FOYDALANISH:**
   - Ilmiy tadqiqotlar (universitetlar, laboratoriyalar)
@@ -34454,7 +34644,7 @@ def main():
     st.sidebar.caption("JCGM 100:2008 — reproducibility guaranteed")
 
     LICENSE_SIDEBAR = """
-⚠️ **Patent Pending** — Ilmiy foydalanish faqat.
+⚠️ **Application NOT_VERIFIED** — Ilmiy foydalanish faqat.
 Tijorat maqsadlarda ishlatish TAQIQLANGAN.
 © Saitov D., TTU 2026
 """
@@ -34468,7 +34658,7 @@ Tijorat maqsadlarda ishlatish TAQIQLANGAN.
         "Adaptive ODE Solver (Radau) | Vectorized Biot | Parallel FOS | "
         "Real FEM Solver | SHAP + LIME Explainability | "
         "© 2026 Saitov Dilshodbek, Tashkent Technical University | "
-        "Patent Pending (UzPatent + WIPO PCT) | "
+        "Application NOT_VERIFIED (UzPatent + WIPO PCT) | "
         "⚠️ Scientific use only — Commercial use strictly prohibited until patent grant."
     )
 
@@ -34672,52 +34862,30 @@ class MathematicalFoundations:
     def theorem_1_adaptive_biot() -> Theorem:
         statement = (
             "Adaptive Biot koeffitsienti α_biot(S_r, φ) = (1 − (1 − S_r)·C_drain)·(1 − φ(1 − S_r)/2) "
-            "har qanday S_r ∈ [0, 1] va φ ∈ [0, φ_max] da [α_min, α_max] ⊂ (0, 1) oralig'ida "
-            "qiymat qabul qiladi va Lipschitz uzluksiz."
+            "S_r ∈ [0, 1], φ ∈ [0, 0.6], C_drain ∈ [0, 1] da [0, 1] oralig'ida "
+            "chegaralangan va Lipschitz uzluksiz. Bu PDE well-posedness isboti emas."
         )
         assumptions = [
             "S_r ∈ [0, 1] — to'yinish darajasi (saturation ratio)",
             "φ ∈ [0, 0.6] — g'ovaklik (porosity), φ_max = 0.6 (geologik jihatdan mumkin)",
             "C_drain ∈ [0, 1] — drenaj koeffitsienti (sheeli kon uchun ≤ 1)",
-            "α_min = 0 (to'liq suvsiz, φ = φ_max, S_r = 0 da cheklov)",
-            "α_max = 1 (to'liq to'ygan, φ = 0 yoki S_r = 1 da)",
+            "α_min = 0 is possible at S_r=0 and C_drain=1; strictly positive bound NOT proven",
+            "α_max = 1 at complete saturation; no strict upper bound below one",
         ]
-        proof = textwrap.dedent("""
-        ISBOT (1-qism: Boundedness).
-        α(S_r, φ) = (1 − (1 − S_r)·C_drain) · (1 − φ(1 − S_r)/2).
-
-        (a) Yuqori chegma: α ≤ 1.
-            Birinchi omil: 1 − (1 − S_r)·C_drain.
-            S_r ∈ [0,1] ⇒ (1 − S_r) ∈ [0,1], C_drain ∈ [0,1] ⇒ (1 − S_r)·C_drain ∈ [0,1]
-            ⇒ 1 − (1 − S_r)·C_drain ∈ [0,1].
-            Ikkinchi omil: 1 − φ(1 − S_r)/2.
-            φ ∈ [0, 0.6], (1 − S_r) ∈ [0,1] ⇒ φ(1 − S_r)/2 ∈ [0, 0.3] ⇒ ikkinchi omil ∈ [0.7, 1].
-            ⇒ α ∈ [0, 1]. ∎ (boundedness)
-
-        (b) Quyi chegma (qat'iy): α > 0.
-            Agar S_r < 1 va C_drain < 1 bo'lsa, birinchi omil > 0.
-            Agar S_r = 1 bo'lsa, birinchi omil = 1 (max).
-            Ikkinchi omil doim ≥ 0.7 > 0.
-            Demak α > 0. ∎
-
-        (2-qism: Lipschitz uzluksizlik).
-        ∂α/∂S_r = C_drain · (1 − φ(1 − S_r)/2) + (1 − (1 − S_r)·C_drain) · φ/2
-                  ≤ 1 · 1 + 1 · 0.3 = 1.3.
-        ∂α/∂φ   = −(1 − (1 − S_r)·C_drain) · (1 − S_r)/2
-                  ≤ 0.5 · 1 = 0.5 (modul bo'yicha).
-        ||∇α||_∞ ≤ 1.3 ⇒ α L − Lipschitz, L = 1.3.
-        Bu Biot-Willis konstitutiv munosabatning uzluksizligini kafolatlaydi. ∎
-
-        (3-qism: Well-posedness).
-        Biot tenglamasi: −∇·(σ) + α·∇p = f, ∂t(α·∇·u + S·p) − ∇·(k/μ ∇p) = q.
-        α ning Lipschitz uzluksizligi va [α_min, α_max] ⊂ (0,1) oralig'idagi
-        chegaralanganligi (Showalter, 2000, Theorem 4.1) bo'yicha Biot tizimi uchun
-        Hadamard well-posedness (yagona, uzluksiz yechim) kafolatlanadi. ∎
-        """).strip()
+        proof = (
+            "Let q = 1-S_r in [0,1]. Then a = 1-q*C_drain in [0,1] "
+            "and b = 1-phi*q/2 in [0.7,1]. Thus alpha=a*b is in [0,1]. "
+            "At S_r=0 and C_drain=1, alpha=0, so strictly positive alpha "
+            "is false on the closed parameter domain. The partial derivatives "
+            "are bounded there; hence alpha is Lipschitz in the parameter inputs. "
+            "This proves only boundedness/continuity of the scalar coefficient, "
+            "NOT existence, uniqueness, or stability of solutions of a coupled Biot PDE. "
+            "Well-posedness requires additional coercivity, BCs and parameter regularity."
+        )
         numerical = MathematicalFoundations._verify_theorem_1()
         return Theorem(
             index=1,
-            name="Adaptive Biot Coefficient: Boundedness and Well-posedness",
+            name="Adaptive Biot Coefficient: Bounds only (PDE not verified)",
             statement=statement,
             assumptions=assumptions,
             proof=proof,
@@ -34741,11 +34909,14 @@ class MathematicalFoundations:
             "alpha_min_observed": float(alpha.min()),
             "alpha_max_observed": float(alpha.max()),
             "alpha_mean": float(alpha.mean()),
-            "bounded_in_0_1": bool((alpha > 0).all() and (alpha <= 1).all()),
+            "bounded_in_0_1": bool((alpha >= 0).all() and (alpha <= 1).all()),
             "finite_everywhere": bool(np.isfinite(alpha).all()),
             "lipschitz_constant_estimated": 1.3,
-            "well_posed": True,
-            "verification_passed": bool((alpha > 0).all() and (alpha <= 1).all() and np.isfinite(alpha).all()),
+            "well_posed": False,
+            "well_posed_status": "NOT_PROVEN_FROM_THESE_ASSUMPTIONS",
+            "verification_passed": False,
+            "verification_scope": "SAMPLING_ONLY_NOT_PDE_PROOF",
+            "sample_bounded": bool((alpha >= 0).all() and (alpha <= 1).all() and np.isfinite(alpha).all()),
         }
 
     # ------------------------------------------------------------------
@@ -34754,10 +34925,9 @@ class MathematicalFoundations:
     @staticmethod
     def theorem_2_thermal_degradation() -> Theorem:
         statement = (
-            "Arrhenius-GSI termal degradatsiya modeli GSI(T) = GSI_0 · exp(−β·(T − T_ref)) "
-            "uchun, β > 0 va T ∈ [T_ref, T_max] da, GSI(T) monoton kamayuvchi, "
-            "concertavativ pastki chegarali (GSI(T) ≥ GSI_0 · exp(−β·(T_max − T_ref)) > 0), "
-            "va Lyapunov barqaror."
+            "For GSI(T) = GSI_0 exp[-beta(T-T_ref)], GSI_0>0, beta>0 and "
+            "T in [T_ref,T_max], GSI(T)>0 and dGSI/dT=-beta*GSI<0. "
+            "This is a temperature response, not a proved Lyapunov-stable dynamical system."
         )
         assumptions = [
             "T ∈ [T_ref, T_max] = [293.15 K, 1473.15 K] (UCG uchun tipik diapazon)",
@@ -34766,35 +34936,13 @@ class MathematicalFoundations:
             "Arrhenius munosabati: k(T) = A · exp(−E_a/(R·T))",
             "T_max < ∞ (chekli maksimal harorat)",
         ]
-        proof = textwrap.dedent("""
-        ISBOT.
-
-        (1) Monoton kamayish.
-            dGSI/dT = −β · GSI_0 · exp(−β·(T − T_ref)) = −β · GSI(T).
-            β > 0 va GSI(T) > 0 ⇒ dGSI/dT < 0. ∎ (monoton kamayuvchi)
-
-        (2) Pastki chegma.
-            GSI monoton kamayuvchi ⇒ minimum T = T_max da:
-            GSI(T_max) = GSI_0 · exp(−β·(T_max − T_ref)) > 0.
-            (eksponensial funksiya hech qachon 0 ga yetmaydi). ∎
-
-        (3) Lyapunov barqarorlik.
-            V(GSI) = (1/2)·(GSI − GSI_eq)^2 — Lyapunov funksiyasi.
-            GSI_eq = GSI_0 · exp(−β·(T_eq − T_ref)) (muvozanat qiymati berilgan T_eq da).
-            dV/dt = (GSI − GSI_eq) · dGSI/dt = −β·GSI·(GSI − GSI_eq).
-            GSI > 0 bo'lgani uchun dV/dt ≤ 0 (yarim aniqlangan).
-            Demak, GSI(T) muvozanatga eksponensial ravishda yaqinlashadi:
-            |GSI(T) − GSI_eq| ≤ |GSI(T_0) − GSI_eq| · exp(−β·(T − T_0)). ∎
-
-        (4) Energiya conservation.
-            Arrhenius o'zgarishchi tezligi k(T) ning chekli ekanligi (T_max < ∞) va
-            GSI ning pastdan chegaralanganligi termal tizim uchun energiya
-            conservation (birinchi termodinamika qonuni) ni kafolatlaydi. ∎
-
-        (5) Konstruktivlik (No-blow-up).
-            |GSI(T)| ≤ GSI_0 < ∞ ∀T ∈ [T_ref, T_max].
-            Chekli vaqt diapazonida yechim no-blow-up. ∎
-        """).strip()
+        proof = (
+            "Direct differentiation gives dGSI/dT = -beta*GSI, negative for "
+            "beta>0, GSI_0>0. Because T is bounded above, "
+            "GSI(T)>=GSI_0*exp[-beta(T_max-T_ref)]>0. "
+            "No autonomous evolution equation d(GSI)/dt nor equilibrium stability "
+            "has been specified, so a Lyapunov convergence claim is NOT ESTABLISHED."
+        )
         numerical = MathematicalFoundations._verify_theorem_2()
         return Theorem(
             index=2,
@@ -34837,9 +34985,11 @@ class MathematicalFoundations:
             "monotonic_decreasing_all_cases": monotonic_all,
             "strictly_positive_all_cases": positive_all,
             "min_GSI_observed": float(GSI_0_test * np.exp(-beta_test * (T_max - T_ref))),
-            "lyapunov_decay_observed": bool(decay_observed),
-            "no_blowup": True,
-            "verification_passed": bool(monotonic_all and positive_all and decay_observed),
+            "lyapunov_decay_observed": False,
+            "lyapunov_status": "NOT_EVALUATED_NO_DYNAMICAL_SYSTEM",
+            "no_blowup": bool(monotonic_all and positive_all),
+            "verification_passed": False,
+            "sample_monotonic": bool(monotonic_all and positive_all),
         }
 
     # ------------------------------------------------------------------
@@ -39236,7 +39386,7 @@ class PatentCertificateGenerator:
         title = "PATENT CERTIFICATE" if language == "en" else "PATENT SERTIFIKATI"
         c.drawCentredString(width / 2, height - 35 * mm, title)
         c.setFont("Helvetica", 11)
-        subtitle = "Algorithm Proprietary Certification — Patent Pending (UzPatent + WIPO PCT)"
+        subtitle = "Algorithm Proprietary Certification — Application NOT_VERIFIED (UzPatent + WIPO PCT)"
         c.drawCentredString(width / 2, height - 42 * mm, subtitle)
 
         # === Patent info ===
@@ -41391,7 +41541,7 @@ class PatentCertificateGeneratorV2:
             # ── Footer ──
             c.setFont("Helvetica-Oblique", 8)
             c.drawString(20 * mm, 10 * mm,
-                         f"Issued: {_utc_now_iso()} | UCG Platform v7.0 | Patent Pending")
+                         f"Issued: {_utc_now_iso()} | UCG Platform v7.0 | Application NOT_VERIFIED")
 
             c.showPage()
             c.save()
@@ -50882,7 +51032,11 @@ class ExpertReviewStreamlitRenderer:
         """Streamlit UI da ekspert tahlil qo'shimchasini ko'rsatish."""
         C = ExpertReviewConstants
 
-        st.title("🔬 Ekspert Tahlili Tuzatishlari (v9.11.1)")
+        st.title("🔬 Tarixiy ekspert ko‘rsatkichlari — DEMO, validatsiya emas")
+        st.warning("SYNTHETIC_DEMO / UNVERIFIED: quyidagi TRL, MC, SHAP, RMSE, CGE, "
+                   "novelty va boshqa raqamlar eski ma'lumotlar katalogidan olingan. "
+                   "Ular joriy solver ishlashi yoki mustaqil Angren o‘lchovlaridan "
+                   "hisoblangan deb qaralmaydi. Patent/PhD dalili sifatida ishlatmang.")
         st.markdown(
             "Ushbu bo'lim 40 ta ekspert darajasidagi tekshiruv natijasida "
             "aniqlangan barcha nomuvofiqlik va kamchiliklarni bartaraf etadi."
@@ -50914,11 +51068,11 @@ class ExpertReviewStreamlitRenderer:
 
         # ── TRL ──
         st.header(f"T.2 TRL Darajasi (Yagona: {C.TRL_LEVEL}/{C.TRL_SCALE})")
-        st.metric("TRL Level", f"{C.TRL_LEVEL}/{C.TRL_SCALE}")
+        st.metric("Tarixiy TRL taxmini (NOT_ASSESSED)", f"{C.TRL_LEVEL}/{C.TRL_SCALE}")
         st.write(f"Tavsif: {C.TRL_NAME}")
         st.info(
-            "Barcha hisobot bo'limlarida TRL qiymati bir xil: 6/9. "
-            "Angren UCG-1 (2018-2024) maydon sharoitida validated."
+            "TRL 6/9 — oldingi shablon qiymati, NOT_ASSESSED. "
+            "Angren bo‘yicha sertifikatlangan field demonstration dalili biriktirilmagan."
         )
 
         # ── Harorat ──
@@ -50985,7 +51139,7 @@ class ExpertReviewStreamlitRenderer:
         with col4:
             st.metric("R-hat", f"{C.MC_CONVERGENCE['r_hat']}")
         if C.MC_CONVERGENCE['passed']:
-            st.success("✅ Monte Carlo convergence PASSED (all criteria met)")
+            st.warning("SYNTHETIC_DEMO: shablon konvergentsiya mezonlari, real hisobdan o‘tmagan.")
         else:
             st.error("❌ Monte Carlo convergence FAILED")
 
