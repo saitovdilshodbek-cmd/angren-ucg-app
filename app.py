@@ -1,3 +1,8 @@
+# ══ Expert targeted audit patches: 2026-10-25 ══
+# Source v9.11.35; regression-tested fixes for DI/MC/BCa/LHS/FEM/rate-limit.
+# This is NOT an external Abaqus/COMSOL benchmark, field validation, or a patent certificate.
+# Scientific results must carry measurement provenance and independent V&V.
+# ════════════════════════════════════════════════════════════════════════
 # ══════════════════════════════════════════════════════════════════════════════
 # UCG Platform — v9.11.35 (Duplicate Class Audit + Code Quality Docs)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -268,6 +273,9 @@ import ast          # FIX #42: safe_eval_literal / safe_loads depend on ast.lite
 import shlex        # FIX #28, #43, #51: safe_run_command uses shlex.split
 import base64       # used by generate_digital_signature and apply_all_patches
 import threading    # FIX (v7.0): RateLimiter token-bucket uses threading.Lock
+# AUDIT: shared state persists across API calls; do not reset token bucket.
+_API_RATE_LIMITER_LOCK = threading.Lock()
+_API_RATE_LIMITERS: Dict[str, Any] = {}  # annotation postponed (future annotations)
 
 
 # ── FIX #29, #41: REQUESTS_AVAILABLE flag ──────────────────────────────
@@ -520,15 +528,10 @@ logger = logging.getLogger("ucg_platform")
 # This is tracked as architectural debt — proper fix requires multi-module
 # refactoring (out of scope for this release).
 class DIContainer:
-    """
-    Simple Dependency Injection container.
-    Registers services by name and resolves them lazily.
-    Supports singleton and transient (factory) lifecycles.
+    """Thread-safe DI service locator; singleton and transient scopes are distinct.
 
-    FIX #53 (v9.11.17): Aylanma bog'liqliklarni aniqlash uchun `_resolving` to'plami
-    qo'shildi — RecursionError o'rniga aniq CircularDependencyError ko'tariladi.
-    FIX #86 (v9.11.17): get_instance() thread-safe qilindi — double-checked locking.
-    FIX #84 (v9.11.17): reset() ham thread-safe lock bilan himoyalangan.
+    Factories may resolve other services. Circular dependencies within the same
+    resolution chain raise RuntimeError; unrelated threads wait for the lock.
     """
     _instance = None
     _instance_lock = threading.Lock()
@@ -538,107 +541,74 @@ class DIContainer:
         self._factories: Dict[str, Callable] = {}
         self._singletons: Dict[str, Any] = {}
         self._initialized: Dict[str, bool] = {}
-        # FIX #53: Aylanma bog'liqliklarni aniqlash uchun
+        self._singleton_flags: Dict[str, bool] = {}
         self._resolving: set = set()
-        self._resolving_lock = threading.Lock()
-        # FIX #84: reset() uchun lock
-        self._reset_lock = threading.Lock()
+        self._resolving_lock = threading.RLock()
+        self._reset_lock = self._resolving_lock
 
     @classmethod
     def get_instance(cls) -> "DIContainer":
-        # FIX #86: Double-checked locking — thread-safe singleton.
-        # v9.11.16 da race condition bor edi: ikkita thread bir vaqtda
-        # `if cls._instance is None` ga kirib, ikki instance yaratishi mumkin edi.
         if cls._instance is None:
             with cls._instance_lock:
                 if cls._instance is None:
-                    cls._instance = DIContainer()
+                    cls._instance = cls()
         return cls._instance
 
     def register(self, name: str, factory: Callable, singleton: bool = True) -> None:
-        """Register a service factory by name. If singleton=True, only one instance is created."""
-        self._factories[name] = factory
-        self._singletons[name] = None
-        self._initialized[name] = False
-        if not singleton:
-            self._initialized[name] = True  # FIX v9.11.12: type consistency
+        if not callable(factory):
+            raise TypeError(f"Service '{name}' factory must be callable")
+        with self._resolving_lock:
+            self._factories[name] = factory
+            self._singleton_flags[name] = bool(singleton)
+            self._singletons.pop(name, None)
+            self._services.pop(name, None)
+            self._initialized[name] = False
 
     def register_instance(self, name: str, instance: Any) -> None:
-        """Register an already-created instance directly."""
-        self._services[name] = instance
-        self._singletons[name] = instance
-        self._initialized[name] = True
+        with self._resolving_lock:
+            self._services[name] = instance
+            self._singleton_flags[name] = True
+            self._singletons[name] = instance
+            self._initialized[name] = True
 
     def resolve(self, name: str) -> Any:
-        """Resolve a service by name. Creates singleton on first access.
-
-        FIX #53 (v9.11.17): Aylanca bog'liqlik aniqlanadi — agar bir service
-        o'zini resolatsiya qilish jarayonida qayta chaqirsa, CircularDependencyError.
-        FIX v9.11.18 #3 (defensive): Singleton lookup ikki shart bilan — `_initialized
-        is True` VA `name in self._singletons`. Bu partial-state holatidan saqlaydi
-        (agar _singletons[name] = None bo'lib qolgan bo'lsa, singleton qayta yaratiladi).
-        """
-        # 1. Allaqachon to'liq servis sifatida ro'yxatdan o'tgan
-        if name in self._services:
-            return self._services[name]
-        if name not in self._factories:
-            raise KeyError(f"Service '{name}' not registered in DIContainer")
-        # FIX v9.11.18 #3: ikki shartli tekshiruv — defensive singleton lookup.
-        # Bu `self._initialized.get(name) is True` LEKIN `name not in self._singletons`
-        # yoki `self._singletons[name] is None` holatini (partial state) bartaraf etadi.
-        if (
-            self._initialized.get(name) is True
-            and name in self._singletons
-            and self._singletons[name] is not None
-        ):
-            # Singleton allaqachon yaratilgan — uni qaytar
-            return self._singletons[name]
-        # FIX #9 (v9.11.16): v9.11.15 da bu yerda dead-code bo'lgan:
-        #   if self._initialized.get(name) == True:
-        #       return self._factories[name]()
-        # Python da `is True` va `== True` boolean uchun bir xil — ikkinchi if
-        # hech qachon bajarilmaydi. Bu mantiq xatosi endi olib tashlandi.
-        # Endi: singleton yaratilgan bo'lsa qaytar, aks holda yangi instance yarat.
-        # FIX #53: Aylanca bog'liqlik tekshiruvi
         with self._resolving_lock:
             if name in self._resolving:
-                raise RuntimeError(
-                    f"CircularDependencyError: Service '{name}' is already being resolved. "
-                    f"Resolution chain: {sorted(self._resolving)}. "
-                    f"This indicates a circular dependency — refactor factory to break the cycle."
-                )
+                raise RuntimeError(f"CircularDependencyError: '{name}' in {sorted(self._resolving)}")
+            if name in self._services:
+                return self._services[name]
+            if name not in self._factories:
+                raise KeyError(f"Service '{name}' not registered in DIContainer")
+            singleton = self._singleton_flags.get(name, True)
+            if singleton and self._initialized.get(name, False):
+                return self._singletons[name]
             self._resolving.add(name)
-        try:
-            # Create singleton
-            instance = self._factories[name]()
-        finally:
-            with self._resolving_lock:
-                self._resolving.discard(name)
-        self._singletons[name] = instance
-        self._services[name] = instance
-        self._initialized[name] = True
-        return instance
+            try:
+                instance = self._factories[name]()
+            finally:
+                self._resolving.remove(name)
+            if singleton:
+                self._singletons[name] = instance
+                self._services[name] = instance
+                self._initialized[name] = True
+            return instance
 
     def is_registered(self, name: str) -> bool:
-        return name in self._factories or name in self._services
+        with self._resolving_lock:
+            return name in self._factories or name in self._services
 
     def list_services(self) -> List[str]:
-        return sorted({*self._factories, *self._services})  # FIX v9.11.16 #92
+        with self._resolving_lock:
+            return sorted({*self._factories, *self._services})
 
     def reset(self) -> None:
-        """Reset all singleton instances (useful for testing).
-
-        FIX #84 (v9.11.17): Thread-safe lock bilan himoyalangan — v9.11.16 da
-        ikkita thread bir vaqtda reset() chaqirsa, partial state qolishi mumkin edi.
-        """
-        with self._reset_lock:
-            for name in list(self._initialized.keys()):
-                if self._initialized[name] is True:
-                    self._singletons[name] = None
-                    self._initialized[name] = False
-            # FIX #53: Aylanca bog'liqlik to'plamini ham tozalash
-            with self._resolving_lock:
-                self._resolving.clear()
+        """Drop constructed factory singletons, retaining explicitly registered instances."""
+        with self._resolving_lock:
+            for name in list(self._factories):
+                self._services.pop(name, None)
+                self._singletons.pop(name, None)
+                self._initialized[name] = False
+            self._resolving.clear()
 
 # Global DI container
 _di = DIContainer.get_instance()
@@ -785,6 +755,14 @@ class ServiceLayer:
                     n_simulations=n_samples,
                 )
             elif base_params and param_distributions:
+                # AUDIT: this branch generates artificial predictions and targets.
+                # Never present them as measured validation if not opted in.
+                if not ALLOW_SYNTHETIC_BENCHMARK:
+                    return {
+                        "status": "error",
+                        "error": "Parametric synthetic benchmark is disabled. Provide measured prediction and benchmark_y, or explicitly opt in to demonstration mode.",
+                        "synthetic_data": False,
+                    }
                 # Parametrik UQ: base_params va param_distributions dan
                 # sintetik prediction/benchmark yaratamiz
                 # FIX v9.11.13 #52: duplicate numpy import removed
@@ -804,6 +782,8 @@ class ServiceLayer:
                 # Parametrik ma'lumotlarni natijaga qo'shamiz
                 result["base_params"] = base_params
                 result["param_distributions"] = param_distributions
+                result["synthetic_data"] = True
+                result["data_provenance"] = "SYNTHETIC — DEMONSTRATION ONLY; no experimental validation"
             else:
                 # FIX v9.11.14: CHECK ALLOW_SYNTHETIC_BENCHMARK before using synthetic data
                 if not ALLOW_SYNTHETIC_BENCHMARK:
@@ -818,6 +798,8 @@ class ServiceLayer:
                     benchmark_y=_bench_def,
                     n_simulations=n_samples,
                 )
+                result["synthetic_data"] = True
+                result["data_provenance"] = "SYNTHETIC — DEMONSTRATION ONLY; no experimental validation"
 
             # BCa CI
             # FIX #37 (v9.11.16): v9.11.15 da BCa muvaffaqiyatsiz bo'lsa `except: pass`
@@ -828,10 +810,19 @@ class ServiceLayer:
             # Kichik namuna bilan BCa CI ishonchsiz. Endi n < 30 bo'lsa, aniq
             # ogohlantirish qaytariladi.
             bca_result = None
-            if globals().get("bca_bootstrap_ci") and isinstance(result, dict) and "error_samples" in result:
-                _error_samples = np.array(result["error_samples"])
+            if globals().get("bca_bootstrap_ci") and isinstance(result, dict) and "observed_residuals" in result:
+                # BCa resamples INDEPENDENT observed paired residuals, never the
+                # highly correlated pseudo-residuals of Monte Carlo iterations.
+                _error_samples = np.asarray(result["observed_residuals"], dtype=float).reshape(-1)
                 _n_samples = len(_error_samples)
-                if _n_samples < 30:
+                if result.get("synthetic_data", False):
+                    bca_result = {
+                        "status": "DEMONSTRATION_ONLY",
+                        "n_samples": _n_samples,
+                        "warning": "Synthetic validation data: BCa is not reported as experimental uncertainty.",
+                        "ci_lower": None, "ci_upper": None,
+                    }
+                elif _n_samples < 30:
                     bca_result = {
                         "status": "INSUFFICIENT_SAMPLES",
                         "n_samples": _n_samples,
@@ -868,7 +859,11 @@ class ServiceLayer:
                         }
                         logger.warning("[BCa] CI computation failed: %s", bca_exc)
 
-            return {"status": "OK", "result": result, "bca_ci": bca_result}
+            return {
+                "status": "DEMONSTRATION_ONLY" if result.get("synthetic_data", False) else "OK",
+                "result": result, "bca_ci": bca_result,
+                "synthetic_data": bool(result.get("synthetic_data", False)),
+            }
         except Exception as exc:
             logger.error(f"Monte Carlo failed: {exc}")
             return {"status": "error", "error": str(exc)}
@@ -893,7 +888,7 @@ class ServiceLayer:
     def export_audit_report(self, private_key_pem: Optional[bytes] = None) -> Dict[str, Any]:
         """Export signed audit report."""
         if globals().get("SignedAuditReport"):
-            audit_data = {"export_time": _utc_now_iso(), "platform_version": "9.11.15"}
+            audit_data = {"export_time": _utc_now_iso(), "platform_version": _pkg_version}
             return SignedAuditReport.generate_signed_report(audit_data, private_key_pem)
         return {"status": "error", "message": "SignedAuditReport not available"}
 
@@ -1052,7 +1047,7 @@ class UCGPlatformConfig:
             "max_mc_samples": cls.MAX_MC_SAMPLES,
             "min_mc_samples": cls.MIN_MC_SAMPLES,
             "db_backend": cls.DB_BACKEND,
-            "postgres_dsn": re.sub(r"(://[^:]+:)[^@]+(@)", r"\\1***\\2", cls.POSTGRES_DSN) if "://" in cls.POSTGRES_DSN else cls.POSTGRES_DSN,  # FIX v9.11.13 #66
+            "postgres_dsn": re.sub(r"(://[^:]+:)[^@]+(@)", lambda m: m.group(1) + "***" + m.group(2), cls.POSTGRES_DSN) if "://" in cls.POSTGRES_DSN else cls.POSTGRES_DSN,  # FIX v9.11.13 #66
             "sqlite_path": cls.SQLITE_PATH,
             "worm_backend": cls.WORM_BACKEND,
             "secrets_backend": cls.SECRETS_BACKEND,
@@ -1152,9 +1147,15 @@ def call_external_api(url: str, *, api_name: str = "external",
     # FIX v9.11.19 #31: Rate limiting — patent API lari uchun (Espacenet 4 req/s, USPTO 10 req/s)
     _rate_limiter = globals().get("RateLimiter")
     if _rate_limiter is not None:
-        # Default: 2 req/sec (konservativ — barcha API larga mos)
-        _api_rl = _rate_limiter(capacity=2, refill_rate=2.0, name=f"api_{api_name}")
-        _api_rl.acquire()  # token bucket — bloklanadi agar limitdan oshsa
+        # Shared bucket PER API, protected against concurrent first use.
+        with _API_RATE_LIMITER_LOCK:
+            _api_rl = _API_RATE_LIMITERS.get(api_name)
+            if _api_rl is None:
+                _api_rl = _rate_limiter(capacity=2, refill_rate=2.0, name=f"api_{api_name}")
+                _API_RATE_LIMITERS[api_name] = _api_rl
+        if not _api_rl.acquire():
+            logger.warning("%s: rate limit timed out; HTTP request not sent", api_name)
+            return None
     try:
         resp = requests.get(url, headers=headers, params=params, timeout=timeout)
         if resp.status_code == 200:
@@ -3419,52 +3420,40 @@ class FEMConvergenceDiagnostics:
 
     @staticmethod
     def richardson_gci(fine: float, medium: float, coarse: float,
-                        p: int = 2, refine_ratio: int = 2) -> Dict[str, Any]:
-        """
-        Richardson extrapolation and Grid Convergence Index (GCI).
-        fine, medium, coarse: scalar quantities (e.g., max displacement) at 3 mesh levels.
-        p: expected order of convergence.
-        refine_ratio: h_coarse/h_fine ratio (usually 2).
-        """
-        # Order of convergence from solutions
-        if abs(coarse - medium) < 1e-15:
-            return {"gci": 0.0, "order": p, "converged": True, "note": "solutions identical"}
-        r_val = refine_ratio
-        p_calc = np.log(abs((coarse - medium) / (medium - fine) + 1e-30)) / np.log(r_val)
-        p_calc = max(1.0, min(float(p_calc), 2 * p))  # Clamp to reasonable range
-
-        # Extrapolated value
-        f_ext = fine + (fine - medium) / (r_val**p_calc - 1)
-
-        # GCI fine
-        ea = abs((fine - medium) / max(abs(fine), 1e-15))  # FIX v9.11.12: div-by-zero protection
-        # FIX v9.11.29: `solutions` was undefined. The function receives 3 scalar
-        # values (fine, medium, coarse) — we construct the list here.
-        _solutions = [fine, medium, coarse]
-        fs = 1.25 if len(_solutions) >= 3 else 3.0  # ASME V&V 20-2009: fs=1.25 for 3+ grids
-        gci_fine = fs * ea / (r_val**p_calc - 1)
-
-        # GCI coarse
-        ea_c = abs((medium - coarse) / medium)
-        gci_coarse = fs * ea_c / (r_val**p_calc - 1)
-
+                       p: int = 2, refine_ratio: float = 2) -> Dict[str, Any]:
+        """Three-level uniform-ratio GCI; refuse inconclusive convergence claims."""
+        values = np.asarray([fine, medium, coarse, refine_ratio], dtype=float)
+        if not np.all(np.isfinite(values)) or refine_ratio <= 1:
+            raise ValueError("GCI requires finite values and refinement ratio > 1")
+        e21, e32 = medium - fine, coarse - medium
+        if abs(e21) < 1e-15 or abs(e32) < 1e-15 or e21*e32 <= 0:
+            return {"status": "INDETERMINATE", "converged": False,
+                    "gci_fine": None, "gci_coarse": None, "observed_order": None,
+                    "asymptotic_ratio": None,
+                    "note": "Equal solutions or oscillatory differences do not establish GCI"}
+        observed_order = float(np.log(abs(e32/e21))/np.log(refine_ratio))
+        if (not np.isfinite(observed_order) or observed_order <= 0 or
+                abs(fine) <= 1e-15 or abs(medium) <= 1e-15):
+            return {"status": "INDETERMINATE", "converged": False,
+                    "gci_fine": None, "gci_coarse": None,
+                    "observed_order": observed_order if np.isfinite(observed_order) else None,
+                    "asymptotic_ratio": None,
+                    "note": "Observed order nonpositive or relative error denominator ~0"}
+        denominator = refine_ratio**observed_order - 1
+        gci_fine = float(1.25*abs(e21/fine)/denominator)
+        gci_coarse = float(1.25*abs(e32/medium)/denominator)
+        ratio = float(gci_coarse/(refine_ratio**observed_order*gci_fine))
+        ratio_ok = bool(.95 <= ratio <= 1.05)
         return {
-            "extrapolated_value": float(f_ext),
-            "observed_order": float(p_calc),
-            "gci_fine": float(gci_fine),
-            "gci_coarse": float(gci_coarse),
-            # FIX #16 (v9.11.16): GCI convergence ikki shartni talab qiladi (ASME V&V 20-2009):
-            #   1) gci_fine < 0.05 (5% relative error)
-            #   2) asymptotic_ratio ≈ 1.0, ya'ni 0.95 ≤ ratio ≤ 1.05
-            # v9.11.15 da faqat birinchi shart tekshirilgan. Endi ikkalasi ham tekshiriladi.
-            "converged": bool(gci_fine < 0.05 and 0.95 <= (gci_coarse / max(gci_fine, 1e-15)) <= 1.05),
-            "asymptotic_ratio": float(gci_coarse / max(gci_fine, 1e-15)),
-            "asymptotic_ratio_in_range": bool(
-                0.95 <= (gci_coarse / max(gci_fine, 1e-15)) <= 1.05
-            ),
-            "gci_fine_threshold_met": bool(gci_fine < 0.05),
-            "convergence_criteria": "ASME V&V 20-2009: gci_fine<0.05 AND 0.95<=asymptotic_ratio<=1.05",
+            "status": "COMPUTED", "observed_order": observed_order,
+            "extrapolated_value": float(fine+(fine-medium)/denominator),
+            "gci": gci_fine, "gci_fine": gci_fine, "gci_coarse": gci_coarse,
+            "asymptotic_ratio": ratio, "asymptotic_ratio_in_range": ratio_ok,
+            "gci_fine_threshold_met": bool(gci_fine < .05),
+            "converged": bool(gci_fine < .05 and ratio_ok),
+            "convergence_criteria": "gci_fine<0.05 and 0.95<=asymptotic_ratio<=1.05 (project policy)",
         }
+
 
 
 @dataclass
@@ -7108,9 +7097,11 @@ def monte_carlo_uncertainty_analysis_parallel(
     """
     pred = _to_1d_float_array(prediction, "prediction")
     bench = _to_1d_float_array(benchmark_y, "benchmark_y")
+    if pred.size != bench.size:
+        raise ValueError(f"prediction and benchmark_y must have equal lengths; got {pred.size} and {bench.size}")
     residuals = pred - bench
     noise_scale = max(float(np.std(residuals, ddof=1)) if residuals.size > 1 else 0.0, EPS_GENERAL)
-    n_sim = clamp_mc_samples(max(10000, int(n_simulations)),
+    n_sim = clamp_mc_samples(n_simulations,
                             label="monte_carlo_uncertainty_analysis_parallel.n_simulations")
 
     try:
@@ -7168,10 +7159,11 @@ def monte_carlo_uncertainty_analysis(
 ) -> Dict[str, Any]:
     pred = _to_1d_float_array(prediction, "prediction")
     bench = _to_1d_float_array(benchmark_y, "benchmark_y")
+    if pred.size != bench.size:
+        raise ValueError(f"prediction and benchmark_y must have equal lengths; got {pred.size} and {bench.size}")
     residuals = pred - bench
     noise_scale = max(float(np.std(residuals, ddof=1)) if residuals.size > 1 else 0.0, EPS_GENERAL)
-    # FIX #4: clamp n_simulations to [10000, MAX_MC_SAMPLES] to prevent RAM blowup
-    n_sim = clamp_mc_samples(max(10000, int(n_simulations)), label="monte_carlo_uncertainty_analysis.n_simulations")
+    n_sim = clamp_mc_samples(n_simulations, label="monte_carlo_uncertainty_analysis.n_simulations")
 
     # FIX #46: chunked computation to avoid RAM blowup on large `pred.size`.
     # The original code allocated ``samples`` as a single (n_sim, pred.size)
@@ -7251,6 +7243,10 @@ def monte_carlo_uncertainty_analysis(
         "prediction_mean": running_mean,
         "prediction_std": prediction_std,
         "error_samples": error_samples_last if error_samples_last is not None else np.zeros((1, pred.size)),
+        "observed_residuals": residuals.copy(),
+        "synthetic_data": False,  # Caller must relabel this if its *input* was synthetic.
+        "interval_method": "Gaussian analytical approximation; not empirical percentiles",
+        "empirical_percentiles_computed": False,
         "ci95_mean": (ci95_mean_low, ci95_mean_high),  # 95% CI of the MEAN
         "ci95_prediction": (ci95_pred_low, ci95_pred_high),  # 95% prediction interval (normal approx)
         "ci99_prediction": (ci99_pred_low, ci99_pred_high),  # 99% prediction interval
@@ -7266,28 +7262,24 @@ def monte_carlo_uncertainty_analysis(
 # ── FIX 37: Latin Hypercube Sampling ────────────────────────────────
 def latin_hypercube_sampling(problem: Dict, n_samples: int = 10000,
                              seed: Optional[int] = None) -> np.ndarray:
-    """Latin Hypercube Sampling (FIX 37)
+    """True Latin hypercube in physical bounds, reproducible with seed.
 
-    FIX v9.11.3: np.random.rand o'rniga _safe_rng() ishlatildi -
-    takrorlanuvchan va thread-safe. seed parametri qo'shildi -
-    har bir chaqiruvda bir xil natija olish uchun.
+    SciPy is a mandatory application dependency. This does not silently fall
+    back to plain independent random samples if pyDOE is missing.
     """
-    if PYDOE_AVAILABLE:
-        return lhs(problem["num_vars"], samples=n_samples)
-    else:
-        # Fallback to reproducible random sampling
-        logger.warning("pyDOE not available, using random sampling for LHS fallback")
-        # FIX v9.11.3: seed berilgan bo'lsa, yangi RNG yaratamiz (reproducible)
-        # Aks holda _safe_rng() ishlatamiz (thread-safe singleton)
-        if seed is not None:
-            _rng_lhs = np.random.default_rng(seed=seed)
-        else:
-            _rng_lhs = np.random.default_rng(seed=RANDOM_SEED)
-        arr = _rng_lhs.random((n_samples, problem["num_vars"]))
-        for i, (low, high) in enumerate(problem["bounds"]):
-            arr[:, i] = low + arr[:, i] * (high - low)
-        return arr
-
+    from scipy.stats import qmc
+    dimension = problem.get("num_vars")
+    bounds = np.asarray(problem.get("bounds"), dtype=float)
+    if isinstance(dimension, bool) or not isinstance(dimension, (int, np.integer)) or dimension < 1:
+        raise ValueError("problem.num_vars must be an integer >= 1")
+    if bounds.shape != (dimension, 2) or not np.all(np.isfinite(bounds)):
+        raise ValueError("problem.bounds must be finite pairs for every parameter")
+    if np.any(bounds[:, 1] <= bounds[:, 0]):
+        raise ValueError("Each Latin-hypercube bound must satisfy upper > lower")
+    if isinstance(n_samples, bool) or not isinstance(n_samples, (int, np.integer)) or n_samples < 1:
+        raise ValueError("n_samples must be an integer >= 1")
+    unit_samples = qmc.LatinHypercube(d=dimension, seed=seed if seed is not None else RANDOM_SEED).random(n_samples)
+    return qmc.scale(unit_samples, bounds[:, 0], bounds[:, 1])
 
 # ── FIX 38: Sobol Analysis ───────────────────────────────────────────
 def sobol_analysis(problem: Dict, func: Callable, n_samples: int = 10000) -> Dict[str, Any]:
@@ -9999,55 +9991,27 @@ def build_hexahedral_mesh(nx: int = 8, ny: int = 6, nz: int = 5,
 
 def adaptive_refine_hexahedral_mesh(mesh: FEMMesh3D, refinement_indicator: np.ndarray,
                                      threshold: float = 0.6) -> FEMMesh3D:
+    """Conservative structured H-refinement when any cell exceeds the threshold.
+
+    This is GLOBAL structured refinement, not local adaptive H-refinement.
+    Local hanging-node constraints are not implemented in this application.
+    Unlike the previous r-movement algorithm, this increases the element count
+    and does not alter the underlying physical domain.
     """
-    FIX F20 (CRITICAL): Adaptive hexahedral mesh refinement — TO'LIQ IMPLEMENTATSIYA.
-
-    Eski stub faqat meshni 2x ga oshirar edi (global refinement). Endi real
-    H-refinement simulyatsiyasi amalga oshiriladi:
-      - refinement_indicator > threshold bo'lgan elementlar aniqlanadi
-      - Har bir high-error elementning tugunlari element markaziga qarab siljitiladi
-        (r-adaptation approach, regularizatsiya bilan)
-      - Bu xatolik yuqori bo'lgan zonada mesh resolution ni oshiradi
-
-    References:
-      - Babuska, I., Rheinboldt, W.C. (1978). A-posteriori error estimates for FEM.
-      - Zienkiewicz, O.C., Zhu, J.Z. (1992). Superconvergent patch recovery.
-      - Rademacher, A. (2016). Mesh regularization for adaptive FEM.
-
-    Parameters:
-        mesh: Original FEMMesh3D
-        refinement_indicator: Per-element error indicator (e.g., from Zienkiewicz-Zhu)
-        threshold: Elements with indicator > threshold are refined
-
-    Returns:
-        Refined FEMMesh3D (same topology, regularized node positions)
-    """
-    indicator = np.asarray(refinement_indicator, dtype=float)
-    # Handle NaN/Inf safely
-    indicator = np.where(np.isfinite(indicator), indicator, 0.0)
-    nodes = mesh.nodes.copy()
-    elements = mesh.elements.copy()
-    # Identify high-error elements
-    high_error_elements = np.where(indicator > threshold)[0]
-    if len(high_error_elements) == 0:
-        # No refinement needed; return original mesh
-        return FEMMesh3D(nodes=nodes, elements=elements, shape=mesh.shape, lengths=mesh.lengths)
-    # R-adaptation: shift nodes of high-error elements toward element center
-    # This effectively concentrates mesh density where errors are high.
-    # The 0.9/0.1 weighting preserves mesh validity (no element inversion).
-    for el_idx in high_error_elements:
-        el_nodes = elements[el_idx]
-        center = np.mean(nodes[el_nodes], axis=0)
-        for node_idx in el_nodes:
-            # Regularized shift: 10% movement toward center (keeps Jacobian > 0)
-            nodes[node_idx] = nodes[node_idx] * 0.9 + center * 0.1
-    logger.info(f"Adaptive refinement: {len(high_error_elements)} elements refined "
-                f"(threshold={threshold}, max_indicator={float(np.nanmax(indicator)):.4f})")
-    return FEMMesh3D(nodes=nodes, elements=elements, shape=mesh.shape, lengths=mesh.lengths)
-
-
-
-
+    indicator = np.asarray(refinement_indicator, dtype=float).reshape(-1)
+    if indicator.size != len(mesh.elements) or not np.all(np.isfinite(indicator)):
+        raise FEMMeshError("Refinement indicators must be finite, one per element")
+    if not np.isfinite(threshold):
+        raise ValueError("threshold must be finite")
+    if not np.any(indicator > threshold):
+        return FEMMesh3D(nodes=np.array(mesh.nodes, copy=True),
+                         elements=np.array(mesh.elements, copy=True),
+                         shape=mesh.shape, lengths=mesh.lengths)
+    nx, ny, nz = mesh.shape
+    logger.info("Refinement indicators exceeded threshold: GLOBAL structured H-refinement %s -> %s",
+                mesh.shape, (2 * nx - 1, 2 * ny - 1, 2 * nz - 1))
+    return build_hexahedral_mesh(nx=2*nx-1, ny=2*ny-1, nz=2*nz-1,
+                                 lengths=mesh.lengths)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # IMPROVEMENT #8: FEM Solver Reports
@@ -10063,52 +10027,43 @@ class FEMSolverReportGenerator:
 
     @staticmethod
     def generate_convergence_report(mesh_results: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Generate mesh convergence report from multiple mesh level results."""
-        if len(mesh_results) < 2:
-            return {"status": "INSUFFICIENT_DATA", "note": "Need at least 2 mesh levels"}
-
-        # Compute convergence rates between successive mesh levels
-        convergence_data = []
+        """Measured-only convergence results; no fabricated default mesh values."""
+        if len(mesh_results) < 3:
+            return {"status": "INSUFFICIENT_DATA", "mesh_independent": False,
+                    "n_mesh_levels": len(mesh_results), "note": "Need 3 measured mesh levels"}
+        required = ("h", "error", "scalar_quantity")
+        for i, row in enumerate(mesh_results):
+            missing = [key for key in required if key not in row]
+            if missing:
+                return {"status": "INSUFFICIENT_DATA", "mesh_independent": False,
+                        "note": f"Mesh level {i} has no measured fields: {missing}"}
+            values = np.asarray([row[key] for key in required], dtype=float)
+            if not np.all(np.isfinite(values)) or values[0] <= 0 or values[1] <= 0:
+                return {"status": "INVALID_DATA", "mesh_independent": False,
+                        "note": f"Mesh level {i} has invalid h/error/scalar_quantity"}
+        rows, gci = [], []
         for i in range(1, len(mesh_results)):
-            h_prev = mesh_results[i-1].get("h", 1.0)
-            h_curr = mesh_results[i].get("h", 0.5)
-            err_prev = mesh_results[i-1].get("error", 1.0)
-            err_curr = mesh_results[i].get("error", 0.1)
-
-            if err_prev > 0 and err_curr > 0 and h_prev > 0 and h_curr > 0:
-                rate = np.log(err_prev / err_curr) / np.log(h_prev / h_curr)
+            co, fi = mesh_results[i-1], mesh_results[i]
+            if co["h"] <= fi["h"]:
+                return {"status": "INVALID_DATA", "mesh_independent": False,
+                        "note": "h must strictly decrease from coarse to fine"}
+            rate = float(np.log(co["error"]/fi["error"])/np.log(co["h"]/fi["h"]))
+            rows.append({"mesh_level": i, "h": fi["h"], "error": fi["error"],
+                         "convergence_rate": rate})
+        for i in range(2, len(mesh_results)):
+            coarse, med, fine = mesh_results[i-2:i+1]
+            r1, r2 = coarse["h"]/med["h"], med["h"]/fine["h"]
+            if not np.isclose(r1, r2, rtol=1e-3):
+                gci.append({"status": "INDETERMINATE", "converged": False,
+                            "note": "Nonuniform refinement ratio unsupported"})
             else:
-                rate = float('nan')
-
-            convergence_data.append({
-                "mesh_level": i,
-                "h": h_curr,
-                "error": err_curr,
-                "convergence_rate": float(rate),
-                "expected_rate": 2.0,  # Linear elements
-            })
-
-        # GCI computation
-        gci_results = []
-        if len(mesh_results) >= 3 and globals().get("FEMConvergenceDiagnostics"):
-            for i in range(2, len(mesh_results)):
-                gci = FEMConvergenceDiagnostics.richardson_gci(
-                    fine=mesh_results[i].get("scalar_quantity", 0),
-                    medium=mesh_results[i-1].get("scalar_quantity", 0),
-                    coarse=mesh_results[i-2].get("scalar_quantity", 0),
-                )
-                gci_results.append(gci)
-
-        return {
-            "n_mesh_levels": len(mesh_results),
-            "convergence_data": convergence_data,
-            "gci_results": gci_results,
-            "mesh_independent": all(
-                cd.get("convergence_rate", 0) >= 1.5 for cd in convergence_data
-                if not np.isnan(cd.get("convergence_rate", float('nan')))
-            ),
-            "report_type": "Mesh Convergence Study",
-        }
+                gci.append(FEMConvergenceDiagnostics.richardson_gci(
+                    fine=fine["scalar_quantity"], medium=med["scalar_quantity"],
+                    coarse=coarse["scalar_quantity"], refine_ratio=r1))
+        return {"status": "COMPUTED", "n_mesh_levels": len(mesh_results),
+                "convergence_data": rows, "gci_results": gci,
+                "mesh_independent": bool(gci and all(r.get("converged", False) for r in gci)),
+                "report_type": "Mesh Convergence Study"}
 
     @staticmethod
     def generate_patch_test_report(results: Dict[str, Any]) -> Dict[str, Any]:
