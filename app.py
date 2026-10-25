@@ -3501,7 +3501,7 @@ class FEMConvergenceDiagnostics:
             })
 
         # Check convergence between successive mesh levels
-        convergence_achieved = True
+        convergence_achieved = len(results) >= 2
         if len(results) >= 2:
             for i in range(1, len(results)):
                 e_prev = results[i-1]["energy"]["energy_norm"]
@@ -7355,10 +7355,11 @@ def monte_carlo_uncertainty_analysis(
         "ci95_prediction": (ci95_pred_low, ci95_pred_high),  # 95% prediction interval (normal approx)
         "ci99_prediction": (ci99_pred_low, ci99_pred_high),  # 99% prediction interval
         # FIX v9.11.3: Percentile-based CI (skewed distributions uchun aniqroq)
-        "ci95_percentile": (ci95_percentile_low, ci95_percentile_high),  # P2.5-P97.5
-        "ci99_percentile": (ci99_percentile_low, ci99_percentile_high),  # P0.5-P99.5
-        # Backward-compatible keys (mapped to percentile-based, NOT normal approx)
-        "ci95": (ci95_percentile_low, ci95_percentile_high),
+        "ci95_percentile": None,  # NOT_EVALUATED: empirical quantiles not stored
+        "ci99_percentile": None,
+        "ci95_normal_approx": (ci95_percentile_low, ci95_percentile_high),
+        "ci99_normal_approx": (ci99_percentile_low, ci99_percentile_high),
+        "ci95": (ci95_percentile_low, ci95_percentile_high),  # Gaussian approximation only
         "ci99": (ci99_percentile_low, ci99_percentile_high),
     }
 
@@ -11782,7 +11783,7 @@ def generate_patent_report(
         f"Claim Strength: {patentability_ext['claim_strength']:.2f}/100. "
         # FIX v9.11.19 #14: dinamik validation status
         f"Validation stages: {_n_pass} of {_n_total} PASSED "
-        f"({'ALL PASSED' if _n_pass == _n_total else f'{_n_total - _n_pass} FAILED — see Section 7'}). "
+        f"({'NOT_EVALUATED' if _n_total == 0 else ('ALL PASSED' if _n_pass == _n_total else f'{_n_total - _n_pass} FAILED — see Section 7')}). "
         # FIX v9.11.20 #65: TRL Level endi UCG_TRL_LEVEL env var orqali sozlanadi
         # (hardcoded 6 olib tashlandi). TRL 6 = "System/subsystem prototype
         # demonstration in relevant environment" (NASA TRL scale).
@@ -14743,28 +14744,36 @@ def validate_hoek_brown() -> Dict[str, Any]:
     }
 
 def physics_informed_loss_with_conservation(pred, sigma1, sigma_ci, temp, damage,
-                                            u, v, rho, mu, pressure):
+                                            u, v, rho, mu, pressure,
+                                            momentum_residual=None, energy_residual=None):
+    """Physics-guided loss; caller supplies PDE residuals from its discretization.
+
+    Mandatory terms are actual (not dummy) momentum and energy residual tensors.
+    They must be computed with model coefficients, boundary conditions and units.
+    Missing residuals are a configuration error, never silently treated as zero.
     """
-    FIX #45: previously this called ``torch.clamp`` unconditionally, raising
-    ``NameError: name 'torch' is not defined`` when PyTorch was not installed.
-    Now we check the TORCH_AVAILABLE flag (defined at top of module) and
-    return a NumPy-based scalar loss when torch is missing, so callers that
-    only need a loss value (without autograd) still work.
-    """
-    if not TORCH_AVAILABLE:
-        # NumPy fallback — returns a Python float (no autograd graph)
-        fos_approx = np.clip(sigma_ci / (sigma1 + EPS_STRESS), 0.0, 3.0)
-        hb_loss = float(np.mean((pred - 1.0 / (1.0 + np.exp(-5.0 * (1.0 - fos_approx)))) ** 2))
-        thermal_risk = np.clip((temp - 800.0) / 400.0, 0.0, 1.0) * damage
-        thermal_loss = float(np.mean(np.maximum(thermal_risk - pred, 0.0)))
-        return hb_loss + 0.5 * thermal_loss
-    fos_approx = torch.clamp(sigma_ci/(sigma1+EPS_STRESS), 0, 3)
-    hb_loss = torch.mean((pred - torch.sigmoid(5*(1-fos_approx)))**2)
-    thermal_risk = torch.clamp((temp-800)/400, 0, 1) * damage
-    thermal_loss = torch.mean(torch.relu(thermal_risk - pred))
-    mom_loss = torch.tensor(0.0, device=pred.device)
-    ene_loss = torch.tensor(0.0, device=pred.device)
-    return hb_loss + 0.5*thermal_loss + 0.1*mom_loss + 0.1*ene_loss
+    if momentum_residual is None or energy_residual is None:
+        raise ValueError('Momentum and energy PDE residuals are required; loss NOT_EVALUATED')
+    if TORCH_AVAILABLE and isinstance(pred, torch.Tensor):
+        fos_approx = torch.clamp(sigma_ci/(sigma1+EPS_STRESS), 0, 3)
+        hb_loss = torch.mean((pred - torch.sigmoid(5*(1-fos_approx)))**2)
+        thermal_risk = torch.clamp((temp-800)/400, 0, 1)*damage
+        thermal_loss = torch.mean(torch.relu(thermal_risk - pred))
+        mom = torch.as_tensor(momentum_residual, dtype=pred.dtype, device=pred.device)
+        ene = torch.as_tensor(energy_residual, dtype=pred.dtype, device=pred.device)
+        if not torch.isfinite(mom).all() or not torch.isfinite(ene).all():
+            raise ValueError('Non-finite physical PDE residual')
+        return hb_loss + 0.5*thermal_loss + 0.1*torch.mean(mom**2) + 0.1*torch.mean(ene**2)
+    pred = np.asarray(pred, dtype=float)
+    fos_approx = np.clip(np.asarray(sigma_ci)/(np.asarray(sigma1)+EPS_STRESS),0,3)
+    hb_loss = float(np.mean((pred - 1.0/(1.0+np.exp(-5*(1-fos_approx))))**2))
+    thermal_risk = np.clip((np.asarray(temp)-800)/400,0,1)*np.asarray(damage)
+    thermal_loss = float(np.mean(np.maximum(thermal_risk-pred,0)))
+    mom = np.asarray(momentum_residual, dtype=float)
+    ene = np.asarray(energy_residual, dtype=float)
+    if not np.isfinite(mom).all() or not np.isfinite(ene).all():
+        raise ValueError('Non-finite physical PDE residual')
+    return hb_loss + 0.5*thermal_loss + 0.1*float(np.mean(mom**2)) + 0.1*float(np.mean(ene**2))
 
 def compute_expanded_uncertainty(standard_unc, coverage_factor=2.0):
     return coverage_factor * standard_unc
@@ -14794,15 +14803,46 @@ def fos_error_propagation(params, uncertainties, func):
     return u_c
 
 def mesh_convergence_test(layers_data, params_dict, resolutions):
-    results = {}
-    for nx, nz in resolutions:
-        mock_fos = 1.5 + 0.1 * (nx / 100)
-        results[(nx, nz)] = {
-            'mean_fos': mock_fos,
-            'max_fos': mock_fos + 0.2,
-            'min_fos': mock_fos - 0.1
-        }
-    return results
+    """Compute mesh independence from explicit solver results, never manufactured FOS.
+
+    params_dict['solver'] must be callable as solver(layers_data, params_dict, nx, nz)
+    and return finite mean_fos/min_fos/max_fos from that mesh.  If unavailable,
+    each mesh remains NOT_EVALUATED.  This cannot replace a full FEM V&V study.
+    """
+    params_dict = dict(params_dict or {})
+    solver = params_dict.get('solver')
+    if solver is not None and not callable(solver):
+        raise TypeError('params_dict["solver"] must be callable')
+    out = {}
+    for pair in resolutions:
+        if len(pair) != 2:
+            raise ValueError('Each resolution needs (nx, nz)')
+        nx, nz = int(pair[0]), int(pair[1])
+        if nx < 2 or nz < 2:
+            raise ValueError('Mesh resolutions must be >=2')
+        row = {'mean_fos': None, 'min_fos': None, 'max_fos': None,
+               'status': 'NOT_EVALUATED', 'source_status': 'NOT_EVALUATED'}
+        if solver is not None:
+            try:
+                computed = solver(layers_data, params_dict, nx, nz)
+                if not isinstance(computed, dict):
+                    raise TypeError('Solver must return a mapping')
+                # A real solver result must identify its solver and contain numeric measurements.
+                vals = {k: float(computed[k]) for k in ('mean_fos','min_fos','max_fos')}
+                if not all(np.isfinite(v) for v in vals.values()):
+                    raise ValueError('Solver returned non-finite FOS')
+                if not vals['min_fos'] <= vals['mean_fos'] <= vals['max_fos']:
+                    raise ValueError('Invalid FOS range')
+                row.update(vals)
+                row['status'] = 'COMPUTED'
+                row['source_status'] = 'MODEL_OUTPUT'
+                row['solver'] = str(computed.get('solver', 'USER_SUPPLIED_SOLVER'))
+            except Exception as exc:
+                logger.warning('Mesh convergence solver failed at (%d,%d): %s', nx, nz, exc)
+                row['status'] = 'FAILED'
+                row['error'] = str(exc)
+        out[(nx,nz)] = row
+    return out
 
 
 # ── Fizika funksiyalari ──────────────────────────────────────────────────
@@ -15466,7 +15506,18 @@ def _generate_v97_report_figures() -> dict:
     plt.rcParams['axes.unicode_minus'] = False
     plt.rcParams['figure.dpi'] = 150
 
-    figures = {}
+    class _ReportFigureBundle(dict):
+        """Mapping with provenance metadata and deterministic resource cleanup."""
+        def __init__(self):
+            super().__init__()
+            self.source_status = {}
+
+        def close_figures(self):
+            for item in self.values():
+                if hasattr(item, 'close'):
+                    item.close()
+
+    figures = _ReportFigureBundle()
     rng = np.random.default_rng(42)
     # FIX #25 (v9.11.16): Hisobot figuralari haqiqiy hisob ma'lumotlari emas, balki
     # reproduktiv sintetik ma'lumotlardir. Endi har bir figurada `source: synthetic`
@@ -15492,6 +15543,7 @@ def _generate_v97_report_figures() -> dict:
         plt.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor='white')
         buf.seek(0)
         figures[name] = buf
+        figures.source_status[name] = "SYNTHETIC_DEMO"
         plt.close()
 
     # FIX #78: Memory leak prevention — figures dict ni tozalash uchun helper
@@ -15504,7 +15556,7 @@ def _generate_v97_report_figures() -> dict:
             except Exception:
                 __import__("logging").getLogger("ucg_platform").debug("Suppressed optional-operation exception", exc_info=True)  # FIX v9.11.36: traceable fallback
 
-    figures._close_figures = close_figures  # type: ignore[attr-defined]
+    figures._close_figures = figures.close_figures  # backward compatibility
 
     # ── Fig 1: 3D Sensitivity Surface for Adaptive Biot ──
     fig = plt.figure(figsize=(7, 5), constrained_layout=True)
@@ -15889,772 +15941,137 @@ def _generate_v97_report_figures() -> dict:
 
 # ── PhD/Patent bo'limlari (v9.11.0 — 39 expert enhancements) ──────────────
 def add_phd_patent_sections(doc: Document, results: dict):
-    """v9.11.0: Comprehensive ISRM/ISO Compliance Report with 20+ embedded figures."""
-    # Generate all figures upfront
-    try:
-        figs = _generate_v97_report_figures()
-    except Exception:
-        figs = {}
+    """Evidence-aware report; unverified metrics NEVER receive fabricated values.
 
-    def add_fig(name, caption, width=Inches(5.5)):
-        if name in figs:
-            doc.add_picture(figs[name], width=width)
-            doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
-            cap = doc.add_paragraph()
-            cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            run = cap.add_run(caption)
-            run.italic = True
-            run.font.size = Pt(9)
-
+    `results` may include `evidence` mapping from metric -> source status,
+    `provenance` mapping with source_file/date/units for REAL_DATA, and
+    `report_figures` mapping of name -> {'image': BytesIO, 'source_status': ...}.
+    Synthetic figures are included only with explicit demo opt-in.
+    """
+    results = results if isinstance(results, dict) else {}
+    labels = results.get('evidence') or {}
+    provenance = results.get('provenance') or {}
+    is_demo = bool(results.get('synthetic_data', False))
     doc.add_page_break()
-    doc.add_heading("ISRM / ISO COMPLIANCE REPORT", level=1)
+    doc.add_heading('ISRM / ISO EVIDENCE STATUS REPORT', 1)
+    doc.add_paragraph('Research-stage output. NOT an ISO certificate, independent FEM benchmark, legal FTO, field-data verification or PhD/patent approval.')
+    if is_demo:
+        doc.add_paragraph('SYNTHETIC_DEMO — FOR DEMONSTRATION ONLY. Not empirical evidence.')
 
-    # ════════════════════════════════════════════════════════════════════
-    # SECTION 1: EXECUTIVE SUMMARY (1-2 pages professional)
-    # ════════════════════════════════════════════════════════════════════
-    doc.add_heading("1. Executive Scientific Summary", level=2)
+    def entry(key, label=None, fmt='.4f'):
+        label = label or key
+        value = results.get(key)
+        if value is None:
+            return [label, 'NOT_EVALUATED', 'NOT_EVALUATED']
+        try:
+            value = float(value)
+            if not np.isfinite(value):
+                raise ValueError('non-finite')
+        except (TypeError, ValueError):
+            return [label, 'NOT_EVALUATED', 'NOT_EVALUATED']
+        source = str(labels.get(key, 'MODEL_OUTPUT'))
+        if is_demo:
+            source = 'SYNTHETIC_DEMO'
+        elif source == 'REAL_DATA':
+            meta = provenance.get(key, {})
+            if not (isinstance(meta, dict) and all(meta.get(k) for k in ('source_file','date','units'))):
+                source = 'UNVERIFIED_SOURCE'
+        elif source not in ('MODEL_OUTPUT','SYNTHETIC_DEMO','UNVERIFIED_SOURCE'):
+            source = 'UNVERIFIED_SOURCE'
+        return [label, format(value, fmt), source]
 
-    fos_design_val = results.get('fos_design', 0.85)
-    pf_val = results.get('pf', 0)
-    patentability = results.get('patentability_index', 0)
-    novelty = results.get('novelty_index', 0)
-    accuracy = results.get('accuracy', 0.85)
+    def table(title, rows):
+        doc.add_heading(title, level=2)
+        tab = doc.add_table(rows=1, cols=3)
+        tab.style='Table Grid'
+        for c, h in zip(tab.rows[0].cells, ('Indicator', 'Value', 'Source status')):
+            c.text=h
+        for data in rows:
+            row=tab.add_row().cells
+            for cell,text_value in zip(row,data):
+                cell.text=str(text_value)
+        return tab
 
-    doc.add_paragraph(
-        "This report presents a comprehensive thermo-hydro-mechanical-geomechanical "
-        "analysis of the Underground Coal Gasification (UCG) system, developed as part "
-        "of a PhD dissertation and patent submission (UzPatent + PCT). The platform "
-        "integrates advanced numerical modeling, artificial intelligence, and "
-        "patent-grade traceability into a single scientific computing environment."
-    )
-    doc.add_paragraph(
-        "The research addresses a critical gap in UCG engineering: the lack of "
-        "real-time geomechanical stability monitoring during in-situ coal gasification. "
-        "Traditional UCG operations rely on post-hoc analysis, which cannot prevent "
-        "catastrophic failures such as cavity collapse, surface subsidence, or "
-        "groundwater contamination. This platform closes that gap by combining "
-        "physics-based modeling (adaptive Biot poroelasticity, Hoek-Brown failure "
-        "criterion, Arrhenius thermal kinetics) with AI-driven risk assessment "
-        "(Physics-Guided Neural Network + RandomForest with SHAP explainability)."
-    )
-
-    p_exec = doc.add_paragraph()
-    p_exec.add_run("Novelty: ").bold = True
-    p_exec.add_run(
-        f"The primary scientific novelty is the synergistic integration of three "
-        f"innovations: (1) adaptive Biot coefficient with saturation-porosity coupling, "
-        f"(2) 3-step Arrhenius thermal degradation linked to GSI decay, and "
-        f"(3) physics-guided AI with SHAP explainability. Novelty Index = {novelty:.2f}/100. "
-        f"No existing patent (US 4,443,007, US 5,765,546, WO 2018/123456, US 10,677,423, "
-        f"CN 110,234,567) covers this combination."
-    )
-
-    p_exec2 = doc.add_paragraph()
-    p_exec2.add_run("Key Results: ").bold = True
-    p_exec2.add_run(
-        f"FOS design (10th percentile) = {fos_design_val:.2f} (conservative), "
-        f"P(failure) = {pf_val*100:.1f}% (Monte Carlo worst-case, capped at 99.9%), "
-        f"AI Accuracy = {accuracy:.4f}, ROC-AUC = {results.get('auc', 0.90):.4f}, "
-        f"Patentability Index = {patentability:.2f}/100, FTO Score = {results.get('fto_score', 0.88):.2f}/100. "
-        f"Model validated against 12 lab experiments (Angren + Shurtan, 2024) and "
-        f"8 international field sites (5 countries, 1999-2024)."
-    )
-
-    p_exec3 = doc.add_paragraph()
-    p_exec3.add_run("Conclusion: ").bold = True
-    p_exec3.add_run(
-        "The platform demonstrates scientific consistency, engineering applicability, "
-        "and patent-level novelty. The methodology is suitable for PhD dissertation "
-        "(UCG stability), SCI journal publication, patent submission, and industrial "
-        "UCG monitoring deployment. All regression tests PASSED (247 unit tests, "
-        "RMSE < 0.25). Technology Readiness Level: TRL 6 (validated in relevant environment)."
-    )
-
-    p_exec4 = doc.add_paragraph()
-    p_exec4.add_run("Practical Impact: ").bold = True
-    p_exec4.add_run(
-        "The platform enables real-time UCG monitoring with sub-minute latency, "
-        "automated risk classification, and SHA-256 + RSA-4096 audit trail for "
-        "regulatory compliance. Economic analysis: CAPEX $7.2M, OPEX $1.245M/year, "
-        "syngas revenue ~$3.2M/year, payback period ~3.5 years, 10-year ROI ~185%. "
-        "Environmental benefit: 35% CO2 reduction vs. surface gasification, "
-        "eligible for carbon credits (~$280k/year)."
-    )
-
-    # Scientific Novelty Comparison Table (FIX #2)
-    doc.add_heading("1a. Scientific Novelty Comparison", level=3)
-    doc.add_paragraph(
-        "The following table compares existing methods with the proposed platform, "
-        "quantifying the improvement for each innovation dimension."
-    )
-    novelty_tbl = doc.add_table(rows=9, cols=4)
-    novelty_tbl.style = 'Table Grid'
-    set_table_border(novelty_tbl)
-    novelty_data = [
-        ["Dimension", "Existing Method", "Proposed Method", "Improvement (%)"],
-        ["Biot coefficient", "Constant (alpha=1.0)", "Adaptive (Sr-phi coupling)", "+85%"],
-        ["Thermal degradation", "Linear (empirical)", "3-step Arrhenius (analytical)", "+120%"],
-        ["Rock failure", "Mohr-Coulomb (static)", "Hoek-Brown 2018 + GSI decay", "+45%"],
-        ["AI explainability", "Black-box RF", "PGNN + SHAP + LIME", "+200%"],
-        ["Uncertainty", "Single-point FOS", "Monte Carlo 50k + Bootstrap", "+300%"],
-        ["Sensitivity", "Local (1-at-a-time)", "Sobol global (S1 + ST)", "+250%"],
-        ["Audit trail", "Manual logging", "SHA-256 + RSA-4096 + WORM", "+500%"],
-        ["Validation", "Single site", "8 sites, 5 countries", "+700%"],
-    ]
-    for i, row_data in enumerate(novelty_data):
-        for j, val in enumerate(row_data):
-            novelty_tbl.rows[i].cells[j].text = val
-
-    doc.add_page_break()
-
-    # ════════════════════════════════════════════════════════════════════
-    # SECTION 2: MATHEMATICAL MODELS (with Assumptions/Constraints/Validity)
-    # ════════════════════════════════════════════════════════════════════
-    doc.add_heading("2. Mathematical Models with Full Specification", level=2)
-
-    # Eq 1: Adaptive Biot
-    doc.add_heading("2.1 Adaptive Biot Coefficient — Eq. (1)", level=3)
-    doc.add_paragraph("alpha_biot = (1 - (1-Sr)*C_drain) * (1 - phi*(1-Sr)/2)    ... (1)")
-    spec_tbl_1 = doc.add_table(rows=4, cols=2)
-    spec_tbl_1.style = 'Table Grid'
-    set_table_border(spec_tbl_1)
-    spec_data_1 = [
-        ["Assumptions", "Isothermal conditions; Sr and phi are spatially uniform within each element; C_drain = 0.7 (calibrated from Angren UCG-1 data)"],
-        ["Constraints", "0 <= Sr <= 1; 0 <= phi <= 0.4; 0 <= alpha_biot <= 1"],
-        ["Validity Range", "T < 1500C; depth 100-800m; coal seam thickness 1-10m"],
-        ["SI Units", "Sr [dimensionless]; phi [dimensionless]; alpha_biot [dimensionless]"],
-    ]
-    for i, (k, v) in enumerate(spec_data_1):
-        spec_tbl_1.rows[i].cells[0].text = k
-        spec_tbl_1.rows[i].cells[1].text = v
-    doc.add_paragraph()
-    add_fig('biot_surface', 'Fig. 1. Adaptive Biot Coefficient Sensitivity Surface (3D)')
-
-    # Eq 2: Effective Stress
-    doc.add_heading("2.2 Effective Stress — Eq. (2)", level=3)
-    doc.add_paragraph("sigma' = sigma - alpha * p    ... (2)")
-    spec_tbl_2 = doc.add_table(rows=4, cols=2)
-    spec_tbl_2.style = 'Table Grid'
-    set_table_border(spec_tbl_2)
-    spec_data_2 = [
-        ["Assumptions", "Small strain; linear elasticity; pore pressure uniformly distributed"],
-        ["Constraints", "sigma' > 0 (compressive); p >= 0; 0 < alpha <= 1"],
-        ["Validity Range", "All UCG depths; T < 1500C; drained/undrained conditions"],
-        ["SI Units", "sigma, sigma', p [Pa or MPa]; alpha [dimensionless]"],
-    ]
-    for i, (k, v) in enumerate(spec_data_2):
-        spec_tbl_2.rows[i].cells[0].text = k
-        spec_tbl_2.rows[i].cells[1].text = v
-
-    # Eqs 3-6: Hoek-Brown
-    doc.add_heading("2.3 Hoek-Brown Failure Criterion — Eqs. (3)-(6)", level=3)
-    doc.add_paragraph(
-        "sigma1 = sigma3 + sigma_ci * (mb * sigma3/sigma_ci + s)^a    ... (3)\n"
-        "mb = mi * exp((GSI-100)/(28-14*D))     ... (4)\n"
-        "s = exp((GSI-100)/(9-3*D))             ... (5)\n"
-        "a = 0.5 + (1/6)*(exp(-GSI/15) - exp(-20/3))    ... (6)"
-    )
-    spec_tbl_3 = doc.add_table(rows=4, cols=2)
-    spec_tbl_3.style = 'Table Grid'
-    set_table_border(spec_tbl_3)
-    spec_data_3 = [
-        ["Assumptions", "Isotropic rock mass; continuous failure surface; GSI captures rock quality"],
-        ["Constraints", "GSI in [10, 100]; D in [0, 1]; sigma_ci > 0; mi > 0"],
-        ["Validity Range", "All rock types; T < 800C (above: thermal degradation modifies GSI)"],
-        ["SI Units", "sigma1, sigma3, sigma_ci [MPa]; GSI, D, mi, mb, s, a [dimensionless]"],
-    ]
-    for i, (k, v) in enumerate(spec_data_3):
-        spec_tbl_3.rows[i].cells[0].text = k
-        spec_tbl_3.rows[i].cells[1].text = v
-    doc.add_paragraph()
-    add_fig('hoek_brown_envelope', 'Fig. 2. Hoek-Brown Failure Envelope vs Lab Data (Angren UCG-1, 2024)')
-
-    # Eqs 7-9: Arrhenius
-    doc.add_heading("2.4 Arrhenius Thermal Degradation — Eqs. (7)-(9)", level=3)
-    doc.add_paragraph(
-        "k(T) = A * exp(-Ea / (R*T))    ... (7)\n"
-        "D(T) = 1 - exp(-k(T) * t)      ... (8)\n"
-        "GSI(t) = GSI0 * exp(-D)        ... (9)"
-    )
-    spec_tbl_4 = doc.add_table(rows=4, cols=2)
-    spec_tbl_4.style = 'Table Grid'
-    set_table_border(spec_tbl_4)
-    spec_data_4 = [
-        ["Assumptions", "First-order reaction; isothermal at element level; coal composition uniform"],
-        ["Constraints", "T > 293K; t >= 0; 0 <= D <= 1; Ea = 50,000 J/mol (Shao et al. 2003)"],
-        ["Validity Range", "T in [20C, 1200C]; validated up to 1200C (Angren lab tests)"],
-        ["SI Units", "k [1/s]; A [1/s]; Ea [J/mol]; R [J/(mol*K)]; T [K]; t [s]; D [dimensionless]"],
-    ]
-    for i, (k, v) in enumerate(spec_data_4):
-        spec_tbl_4.rows[i].cells[0].text = k
-        spec_tbl_4.rows[i].cells[1].text = v
-    doc.add_paragraph()
-    add_fig('arrhenius_contour', 'Fig. 3. Temperature-Damage Contour (Arrhenius Kinetics)')
-    add_fig('gsi_heatmap', 'Fig. 4. GSI Degradation 3D Heatmap')
-
-    # ════════════════════════════════════════════════════════════════════
-    # SECTION 3: FOS ANALYSIS
-    # ════════════════════════════════════════════════════════════════════
-    doc.add_heading("3. Factor of Safety (FOS) Analysis", level=2)
-    fos_min_r = results.get('fos_min', 0.05)
-    fos_avg_r = results.get('fos_avg', 0.96)
-    fos_design_r = results.get('fos_design', 0.85)
-    fos_p = doc.add_paragraph()
-    fos_p.add_run("FOS min    = ").bold = True
-    fos_p.add_run(f"{fos_min_r:.2f}  (absolute minimum — single point, local failure indicator)\n")
-    fos_p.add_run("FOS avg    = ").bold = True
-    fos_p.add_run(f"{fos_avg_r:.2f}  (spatial mean over entire domain)\n")
-    fos_p.add_run("FOS design = ").bold = True
-    fos_p.add_run(f"{fos_design_r:.2f}  (10th percentile — conservative design value)")
-    doc.add_paragraph(
-        "Design decisions are based on FOS design (10th percentile), which ensures "
-        "90% of the domain is safer than the design value. FOS min represents only "
-        "a single point and should not be used for design decisions. Risk index is "
-        "AHP-weighted composite (FOS + temperature + gas pressure)."
-    )
-    # Auto risk classification
-    if fos_design_r >= 1.5:
-        risk_class = "LOW"
-        risk_color = RGBColor(0, 128, 0)
-    elif fos_design_r >= 1.1:
-        risk_class = "MEDIUM"
-        risk_color = RGBColor(255, 165, 0)
+    table('1. Executive Scientific Summary', [
+        entry('fos_design','Design FOS'), entry('pf','P(failure) (fraction)'),
+        entry('novelty_index','Novelty heuristic'), entry('patentability_index','Patent heuristic'),
+    ])
+    doc.add_paragraph('Patent novelty and FTO require professional source-based analysis. Heuristic values cannot demonstrate patentability.')
+    doc.add_heading('2. Governing Models and Applicability', level=2)
+    doc.add_paragraph('Hoek-Brown, thermal degradation and pore-pressure coupling are model assumptions; independent model calibration and measurement uncertainty must be supplied separately.')
+    table('3. Factor of Safety (FOS)', [entry('fos_min'),entry('fos_avg'),entry('fos_design')])
+    table('4. AI Evaluation', [entry(k) for k in ('accuracy','auc','f1','precision','recall','specificity','mcc','kappa','ece')])
+    doc.add_paragraph('AI scores are model outputs, not field validation unless holdout data and provenance are independently verified.')
+    table('4d. CPU/GPU Benchmarks', [entry(k) for k in ('cpu_seconds','gpu_seconds','memory_mb','flops')])
+    ablation = results.get('ablation_results')
+    doc.add_heading('4e. Ablation Study',level=2)
+    doc.add_paragraph('MODEL_OUTPUT — supplied ablation results require independent CV/holdout and uncertainty.' if ablation is not None else 'NOT_EVALUATED — no ablation results supplied.')
+    table('5. SHAP Explainability', [entry('shap_temperature','Temperature |SHAP|')])
+    doc.add_paragraph('SHAP values must be extracted from a fitted model with traceable inputs; no prior figure is proof of variable dominance.')
+    table('6. Monte Carlo / Bootstrap UQ', [entry('pf'), entry('fos_avg'),entry('bootstrap_mean_fos'),entry('bootstrap_ci_low'),entry('bootstrap_ci_high'),entry('n_simulations')])
+    doc.add_paragraph('P(failure) values are shown without artificial capping: 1.0 means 100 percent. Sampling details require provenance.')
+    table('7. Sobol Sensitivity', [entry('sobol_temperature_s1'),entry('sobol_temperature_st')])
+    doc.add_heading('8. FEM Solver Validation and Mesh Convergence',level=2)
+    mesh_rows=results.get('mesh_convergence_results') or []
+    verified_rows=[]
+    if isinstance(mesh_rows,list):
+        for r in mesh_rows:
+            if isinstance(r,dict) and r.get('status') == 'COMPUTED' and r.get('source_status') == 'MODEL_OUTPUT':
+                verified_rows.append(r)
+    doc.add_paragraph(f'{len(verified_rows)} computed mesh-level records supplied.' if verified_rows else 'NOT_EVALUATED — no externally traceable mesh convergence outputs supplied.')
+    doc.add_paragraph('ABAQUS/COMSOL benchmark: NOT_EVALUATED without independent solver files, mesh/material/BC matching and error calculation.')
+    doc.add_heading('9. ISO Standards — Assessment Status', level=2)
+    for name in ('ISO 9001:2015','ISO 14001:2015','ISO 45001:2018','ISO 31000:2018','ISO 5725'):
+        doc.add_paragraph(name + ': NOT_ASSESSED — functional mapping is not certification.')
+    doc.add_heading('13. Angren Experimental Data Validation',level=2)
+    field=results.get('angren_validation') or {}
+    required=('source_file','date','units','observed','predicted')
+    if isinstance(field,dict) and all(field.get(k) is not None for k in required):
+        try:
+            observed=np.asarray(field['observed'],dtype=float)
+            predicted=np.asarray(field['predicted'],dtype=float)
+            if observed.size < 2 or observed.shape != predicted.shape or not np.isfinite(observed).all() or not np.isfinite(predicted).all():
+                raise ValueError('invalid pairs')
+            # Source is user-supplied, not independently authenticated by software.
+            rmse=float(np.sqrt(np.mean((observed-predicted)**2)))
+            doc.add_paragraph(f'RMSE = {rmse:.6g} ({field["units"]}); paired n={observed.size}; source={field["source_file"]}; date={field["date"]}; status UNVERIFIED_SOURCE (external verification pending).')
+        except (ValueError,TypeError) as exc:
+            doc.add_paragraph('NOT_EVALUATED — invalid paired observations: '+str(exc))
     else:
-        risk_class = "CRITICAL"
-        risk_color = RGBColor(255, 0, 0)
-    risk_p = doc.add_paragraph()
-    risk_p.add_run("Risk Classification (auto, by FOS design): ").bold = True
-    risk_run = risk_p.add_run(risk_class)
-    risk_run.bold = True
-    risk_run.font.color.rgb = risk_color
-
-    # ════════════════════════════════════════════════════════════════════
-    # SECTION 4: AI ANALYSIS (expanded with all metrics)
-    # ════════════════════════════════════════════════════════════════════
-    doc.add_heading("4. Artificial Intelligence Analysis", level=2)
-
-    doc.add_heading("4a. Comprehensive AI Metrics", level=3)
-    metrics_tbl = doc.add_table(rows=12, cols=2)
-    metrics_tbl.style = 'Table Grid'
-    set_table_border(metrics_tbl)
-    metrics_data = [
-        ["Metric", "Value"],
-        ["Accuracy", f"{accuracy:.4f}"],
-        ["ROC-AUC", f"{results.get('auc', 0.90):.4f}"],
-        ["F1-Score", f"{results.get('f1', 0.82):.4f}"],
-        ["Precision", "0.834"],
-        ["Recall (Sensitivity)", "0.812"],
-        ["Specificity", "0.891"],
-        ["MCC (Matthews Correlation)", "0.745"],
-        ["Cohen's Kappa", "0.762"],
-        ["ECE (Expected Calibration Error)", "0.034"],
-        ["Inference Time (per sample)", "0.8 ms"],
-        ["Model Size (FLOPS)", "~2.3M FLOPs"],
-    ]
-    for i, (k, v) in enumerate(metrics_data):
-        metrics_tbl.rows[i].cells[0].text = k
-        metrics_tbl.rows[i].cells[1].text = v
-    doc.add_paragraph()
-    add_fig('roc_curve', 'Fig. 5. ROC Curve (AUC = 0.90)', Inches(4.5))
-    add_fig('pr_curve', 'Fig. 6. Precision-Recall Curve (AP = 0.87)', Inches(4.5))
-
-    # Network Architecture
-    doc.add_heading("4b. PGNN Network Architecture", level=3)
-    add_fig('pgnn_architecture', 'Fig. 7. PGNN Network Architecture Diagram', Inches(6.5))
-    arch_p = doc.add_paragraph()
-    arch_p.add_run("Optimizer: ").bold = True
-    arch_p.add_run("Adam (lr=0.001, beta1=0.9, beta2=0.999)\n")
-    arch_p.add_run("Loss: ").bold = True
-    arch_p.add_run("Categorical Cross-Entropy\n")
-    arch_p.add_run("Batch Size: ").bold = True
-    arch_p.add_run("32\n")
-    arch_p.add_run("Epochs: ").bold = True
-    arch_p.add_run("100 (early stopping at 47, patience=10)\n")
-    arch_p.add_run("Learning Rate Scheduler: ").bold = True
-    arch_p.add_run("ReduceLROnPlateau (factor=0.5, patience=5, min_lr=1e-6)\n")
-    arch_p.add_run("Feature Scaling: ").bold = True
-    arch_p.add_run("StandardScaler (zero mean, unit variance)\n")
-    arch_p.add_run("Class Imbalance: ").bold = True
-    arch_p.add_run("SMOTE (Safe: 62%, Marginal: 23%, Critical: 15%)\n")
-    arch_p.add_run("Random Seed: ").bold = True
-    arch_p.add_run("42 (sklearn + NumPy)")
-    add_fig('learning_curve', 'Fig. 8. PGNN Learning Curve (Training + Validation Loss)')
-
-    # RandomForest hyperparameters (FIX #17, #18)
-    doc.add_heading("4c. RandomForest Hyperparameters", level=3)
-    rf_tbl = doc.add_table(rows=10, cols=3)
-    rf_tbl.style = 'Table Grid'
-    set_table_border(rf_tbl)
-    rf_data = [
-        ["Parameter", "Value", "Optimization Method"],
-        ["n_estimators (trees)", "100", "RandomizedSearchCV"],
-        ["max_depth", "20", "RandomizedSearchCV"],
-        ["min_samples_leaf", "4", "RandomizedSearchCV"],
-        ["min_samples_split", "10", "RandomizedSearchCV"],
-        ["max_features", "sqrt", "Default"],
-        ["criterion", "gini", "Default"],
-        ["bootstrap", "True", "Default"],
-        ["class_weight", "balanced", "For imbalanced data"],
-        ["n_jobs", "-1 (all cores)", "Performance"],
-    ]
-    for i, row_data in enumerate(rf_data):
-        for j, val in enumerate(row_data):
-            rf_tbl.rows[i].cells[j].text = val
-    doc.add_paragraph()
-
-    # Performance metrics (FIX #12-15)
-    doc.add_heading("4d. Model Performance Benchmarks", level=3)
-    perf_tbl = doc.add_table(rows=6, cols=4)
-    perf_tbl.style = 'Table Grid'
-    set_table_border(perf_tbl)
-    perf_data = [
-        ["Metric", "CPU", "GPU (CUDA)", "Speedup"],
-        ["Inference time (1k samples)", "0.82 s", "0.09 s", "9.1x"],
-        ["Memory usage (peak)", "485 MB", "1,240 MB", "—"],
-        ["Model size (disk)", "2.8 MB", "2.8 MB", "—"],
-        ["FLOPs (single inference)", "~2,300", "~2,300", "—"],
-        ["Training time (100 epochs)", "847 s", "124 s", "6.8x"],
-    ]
-    for i, row_data in enumerate(perf_data):
-        for j, val in enumerate(row_data):
-            perf_tbl.rows[i].cells[j].text = val
-    doc.add_paragraph()
-    add_fig('gpu_cpu', 'Fig. 9. GPU vs CPU Performance Comparison')
-
-    # Ablation Study (FIX #20)
-    doc.add_heading("4e. Ablation Study", level=3)
-    doc.add_paragraph(
-        "Systematic removal of components to quantify individual contribution to performance."
-    )
-    abl_tbl = doc.add_table(rows=6, cols=4)
-    abl_tbl.style = 'Table Grid'
-    set_table_border(abl_tbl)
-    abl_data = [
-        ["Configuration", "Accuracy", "AUC", "Delta vs Full"],
-        ["Hoek-Brown only (no AI)", "0.712", "0.685", "-0.138"],
-        ["Hoek-Brown + RF (no PGNN)", "0.798", "0.835", "-0.052"],
-        ["Hoek-Brown + PGNN (no Adaptive Biot)", "0.821", "0.868", "-0.029"],
-        ["Hoek-Brown + PGNN + Adaptive Biot (no SHAP)", "0.843", "0.892", "-0.007"],
-        ["Full (Hoek-Brown + PGNN + Biot + SHAP)", "0.850", "0.900", "baseline"],
-    ]
-    for i, row_data in enumerate(abl_data):
-        for j, val in enumerate(row_data):
-            abl_tbl.rows[i].cells[j].text = val
-
-    # ════════════════════════════════════════════════════════════════════
-    # SECTION 5: SHAP EXPLAINABILITY (with figures)
-    # ════════════════════════════════════════════════════════════════════
-    doc.add_heading("5. SHAP Explainability Suite", level=2)
-    doc.add_paragraph(
-        "SHAP (SHapley Additive exPlanations) — Lundberg & Lee (2017). "
-        "Temperature is the dominant feature (|SHAP|=0.342), consistent with Arrhenius "
-        "thermal degradation. Feature importance computed via Permutation Importance "
-        "(Breiman 2001) as fallback, calibrated against UCG geomechanics literature."
-    )
-    add_fig('shap_beeswarm', 'Fig. 10. SHAP Beeswarm Plot (all features, all samples)')
-    add_fig('shap_waterfall', 'Fig. 11. SHAP Waterfall (single prediction decomposition)')
-    add_fig('shap_dependence', 'Fig. 12. SHAP Dependence Plot: Temperature vs SHAP value')
-
-    # ════════════════════════════════════════════════════════════════════
-    # SECTION 6: MONTE CARLO UQ (with figures)
-    # ════════════════════════════════════════════════════════════════════
-    doc.add_heading("6. Monte-Carlo Uncertainty Quantification", level=2)
-    pf_capped = min(pf_val, 0.999)
-    doc.add_paragraph(
-        f"P(failure) = {pf_capped*100:.1f}% (Monte Carlo, conservative worst-case)\n"
-        f"FOS avg = {fos_avg_r:.2f}\n"
-        f"FOS design = {fos_design_r:.2f}\n\n"
-        "Sample Size: N = 50,000 (LHS sampling)\n"
-        "Distributions: Normal (UCS, GSI), Lognormal (Temperature), Uniform (Pillar width), Beta (Biot)"
-    )
-    add_fig('mc_histogram', 'Fig. 13. Monte Carlo FOS Histogram (N=50,000)')
-    add_fig('mc_cdf', 'Fig. 14. Monte Carlo Cumulative Distribution Function (CDF)')
-    add_fig('mc_pdf', 'Fig. 15. Monte Carlo Probability Density Function (PDF, KDE)')
-
-    # Bootstrap
-    doc.add_heading("6a. Bootstrap Uncertainty Analysis", level=3)
-    doc.add_paragraph(
-        "Method: Non-parametric bootstrap (Efron 1979), 10,000 resamples, BCa CI.\n"
-        "Bootstrap Mean FOS: 0.96 +/- 0.03 (95% CI)\n"
-        "Bootstrap P(failure): 99.9% +/- 0.4% (95% CI)"
-    )
-    add_fig('bootstrap_dist', 'Fig. 16. Bootstrap Distribution (N=10,000 resamples)')
-
-    # ════════════════════════════════════════════════════════════════════
-    # SECTION 7: SOBOL SENSITIVITY
-    # ════════════════════════════════════════════════════════════════════
-    doc.add_heading("7. Global Sensitivity Analysis (Sobol)", level=2)
-    doc.add_paragraph(
-        "First-order: Si = Vi/V(Y)    ... (14)\n"
-        "Total: STi = 1 - V~i/V(Y)    ... (15)"
-    )
-    add_fig('sobol_tornado', 'Fig. 17. Sobol Sensitivity Tornado Diagram (S1 + ST)')
-
-    # ════════════════════════════════════════════════════════════════════
-    # SECTION 8: FEM VALIDATION
-    # ════════════════════════════════════════════════════════════════════
-    doc.add_heading("8. FEM Solver Validation", level=2)
-    add_fig('fem_comparison', 'Fig. 18. FEM Comparison: Our Solver vs ABAQUS vs COMSOL')
-
-    doc.add_heading("8a. Mesh Convergence Study", level=3)
-    add_fig('mesh_convergence', 'Fig. 19. Mesh Convergence: Stress + CPU Time vs Element Count')
-    mesh_tbl = doc.add_table(rows=6, cols=4)
-    mesh_tbl.style = 'Table Grid'
-    set_table_border(mesh_tbl)
-    mesh_conv_data = [
-        ["Elements", "Max Stress (MPa)", "CPU Time (s)", "Error (%)"],
-        ["500", "16.80", "0.5", "10.5"],
-        ["2,000", "15.80", "2.1", "4.3"],
-        ["8,000", "15.40", "8.3", "1.6"],
-        ["32,000", "15.20", "33.7", "0.3"],
-        ["128,000", "15.15", "134.2", "reference"],
-    ]
-    for i, row_data in enumerate(mesh_conv_data):
-        for j, val in enumerate(row_data):
-            mesh_tbl.rows[i].cells[j].text = val
-    doc.add_paragraph()
-
-    doc.add_heading("8b. Solver Performance Benchmark", level=3)
-    add_fig('solver_benchmark', 'Fig. 20. Solver Performance: Assembly + Solve + Post-process')
-    solver_tbl = doc.add_table(rows=4, cols=5)
-    solver_tbl.style = 'Table Grid'
-    set_table_border(solver_tbl)
-    solver_data = [
-        ["Mesh Size", "Elements", "Assembly (s)", "Solve (s)", "Total (s)"],
-        ["100k", "100,000", "2.1", "5.8", "9.1"],
-        ["500k", "500,000", "12.5", "32.1", "51.4"],
-        ["1M", "1,000,000", "28.3", "75.6", "119.3"],
-    ]
-    for i, row_data in enumerate(solver_data):
-        for j, val in enumerate(row_data):
-            solver_tbl.rows[i].cells[j].text = val
-
-    # ════════════════════════════════════════════════════════════════════
-    # SECTION 9: ISO COMPLIANCE
-    # ════════════════════════════════════════════════════════════════════
-    doc.add_heading("9. ISO Compliance Mapping with Evidence", level=2)
-    iso_tbl = doc.add_table(rows=6, cols=4)
-    iso_tbl.style = 'Table Grid'
-    set_table_border(iso_tbl)
-    iso_data = [
-        ["Standard", "Domain", "Evidence", "Status"],
-        ["ISO 9001:2015", "Quality Management", "Doc control, revision history, SHA-256 chain", "COMPLIANT"],
-        ["ISO 14001:2015", "Environmental Management", "LCA, CO2 reduction, carbon credit calc", "COMPLIANT"],
-        ["ISO 45001:2018", "Occupational Safety", "5x5 Risk Matrix, FOS classification", "COMPLIANT"],
-        ["ISO 31000:2018", "Risk Management", "AHP risk index, Monte Carlo, Sobol", "COMPLIANT"],
-        ["ISO 5725", "Measurement Accuracy", "RMSE, MAE, R2 for all sensors", "COMPLIANT"],
-    ]
-    for i, row_data in enumerate(iso_data):
-        for j, val in enumerate(row_data):
-            iso_tbl.rows[i].cells[j].text = val
-
-    # ════════════════════════════════════════════════════════════════════
-    # SECTION 10: RISK MATRIX 5x5
-    # ════════════════════════════════════════════════════════════════════
-    doc.add_heading("10. Risk Matrix (5x5 Industrial Standard)", level=2)
-    rm_tbl = doc.add_table(rows=6, cols=6)
-    rm_tbl.style = 'Table Grid'
-    set_table_border(rm_tbl)
-    rm_data = [
-        ["Likelihood / Severity", "Negligible (1)", "Minor (2)", "Moderate (3)", "Major (4)", "Catastrophic (5)"],
-        ["Almost Certain (5)", "5 (LOW)", "10 (MED)", "15 (HIGH)", "20 (CRIT)", "25 (CRIT)"],
-        ["Likely (4)", "4 (LOW)", "8 (MED)", "12 (HIGH)", "16 (CRIT)", "20 (CRIT)"],
-        ["Possible (3)", "3 (LOW)", "6 (MED)", "9 (HIGH)", "12 (HIGH)", "15 (HIGH)"],
-        ["Unlikely (2)", "2 (LOW)", "4 (LOW)", "6 (MED)", "8 (MED)", "10 (MED)"],
-        ["Rare (1)", "1 (LOW)", "2 (LOW)", "3 (LOW)", "4 (LOW)", "5 (LOW)"],
-    ]
-    for i, row_data in enumerate(rm_data):
-        for j, val in enumerate(row_data):
-            rm_tbl.rows[i].cells[j].text = val
-
-    # ════════════════════════════════════════════════════════════════════
-    # SECTION 11: PATENT NOVELTY + FTO + CLAIM TREE
-    # ════════════════════════════════════════════════════════════════════
-    doc.add_heading("11. Patent Novelty, FTO, and Claim Structure", level=2)
-    doc.add_paragraph(
-        f"Patentability Index: {patentability:.2f}/100\n"
-        f"Novelty Index: {novelty:.2f}/100\n"
-        f"FTO Score: {results.get('fto_score', 0.88):.2f}/100\n"
-        f"TRL Level: 6 (validated in relevant environment)"
-    )
-
-    # Patent Claim Dependency Tree (FIX #31)
-    doc.add_heading("11a. Patent Claim Dependency Tree", level=3)
-    doc.add_paragraph(
-        "INDEPENDENT CLAIMS (4):\n\n"
-        "Claim 1 (METHOD) — Adaptive Biot + Arrhenius + AI monitoring\n"
-        "  |\n"
-        "  +-- Claim 5 (dependent): wherein SHAP explainability is used\n"
-        "  +-- Claim 6 (dependent): wherein Monte Carlo UQ with 50k samples\n"
-        "  +-- Claim 7 (dependent): wherein Sobol sensitivity S1+ST\n\n"
-        "Claim 2 (SYSTEM) — Digital twin with SCADA/MQTT/OPC-UA\n"
-        "  |\n"
-        "  +-- Claim 8 (dependent): wherein SHA-256 + RSA-4096 audit\n"
-        "  +-- Claim 9 (dependent): wherein WORM storage protection\n\n"
-        "Claim 3 (APPARATUS) — Sensor array + edge AI device\n"
-        "  |\n"
-        "  +-- Claim 10 (dependent): wherein fiber optic DTS sensors\n"
-        "  +-- Claim 11 (dependent): wherein vibrating wire stress cells\n\n"
-        "Claim 4 (CRM) — Computer-readable medium with instructions\n"
-        "  |\n"
-        "  +-- Claim 12 (dependent): wherein PCT filing instructions\n"
-        "  +-- Claim 13 (dependent): wherein multi-language support (UZ/EN/RU)\n"
-        "  +-- Claim 14 (dependent): wherein GPU acceleration (CUDA)\n"
-        "  +-- Claim 15 (dependent): wherein post-quantum crypto (Kyber)"
-    )
-
-    # SCADA Sequence Diagram (FIX #35)
-    doc.add_heading("11b. SCADA Signal Flow Sequence Diagram", level=3)
-    doc.add_paragraph(
-        "Sequence diagram (UML 2.0 notation):\n\n"
-        "  Sensor  ->  OPC-UA  :  Data sample (T, sigma, p, epsilon)\n"
-        "  OPC-UA  ->  MQTT    :  Publish to topic 'ucg/sensor/{id}'\n"
-        "  MQTT    ->  Edge AI :  Subscribe + preprocess\n"
-        "  Edge AI ->  Edge AI :  PGNN inference (0.8 ms)\n"
-        "  Edge AI ->  Cloud   :  Risk score + SHAP values\n"
-        "  Cloud   ->  Cloud   :  Monte Carlo + Sobol update\n"
-        "  Cloud   ->  Dashboard:  Real-time visualization\n"
-        "  Cloud   ->  Audit   :  SHA-256 hash + RSA-4096 sign\n"
-        "  Audit   ->  WORM    :  Append-only storage\n"
-        "  Dashboard -> Operator:  Alert if FOS < 1.1"
-    )
-
-    # ════════════════════════════════════════════════════════════════════
-    # SECTION 12: CYBERSECURITY + STRIDE THREAT MODEL (FIX #36)
-    # ════════════════════════════════════════════════════════════════════
-    doc.add_heading("12. Cybersecurity: STRIDE Threat Model", level=2)
-    doc.add_paragraph(
-        "Threat model based on Microsoft STRIDE (Spoofing, Tampering, Repudiation, "
-        "Information Disclosure, Denial of Service, Elevation of Privilege)."
-    )
-    stride_tbl = doc.add_table(rows=7, cols=4)
-    stride_tbl.style = 'Table Grid'
-    set_table_border(stride_tbl)
-    stride_data = [
-        ["Threat (STRIDE)", "Scenario", "Mitigation", "Status"],
-        ["Spoofing", "Fake sensor data injection", "RSA-4096 mutual auth + sensor PKI", "MITIGATED"],
-        ["Tampering", "Audit log modification", "WORM storage + SHA-256 Merkle chain", "MITIGATED"],
-        ["Repudiation", "Deny action performed", "RSA-4096 signed timestamps + IPFS", "MITIGATED"],
-        ["Info Disclosure", "Data breach", "AES-256 encryption + Vault secrets", "MITIGATED"],
-        ["Denial of Service", "MQTT broker flood", "Rate limiting + failover broker", "MITIGATED"],
-        ["Elevation of Privilege", "SQL injection → admin", "Parameterized queries + AST scanner", "MITIGATED"],
-    ]
-    for i, row_data in enumerate(stride_data):
-        for j, val in enumerate(row_data):
-            stride_tbl.rows[i].cells[j].text = val
-
-    # ════════════════════════════════════════════════════════════════════
-    # SECTION 13: EXPERIMENTAL VALIDATION + UNCERTAINTY BUDGET (FIX #37)
-    # ════════════════════════════════════════════════════════════════════
-    doc.add_heading("13. Experimental Validation with Measurement Uncertainty", level=2)
-    doc.add_paragraph(
-        "Lab: 12 experiments (Angren + Shurtan, 2024). Field: 8 sites (5 countries, 1999-2024).\n"
-        "R2 = 0.94, MAPE = 4.2%, NRMSE = 0.06 (all within acceptable range)."
-    )
-    # Measurement Uncertainty Budget (FIX #37)
-    doc.add_heading("13a. Measurement Uncertainty Budget", level=3)
-    unc_tbl = doc.add_table(rows=8, cols=5)
-    unc_tbl.style = 'Table Grid'
-    set_table_border(unc_tbl)
-    unc_data = [
-        ["Source", "Type", "Distribution", "Std Uncertainty", "Sensitivity Coeff"],
-        ["Temperature sensor (K-type)", "B", "Rectangular", "0.29 C", "0.85"],
-        ["Stress sensor (vibrating wire)", "B", "Normal", "0.15 MPa", "1.20"],
-        ["Extensometer", "B", "Normal", "0.05 mm", "0.45"],
-        ["Calibration drift", "B", "Rectangular", "0.5% reading", "1.00"],
-        ["Spatial variability", "A", "Normal", "0.8 MPa", "0.92"],
-        ["Repeatability", "A", "Normal (n=5)", "0.3 MPa", "1.00"],
-        ["Combined (RSS)", "—", "Normal", "u_c = 1.34 MPa", "—"],
-    ]
-    for i, row_data in enumerate(unc_data):
-        for j, val in enumerate(row_data):
-            unc_tbl.rows[i].cells[j].text = val
-    doc.add_paragraph(
-        "Expanded uncertainty (k=2, 95% CI): U = 2.68 MPa.\n"
-        "Reference: JCGM 100:2008 (GUM) Guide to Uncertainty in Measurement."
-    )
-
-    # ════════════════════════════════════════════════════════════════════
-    # SECTION 14: ECONOMIC ANALYSIS + SENSITIVITY (FIX #38)
-    # ════════════════════════════════════════════════════════════════════
-    doc.add_heading("14. Economic Analysis with Sensitivity", level=2)
-    econ_p = doc.add_paragraph()
-    econ_p.add_run("CAPEX: ").bold = True
-    econ_p.add_run("$7,200,000\n")
-    econ_p.add_run("OPEX: ").bold = True
-    econ_p.add_run("$1,245,000/year\n")
-    econ_p.add_run("Syngas Revenue: ").bold = True
-    econ_p.add_run("~$3,200,000/year\n")
-    econ_p.add_run("Payback Period: ").bold = True
-    econ_p.add_run("~3.5 years\n")
-    econ_p.add_run("10-year ROI: ").bold = True
-    econ_p.add_run("~185%")
-
-    doc.add_heading("14a. Economic Sensitivity Analysis", level=3)
-    econ_sens_tbl = doc.add_table(rows=6, cols=4)
-    econ_sens_tbl.style = 'Table Grid'
-    set_table_border(econ_sens_tbl)
-    econ_sens_data = [
-        ["Variable", "Pessimistic (-20%)", "Base Case", "Optimistic (+20%)"],
-        ["Syngas price ($/GJ)", "$3.20 → ROI 142%", "$4.00 → ROI 185%", "$4.80 → ROI 228%"],
-        ["CAPEX", "$8.64M → ROI 165%", "$7.20M → ROI 185%", "$5.76M → ROI 205%"],
-        ["OPEX", "$1.49M → ROI 178%", "$1.25M → ROI 185%", "$1.00M → ROI 192%"],
-        ["Carbon credit ($/tCO2)", "$40 → ROI 175%", "$50 → ROI 185%", "$60 → ROI 195%"],
-        ["Syngas yield (MJ/Nm3)", "6.6 → ROI 155%", "8.2 → ROI 185%", "9.8 → ROI 215%"],
-    ]
-    for i, row_data in enumerate(econ_sens_data):
-        for j, val in enumerate(row_data):
-            econ_sens_tbl.rows[i].cells[j].text = val
-
-    # ════════════════════════════════════════════════════════════════════
-    # SECTION 15: ENVIRONMENTAL + CO2 + LCA (FIX #39)
-    # ════════════════════════════════════════════════════════════════════
-    doc.add_heading("15. Environmental Assessment: CO2, Carbon Credit, LCA", level=2)
-
-    doc.add_heading("15a. CO2 Emission Reduction", level=3)
-    co2_p = doc.add_paragraph()
-    co2_p.add_run("Surface gasification CO2: ").bold = True
-    co2_p.add_run("2.8 tCO2/tcoal\n")
-    co2_p.add_run("UCG (this platform) CO2: ").bold = True
-    co2_p.add_run("1.82 tCO2/tcoal\n")
-    co2_p.add_run("Reduction: ").bold = True
-    co2_p.add_run("35% (0.98 tCO2/tcoal saved)\n")
-    co2_p.add_run("Annual CO2 saved (at 100k tcoal/yr): ").bold = True
-    co2_p.add_run("98,000 tCO2/year")
-
-    doc.add_heading("15b. Carbon Credit Calculation", level=3)
-    cc_p = doc.add_paragraph()
-    cc_p.add_run("Carbon credit price (Verra VCS): ").bold = True
-    cc_p.add_run("$50/tCO2 (2026 market)\n")
-    cc_p.add_run("Annual carbon credit: ").bold = True
-    cc_p.add_run("98,000 * $50 = $4,900,000/year\n")
-    cc_p.add_run("Net (after verification fees 15%): ").bold = True
-    cc_p.add_run("$4,165,000/year\n")
-    cc_p.add_run("10-year carbon credit revenue: ").bold = True
-    cc_p.add_run("~$41.7M")
-
-    doc.add_heading("15c. Life Cycle Assessment (LCA)", level=3)
-    lca_tbl = doc.add_table(rows=7, cols=4)
-    lca_tbl.style = 'Table Grid'
-    set_table_border(lca_tbl)
-    lca_data = [
-        ["Phase", "CO2 (tCO2eq)", "Energy (GJ)", "Water (m3)"],
-        ["1. Construction (drilling+plant)", "1,200", "8,500", "5,000"],
-        ["2. Operation (10 years)", "18,200", "125,000", "15,000"],
-        ["3. Decommissioning", "350", "2,100", "800"],
-        ["4. Syngas transport", "1,800", "12,000", "—"],
-        ["TOTAL (10-year lifecycle)", "21,550", "147,600", "20,800"],
-        ["Per GJ syngas", "0.018", "—", "—"],
-    ]
-    for i, row_data in enumerate(lca_data):
-        for j, val in enumerate(row_data):
-            lca_tbl.rows[i].cells[j].text = val
-    doc.add_paragraph(
-        "LCA Method: ISO 14040/14044:2006.\n"
-        "Functional unit: 1 GJ syngas delivered.\n"
-        "Comparison: Surface gasification = 0.028 tCO2eq/GJ → UCG = 0.018 → 36% reduction."
-    )
-
-    # ════════════════════════════════════════════════════════════════════
-    # SECTION 16: DIGITAL TWIN ARCHITECTURE
-    # ════════════════════════════════════════════════════════════════════
-    doc.add_heading("16. Digital Twin Architecture", level=2)
-    doc.add_paragraph(
-        "┌─── FIELD LAYER ───────┐    ┌─── EDGE LAYER ──────┐\n"
-        "│ Thermocouples         │ →  │ OPC-UA Server        │\n"
-        "│ Vibrating wire        │ →  │ MQTT Broker          │\n"
-        "│ Extensometers         │ →  │ Edge AI (PGNN)       │\n"
-        "│ Fiber optic DTS       │ →  │ Local SQLite         │\n"
-        "└───────────────────────┘    └──────────┬───────────┘\n"
-        "                                        ↓\n"
-        "┌─── CLOUD LAYER ─────────────────────────────────────┐\n"
-        "│ Streamlit Dashboard  •  Monte Carlo Engine          │\n"
-        "│ FEM Solver (3D Hex)  •  Sobol Sensitivity           │\n"
-        "│ SHAP Explainer       •  Bootstrap UQ                │\n"
-        "│ PostgreSQL (audit)   •  WORM Storage                │\n"
-        "└──────────────────────────────┬──────────────────────┘\n"
-        "                               ↓\n"
-        "┌─── SECURITY LAYER ──────────────────────────────────┐\n"
-        "│ RSA-4096 Signature  •  SHA-256 Merkle Chain         │\n"
-        "│ PQC (CRYSTALS-Kyber) •  IPFS Distributed            │\n"
-        "└─────────────────────────────────────────────────────┘"
-    )
-
-    # ════════════════════════════════════════════════════════════════════
-    # SECTION 17: REGRESSION SUITE
-    # ════════════════════════════════════════════════════════════════════
-    doc.add_heading("17. Regression Suite and Traceability", level=2)
-    reg_suite = results.get('regression_suite', {})
-    reg_status = "PASSED" if reg_suite.get('unittest_success', False) else "VALIDATION PASSED"
-    reg_rmse = reg_suite.get('regression_rmse', 0.0)
-    reg_r2 = reg_suite.get('regression_r2', 0.0)
-    doc.add_paragraph(
-        f"Regression Suite: {reg_status} (RMSE={reg_rmse:.4f}, R2={reg_r2:.4f})\n"
-        f"Unit Tests: 247 tests, all PASSED\n"
-        f"Code Coverage: ~5-10% (stub tests, NOT 78%)  # FIX v9.11.26 (target 80%)\n"
-        f"CI: GitHub Actions (Python 3.10/3.11/3.12)\n"
-        f"SHA256: {results.get('sha256', 'n/a')}\n"
-        f"DOI: {results.get('doi', 'n/a')}\n"
-        f"Git Commit: {results.get('git_commit', 'n/a')}"
-    )
-
-    # ════════════════════════════════════════════════════════════════════
-    # SECTION 18: REFERENCES (with DOI)
-    # ════════════════════════════════════════════════════════════════════
-    doc.add_heading("18. Scientific References (with DOI)", level=2)
-    refs = [
-        "Biot, M.A. (1941). J. Appl. Phys., 12(2), 155-164. DOI: 10.1063/1.1713685",
-        "Hoek, E., & Brown, E.T. (2018). JRMGE, 11(3), 445-463. DOI: 10.1016/j.jrmge.2018.06.001",
-        "Yang, D. (2010). PhD Thesis, TU Delft. DOI: 10.4233/uuid:12345678",
-        "Shao, J.F., et al. (2003). IJRMMS, 40(7), 927-937. DOI: 10.1016/S1365-1609(03)00050-1",
-        "Lundberg, S.M., & Lee, S.I. (2017). NeurIPS. DOI: 10.48550/arXiv.1705.07874",
-        "Saaty, T.L. (1980). The Analytic Hierarchy Process. DOI: 10.1007/978-3-642-60065-2",
-        "JCGM 100:2008 (GUM). DOI: 10.59161/JCGM100-2008E",
-        "Anthony, D.B., & Howard, J.B. (1976). AIChE Journal, 22(4). DOI: 10.1002/aic.690220410",
-        "Efron, B. (1979). Bootstrap Methods. Ann. Statist. 7(1), 1-26. DOI: 10.1214/aos/1176344552",
-        "Saltelli, A. et al. (2010). Variance based sensitivity analysis. DOI: 10.1016/j.cmpb.2009.07.004",
-    ]
-    for r in refs:
-        doc.add_paragraph(r, style='List Bullet')
-
-    # ════════════════════════════════════════════════════════════════════
-    # SECTION 19: SCIENTIFIC CONTRIBUTIONS SUMMARY
-    # ════════════════════════════════════════════════════════════════════
-    doc.add_heading("19. Scientific Contributions Summary", level=2)
-    contributions = [
-        ("1. Adaptive Biot Coefficient Model",
-         "First-ever dynamic coupling of Biot coefficient with saturation and porosity for UCG."),
-        ("2. 3-Step Arrhenius Thermal Degradation",
-         "Anthony-Howard-Serio kinetics integrated with GSI decay. Validated against 12 lab experiments."),
-        ("3. Physics-Guided Neural Network (PGNN)",
-         "Domain-specific feature engineering with RF. Accuracy 0.85, AUC 0.90, F1 0.82."),
-        ("4. SHAP Explainability with Domain Fallback",
-         "Lundberg & Lee (2017) SHAP with UCG literature-calibrated Permutation Importance fallback."),
-        ("5. Monte Carlo UQ with Multi-Distribution",
-         "50,000 LHS samples using Normal, Lognormal, Uniform, Beta. MCSE < 0.01, Geweke |z| < 2."),
-        ("6. Sobol Global Sensitivity (S1 + ST)",
-         "Temperature identified as dominant (S1=0.342). Full ranking table provided."),
-        ("7. Comprehensive FTO Analysis",
-         "Element-by-element claim comparison vs 5 prior art patents. FTO Score 0.88."),
-        ("8. SHA-256 + RSA-4096 Audit Chain",
-         "WORM-protected Merkle tree. Patent-grade traceability for regulatory compliance."),
-        ("9. 5x5 Industrial Risk Matrix",
-         "ISO 31000:2018 aligned. Bridges academic analysis with industrial decision-making."),
-        ("10. Real Field Validation",
-         "Model vs sensor at Angren + Shurtan (2018-2024). RMSE within industrial range."),
-    ]
-    for title, desc in contributions:
-        p = doc.add_paragraph()
-        p.add_run(f"{title}: ").bold = True
-        p.add_run(desc)
-
-    doc.add_heading("20. Scientific Conclusion", level=2)
-    doc.add_paragraph(
-        "The integrated platform demonstrates scientific consistency, engineering "
-        "applicability, and patent-level novelty. Suitable for PhD dissertation, "
-        "SCI journal publication, patent submission (UzPatent + PCT), and "
-        "industrial UCG monitoring deployment."
-    )
+        doc.add_paragraph('NOT_EVALUATED — Angren measurement table, sampling date, units, source file and paired residuals missing.')
+    doc.add_heading('17. Regression and Traceability',level=2)
+    tests=results.get('regression_suite',{})
+    doc.add_paragraph('Test suite: '+('REPORTED_BY_RUNNER' if isinstance(tests,dict) and tests.get('unittest_success') is True else 'NOT_EVALUATED'))
+    doc.add_paragraph('Measured test coverage: NOT_EVALUATED unless actual coverage artifact provided.')
+    doc.add_heading('18. Figure Provenance and Research Limitations',level=2)
+    supplied=results.get('report_figures') or {}
+    if not isinstance(supplied,dict):
+        supplied={}
+    for name,record in supplied.items():
+        if not isinstance(record,dict):
+            doc.add_paragraph(f'{name}: NOT_EVALUATED — missing status and image data')
+            continue
+        status=record.get('source_status','NOT_EVALUATED')
+        if status not in ('REAL_DATA','MODEL_OUTPUT','SYNTHETIC_DEMO','NOT_EVALUATED'):
+            status='NOT_EVALUATED'
+        if status=='REAL_DATA' and not all(record.get(k) for k in ('source_file','date','units')):
+            status='NOT_EVALUATED'
+        if status=='SYNTHETIC_DEMO' and not bool(results.get('include_synthetic_demo_figures',False)):
+            doc.add_paragraph(f'{name}: SYNTHETIC_DEMO excluded (opt-in required)')
+            continue
+        doc.add_paragraph(f'{name}: {status}')
+        graphic=record.get('image')
+        if graphic is not None and status!='NOT_EVALUATED':
+            try:
+                if hasattr(graphic,'seek'):
+                    graphic.seek(0)
+                doc.add_picture(graphic,width=Inches(5.2))
+                doc.add_paragraph(f'Figure: {name}; source_status={status}')
+            except Exception as exc:
+                logger.warning('Cannot embed %s: %s',name,exc)
+                doc.add_paragraph('Figure embedding FAILED: '+str(exc))
+    doc.add_heading('20. Scientific Conclusion',level=2)
+    doc.add_paragraph('RESEARCH_STAGE — independent validation, field measurement verification, full conservation residuals and professional FTO/ISO review remain pending.')
 
 
 
@@ -16756,7 +16173,10 @@ class RealSciBERTNovelty:
         inv_emb = emb[0:1]
         prior_emb = emb[1:]
         if prior_emb.shape[0] == 0:
-            sims = np.array([0.0])
+            return {"novelty_index": None, "mean_similarity": None, "max_similarity": None,
+                    "backend": self.backend, "model_real": self.model_real,
+                    "embedding_dim": int(self.embedding_dim), "device": self.device,
+                    "n_prior_documents": 0, "status": "NOT_EVALUATED"}
         else:
             sims = cosine_similarity(inv_emb, prior_emb)[0]
         mean_sim = float(np.mean(sims))
@@ -19386,6 +18806,7 @@ def generate_full_iso_report(
 
     tt = texts.get(lang, texts['en'])
     doc = Document()
+    doc.add_paragraph('EVIDENCE STATUS: RESEARCH_STAGE. Unverified field comparisons, ISO certification, patentability and external solver validations must not be inferred from this report. Figure captions identify source types; model outputs are not measurements.')
 
     header = doc.add_heading(tt['h1'], level=1)
     header.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -19457,6 +18878,7 @@ def generate_full_iso_report(
         doc.add_heading(tt['visual_analysis'], level=2)
         image_stream = io.BytesIO(fig_bytes)
         doc.add_picture(image_stream, width=Inches(5.5))
+        doc.add_paragraph("Source status: MODEL_OUTPUT — source numerical model; measurement validation NOT_EVALUATED")
         doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
 
     doc.add_heading(tt['sec5'], level=2)
@@ -19515,6 +18937,7 @@ def generate_full_iso_report(
             doc.add_paragraph(f"{tt['figure_label']} 2D-{i}")
             image_stream = io.BytesIO(img_bytes)
             doc.add_picture(image_stream, width=Inches(5.5))
+            doc.add_paragraph("Source status: MODEL_OUTPUT — source numerical model; measurement validation NOT_EVALUATED")
             doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
 
     if figure_list_3d:
@@ -19523,6 +18946,7 @@ def generate_full_iso_report(
             doc.add_paragraph(f"{tt['figure_label']} 3D-{i}")
             image_stream = io.BytesIO(img_bytes)
             doc.add_picture(image_stream, width=Inches(5.5))
+            doc.add_paragraph("Source status: MODEL_OUTPUT — source numerical model; measurement validation NOT_EVALUATED")
             doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
 
     doc.add_page_break()
@@ -21705,7 +21129,7 @@ def plot_monte_carlo(mc_summary: Dict[str, Dict[str, np.ndarray]], n_sim: int):
     for ax, key, ylabel, color in items:
         s = mc_summary[key]
         ax.plot(x_mc, s['mean'], color=color, linewidth=2, label="O'rtacha")
-        ax.fill_between(x_mc, s['ci95_low'], s['ci95_high'], alpha=0.25, color=color, label='95% CI')
+        ax.fill_between(x_mc, s['ci95_low'], s['ci95_high'], alpha=0.25, color=color, label='ILLUSTRATIVE RANGE (NOT verified 95% CI)')
         ax.set_title(f'MC: {ylabel}', fontsize=12, fontweight='bold')
         ax.set_ylabel(ylabel); ax.legend(fontsize=9); ax.grid(True, linestyle=':')
     plt.tight_layout(rect=[0, 0, 1, 0.95])
@@ -29460,6 +28884,7 @@ def run_v7_app():
                     buf_arr.seek(0)
                     plt.close()
                     doc.add_picture(buf_arr, width=DocxInches(5.5))
+                    doc.add_paragraph("Source status: MODEL_OUTPUT — computed or parameterized figure; independent field validation NOT_EVALUATED")
                     cap = doc.add_paragraph()
                     cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
                     cap.add_run("Fig. 1. Arrhenius Plot - ln k vs 1000/T (qiyalik = -Ea/R)").italic = True
@@ -29523,6 +28948,7 @@ def run_v7_app():
                     buf_gibbs.seek(0)
                     plt.close()
                     doc.add_picture(buf_gibbs, width=DocxInches(5.5))
+                    doc.add_paragraph("Source status: MODEL_OUTPUT — computed or parameterized figure; independent field validation NOT_EVALUATED")
                     cap2 = doc.add_paragraph()
                     cap2.alignment = WD_ALIGN_PARAGRAPH.CENTER
                     cap2.add_run("Fig. 2. dG(T) - Gibbs Free Energy vs Temperature. dG < 0 = spontan.").italic = True
@@ -29889,6 +29315,7 @@ def run_v7_app():
                                 _plt.close(fig)
                                 doc.add_heading(chart_title, level=2)
                                 doc.add_picture(tmp.name, width=DocxInches(5.5))
+                                doc.add_paragraph("Source status: MODEL_OUTPUT — computed or parameterized figure; independent field validation NOT_EVALUATED")
                                 _os.unlink(tmp.name)
                     except Exception as _chart_exc:
                         doc.add_paragraph(f'{chart_title}: grafik yaratilmadi ({_chart_exc})')
@@ -29930,6 +29357,7 @@ def run_v7_app():
                         fig_kin_rates.savefig(tmp.name, dpi=150, bbox_inches='tight')
                         plt.close(fig_kin_rates)
                         doc.add_picture(tmp.name, width=DocxInches(5.5))
+                        doc.add_paragraph("Source status: MODEL_OUTPUT — computed or parameterized figure; independent field validation NOT_EVALUATED")
                         _os.unlink(tmp.name)
 
                     # Uglerod konversiyasi
@@ -29944,6 +29372,7 @@ def run_v7_app():
                         fig_kin_conv.savefig(tmp.name, dpi=150, bbox_inches='tight')
                         plt.close(fig_kin_conv)
                         doc.add_picture(tmp.name, width=DocxInches(5.5))
+                        doc.add_paragraph("Source status: MODEL_OUTPUT — computed or parameterized figure; independent field validation NOT_EVALUATED")
                         _os.unlink(tmp.name)
 
                     # Gibbs erkin energiyasi
@@ -29960,6 +29389,7 @@ def run_v7_app():
                         fig_kin_gibbs.savefig(tmp.name, dpi=150, bbox_inches='tight')
                         plt.close(fig_kin_gibbs)
                         doc.add_picture(tmp.name, width=DocxInches(5.5))
+                        doc.add_paragraph("Source status: MODEL_OUTPUT — computed or parameterized figure; independent field validation NOT_EVALUATED")
                         _os.unlink(tmp.name)
 
                     # Issiqlik balansi
@@ -30232,19 +29662,19 @@ def run_v7_app():
 
                 # 19a. Experimental Validation
                 doc.add_heading("19a. Eksperimental Validatsiya va Adabiyot Taqqoslashi", level=1)
-                doc.add_paragraph("Model natijalari nashr etilgan UCG tajribalari bilan taqqoslangan.")
-                exp_val_table = doc.add_table(rows=6, cols=5, style="Light Shading Accent 1")
+                doc.add_paragraph("Independent comparison NOT_EVALUATED: source measurements, units, dates and paired residuals are required.")
+                exp_val_table = doc.add_table(rows=1, cols=5, style="Light Shading Accent 1")
                 exp_val_table.rows[0].cells[0].text = "Manba"
                 exp_val_table.rows[0].cells[1].text = "Joy"
                 exp_val_table.rows[0].cells[2].text = "Yil"
                 exp_val_table.rows[0].cells[3].text = "Model RMSE"
                 exp_val_table.rows[0].cells[4].text = "CO (%)"
                 exp_val_data = [
-                    ("Blinderman & Jones", "Chinchilla, AU", "2002", "0.142", "28-32 (biz: 30)"),
-                    ("Pershad et al.", "Majuba, SA", "2009", "0.165", "25-30 (biz: 28)"),
-                    ("Kudelko et al.", "Wieczorek, PL", "2012", "0.158", "22-28 (biz: 26)"),
-                    ("Blinderman et al.", "Linc Energy, AU", "2008", "0.178", "24-30 (biz: 27)"),
-                    ("Saitov (internal)", "Angren UCG-1, UZ", "2024", "0.112", "30-35 (biz: 32)"),
+                    ("Blinderman & Jones", "Chinchilla, AU", "2002", "NOT_EVALUATED", "NOT_EVALUATED"),
+                    ("Pershad et al.", "Majuba, SA", "2009", "NOT_EVALUATED", "NOT_EVALUATED"),
+                    ("Kudelko et al.", "Wieczorek, PL", "2012", "NOT_EVALUATED", "NOT_EVALUATED"),
+                    ("Blinderman et al.", "Linc Energy, AU", "2008", "NOT_EVALUATED", "NOT_EVALUATED"),
+                    ("Saitov (unverified)", "Angren UCG-1, UZ", "2024", "NOT_EVALUATED", "NOT_EVALUATED"),
                 ]
                 for i, (src, loc, yr, rmse, co) in enumerate(exp_val_data):
                     row = exp_val_table.add_row().cells
@@ -30253,10 +29683,7 @@ def run_v7_app():
                     row[2].text = yr
                     row[3].text = rmse
                     row[4].text = co
-                doc.add_paragraph(
-                    "Taqqoslash xulosasi: Model CO tarkibi 26-32% oraligida, "
-                    "nashr etilgan malumotlar 22-35% oraligida. RMSE 0.11-0.18 - qabul qilinadigan."
-                )
+                doc.add_paragraph("No independently verified paired source-vs-prediction data. RMSE and CO comparison are NOT_EVALUATED. Angren measurements require file, acquisition date, units, data source and residuals.")
 
                 # 19b. Patent Claims
                 doc.add_heading("19b. Patent Claims (Batafsil)", level=1)
@@ -30489,7 +29916,7 @@ def run_v7_app():
                     # Confidence band
                     conv_lower = conv_sweep - 0.05
                     conv_upper = conv_sweep + 0.05
-                    ax_ps1.fill_between(T_sweep, conv_lower, conv_upper, alpha=0.2, color='#2196F3', label='95% CI')
+                    ax_ps1.fill_between(T_sweep, conv_lower, conv_upper, alpha=0.2, color='#2196F3', label='ILLUSTRATIVE RANGE (NOT verified 95% CI)')
                     ax_ps1.plot(T_sweep, conv_sweep, 'b-o', linewidth=2, markersize=6, label='Mean')
                     ax_ps1.set_xlabel('Temperature (K)')
                     ax_ps1.set_ylabel('Carbon Conversion')
@@ -30501,10 +29928,11 @@ def run_v7_app():
                     buf_ps1.seek(0)
                     plt.close()
                     doc.add_picture(buf_ps1, width=DocxInches(5.5))
+                    doc.add_paragraph("Source status: SYNTHETIC_DEMO — illustration only; not an empirical confidence interval or observed result")
                     cap_ps1 = doc.add_paragraph()
                     cap_ps1.alignment = WD_ALIGN_PARAGRAPH.CENTER
                     cap_ps1.add_run('Fig. 10. Parameter Sweep: Temperature vs Carbon Conversion. '
-                                    '95% CI (blue band). Conversion rises exponentially with T.').italic = True
+                                    'SYNTHETIC_DEMO — curve and band illustrative; NOT verified 95% CI.').italic = True
                 except Exception:
                     doc.add_paragraph('[Parameter Sweep: Temperature]')
 
@@ -30515,7 +29943,7 @@ def run_v7_app():
                     LHV_sweep = 8.0 + 0.5 * np.log(P_sweep) + np.random.default_rng(42).normal(0, 0.2, 20)
                     LHV_lower = LHV_sweep - 0.3
                     LHV_upper = LHV_sweep + 0.3
-                    ax_ps2.fill_between(P_sweep, LHV_lower, LHV_upper, alpha=0.2, color='#4CAF50', label='95% CI')
+                    ax_ps2.fill_between(P_sweep, LHV_lower, LHV_upper, alpha=0.2, color='#4CAF50', label='ILLUSTRATIVE RANGE (NOT verified 95% CI)')
                     ax_ps2.plot(P_sweep, LHV_sweep, 'g-s', linewidth=2, markersize=6, label='Mean LHV')
                     ax_ps2.set_xlabel('Pressure (MPa)')
                     ax_ps2.set_ylabel('Syngas LHV (MJ/Nm3)')
@@ -30527,6 +29955,7 @@ def run_v7_app():
                     buf_ps2.seek(0)
                     plt.close()
                     doc.add_picture(buf_ps2, width=DocxInches(5.5))
+                    doc.add_paragraph("Source status: SYNTHETIC_DEMO — illustration only; not an empirical confidence interval or observed result")
                     cap_ps2 = doc.add_paragraph()
                     cap_ps2.alignment = WD_ALIGN_PARAGRAPH.CENTER
                     cap_ps2.add_run('Fig. 11. Parameter Sweep: Pressure vs Syngas LHV. '
@@ -30555,10 +29984,11 @@ def run_v7_app():
                     buf_torn.seek(0)
                     plt.close()
                     doc.add_picture(buf_torn, width=DocxInches(5.5))
+                    doc.add_paragraph("Source status: SYNTHETIC_DEMO — illustration only; not an empirical confidence interval or observed result")
                     cap_torn = doc.add_paragraph()
                     cap_torn.alignment = WD_ALIGN_PARAGRAPH.CENTER
                     cap_torn.add_run('Fig. 12. Sobol Sensitivity Tornado Diagram. '
-                                     'Temperature dominates (S1=0.342) - Arrhenius kinetics confirmation.').italic = True
+                                     'SYNTHETIC_DEMO — illustrative Sobol values, NOT computed from supplied data.').italic = True
                 except Exception:
                     doc.add_paragraph('[Tornado Diagram]')
 
@@ -30570,7 +30000,7 @@ def run_v7_app():
                     fos_std = 0.1 + 0.005 * t_ci
                     fos_lower = fos_mean - 1.96 * fos_std
                     fos_upper = fos_mean + 1.96 * fos_std
-                    ax_ci.fill_between(t_ci, fos_lower, fos_upper, alpha=0.3, color='#2196F3', label='95% CI')
+                    ax_ci.fill_between(t_ci, fos_lower, fos_upper, alpha=0.3, color='#2196F3', label='ILLUSTRATIVE RANGE (NOT verified 95% CI)')
                     ax_ci.plot(t_ci, fos_mean, 'b-', linewidth=2, label='Mean FOS')
                     ax_ci.axhline(1.0, color='r', linestyle='--', label='FOS=1.0 (failure)')
                     ax_ci.axhline(1.5, color='g', linestyle=':', label='FOS=1.5 (safe)')
@@ -30584,10 +30014,11 @@ def run_v7_app():
                     buf_ci.seek(0)
                     plt.close()
                     doc.add_picture(buf_ci, width=DocxInches(5.5))
+                    doc.add_paragraph("Source status: SYNTHETIC_DEMO — illustration only; not an empirical confidence interval or observed result")
                     cap_ci = doc.add_paragraph()
                     cap_ci.alignment = WD_ALIGN_PARAGRAPH.CENTER
                     cap_ci.add_run('Fig. 13. FOS Evolution with 95% Confidence Interval. '
-                                   'FOS remains above 1.0 (no failure) throughout simulation.').italic = True
+                                   'SYNTHETIC_DEMO — NOT a measured FOS history, no reliability inference.').italic = True
                 except Exception:
                     doc.add_paragraph('[CI Graph]')
 
@@ -35731,14 +35162,15 @@ def main():
                         results['auc'] = roc_auc_score(y_test_ai, proba_test)
                         results['f1'] = compute_confusion_roc_f1(y_test_ai, proba_test)['f1']
                     else:
-                        results['accuracy'] = 0.85
-                        results['auc'] = 0.90
-                        results['f1'] = 0.82
-                    results['pf'] = pf_mc if 'pf_mc' in locals() else 0.15
+                        results['accuracy'] = None
+                        results['auc'] = None
+                        results['f1'] = None
+                        results['ai_status'] = 'NOT_EVALUATED'
+                    results['pf'] = pf_mc if 'pf_mc' in locals() else None
                     # FIX #1 (v9.11.0): FOS min/avg/design values for report
-                    results['fos_min'] = float(np.nanmin(fos_worst_case)) if 'fos_worst_case' in locals() else 0.05
-                    results['fos_avg'] = float(np.nanmean(fos_worst_case)) if 'fos_worst_case' in locals() else 0.96
-                    results['fos_design'] = float(np.nanpercentile(fos_worst_case, 10)) if 'fos_worst_case' in locals() else 0.85
+                    results['fos_min'] = float(np.nanmin(fos_worst_case)) if 'fos_worst_case' in locals() else None
+                    results['fos_avg'] = float(np.nanmean(fos_worst_case)) if 'fos_worst_case' in locals() else None
+                    results['fos_design'] = float(np.nanpercentile(fos_worst_case, 10)) if 'fos_worst_case' in locals() else None
                     trace_payload = {
                         "project": obj_name,
                         "temperature_max": T_source_max,
@@ -35766,24 +35198,15 @@ def main():
                     results['regression_suite'] = run_internal_regression_suite()
                     gpu_count = int(torch.cuda.device_count()) if PT_AVAILABLE and torch.cuda.is_available() else 0
                     results['multi_gpu_mode'] = f"multi-gpu:{gpu_count}" if gpu_count > 1 else ("single-gpu:1" if gpu_count == 1 else "cpu")
-                    exp_metrics = ExperimentalMetrics(
-                        rmse=float(results.get('accuracy', 0.0)),
-                        mae=float(1.0 - results.get('f1', 0.0)),
-                        r2=float(results.get('auc', 0.0)),
-                        mape=float((1.0 - results.get('accuracy', 0.0)) * 100.0),
-                        nse=float(results.get('auc', 0.0)),
-                        kge=float(results.get('f1', 0.0)),
-                    )
-                    patentability = evaluate_patentability_extended(
-                        82.0, 0.25, exp_metrics,
-                        prior_art_count=len(results.get('claims', []))
-                    )
-                    results['patentability_index'] = patentability['patentability_index']
-                    results['novelty_index'] = patentability['novelty_index']
-                    results['inventive_step'] = patentability['inventive_step']
-                    results['industrial_applicability'] = patentability['industrial_applicability']
-                    results['fto_score'] = patentability['fto_score']
-                    results['claim_strength'] = patentability['claim_strength']
+                    # v9.11.38: Classifier scores are NOT FEM experimental metrics.
+                    # Patentability requires verified prior art and domain validation.
+                    results['patentability_index'] = None
+                    results['novelty_index'] = None
+                    results['inventive_step'] = None
+                    results['industrial_applicability'] = None
+                    results['fto_score'] = None
+                    results['claim_strength'] = None
+                    results['patent_status'] = 'NOT_EVALUATED'
                     if rf_model is not None:
                         try:
                             X_explain = physics_features(
@@ -36665,19 +36088,24 @@ def main():
             st.markdown("Grid independence test - FOS o'zgarishi turli rezolyutsiyalarda")
             resolutions = [(100,80), (150,120), (200,160), (300,240), (400,320)]
             conv = mesh_convergence_test(layers_data, {}, resolutions)
-            df_conv = pd.DataFrame([{'nx': nx, 'nz': nz, 'mean_FOS': val['mean_fos']}
+            df_conv = pd.DataFrame([{'nx': nx, 'nz': nz, 'mean_FOS': val['mean_fos'],
+                                     'status': val['status']}
                                     for (nx,nz), val in conv.items()])
             st.dataframe(df_conv)
-            fig_conv = go.Figure(go.Scatter(x=df_conv['nx'], y=df_conv['mean_FOS'],
-                                            mode='lines+markers', name='FOS'))
-            fig_conv.update_layout(title='Grid independence (FOS vs nx)',
-                                   template='plotly_dark', xaxis_title='nx (grid points)',
-                                   yaxis_title='Mean FOS')
-            st.plotly_chart(fig_conv, use_container_width=True)
-            if len(df_conv) >= 2:
-                denominator = df_conv['mean_FOS'].iloc[-2]
+            df_valid = df_conv.loc[df_conv['status'] == 'COMPUTED'].copy()
+            if df_valid.empty:
+                st.warning('Mesh convergence NOT_EVALUATED: supply a real solver callback and mesh results.')
+            else:
+                fig_conv = go.Figure(go.Scatter(x=df_valid['nx'], y=df_valid['mean_FOS'],
+                                               mode='lines+markers', name='FOS'))
+                fig_conv.update_layout(title='Grid independence (computed FOS)',
+                                       template='plotly_dark', xaxis_title='nx (grid points)',
+                                       yaxis_title='Mean FOS')
+                st.plotly_chart(fig_conv, use_container_width=True)
+            if len(df_valid) >= 2:
+                denominator = df_valid['mean_FOS'].iloc[-2]
                 if abs(denominator) > EPS_GENERAL:
-                    last_change = abs(df_conv['mean_FOS'].iloc[-1] - denominator) / abs(denominator)
+                    last_change = abs(df_valid['mean_FOS'].iloc[-1] - denominator) / abs(denominator)
                     st.metric("Last relative change", f"{last_change*100:.3f}%",
                               delta="Converged" if last_change < 0.01 else "Not converged",
                               delta_color="normal" if last_change < 0.01 else "inverse")
@@ -37303,62 +36731,24 @@ class MathematicalFoundations:
     # ------------------------------------------------------------------
     @staticmethod
     def theorem_4_uniqueness() -> Theorem:
-        statement = (
-            "Physics-Guided Neural Network (PGNN, formerly PINN) yo'qotish funksiyasi "
-            "L(θ) = λ_data·L_data(θ) + λ_pde·L_pde(θ) + λ_bc·L_bc(θ) + λ_ic·L_ic(θ) "
-            "qat'iy konveks bo'lsin (L_pde strongly elliptic operator uchun). "
-            "U holda L(θ) ning global minimizeri yagona ( uniqueness up to measure-zero), "
-            "ya'ni θ* ≈ θ** bo'lsa, ularning farqi neyron tarmoqning simmetriyasi "
-            "(permutatsiya, sign-flip) bilan bog'liq."
-        )
-        assumptions = [
-            "PINN arxitekturasi: u(x, t; θ) — feed-forward NN, ReLU/tanh activation",
-            "L_pde = ||F[u]||²_{L²(Ω×T)} strongly elliptic operator (Poisson, heat, etc.)",
-            "λ_data, λ_pde, λ_bc, λ_ic > 0 (positive weights)",
-            "Training data Ω_data ⊂ Ω (PDE domain) bilan compatible",
-            "Optimizer: Adam + L-BFGS (second-order convergence to local min)",
-        ]
-        proof = textwrap.dedent("""
-        ISBOT.
-
-        (1) Yo'qotish dekompozitsiyasi.
-            L(θ) = λ_d·L_d + λ_p·L_p + λ_b·L_b + λ_i·L_i.
-            Har bir komponent ≥ 0 (sum-of-squares). ∎
-
-        (2) Strong convexity of L_p.
-            L_p(θ) = ∫∫ |F[u(x,t;θ)]|² dx dt.
-            F strongly elliptic ⇒ ||F[u] − F[v]|| ≥ C·||u − v||_{H¹}.
-            L_p(θ) — strongly convex in u, hence strongly convex in θ (parameter-to-solution
-            map Lipschitz bo'lsa). ∎
-
-        (3) Yagonalik (variational formulation).
-            Lasso/Ridge regularization yoki weight decay qo'shilgan bo'lsa:
-            L_reg(θ) = L(θ) + (γ/2)·||θ||².
-            Strong convexity ⇒ unique minimizer θ* (Boyd & Vandenberghe, 2004, §9.1). ∎
-
-        (4) Simmetriyalar (measure-zero).
-            ReLU NN da neyronlarni almashtirish (permutation) va sign-flip simmetriyasi
-            mavjud. Bu simmetriyalar θ parametr bo'shlig'ida measure-zero ko'plikni
-            tashkil qiladi. Shu sababli yagonalik "modulo symmetry" da tushuniladi. ∎
-
-        (5) Optimizer convergence.
-            L-BFGS (quasi-Newton) strongly-convex L uchun global convergence
-            (Nocedal & Wright, 2006, Theorem 6.5) kafolatlaydi. ∎
-        """).strip()
-        numerical = MathematicalFoundations._verify_theorem_4()
+        """Conditional result for a convex objective; not a PINN uniqueness proof."""
         return Theorem(
             index=4,
-            name="Uniqueness of PINN Solution (Strong Convexity + Symmetries)",
-            statement=statement,
-            assumptions=assumptions,
-            proof=proof,
-            numerical_verification=numerical,
-            references=[
-                "Raissi, M., Perdikaris, P., Karniadakis, G.E. (2019). Physics-informed neural networks. JCP 378.",
-                "Boyd, S., Vandenberghe, L. (2004). Convex Optimization. Cambridge Univ. Press. §9.1.",
-                "Nocedal, J., Wright, S.J. (2006). Numerical Optimization (2nd ed.). Springer. Theorem 6.5.",
-                "Krishnapriyan, A. et al. (2021). Characterizing possible failure modes for PINNs. ICLR.",
-            ],
+            name='Conditional optimization uniqueness (NOT verified for neural network)',
+            statement=('If and only if a specific differentiable objective L(theta) is '
+                       'mu-strongly convex on a convex parameter domain (mu>0), '
+                       'it has at most one global minimizer. Existence requires additional '
+                       'coercivity/compactness assumptions. This is not established for PGNN/PINN.'),
+            assumptions=['Prove strong convexity in theta, not solely in physical field u',
+                         'Prove existence, regularity and any required constraint qualification',
+                         'Neural-network parameter symmetries and nonconvexity are not excluded'],
+            proof=('This is a conditional theorem in convex optimization. A strongly convex '
+                   'objective has at most one minimizer; with existence it is unique. '
+                   'Strong ellipticity of a PDE does not imply convexity in NN parameters. '
+                   'No uniqueness claim is made for this implementation.'),
+            numerical_verification={'verified': False, 'status': 'NOT_EVALUATED',
+                                    'reason': 'No parameter-space strong convexity proof'},
+            references=['Boyd & Vandenberghe (2004), Convex Optimization; conditional theorem only'],
         )
 
     @staticmethod
@@ -38435,10 +37825,11 @@ class SemanticNoveltyAnalyzer:
         sims = self.compute_similarity_matrix(invention_text, prior_art_texts)
         if sims.size == 0:
             return {
-                "novelty_index": 100.0,
-                "mean_similarity": 0.0,
-                "max_similarity": 0.0,
-                "p95_similarity": 0.0,
+                "novelty_index": None,
+                "mean_similarity": None,
+                "max_similarity": None,
+                "p95_similarity": None,
+                "status": "NOT_EVALUATED",
                 "backend": self.backend,
                 "n_prior_art": 0,
                 "per_reference_similarity": [],
@@ -46004,6 +45395,9 @@ class SentenceTransformerNovelty:
                                 prior_texts: List[str]) -> Dict[str, Any]:
         """Compute novelty score using SentenceTransformer embeddings."""
         from sklearn.metrics.pairwise import cosine_similarity
+        if not prior_texts:
+            return {"novelty_index": None, "mean_similarity": None, "max_similarity": None,
+                    "n_prior_documents": 0, "status": "NOT_EVALUATED"}
         self._ensure_model()
         if self._backend == "sentence_transformer":
             all_texts = [invention] + list(prior_texts)
@@ -46132,6 +45526,9 @@ class PatentBERTNovelty:
                                 prior_texts: List[str]) -> Dict[str, Any]:
         """Compute novelty using PatentBERT embeddings."""
         from sklearn.metrics.pairwise import cosine_similarity
+        if not prior_texts:
+            return {"novelty_index": None, "mean_similarity": None, "max_similarity": None,
+                    "n_prior_documents": 0, "status": "NOT_EVALUATED"}
         self._ensure_model()
         if self._backend == "patent_bert":
             all_texts = [invention] + list(prior_texts)
@@ -61518,28 +60915,10 @@ class TheoremNumericalVerification:
 
     @staticmethod
     def verify_theorem_4_pinn_uniqueness() -> Dict[str, Any]:
-        """Theorem 4: PINN solution uniqueness (strong convexity)."""
-        # Check loss function convexity: Hessian should be positive semi-definite
-        # Simplified: check that loss is monotonically decreasing during training
-        rng = np.random.default_rng(42)
-        epochs = np.arange(1, 48)
-        # Simulate loss curve (exponential decay)
-        loss = 1.5 * np.exp(-epochs * 0.08) + rng.normal(0, 0.01, len(epochs))
-        loss = np.maximum(loss, 0.01)  # Bounded below
-
-        # Check monotonic decrease (with noise tolerance)
-        decreasing = np.mean(np.diff(loss) < 0.01) > 0.8  # 80% decreasing
-
-        return {
-            'theorem': 4,
-            'name': 'PINN Solution Uniqueness (Strong Convexity)',
-            'n_epochs': len(epochs),
-            'loss_initial': float(loss[0]),
-            'loss_final': float(loss[-1]),
-            'monotonically_decreasing': bool(decreasing),
-            'converged': float(loss[-1]) < 0.1,
-            'verified': bool(decreasing) and float(loss[-1]) < 0.1,
-        }
+        """Synthetic learning curves cannot establish uniqueness/strong convexity."""
+        return {'theorem': 4, 'name': 'PINN uniqueness', 'verified': False,
+                'status': 'NOT_EVALUATED',
+                'reason': 'No analytical Hessian bound or verified global convexity in NN weights'}
 
     @staticmethod
     def verify_theorem_5_fem_stability() -> Dict[str, Any]:
@@ -62269,16 +61648,17 @@ By the Strong Law of Large Numbers (SLLN), the Monte Carlo estimator $\hat{\mu}_
 """
 
     THEOREM_4_LATEX = r"""
-\begin{theorem}[Uniqueness of PINN Solution]
+% CONDITIONAL MATHEMATICAL STATEMENT — NOT VERIFIED FOR THIS PINN/PGNN
+\begin{theorem}[Conditional uniqueness under explicitly proven strong convexity]
 \label{thm:pinn_uniqueness}
 Under strong convexity assumption ($\mu$-strongly convex loss), the Physics-Informed Neural Network (PINN) has a unique global minimizer.
 \end{theorem}
 \begin{proof}
 \begin{enumerate}
-    \item The loss function $\mathcal{L}(\theta) = \mathcal{L}_{\text{data}}(\theta) + \lambda \mathcal{L}_{\text{PDE}}(\theta)$ is $\mu$-strongly convex.
+    \item Assume (do not infer) that the particular parameter-space objective is $\mu$-strongly convex and attains its minimum.
     \item Strong convexity implies $\nabla^2 \mathcal{L} \succeq \mu I$ (Hessian positive definite).
     \item By standard optimization theory, a $\mu$-strongly convex function has a unique global minimizer $\theta^*$.
-    \item Gradient descent converges: $\|\theta_k - \theta^*\|^2 \leq (1-\mu/L)^k \|\theta_0 - \theta^*\|^2$ where $L$ is the Lipschitz constant.
+    \item This assumption has not been verified for the present neural network; no global minimizer or training rate is claimed.
 \end{enumerate}
 \qed
 \end{proof}
@@ -63508,16 +62888,16 @@ class PatentReadinessAssessment:
     def get_assessment() -> Dict[str, Any]:
         return {
             'version': __version__,
-            'readiness_score': _version_manager.get_version() if hasattr(globals().get('_version_manager', None), 'get_version') else 'unknown',
+            'readiness_score': None,  # NOT_EVALUATED: no independently verified scoring evidence
             'strengths': [
                 'Comprehensive UCG physics model (5 reactions + Arrhenius + Gibbs)',
                 'Real-time digital twin architecture (Sensor → Edge AI → Cloud)',
                 'AI explainability suite (SHAP + LIME + PDP + ICE + Counterfactual)',
                 'Monte Carlo UQ with 50,000 samples + convergence diagnostics',
                 'SHA-256 Merkle audit chain + RSA-4096 signatures',
-                '12 lab experiments + 8 field sites validation database',
-                '5 theorems with LaTeX proofs + numerical verification',
-                'FEM validation: Patch test + Kirsch + ABAQUS/COMSOL comparison',
+                'Experimental validation data: UNVERIFIED_SOURCE (upload independent measurements)',
+                '5 mathematical formulations, with theorem 4 conditional/unverified',
+                'FEM benchmark routines exist; independent external solver runs NOT_EVALUATED',
                 'ISO/ISRM compliance mapping',
                 'Prior art database (115 records) with FTO analysis',
             ],
@@ -63532,12 +62912,12 @@ class PatentReadinessAssessment:
                 'Cyclomatic complexity > 10 in some functions',
             ],
             'recommendation': (
-                "Platform is SCIENTIFICALLY READY for PhD defense (with limitations documented). "
+                "The platform is RESEARCH_STAGE; PhD scientific validation is NOT_EVALUATED. "
                 "For PATENT FILING: requires (1) patent attorney review, "
                 "(2) real PCT application, (3) notarized certificates, "
                 "(4) independent prior art search, (5) ~5-10% (stub tests)  # FIX v9.11.26 test coverage."
             ),
-            'honest_status': 'PhD-READY (with documented limitations). Patent-READY after attorney review.',
+            'honest_status': 'RESEARCH_STAGE — PhD and Patent independent validation pending',
         }
 
 
@@ -63574,27 +62954,27 @@ class FormalReadinessChecklist:
                 'ready': False,
             },
             'reproducible_environment': {
-                'status': 'GENERATOR AVAILABLE',
+                'status': 'GENERATOR AVAILABLE — NOT_VERIFIED',
                 'required': 'environment.yml + requirements.txt + config snapshot',
-                'current': 'ReproducibilityPackageGenerator.generate_full_package() creates all files.',
-                'ready': True,
+                'current': 'Reproducibility package generator exists; not independently checked.',
+                'ready': False,
                 'function': 'ReproducibilityPackageGenerator.generate_full_package()',
             },
             'formal_theorem_proofs': {
                 'status': 'AVAILABLE (LaTeX + numerical)',
                 'required': 'LaTeX formal proofs with peer review',
                 'current': 'TheoremLaTeX class (4330 chars, 5 theorems with proofs). TheoremNumericalVerification (4/5 verified).',
-                'ready': True,
-                'note': 'PhD defense: include LaTeX proofs in dissertation appendix. Peer review pending.',
+                'ready': False,
+                'note': 'Formal network-specific uniqueness proof missing; no peer review.',
             },
             'statistical_rigor': {
-                'status': 'COMPREHENSIVE',
+                'status': 'NOT_ASSESSED',
                 'required': 'All metrics with CI, p-value, effect size, n',
-                'current': 'PearsonRWithPValue (r+p+n), WillmottIndexVerifier, SafeNSE, SafeKGE, BCaMinSamplesChecker, GUMUncertaintyCalculator.',
-                'ready': True,
+                'current': 'Implementations exist; no verified experimental provenance supplied.',
+                'ready': False,
             },
             'test_coverage': {
-                'status': '~78%',
+                'status': 'NOT_EVALUATED — run measured coverage.py',
                 'required': '>80% for patent, >95% for production',
                 'current': '4 test suites: FormulaRegressionSuite, TestPatentReadyScientificCore, TheoremNumericalVerification, FEMNumericalValidation. Run: python app.py --test',
                 'ready': False,
@@ -64050,3 +63430,5 @@ if __name__ == "__main__":
 
 # ══════════════════════════════════════════════════════════════════════════════
 # FIX v9.11.26: ComprehensiveStatusReport — halol holat hisoboti
+
+                                                              
