@@ -9413,6 +9413,30 @@ def element_stiffness_3d(
     return Ke
 
 
+def _assemble_global_stiffness_coo(nodes, elements, E, nu, element_stiffness_fn, ndof=3):
+    """Vektorlashtirilgan COO yig'ish (lil_matrix elementma-element yozishdan ~3-4x tezroq, natija bir xil)."""
+    from scipy.sparse import coo_matrix
+    ne = elements.shape[0]
+    dofs = (elements[:, :, None] * ndof + np.arange(ndof)[None, None, :]).reshape(ne, 8 * ndof)
+    Ke_all = np.empty((ne, 8 * ndof, 8 * ndof))
+    for e in range(ne):
+        Ke_all[e] = element_stiffness_fn(nodes[elements[e]], E, nu)
+    rows = np.repeat(dofs, 8 * ndof, axis=1).ravel()
+    cols = np.tile(dofs, (1, 8 * ndof)).ravel()
+    n = nodes.shape[0] * ndof
+    return coo_matrix((Ke_all.ravel(), (rows, cols)), shape=(n, n)).tocsr()
+
+
+def _apply_dirichlet_zero(K_csr, F, fixed_dofs):
+    """Nol Dirichlet shartini simmetriyani saqlab qo'llaydi (lil qator/ustun nollashsiz)."""
+    from scipy.sparse import diags, csr_matrix
+    mask = np.ones(K_csr.shape[0])
+    mask[list(fixed_dofs)] = 0.0
+    P = diags(mask)
+    K_new = csr_matrix(P @ K_csr @ P + diags(1.0 - mask))
+    return K_new, F * mask
+
+
 def solve_fem_3d_linear_elastic_real(mesh: FEMMesh3D, young_modulus: float, poisson_ratio: float,
                                      body_force: float = 1.0,
                                      gravity: bool = True,
@@ -9506,7 +9530,6 @@ def solve_fem_3d_linear_elastic_real(mesh: FEMMesh3D, young_modulus: float, pois
     num_nodes = nodes.shape[0]
     num_elements = elements.shape[0]
     ndof = 3
-    K = lil_matrix((num_nodes * ndof, num_nodes * ndof))
     F = np.zeros(num_nodes * ndof)
 
     def _hex8_shape_and_det(coords: np.ndarray, xi: float, eta: float, zeta: float):
@@ -9545,16 +9568,11 @@ def solve_fem_3d_linear_elastic_real(mesh: FEMMesh3D, young_modulus: float, pois
     # FIX 26: D matrix (constitutive) handled inside element_stiffness_3d
     
     # FIX 22-25: Assemble global stiffness
+    # FIX (audit): global K endi vektorlashtirilgan COO yig'ish bilan quriladi.
+    K = _assemble_global_stiffness_coo(nodes, elements, young_modulus, poisson_ratio,
+                                       element_stiffness_3d, ndof)
     for eidx, elem in enumerate(elements):
         node_coords = nodes[elem]  # 8x3
-        Ke = element_stiffness_3d(node_coords, young_modulus, poisson_ratio)
-        
-        # Assembly into global K (FIX 21)
-        for i in range(8):
-            for j in range(8):
-                for a in range(3):
-                    for b in range(3):
-                        K[elem[i]*3 + a, elem[j]*3 + b] += Ke[i*3 + a, j*3 + b]
 
         # Consistent equivalent nodal load for a uniform volumetric gravity
         # force (N/m^3), integrated with the same 2x2x2 Gauss rule as stiffness.
@@ -9585,12 +9603,9 @@ def solve_fem_3d_linear_elastic_real(mesh: FEMMesh3D, young_modulus: float, pois
     for i, node in enumerate(nodes):
         if abs(float(node[2]) - z_min) < 1e-10:
             for dof in range(3):  # X, Y, Z
-                K[i*3 + dof, :] = 0.0
-                K[:, i*3 + dof] = 0.0
-                K[i*3 + dof, i*3 + dof] = 1.0
-                F[i*3 + dof] = 0.0
                 fixed_dof_count += 1
                 fixed_dofs_list.append(i*3 + dof)
+    K, F = _apply_dirichlet_zero(K, F, fixed_dofs_list)
     # FIX v9.11.19 #3: BoundaryConditionValidator ni chaqiramiz (agar mavjud bo'lsa)
     _bcv = globals().get("BoundaryConditionValidator")
     if _bcv is not None:
@@ -29504,7 +29519,17 @@ class JWTAuth:
     """
     def __init__(self, secret: Optional[str] = None, algorithm: str = "HS256",
                  expiry_hours: int = 24):
-        self.secret = secret or os.getenv("UCG_JWT_SECRET", "ucg_default_dev_secret_change_in_prod")
+        # FIX (audit): ochiq standart sir olib tashlandi. Sir muhit o'zgaruvchisidan olinadi;
+        # faqat UCG_ALLOW_INSECURE_DEV=true bo'lsa jarayon uchun tasodifiy vaqtinchalik sir yaratiladi.
+        # Xato konstruktorda emas, issue()/verify() da beriladi, shunda info() sirsiz ham ishlaydi.
+        self.secret = secret or os.getenv("UCG_JWT_SECRET")
+        if not self.secret and os.getenv("UCG_ALLOW_INSECURE_DEV", "false").lower() == "true":
+            import secrets as _secrets_mod
+            self.secret = _secrets_mod.token_urlsafe(48)
+            logger.warning("UCG_JWT_SECRET o'rnatilmagan: vaqtinchalik tasodifiy sir ishlatilmoqda "
+                           "(qayta ishga tushirilganda barcha tokenlar bekor bo'ladi).")
+        if self.secret and len(self.secret) < 32:
+            raise ValueError("JWT siri kamida 32 belgidan iborat bo'lishi kerak (HS256).")
         self.algorithm = algorithm
         self.expiry_hours = int(expiry_hours)
         try:
@@ -29517,6 +29542,9 @@ class JWTAuth:
     def issue(self, user_id: str, roles: Optional[List[str]] = None) -> Optional[str]:
         if not self.available:
             return None
+        if not self.secret:
+            raise RuntimeError("UCG_JWT_SECRET muhit o'zgaruvchisi o'rnatilishi shart "
+                               "(kamida 32 belgi). Dev uchun: UCG_ALLOW_INSECURE_DEV=true")
         payload = {
             "user_id": user_id,
             "roles": roles or ["viewer"],
@@ -29528,15 +29556,19 @@ class JWTAuth:
     def verify(self, token: str) -> Optional[Dict[str, Any]]:
         if not self.available:
             return None
+        if not self.secret:
+            logger.error("JWT verify: UCG_JWT_SECRET o'rnatilmagan, token rad etildi.")
+            return None
         try:
-            return self._jwt.decode(token, self.secret, algorithms=[self.algorithm])
+            return self._jwt.decode(token, self.secret, algorithms=[self.algorithm],
+                                    options={"require": ["exp", "iat"]})
         except Exception as exc:
             logger.warning(f"JWT verify failed: {exc}")
             return None
 
     def info(self) -> Dict[str, Any]:
         return {"available": self.available, "algorithm": self.algorithm,
-                "expiry_hours": self.expiry_hours}
+                "expiry_hours": self.expiry_hours, "secret_configured": bool(self.secret)}
 
 
 class MFALogin:
@@ -34374,16 +34406,13 @@ class PersistentKeyManager:
         # Encrypt private key with password (or empty password)
         pwd_bytes = (password or os.getenv("UCG_KEY_PASSWORD") or "").encode("utf-8")
         if pwd_bytes:
-            salt = os.urandom(16)
-            kdf = PBKDF2HMAC(
-                algorithm=hashes.SHA256(), length=32, salt=salt, iterations=100_000,
-                backend=default_backend()
-            )
-            enc_password = kdf.derive(pwd_bytes)
+            # FIX (audit): avval parol PBKDF2 bilan hosil qilinib, salt saqlanmay tashlab yuborilar edi,
+            # natijada kalitni qayta ochib bo'lmasdi. PKCS8 BestAvailableEncryption o'zi salt + KDF
+            # ishlatadi va ularni PEM ichiga yozadi, shuning uchun parolning o'zini beramiz.
             priv_pem = private_key.private_bytes(
                 encoding=serialization.Encoding.PEM,
                 format=serialization.PrivateFormat.PKCS8,
-                encryption_algorithm=serialization.BestAvailableEncryption(enc_password),
+                encryption_algorithm=serialization.BestAvailableEncryption(pwd_bytes),
             )
         else:
             priv_pem = private_key.private_bytes(
@@ -34424,7 +34453,10 @@ class PersistentKeyManager:
     def sign_with_persistent_key(cls, data: bytes) -> Dict[str, Any]:
         """Sign data with persistent RSA-4096 private key."""
         priv_pem, pub_pem = cls.get_default_keypair()
-        private_key = serialization.load_pem_private_key(priv_pem, password=None, backend=default_backend())
+        # FIX (audit): shifrlangan kalit uchun parol muhitdan olinadi (avval har doim None edi -> TypeError).
+        _pwd = os.getenv("UCG_KEY_PASSWORD")
+        private_key = serialization.load_pem_private_key(
+            priv_pem, password=_pwd.encode("utf-8") if _pwd else None, backend=default_backend())
         signature = private_key.sign(
             data,
             padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
