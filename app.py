@@ -30491,8 +30491,12 @@ def main():
             BackendIndicator.to_streamlit()
     except Exception:
         __import__("logging").getLogger("ucg_platform").debug("Suppressed optional-operation exception", exc_info=True)  # FIX v9.11.36: traceable fallback
-    # Feature Availability Report yon paneldan olib tashlandi (foydalanuvchi talabi).
-    # FeatureAvailabilityReport sinfi o'zgarishsiz qoldi (reyestr unga havola qiladi).
+    # IMPROVEMENT #5: Feature availability report in UI
+    try:
+        if globals().get('FeatureAvailabilityReport'):
+            FeatureAvailabilityReport.to_streamlit()
+    except Exception:
+        __import__("logging").getLogger("ucg_platform").debug("Suppressed optional-operation exception", exc_info=True)  # FIX v9.11.36: traceable fallback
     # IMPROVEMENT #100: PhD Readiness checklist in UI
     try:
         if globals().get('PhDReadinessChecklist'):
