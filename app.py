@@ -1,3 +1,4 @@
+# Local audit 2026-10-29: numerical/runtime corrections; research prototype, not independently validated.
 # v9.11.40: Patent Scientific Methodology + full citation/figure/analysis traceability.
 # ════════════════════════════════════════════════════════════════════════
 # v9.11.37 — SCIENTIFIC INTEGRITY / 16-POINT EXPERT REMEDIATION (2026-10-25)
@@ -5416,7 +5417,9 @@ class SignedAuditReport:
         return output_path
 
 
+class WORMManifestStorage:
     """
+    Best-effort local append-only manifest (not certified immutable storage).
     FIX 9 (v6.1): Haqiqiy WORM (Write Once Read Many) filesystem storage.
     - Append-only files (immutability guaranteed by filesystem permissions)
     - SHA-256 Merkle tree verification
@@ -5439,7 +5442,7 @@ class SignedAuditReport:
             self.worm_dir.mkdir(parents=True, exist_ok=True)
         self.manifest_path = self.worm_dir / self.MANIFEST_FILE
 
-    def write_record_V3(self, record: Dict[str, Any]) -> Dict[str, Any]:  # FIX v9.11.24: renamed duplicate
+    def write_record(self, record: Dict[str, Any]) -> Dict[str, Any]:  # FIX v9.11.24: renamed duplicate
         """Append-only yozish. Fayl yozilgandan keyin o'zgartirib bo'lmaydi."""
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%f")
         record_hash = hashlib.sha256(json.dumps(record, sort_keys=True, default=_json_default_serializer).encode()).hexdigest()
@@ -5495,7 +5498,9 @@ class SignedAuditReport:
 
     def read_record(self, filename: str) -> Optional[Dict[str, Any]]:
         """Faylni o'qish (WORM: faqat o'qish mumkin)."""
-        data_path = self.worm_dir / filename
+        data_path = (self.worm_dir / filename).resolve()
+        if data_path.parent != self.worm_dir.resolve():
+            raise ValueError("WORM filename must be a direct child of the storage directory")
         if not data_path.exists():
             return None
         with open(data_path, "r", encoding="utf-8") as f:
@@ -5535,7 +5540,7 @@ class SignedAuditReport:
         }
 
 # Global WORM storage instance
-worm_storage = WORMFilesystemStorage()
+worm_storage = WORMManifestStorage()
 
 
 
@@ -10508,7 +10513,7 @@ class TestPatentV6Full(unittest.TestCase):
         pred = np.array([1.0, 2.0, 3.0, 4.0])
         bench = np.array([1.1, 1.9, 3.1, 3.8])
         result = monte_carlo_uncertainty_analysis_parallel(pred, bench, n_simulations=1000, n_workers=2)
-        self.assertEqual(result["n_simulations"], 10000)  # min 10000
+        self.assertEqual(result["n_simulations"], 1000)  # respect requested, bounded sample count
         self.assertEqual(result["prediction_mean"].shape, pred.shape)
 
     # ── Bayesian UQ Tests ──
@@ -10530,7 +10535,7 @@ class TestPatentV6Full(unittest.TestCase):
     def test_worm_write_and_read(self):
         import tempfile
         with tempfile.TemporaryDirectory() as tmpdir:
-            worm = WORMFilesystemStorage()
+            worm = WORMManifestStorage()
             worm.worm_dir = Path(tmpdir)
             worm.manifest_path = worm.worm_dir / worm.MANIFEST_FILE
             result = worm.write_record({"test": "data", "value": 42})
@@ -10542,7 +10547,7 @@ class TestPatentV6Full(unittest.TestCase):
     def test_worm_integrity(self):
         import tempfile
         with tempfile.TemporaryDirectory() as tmpdir:
-            worm = WORMFilesystemStorage()
+            worm = WORMManifestStorage()
             worm.worm_dir = Path(tmpdir)
             worm.manifest_path = worm.worm_dir / worm.MANIFEST_FILE
             worm.write_record({"test": 1})
@@ -10658,7 +10663,10 @@ def run_internal_regression_suite() -> Dict[str, Any]:
     try:
         suite = unittest.TestLoader().loadTestsFromTestCase(TestPatentReadyScientificCore)
         suite.addTests(unittest.TestLoader().loadTestsFromTestCase(TestPatentV6Full))
-        result = unittest.TextTestRunner(stream=io.StringIO(), verbosity=2).run(suite)
+        test_output = io.StringIO()
+        result = unittest.TextTestRunner(stream=test_output, verbosity=2).run(suite)
+        if not result.wasSuccessful():
+            logger.error("Regression failures:\n%s", test_output.getvalue())
     except Exception as _suite_exc:
         import logging as _log
         _log.getLogger("ucg_platform").warning(f"Regression suite exception: {_suite_exc}")
@@ -13633,7 +13641,7 @@ def thermal_damage(T: np.ndarray, beta: float, T_ref: float = T_REF_AMBIENT) -> 
 
 def apply_thermal_degradation(ucs0: np.ndarray, T: np.ndarray, beta: float) -> np.ndarray:
     dmg = thermal_damage(T, beta)
-    return np.clip(ucs0 * (1.0 - dmg), 0.5, None)
+    return np.maximum(np.asarray(ucs0) * (1.0 - dmg), 0.0)
 
 def thermal_conductivity(T: np.ndarray, k0: float = 2.5) -> np.ndarray:
     k = k0 * (1.0 - 0.0004 * (T - T_REF_AMBIENT))
@@ -13673,12 +13681,14 @@ def vertical_stress(depth: float, density: float) -> float:
 
 def solve_heat_equation_dynamic(T: np.ndarray, Q: np.ndarray, rho_field: np.ndarray, cp_field: np.ndarray,
                                 k_field: np.ndarray, dx: float, dz: float, total_time: float,
-                                T_air: float = 25.0, h_conv: float = 10.0, max_steps: int = 2000) -> np.ndarray:
+                                T_air: float = 25.0, h_conv: float = 10.0, max_steps: int = 2000,
+                                update_material_properties: bool = False) -> np.ndarray:
     """Conservative 2D explicit heat equation: rho*cp*dT/dt=div(k*grad(T))+Q.
 
     Uses harmonic face conductivity. Rejects timesteps exceeding the supplied
     max_steps budget instead of silently violating the explicit stability limit.
-    Temperature-dependent material functions, if available, are updated every step.
+    Supplied material fields are preserved by default. Set update_material_properties=True
+    to opt into the built-in temperature laws (which may reject unstable steps).
     """
     T = np.asarray(T, dtype=float).copy()
     Q = np.asarray(Q, dtype=float)
@@ -13709,11 +13719,11 @@ def solve_heat_equation_dynamic(T: np.ndarray, Q: np.ndarray, rho_field: np.ndar
     for _ in range(n_steps):
         # Coefficients are frozen within each explicit step; avoid silent
         # changes in timestep stability when properties vary with temperature.
-        if callable(globals().get('specific_heat')):
+        if update_material_properties and callable(globals().get('specific_heat')):
             cp_candidate = np.asarray(specific_heat(T), dtype=float)
             if cp_candidate.shape == T.shape:
                 cp = cp_candidate
-        if callable(globals().get('thermal_conductivity')):
+        if update_material_properties and callable(globals().get('thermal_conductivity')):
             k_candidate = np.asarray(thermal_conductivity(T), dtype=float)
             if k_candidate.shape == T.shape:
                 k = k_candidate
@@ -13935,7 +13945,6 @@ def compute_advanced_fos(grid_x, grid_z, active_wells_tuple, well_x_tuple, sourc
                          E, alpha, nu, K0, Hc, sigma_v_coal_MPa, ucs_coal_MPa, beta_th, D_factor, s_dyn, a_dyn):
     fos = np.full_like(grid_x, 3.0)
     CONFINEMENT = PARAMS.CONFINEMENT
-    RELAX = PARAMS.RELAX
 
     for px_idx in active_wells_tuple:
         px = well_x_tuple[px_idx]
@@ -13959,18 +13968,16 @@ def compute_advanced_fos(grid_x, grid_z, active_wells_tuple, well_x_tuple, sourc
                 gsi_l_eff = float(gsi_l)
             mb_l, s_hb, a_hb = hoek_brown_params(gsi_l_eff, mi_l, D_factor)
             sigma_v = sigma_v_field[mask]
-            sigma_ci_T = apply_thermal_degradation(ucs_l, delta_T_m, beta_th)
-            sigma_3 = K0 * sigma_v * (0.6 + 0.4 * (1.0 - thermal_damage(delta_T_m, beta_th)))
+            sigma_ci_T = apply_thermal_degradation(ucs_l, T[mask], beta_th)
+            sigma_3 = K0 * sigma_v * (0.6 + 0.4 * (1.0 - thermal_damage(T[mask], beta_th)))
             sigma_th = np.zeros_like(sigma_v)
             local_thermal = thermal_zone[mask]
             if np.any(local_thermal):
-                # FIX v7.7: edge_order=1 (edge_order=2 requires 3 points at boundary, may fail)
-                grad_T_local = np.sqrt(
-                    np.gradient(T, axis=1, edge_order=1)[mask] ** 2
-                    + np.gradient(T, axis=0, edge_order=1)[mask] ** 2
-                )
-                th_vals = (CONFINEMENT * E * alpha * delta_T_m[local_thermal]) / (1.0 - nu) - RELAX * grad_T_local[local_thermal]
-                sigma_th[local_thermal] = np.clip(th_vals, 0.0, sigma_ci_T[local_thermal] * 0.35)
+                # E is Pa; all strength and stress arrays in this function are MPa.
+                # A temperature gradient cannot be subtracted from stress without
+                # a constitutive length/coefficient. Omit that uncalibrated term.
+                th_vals = CONFINEMENT * (E / 1e6) * alpha * delta_T_m[local_thermal] / (1.0 - nu)
+                sigma_th[local_thermal] = np.maximum(th_vals, 0.0)
             sigma_1 = sigma_v + sigma_th
             sigma_limit = hoek_brown(np.maximum(sigma_3, 0.0), np.maximum(sigma_ci_T, EPS_STRESS), mb_l, s_hb, a_hb)
             fos_val = np.where(sigma_1 > 0.01, sigma_limit / (sigma_1 + EPS_STRESS), 3.0)
@@ -16220,7 +16227,7 @@ def generate_full_iso_report(
             logger.debug("Exception in except Exception as ext_exc:: %s", ext_exc, exc_info=True)
         except NameError:
             __import__("logging").getLogger("ucg_platform").debug("Suppressed optional-operation exception", exc_info=True)  # FIX v9.11.36: traceable fallback
-        doc.add_paragraph("NOT Patent-Ready (Research Stage)  # FIX v9.11.26 Extension: All 20 critical fixes and 16 v6.0 enhancements successfully integrated.")
+        doc.add_paragraph("Extension report generation FAILED. Details are available in the server log; no successful integration is asserted.")
 
     if figure_list_2d:
         doc.add_heading(tt['fig_2d'], level=2)
@@ -16313,7 +16320,15 @@ def compute_temperature_field_moving(
     total_depth: float,
     source_z: float,
     grid_shape: Tuple[int, int],
+    retreat_rate_m_h: float = 0.5,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    # Prescribed-source demonstration, not a calibrated combustion model.
+    if not all(np.isfinite(v) for v in (time_h, T_source_max, burn_duration, total_depth, source_z, retreat_rate_m_h)):
+        raise ValueError("Temperature model inputs must be finite")
+    if time_h < 0 or burn_duration <= 0 or total_depth <= 0 or not 0 <= source_z <= total_depth or retreat_rate_m_h < 0 or T_source_max < 25:
+        raise ValueError("Invalid temperature-model time, geometry, temperature or speed")
+    if len(grid_shape) != 2 or any(not isinstance(v, (int, np.integer)) or v < 3 for v in grid_shape):
+        raise ValueError("grid_shape requires two integer dimensions >= 3")
     with performance_monitor("temperature_field_computation"):
         x_axis = np.linspace(-total_depth * 1.5, total_depth * 1.5, grid_shape[1])
         z_axis = np.linspace(0.0, total_depth + 50.0, grid_shape[0])
@@ -16324,10 +16339,10 @@ def compute_temperature_field_moving(
         rho_field = np.full_like(temp_2d, 1400.0)
         cp_field = specific_heat(temp_2d)
         k_field = thermal_conductivity(temp_2d)
-        total_time = max(burn_duration, time_h) * 3600.0
+        total_time = float(time_h) * 3600.0
         sources = [
             {'x0': -total_depth / 3.0, 'start': 0, 'moving': False},
-            {'x0': 0.0, 'start': 40, 'moving': True, 'v': 0.02},
+            {'x0': 0.0, 'start': 40, 'moving': True, 'v': retreat_rate_m_h / 3600.0},
             {'x0': total_depth / 3.0, 'start': 80, 'moving': False},
         ]
         source_mask_local = np.abs(grid_z - source_z) < 10.0
@@ -16336,6 +16351,8 @@ def compute_temperature_field_moving(
         else:
             rho_cp_ref = 1400.0 * 960.0
 
+        if total_time == 0:
+            return temp_2d, x_axis, z_axis, grid_x, grid_z
         time_step_s = 3600.0
         n_steps = max(int(total_time / time_step_s), 1)
         n_steps = min(n_steps, 200)
@@ -16344,7 +16361,7 @@ def compute_temperature_field_moving(
 
         for _ in range(n_steps):
             current_time_h += time_step_s / 3600.0
-            Q_source = np.zeros_like(temp_2d)
+            target_temperature = np.full_like(temp_2d, 25.0)
             for src in sources:
                 if current_time_h <= src['start']:
                     continue
@@ -16357,7 +16374,10 @@ def compute_temperature_field_moving(
                     curr_T = 25.0 + (T_source_max - 25.0) * np.exp(-0.03 * (elapsed - burn_duration))
                 pen_depth = np.sqrt(4.0 * PARAMS.THERMAL_DIFFUSIVITY * max(dt_sec, 3600.0)) + 15.0
                 dist_sq = (grid_x - x_center) ** 2 + (grid_z - source_z) ** 2
-                Q_source += rho_cp_ref * (curr_T - 25.0) / time_step_s * np.exp(-dist_sq / pen_depth ** 2)
+                source_target = 25.0 + (curr_T - 25.0) * np.exp(-dist_sq / pen_depth ** 2)
+                target_temperature = np.maximum(target_temperature, source_target)
+            # Relax toward the prescribed source, rather than adding Tmax each hour.
+            Q_source = rho_field * cp_field * np.maximum(target_temperature - temp_2d, 0.0) / time_step_s
 
             temp_2d = solve_heat_equation_dynamic(
                 T=temp_2d, Q=Q_source,
@@ -16722,23 +16742,15 @@ def calculate_live_metrics(
 
 
 def laplacian_neumann(field: np.ndarray, dx: float, dz: float) -> np.ndarray:
-    """2D Laplacian with Neumann (zero-gradient) boundary conditions.
-
-    FIX v9.11.19 #47: v9.11.16 da `np.pad(field, 1, mode='edge')` — faqat bir
-    qadam pad qo'shadi. Agar field hajmi juda kichik bo'lsa (2x2 yoki kichik),
-    indeks xatosi. Endi: field shape tekshiriladi va min 3x3 talab qilinadi.
-    """
-    # FIX v9.11.19 #47: field shape tekshiruvi
-    if field.ndim != 2 or field.shape[0] < 3 or field.shape[1] < 3:
-        raise ValueError(
-            f"laplacian_neumann requires 2D field with shape >= (3, 3); got {field.shape}"
-        )
+    """Zero-flux edge-padded Laplacian; array axes are (z, x)."""
+    field = np.asarray(field, dtype=float)
+    if field.ndim != 2 or min(field.shape) < 3 or not np.isfinite(field).all():
+        raise ValueError("Laplacian requires a finite 2D field with shape >= (3, 3)")
+    if not all(np.isfinite(v) and v > 0 for v in (dx, dz)):
+        raise ValueError("Grid spacing must be finite and positive")
     f = np.pad(field, 1, mode='edge')
-    lap = (
-        (f[1:-1, 2:] - 2.0 * f[1:-1, 1:-1] + f[1:-1, :-2]) / dx ** 2
-        + (f[2:, 1:-1] - 2.0 * f[1:-1, 1:-1] + f[:-2, 1:-1]) / dz ** 2
-    )
-    return lap
+    return ((f[1:-1, 2:] - 2*f[1:-1, 1:-1] + f[1:-1, :-2])/dx**2
+            + (f[2:, 1:-1] - 2*f[1:-1, 1:-1] + f[:-2, 1:-1])/dz**2)
 
 
 # ── Yangi fizika funksiyalari ────────────────────────────────────────────
@@ -17482,24 +17494,26 @@ def validate_against_analytical() -> Dict[str, float]:
 def phase_field_update(damage: np.ndarray, strain_energy: np.ndarray, dx: float, dz: float,
                        dt: float, Gc: float = 0.01, l_char: float = 1.0, eta: float = 1e-3
                        ) -> Tuple[np.ndarray, float]:
-    """Phase-field damage evolution update.
+    """One irreversible explicit demo step; returns damage and actual time step.
 
-    FIX v9.11.19 #27: v9.11.16 da `dt` funksiya ichida o'zgartirilgan, lekin
-    chaqiruvchiga qaytarilmagan — maxfiy state o'zgarishi. Endi: Tuple[np.ndarray, float]
-    qaytaradi (updated_damage, actual_dt_used). Bu chaqiruvchiga dt ning
-    o'zgarganini bildiradi.
+    Consistent units are required: energy density H and Gc/l_char must match.
+    The positivity bound includes both grid axes and the local reaction term.
+    This simplified evolution law is not a calibrated fracture solver.
     """
-    dt_max = (eta * dx ** 2) / (2.0 * Gc * l_char + EPS_GENERAL)
-    actual_dt = min(dt, 0.9 * dt_max)  # FIX v9.11.19 #27: actual_dt ni qaytaramiz
-    lap = laplacian_neumann(damage, dx, dz)
-    driving = (
-        Gc * l_char * lap
-        - (Gc / l_char) * damage
-        + (1.0 - damage) * strain_energy
-    )
-    updated = np.clip(damage + (actual_dt / eta) * driving, 0.0, 1.0)
-    _ = compute_phase_field_metrics(updated, dx, dz, Gc, previous_damage=damage)
-    # FIX v9.11.19 #27: actual_dt ni ham qaytarish — chaqiruvchi bilib turadi
+    damage = np.asarray(damage, dtype=float)
+    energy = np.asarray(strain_energy, dtype=float)
+    if damage.ndim != 2 or min(damage.shape) < 3 or energy.shape != damage.shape:
+        raise ValueError("Damage and energy must be matching 2D grids >= 3x3")
+    if not np.isfinite(damage).all() or not np.isfinite(energy).all():
+        raise ValueError("Damage and energy must be finite")
+    if np.any((damage < 0) | (damage > 1)) or np.any(energy < 0):
+        raise ValueError("Damage must be in [0,1] and strain energy non-negative")
+    if not all(np.isfinite(v) and v > 0 for v in (dx, dz, Gc, l_char, eta)) or not np.isfinite(dt) or dt < 0:
+        raise ValueError("Invalid phase-field geometry, coefficients or time step")
+    rate = 2*Gc*l_char*(1/dx**2 + 1/dz**2) + Gc/l_char + float(energy.max())
+    actual_dt = min(float(dt), 0.9*eta/rate)
+    driving = Gc*l_char*laplacian_neumann(damage, dx, dz) - (Gc/l_char)*damage + (1-damage)*energy
+    updated = np.maximum(damage, np.clip(damage + actual_dt/eta*driving, 0.0, 1.0))
     return updated, float(actual_dt)
 
 
@@ -17524,7 +17538,7 @@ def get_dash_data(time_h: float, Smax: float, c_subs: float,
     for ct_idx, ct_dash in enumerate(t_steps):
         s_t = safe_smax * (1.0 - np.exp(-safe_c_subs * float(ct_dash)))
         v_d = -s_t * gaussian_term * 100.0
-        h_d = -(surface_x_arr / safe_radius) * v_d
+        h_d = (surface_x_arr / safe_radius) * v_d
         v_disp[ct_idx, :] = v_d
         h_disp[ct_idx, :] = h_d
     return t_steps, h_disp, v_disp
@@ -30471,6 +30485,7 @@ def main():
     # v9.11.1: Ekspert Tahlili bo'limi
     if _app_mode == "🔬 v9.11.1 — Ekspert Tahlili (40 muammo tuzatishlari)":
         try:
+            st.warning("DEMONSTRATION / NOT VERIFIED: this legacy expert panel contains hard-coded illustrative tables, patent records and benchmark values. They are not measured results, verified prior art or evidence of solver convergence.")
             ExpertReviewStreamlitRenderer.render()
         except Exception as _expert_render_exc:
             st.error(f"Ekspert tahlilini ko'rsatishda xato: {_expert_render_exc}")
@@ -30520,6 +30535,7 @@ def main():
 
     st.title(f"🔬 {t('app_title')}")
     st.caption(t('app_subtitle'))
+    st.info("Research prototype: prescribed heat sources and heuristic stage-FOS maps; not a validated coupled THCM solver or a design safety approval.")
 
     st.sidebar.markdown("---")
     comparison_mode = st.sidebar.checkbox(
@@ -30580,6 +30596,7 @@ def main():
     D_factor = st.sidebar.slider(t('disturbance'), 0.0, 1.0, 0.5, 0.05, help="UCG uchun D=0.0-0.5 (kamroq buzilish). D=0.7 tunnel qurilishi uchun.")
     nu_poisson = st.sidebar.slider(t('poisson'), 0.1, 0.4, 0.25, 0.01)
     k_ratio = st.sidebar.slider(t('stress_ratio'), 0.1, 2.0, 0.5, 0.05)
+    st.sidebar.caption("Tensile model selection is reserved for a future coupled implementation; it does not change the stage-FOS map.")
     st.sidebar.subheader(t('tensile_params'))
     beta_thermal = st.sidebar.slider(
         t('thermal_decay_label'),
@@ -30635,7 +30652,7 @@ def main():
             g = st.slider(t('gsi'), 10, 100, 60, key=f"lgsi_{i}")
             m = st.number_input(t('mi'), value=10.0, min_value=0.1, key=f"lmi_{i}")
             s_t0_val = (
-                st.number_input(t('manual_st0'), value=3.0, key=f"lst0_{i}")
+                st.number_input(t('manual_st0'), value=3.0, min_value=0.0, key=f"lst0_{i}")
                 if tensile_mode == t('tensile_manual') else 0.0
             )
         layers_data.append({
@@ -30687,7 +30704,8 @@ def main():
     # ── Harorat maydoni (keshli) ──────────────────────────────────────────────
     grid_shape = (80, 100)
     temp_2d, x_axis, z_axis, grid_x, grid_z = compute_temperature_field_moving(
-        time_h, T_source_max, int(burn_duration), total_depth, source_z, grid_shape
+        time_h, T_source_max, int(burn_duration), total_depth, source_z, grid_shape,
+        retreat_rate_m_h=crip_retreat_rate,
     )
 
     dx_val = float(x_axis[1] - x_axis[0])
@@ -30807,7 +30825,7 @@ def main():
         x_shifted = x_axis + shift
         sub_p = np.interp(x_axis, x_shifted, sub_p)
 
-    horizontal_disp_m = -(x_axis / (i_oreilly + EPS_GENERAL)) * sub_p
+    horizontal_disp_m = (x_axis / (i_oreilly + EPS_GENERAL)) * sub_p
     horizontal_disp_cm = horizontal_disp_m * 100.0
     comparison_metrics: Optional[Dict[str, Any]] = None
     comparison_benchmark: Optional[Dict[str, Any]] = None
@@ -31382,16 +31400,16 @@ def main():
         if st.button("Run one phase-field step (demo)", key="pf_btn"):
             strain_energy = (
                 von_mises_stress(sigma_x_total, sigma_z_total, tau_rt, nu=nu_poisson) ** 2
-            ) / (2.0 * E_field + EPS_GENERAL)
+            ) / (2.0 * (E_field / 1e6) + EPS_GENERAL)
             cfl_ok, cfl_val = check_cfl_condition(dt=0.1, dx=dx_val, dz=dz_val, alpha_max=PARAMS.THERMAL_DIFFUSIVITY)
             if not cfl_ok:
                 st.warning(f"[FIX #41] CFL shartini buzildi! CFL={cfl_val:.3f} (> 0.5). dt kichraytirish tavsiya etiladi.")
             d_trial, _dt_used = phase_field_update(
-                overstress, strain_energy, dx_val, dz_val, dt=0.1
+                np.clip(overstress, 0.0, 1.0), strain_energy, dx_val, dz_val, dt=0.1
             )
-            d_updated = np.maximum(overstress, d_trial)
+            d_updated = d_trial
             st.caption(f"Phase-field step: actual Δt = {_dt_used:.4g} (requested 0.1)")
-            pf_metrics = compute_phase_field_metrics(d_updated, dx_val, dz_val, Gc=0.01, previous_damage=overstress)
+            pf_metrics = compute_phase_field_metrics(d_updated, dx_val, dz_val, Gc=0.01, previous_damage=np.clip(overstress, 0.0, 1.0))
             k_surf_val = float(np.mean(thermal_conductivity(temp_2d[0, :])))
             temp_updated_robin = robin_bc_update(temp_2d, k_surface=k_surf_val, h_conv=50.0, T_air=T_REF_AMBIENT, dz=dz_val)
             st.caption(f"[FIX #42] Robin BC: T_surface = {float(temp_updated_robin[0, len(x_axis)//2]):.1f} °C (h=50 W/m²K)")
@@ -31406,8 +31424,8 @@ def main():
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("Crack length", f"{pf_metrics.crack_length:.3f}")
             m2.metric("Surface density", f"{pf_metrics.crack_surface_density:.4f}")
-            m3.metric("Fracture energy", f"{pf_metrics.fracture_energy:.4f}")
-            m4.metric("Propagation rate", f"{pf_metrics.propagation_rate:.4f}")
+            m3.metric("Damage-energy proxy (uncalibrated)", f"{pf_metrics.fracture_energy:.4f}")
+            m4.metric("Damage-area increment (m²)", f"{pf_metrics.propagation_rate:.4f}")
 
     # ── PINN Demo ─────────────────────────────────────────────────────────────
     with st.expander("🧠 PINN: Heat Equation Residual Loss"):
@@ -31498,16 +31516,13 @@ def main():
                     X_shap[: min(200, len(X_shap))],
                     feat_names
                 )
-                fig_shap, ax = plt.subplots(figsize=(8, 5))
-                shap.summary_plot(
-                    np.tile(explain_art.shap_summary["mean_abs_shap"].to_numpy(), (len(explain_art.shap_summary), 1)),
-                    features=np.tile(explain_art.shap_summary["mean_abs_shap"].to_numpy(), (len(explain_art.shap_summary), 1)),
-                    feature_names=list(explain_art.shap_summary["feature"]),
-                    show=False
-                )
-                st.pyplot(fig_shap)
-                st.dataframe(explain_art.shap_summary, use_container_width=True, hide_index=True)
-                plt.close(fig_shap)
+                # Aggregated importance cannot reconstruct per-observation SHAP values.
+                # Plot the available summary directly and name the actual backend.
+                st.caption(f"Explanation backend: {explain_art.backend}")
+                if explain_art.backend != "shap":
+                    st.info("SHAP unavailable: displaying feature importance from the named fallback method.")
+                display_summary = explain_art.shap_summary.rename(columns={"mean_abs_shap": "importance"})
+                st.dataframe(display_summary, use_container_width=True, hide_index=True)
                 st.subheader("Feature Importance (Bar Chart)")
                 fig_imp = go.Figure(go.Bar(
                     x=explain_art.shap_summary["mean_abs_shap"],
@@ -31515,7 +31530,7 @@ def main():
                     orientation='h',
                     marker_color='darkorange'
                 ))
-                fig_imp.update_layout(title="Mean Absolute SHAP Values", template="plotly_dark", height=400)
+                fig_imp.update_layout(title=f"Feature importance ({explain_art.backend})", template="plotly_dark", height=400)
                 st.plotly_chart(fig_imp, use_container_width=True)
             except Exception as e:
                 st.error(f"Majburiy SHAP explainability ishga tushmadi: {e}")
@@ -43590,7 +43605,7 @@ class ReferenceManager:
                 results.append({"id": ref["id"], "doi": None, "valid": "N/A"})
                 continue
             try:
-                def _check():
+                def _check(ref=ref):
                     return requests.get(
                         f"https://api.crossref.org/works/{ref['doi']}",
                         timeout=10,
@@ -46445,7 +46460,8 @@ class DynamicRemeshing:
             "n_refined_zones": len(refinement_zones),
             "target_element_size": target_h,
             "method": "h-adaptive remeshing",
-            "mesh_updated": True,
+            "mesh_updated": False,
+            "status": "NOT_IMPLEMENTED",
             "timestamp": _utc_now_iso(),
         }
 
@@ -46497,10 +46513,15 @@ class FluidCoupling:
     """Item 6: Poroelastic fluid coupling (Biot equation)."""
 
     @staticmethod
-    def biot_coupling(solid_displacement: np.ndarray, pore_pressure: np.ndarray,
+    def biot_coupling(total_stress: np.ndarray, pore_pressure: np.ndarray,
                       biot_alpha: float = 0.8) -> np.ndarray:
         """Effective stress: σ' = σ - α * P (Biot, 1941)."""
-        return solid_displacement - biot_alpha * pore_pressure
+        if not np.isfinite(biot_alpha) or not 0 <= biot_alpha <= 1:
+            raise ValueError("Biot coefficient must be within [0,1]")
+        stress, pressure = np.broadcast_arrays(np.asarray(total_stress, dtype=float), np.asarray(pore_pressure, dtype=float))
+        if not np.isfinite(stress).all() or not np.isfinite(pressure).all():
+            raise ValueError("Stress and pressure must be finite, with matching units")
+        return stress - biot_alpha * pressure
 
 
 class MultiphysicsCoupling:
@@ -46515,9 +46536,10 @@ class MultiphysicsCoupling:
             "hydraulic": {"pressure_range": [float(P.min()), float(P.max())]},
             "mechanical": {"displacement_range": [float(u.min()), float(u.max())]},
             "chemical": {"concentration_range": [float(C.min()), float(C.max())]},
-            "coupling_type": "fully coupled (THMC)",
-            "iterations": 5,
-            "converged": True,
+            "coupling_type": "field summary only; no coupled solve performed",
+            "iterations": 0,
+            "converged": None,
+            "status": "NOT_EVALUATED",
         }
 
 
@@ -46526,15 +46548,11 @@ class CrackPropagation:
 
     @staticmethod
     def phase_field_update(damage: np.ndarray, strain_energy: np.ndarray,
-                           dt: float, Gc: float = 0.01, l_char: float = 1.0) -> np.ndarray:
-        """Phase-field evolution: ∂d/∂t = (Gc * l_char * ∇²d - Gc/l_char * d + 2*H) / η."""
-        from scipy.ndimage import laplace
-        lap_d = laplace(damage)
-        driving = Gc * l_char * lap_d - Gc / l_char * damage + 2.0 * strain_energy
-        eta = 1e-3
-        dt_max = (eta * l_char**2) / (2.0 * Gc * l_char + 1e-12)
-        dt = min(dt, 0.9 * dt_max)
-        return np.clip(damage + dt / eta * driving, 0.0, 1.0)
+                           dt: float, Gc: float = 0.01, l_char: float = 1.0,
+                           dx: float = 1.0, dz: float = 1.0) -> np.ndarray:
+        """Compatibility wrapper; explicit grid spacing defaults to one metre."""
+        updated, _ = phase_field_update(damage, strain_energy, dx, dz, dt, Gc, l_char)
+        return updated
 
 
 class FractureBenchmark:
@@ -46563,53 +46581,39 @@ class MeshQualityMetrics:
 
     @staticmethod
     def aspect_ratio_hex(coords: np.ndarray) -> float:
-        """
-        Compute aspect ratio for a hexahedral element.
-        coords: (8, 3) array of vertex coordinates.
-        Returns: aspect ratio (1.0 = perfect cube, >1 = stretched).
-        """
-        if coords.shape != (8, 3):
+        """Longest/shortest of the 12 edges, standard HEX8 ordering."""
+        coords = np.asarray(coords, dtype=float)
+        if coords.shape != (8,3) or not np.isfinite(coords).all():
             return float('inf')
-        # Edge lengths
-        edges = []
-        for i in range(8):
-            for j in range(i+1, 8):
-                edges.append(np.linalg.norm(coords[i] - coords[j]))
-        edges = np.array(edges)
-        # Aspect ratio = max_edge / min_edge
-        return float(np.max(edges) / max(np.min(edges), 1e-15))
+        pairs = ((0,1),(1,2),(2,3),(3,0),(4,5),(5,6),(6,7),(7,4),(0,4),(1,5),(2,6),(3,7))
+        edges = np.array([np.linalg.norm(coords[j]-coords[i]) for i,j in pairs])
+        if edges.min() <= 0:
+            return float('inf')
+        return float(edges.max()/edges.min())
 
     @staticmethod
-    def jacobian_ratio_hex(coords: np.ndarray) -> Dict[str, float]:
+    def jacobian_ratio_hex(coords: np.ndarray) -> Dict[str, Any]:
+        """Signed trilinear HEX8 Jacobians at all 8 Gauss points.
+
+        Positive Gauss determinants are a sampled quality check, not proof of
+        positivity everywhere in a strongly warped element.
         """
-        Compute Jacobian determinant at all 8 Gauss points of a hex element.
-        Returns min/max/mean Jacobian ratio.
-        """
-        try:
-            from scipy.spatial import Delaunay
-        except ImportError:
-            return {"min_jacobian": 0.0, "ratio": 0.0, "status": "scipy unavailable"}
-
-        # Simplified: check volume-based Jacobian
-        if coords.shape != (8, 3):
-            return {"min_jacobian": 0.0, "ratio": 0.0, "status": "invalid shape"}
-
-        # Approximate Jacobian via triple product at corners
-        # Use vectors from node 0 to neighbors
-        v1 = coords[1] - coords[0]
-        v2 = coords[2] - coords[0]
-        v3 = coords[3] - coords[0]
-        J = abs(np.dot(v1, np.cross(v2, v3)))
-
-        # Reference element volume (unit cube = 1.0)
-        ref_vol = 1.0
-        ratio = J / max(ref_vol, 1e-15)
-        return {
-            "min_jacobian": float(J),
-            "jacobian_ratio": float(ratio),
-            "status": "OK" if ratio > 0.0 else "INVERTED",
-            "det_positive": J > 0,
-        }
+        coords = np.asarray(coords, dtype=float)
+        if coords.shape != (8,3) or not np.isfinite(coords).all():
+            return {"min_jacobian": 0.0, "jacobian_ratio": 0.0, "status": "INVALID", "det_positive": False}
+        signs = np.array([[-1,-1,-1],[1,-1,-1],[1,1,-1],[-1,1,-1],
+                          [-1,-1,1],[1,-1,1],[1,1,1],[-1,1,1]],dtype=float)
+        dets=[]
+        for xi, yi, zi in signs/np.sqrt(3.0):
+            dN=np.column_stack((signs[:,0]*(1+signs[:,1]*yi)*(1+signs[:,2]*zi),
+                                signs[:,1]*(1+signs[:,0]*xi)*(1+signs[:,2]*zi),
+                                signs[:,2]*(1+signs[:,0]*xi)*(1+signs[:,1]*yi)))/8
+            dets.append(float(np.linalg.det(coords.T @ dN)))
+        lo, hi = min(dets), max(dets)
+        positive = lo > 0
+        return {"min_jacobian":lo, "max_jacobian":hi, "mean_jacobian":float(np.mean(dets)),
+                "jacobian_ratio":lo/hi if positive else 0.0,
+                "status":"OK" if positive else "INVERTED_OR_DEGENERATE", "det_positive":positive}
 
     @staticmethod
     def skewness_hex(coords: np.ndarray) -> float:
@@ -46623,7 +46627,7 @@ class MeshQualityMetrics:
         # Compute angles at node 0 using adjacent edges
         angles = []
         # Get edges from node 0
-        neighbors = [1, 2, 4]  # Typical hex connectivity
+        neighbors = [1, 3, 4]  # Standard HEX8 edges incident on node zero
         vectors = []
         for n in neighbors:
             if n < 8:
@@ -46675,6 +46679,8 @@ class MeshQualityMetrics:
         nodes = mesh.nodes
         elements = mesh.elements
         n_elem = len(elements)
+        if n_elem == 0:
+            return {"status": "error", "message": "Empty mesh", "overall_quality": "NOT_EVALUATED"}
         aspect_ratios = []
         jacobian_ratios = []
         skewness_vals = []
@@ -46712,7 +46718,8 @@ class MeshQualityMetrics:
             "overall_quality": "PASS" if (
                 all(ar < 5.0 for ar in aspect_ratios) and
                 all(j > 0 for j in jacobian_ratios) and
-                all(s < 0.75 for s in skewness_vals)
+                all(s < 0.75 for s in skewness_vals) and
+                all(w < 15.0 for w in warpage_vals)
             ) else "WARNING",
         }
 
@@ -46769,24 +46776,23 @@ class SolverBenchmark:
 
     @staticmethod
     def run() -> pd.DataFrame:
-        return pd.DataFrame([
-            {"Solver": "Direct (sparse)", "Time (s)": 0.05, "Memory (MB)": 50, "Accuracy": "Exact"},
-            {"Solver": "CG (iterative)", "Time (s)": 0.02, "Memory (MB)": 20, "Accuracy": "1e-6"},
-            {"Solver": "AMG (multigrid)", "Time (s)": 0.01, "Memory (MB)": 15, "Accuracy": "1e-6"},
-        ])
+        """No timing experiment is performed by this helper."""
+        return pd.DataFrame([{"Solver": name, "Time (s)": None, "Memory (MB)": None,
+                              "Accuracy": "NOT_EVALUATED", "Status": "NOT_EVALUATED"}
+                             for name in ("Direct (sparse)", "CG (iterative)", "AMG (multigrid)")])
 
 
 class SolverScalability:
     """Item 14: Solver scalability analysis."""
 
     @staticmethod
-    def analyze(n_points_list: List[int] = [100, 500, 1000, 5000, 10000]) -> Dict[str, Any]:
-        """Analyze how solve time scales with problem size."""
-        # Simulated scaling data
-        times = [0.01, 0.05, 0.12, 0.8, 2.5]
-        return {"n_points": n_points_list, "solve_times": times,
-                "scaling_factor": times[-1] / times[0],
-                "scaling_type": "O(N^1.5) — sub-quadratic (sparse)"}
+    def analyze(n_points_list: Optional[List[int]] = None) -> Dict[str, Any]:
+        """Return requested sizes without inventing timings or complexity."""
+        sizes = list(n_points_list) if n_points_list is not None else [100,500,1000,5000,10000]
+        if not sizes or any(not isinstance(n,int) or isinstance(n,bool) or n <= 0 for n in sizes):
+            raise ValueError("Problem sizes must be positive integers")
+        return {"n_points":sizes,"solve_times":[None]*len(sizes),"scaling_factor":None,
+                "scaling_type":"NOT_EVALUATED","status":"NOT_EVALUATED"}
 
 
 class GPUBenchmark:
@@ -46802,9 +46808,10 @@ class GPUBenchmark:
             gpu_available = False
         return {
             "gpu_available": gpu_available,
-            "cpu_time_ms": 120.0,
-            "gpu_time_ms": 15.0 if gpu_available else None,
-            "speedup": 8.0 if gpu_available else 1.0,
+            "cpu_time_ms": None,
+            "gpu_time_ms": None,
+            "speedup": None,
+            "status": "NOT_EVALUATED",
             "method": "Monte Carlo 10k samples, 100 grid points",
         }
 
@@ -49939,6 +49946,7 @@ class ExpertReviewStreamlitRenderer:
         # T.27: Solver benchmark
         st.header("T.27 Solver Benchmark - Radau vs BDF vs LSODA vs RK45 (v9.11.2)")
         solver_df = pd.DataFrame(C.SOLVER_BENCHMARK)
+        solver_df["order"] = solver_df["order"].astype(str)
         st.dataframe(solver_df, use_container_width=True)
         fig_solver, ax_solver = plt.subplots(figsize=(10, 5))
         solvers = [s['solver'].split(' (')[0] for s in C.SOLVER_BENCHMARK]
