@@ -188,6 +188,10 @@
 
 from __future__ import annotations
 
+# v9.11.45 — focused research-integrity patch (2026-10-29).
+UCG_APP_VERSION = "9.11.45"  # Single source for RUNTIME versioning
+# Project outputs are uncalibrated; analytical THERMAL check != Angren THCM V&V.
+
 # FIX v9.11.23: TYPE_CHECKING — globals().get() ning haddan tashqar ko'pligi
 # o'rniga, TYPE_CHECKING blokida type-only import qilamiz. Bu forward reference
 # ni to'g'ri hal qiladi va mypy --strict ga mos keladi.
@@ -213,7 +217,7 @@ import streamlit as st
 _ST_CFG_OK = False
 try:
     st.set_page_config(
-        page_title="UCG Research Platform v9.11.43 (Research-stage, not certified)",
+        page_title=f"UCG Research Platform v{UCG_APP_VERSION} (Research-stage, not certified)",
         layout="wide",
         initial_sidebar_state="expanded",
     )
@@ -252,7 +256,7 @@ try:
     _PKG_AVAILABLE = True
 except ImportError:
     _PKG_AVAILABLE = False
-    _pkg_version = "9.11.43"  # Fallback version; scientific certification NOT claimed
+    _pkg_version = UCG_APP_VERSION  # Fallback version; scientific certification NOT claimed
 
     # FIX #35: Fallback exception classes when ucg_platform package is unavailable.
     # Without these, element_stiffness_3d() raises NameError on FEMMeshError.
@@ -1422,6 +1426,12 @@ class DatabaseBackend:
         # FIX #52: If user requested postgresql but psycopg2 is missing OR
         # the DSN is empty (no credentials supplied), downgrade to SQLite.
         if self.backend == "postgresql" and (not self._pg_available or not self.dsn):
+            if os.getenv("UCG_ENV", "development").lower() == "production":
+                raise RuntimeError(
+                    "Production requires a configured PostgreSQL backend. "
+                    "Set UCG_POSTGRES_DSN and install psycopg2-binary; "
+                    "silent SQLite fallback is disabled in production."
+                )
             if not self._pg_available:
                 logger.warning(
                     "UCG_DB_BACKEND=postgresql but psycopg2 not installed — "
@@ -2675,7 +2685,7 @@ class VersionInfo:
     """FIX v9.11.8: Versiya birlashtirildi - endi hamma joyda 9.11.8"""
     major: int = 9
     minor: int = 11
-    patch: int = 43
+    patch: int = int(UCG_APP_VERSION.split(".")[2])
     prerelease: str = ""  # SemVer 2.0.0 §9 — bo'sh yoki 'v' siz identifikator
 
     @property
@@ -2698,7 +2708,7 @@ class VersionManager:
     _lock = threading.Lock()
 
     def __init__(self):
-        self.version = '9.11.44'
+        self.version = UCG_APP_VERSION
 
     @classmethod
     def get_instance(cls):
@@ -2744,7 +2754,7 @@ __version__ = _version_manager.version
 # to (4, 0, 1) while __version__ was "6.1.0-v6.1" — the inconsistency broke
 # downstream code that compared version tuples (e.g. for feature flags).
 __version_info__ = (version_info.major, version_info.minor, version_info.patch)
-__build_number__ = "20261026"  # v9.11.43 evidence-safeguards build, not certification
+__build_number__ = "20261029"  # research model patch; NOT certified
 __git_commit__ = version_info.get_git_commit()
 
 
@@ -2754,7 +2764,7 @@ class PatentMetadata:
     """Proper dataclass for patent metadata (replaces __dunder__ variables)."""
     patent_status: str = "NOT_VERIFIED (application number required)"
     license_info: str = "Application status: NOT_VERIFIED"
-    version: str = "9.11.44"
+    version: str = field(default_factory=lambda: UCG_APP_VERSION)
     build_number: str = "20261025"
     patent_application_number: Optional[str] = None
     pct_application_number: Optional[str] = None
@@ -11572,13 +11582,13 @@ def patent_analysis_ui(ucg_subsidence_cm: np.ndarray, x_axis: np.ndarray):
     if st.button("Generate Novelty Matrix", key="patent_novelty"):
         analyzer = NoveltyAnalyzer()
         df = analyzer.generate_novelty_matrix()
-        st.dataframe(df, use_container_width=True)
+        st.dataframe(df, width="stretch")
         st.metric("Novelty Index", f"{analyzer.novelty_score(df):.1f}%")
         st.metric("Patent Similarity Index", f"{analyzer.patent_similarity_index(df):.1f}%")
         
         sim_analyzer = SimilarityAnalyzer(analyzer)
         sim_df = sim_analyzer.compute_similarities()
-        st.dataframe(sim_df, use_container_width=True)
+        st.dataframe(sim_df, width="stretch")
         mean_sim = sim_analyzer.mean_similarity()
         st.metric("Mean Similarity to Prior Art", f"{mean_sim:.4f}", 
                   delta="Low (good)" if mean_sim < 0.3 else "High (caution)")
@@ -11746,7 +11756,7 @@ def patent_analysis_ui(ucg_subsidence_cm: np.ndarray, x_axis: np.ndarray):
             template="plotly_dark",
             height=600,
         )
-        st.plotly_chart(fig_compare, use_container_width=True)
+        st.plotly_chart(fig_compare, width="stretch")
 
         errors = comparison_metrics["errors"]
         fig_err = go.Figure()
@@ -11763,7 +11773,7 @@ def patent_analysis_ui(ucg_subsidence_cm: np.ndarray, x_axis: np.ndarray):
             xaxis_title="Error (cm)",
             yaxis_title="Frequency",
         )
-        st.plotly_chart(fig_err, use_container_width=True)
+        st.plotly_chart(fig_err, width="stretch")
 
         error_surface = comparison_metrics["error_samples"][: min(80, comparison_metrics["error_samples"].shape[0]), :]
         heatmap_y = np.arange(error_surface.shape[0])
@@ -11785,7 +11795,7 @@ def patent_analysis_ui(ucg_subsidence_cm: np.ndarray, x_axis: np.ndarray):
             yaxis_title="Monte Carlo sample",
             height=500,
         )
-        st.plotly_chart(fig_heatmap, use_container_width=True)
+        st.plotly_chart(fig_heatmap, width="stretch")
 
         fig_surface = go.Figure(
             data=[
@@ -11808,13 +11818,13 @@ def patent_analysis_ui(ucg_subsidence_cm: np.ndarray, x_axis: np.ndarray):
             ),
             height=650,
         )
-        st.plotly_chart(fig_surface, use_container_width=True)
+        st.plotly_chart(fig_surface, width="stretch")
 
         st.subheader("Benchmark Ranking")
-        st.dataframe(ranking_df, use_container_width=True, hide_index=True)
+        st.dataframe(ranking_df, width="stretch", hide_index=True)
 
         st.subheader("Sensitivity Analysis")
-        st.dataframe(sensitivity_df, use_container_width=True, hide_index=True)
+        st.dataframe(sensitivity_df, width="stretch", hide_index=True)
         fig_sens = go.Figure(
             go.Bar(
                 x=sensitivity_df["Parameter"],
@@ -11828,7 +11838,7 @@ def patent_analysis_ui(ucg_subsidence_cm: np.ndarray, x_axis: np.ndarray):
             yaxis_title="Sensitivity score",
             height=350,
         )
-        st.plotly_chart(fig_sens, use_container_width=True)
+        st.plotly_chart(fig_sens, width="stretch")
         
         if st.button("Generate Patent Report (DOCX)", key="generate_patent_report_docx"):
             methodology_lines = [
@@ -13829,7 +13839,8 @@ def pore_pressure_field(T: np.ndarray, depth: np.ndarray, water_table: float = 2
 def monte_carlo_fos(ucs_mean: float, ucs_std: float, gsi_mean: float, gsi_std: float,
                     mi_val: float, D: float, T_avg: float, H_seam: float, depth: float,
                     density: float, rec_width: float, beta_th: float, n_sim: int = MIN_PATENT_MONTE_CARLO,
-                    random_seed: int = RANDOM_SEED) -> Tuple[np.ndarray, float, float, float, float, float]:
+                    random_seed: int = RANDOM_SEED, *, extraction_ratio=0.0,
+                    confinement_ratio=0.0, time_h=0.0) -> Tuple[np.ndarray, float, float, float, float, float]:
     rng = np.random.default_rng(seed=random_seed)
     n_sim = min(max(int(n_sim), MIN_PATENT_MONTE_CARLO),
                 int(UCG_CONFIG.MAX_MC_SAMPLES))
@@ -13839,24 +13850,13 @@ def monte_carlo_fos(ucs_mean: float, ucs_std: float, gsi_mean: float, gsi_std: f
         raise ValueError("Monte Carlo inputs must be finite")
     if ucs_std < 0 or gsi_std < 0 or H_seam <= 0 or depth <= 0 or density <= 0:
         raise ValueError("Invalid Monte Carlo scale or physical geometry")
-    cov = np.array([
-        [ucs_std ** 2, 0.3 * ucs_std * gsi_std],
-        [0.3 * ucs_std * gsi_std, gsi_std ** 2],
-    ])
-    min_eig = float(np.min(np.linalg.eigvalsh(cov)))
-    if min_eig < 0:
-        cov -= np.eye(2) * min_eig * 1.01
-
-    samples = rng.multivariate_normal([ucs_mean, gsi_mean], cov, n_sim)
-    ucs_samples = samples[:, 0]
-    gsi_samples = np.clip(samples[:, 1], 10.0, 100.0)
-    mb_arr, s_arr, a_arr = hoek_brown_params(gsi_samples, mi_val, D)
-    ucs_T = apply_thermal_degradation(ucs_samples, T_avg, beta_th)
-    sigma_cm = ucs_T * (np.maximum(s_arr, 1e-9) ** a_arr)
-    p_str = sigma_cm * (BIENIAWSKI_C1 + BIENIAWSKI_C2 * rec_width / (H_seam + EPS_STRESS))
-    sv = density * 9.81 * depth / 1e6
-    epistemic_bias = rng.normal(0.0, 0.03, size=n_sim)
-    fos_np = np.clip(p_str / (sv + EPS_STRESS) + epistemic_bias, 0.0, 50.0)
+    # Unmeasured UCS-GSI covariance is NOT guessed; independence is explicit.
+    ucs_samples = np.maximum(rng.normal(ucs_mean, ucs_std, n_sim), 1e-6)
+    gsi_samples = np.clip(rng.normal(gsi_mean, gsi_std, n_sim), 0.0, 100.0)
+    fos_np = pillar_fos_consistent(
+        ucs_samples, gsi_samples, T_avg, H_seam, rec_width, D, beta_th,
+        depth, density, mi=mi_val, extraction_ratio=extraction_ratio,
+        confinement_ratio=confinement_ratio, time_h=time_h)
     pf = float(np.mean(fos_np < 1.0))
     mean_fos = float(np.mean(fos_np))
     std_fos = float(np.std(fos_np))
@@ -13897,69 +13897,120 @@ def water_inrush_risk(void_volume: float, aquifer_depth: float, depth_seam: floa
     else:
         return "LOW", 0.1
 
-def pillar_fos_consistent(ucs_mpa, gsi, temperature_c, seam_height_m, pillar_width_m,
-                          disturbance, thermal_beta, depth_m, density_kg_m3):
-    """Illustrative pillar capacity/demand ratio (not the Hoek–Brown field FOS).
+def pillar_capacity_demand_model(ucs_mpa, gsi, temperature_c, seam_height_m,
+                                 pillar_width_m, disturbance, thermal_beta, depth_m,
+                                 density_kg_m3, *, mi=10.0, extraction_ratio=0.0,
+                                 confinement_ratio=0.0, time_h=0.0):
+    """EXPLORATORY capacity/demand, MPa: NOT calibrated for Angren or design.
 
-    Stress and UCS in MPa. Density kg/m³, depth/height/width in m, T in °C.
-    Not a calibrated design formula or verified field prediction.
-    Scalars and Numpy arrays are both supported for Monte Carlo evaluation.
+    T in Celsius, distances in m, density in kg/m³. The assumed tributary-area
+    load is sigma_v/(1-e), with e the *local* extracted area fraction. The
+    assumed lateral confinement is sigma3 = confinement_ratio * sigma_v.
+    Hoek-Brown rock-mass *strength increment* at sigma3 is used as a proxy
+    capacity before the illustrative pillar width factor and creep reduction.
+    This mixes empirical approximations; it does NOT replace a 3D pillar model.
+    Passing e=0 and K0=0 reproduces the legacy unconfined definition.
     """
-    if seam_height_m <= 0 or pillar_width_m <= 0 or depth_m <= 0 or density_kg_m3 <= 0:
-        raise ValueError('Seam height, pillar width, depth and density must be positive.')
-    if not 0 <= disturbance <= 1 or thermal_beta < 0:
-        raise ValueError('Invalid Hoek-Brown disturbance or thermal degradation.')
-    gsi_arr = np.asarray(gsi, dtype=float)
-    if np.any((gsi_arr < 0) | (gsi_arr > 100)):
-        raise ValueError('GSI must be between 0 and 100.')
-    if np.any(np.asarray(ucs_mpa) <= 0):
-        raise ValueError('UCS must be positive (MPa).')
-    _mb, hb_s, hb_a = hoek_brown_params(gsi, 10.0, disturbance)
-    ucs_t = apply_thermal_degradation(np.asarray(ucs_mpa, dtype=float),
-                                       np.asarray(temperature_c, dtype=float), thermal_beta)
-    sigma_cm = ucs_t * np.maximum(np.asarray(hb_s), 1e-9) ** hb_a
-    strength_mpa = sigma_cm * (BIENIAWSKI_C1 + BIENIAWSKI_C2 * pillar_width_m / seam_height_m)
-    demand_mpa = vertical_stress(depth_m, density_kg_m3)
-    result = np.maximum(strength_mpa / demand_mpa, 0.0)
-    return float(result) if np.ndim(result) == 0 else result
+    for name, val in (('seam_height_m', seam_height_m), ('pillar_width_m', pillar_width_m),
+                      ('depth_m', depth_m), ('density_kg_m3', density_kg_m3),
+                      ('mi', mi)):
+        if not np.isfinite(val) or val <= 0:
+            raise ValueError(f'{name} must be a finite positive number')
+    if not (0 <= disturbance <= 1 and 0 <= extraction_ratio < 1
+            and 0 <= confinement_ratio <= 2 and thermal_beta >= 0 and time_h >= 0):
+        raise ValueError('Invalid D, extraction ratio, K0, thermal beta or time')
+    u = np.asarray(ucs_mpa, dtype=float)
+    g = np.asarray(gsi, dtype=float)
+    t = np.asarray(temperature_c, dtype=float)
+    if (np.any(~np.isfinite(u)) or np.any(u <= 0) or
+        np.any(~np.isfinite(g)) or np.any((g < 0) | (g > 100)) or
+        np.any(~np.isfinite(t)) or np.any(t < -273.15)):
+        raise ValueError('Invalid UCS (MPa), GSI or temperature (C)')
+    sigma_v = float(vertical_stress(depth_m, density_kg_m3))
+    sigma3 = confinement_ratio * sigma_v
+    mb, hb_s, hb_a = hoek_brown_params(g, float(mi), disturbance)
+    ucs_t = np.asarray(apply_thermal_degradation(u, t, thermal_beta), dtype=float)
+    # Eq.: sigma1 - sigma3 = sigma_ci * (mb * sigma3 / sigma_ci + s) ** a
+    hb_strength_increment = ucs_t * (np.maximum(mb * sigma3 / np.maximum(ucs_t, 1e-12)
+                                               + hb_s, 1e-12) ** hb_a)
+    base_capacity = hb_strength_increment * (BIENIAWSKI_C1 +
+                                             BIENIAWSKI_C2 * pillar_width_m / seam_height_m)
+    creep_reduction = min(0.05 * (float(time_h) ** 0.3), 0.40) if time_h > 0 else 0.0
+    capacity = np.maximum(base_capacity * (1.0 - creep_reduction), 0.0)
+    demand = sigma_v / (1.0 - extraction_ratio)
+    fos = capacity / demand
+    def _scalar_or_array(x):
+        a = np.asarray(x, dtype=float)
+        return float(a) if a.ndim == 0 else a
+    return {
+        'fos': _scalar_or_array(fos),
+        'capacity_mpa': _scalar_or_array(capacity),
+        'strength_before_creep_mpa': _scalar_or_array(base_capacity),
+        'demand_mpa': float(demand),
+        'vertical_stress_mpa': sigma_v,
+        'confinement_mpa': sigma3,
+        'extraction_ratio': float(extraction_ratio),
+        'mi': float(mi),
+        'status': 'ILLUSTRATIVE_NOT_CALIBRATED',
+    }
+
+
+def pillar_fos_consistent(ucs_mpa, gsi, temperature_c, seam_height_m, pillar_width_m,
+                          disturbance, thermal_beta, depth_m, density_kg_m3,
+                          *, mi=10.0, extraction_ratio=0.0, confinement_ratio=0.0,
+                          time_h=0.0):
+    """Unified EXPLORATORY pillar FOS; not the spatial Hoek-Brown map FOS."""
+    return pillar_capacity_demand_model(
+        ucs_mpa, gsi, temperature_c, seam_height_m, pillar_width_m,
+        disturbance, thermal_beta, depth_m, density_kg_m3,
+        mi=mi, extraction_ratio=extraction_ratio,
+        confinement_ratio=confinement_ratio, time_h=time_h)['fos']
 
 
 def _quick_fos(ucs: float, gsi: float, T: float, H_seam: float, rec_width: float,
-               d_factor: float, beta_th: float, depth: float, rho: float) -> float:
-    """Backward-compatible wrapper for the common illustrative pillar FOS."""
+               d_factor: float, beta_th: float, depth: float, rho: float,
+               *, mi=10.0, extraction_ratio=0.0, confinement_ratio=0.0,
+               time_h=0.0) -> float:
     return pillar_fos_consistent(ucs, gsi, T, H_seam, rec_width,
-                                  d_factor, beta_th, depth, rho)
+                                 d_factor, beta_th, depth, rho, mi=mi,
+                                 extraction_ratio=extraction_ratio,
+                                 confinement_ratio=confinement_ratio, time_h=time_h)
 
 
 def propagate_uncertainty_analytical(ucs_mean: float, ucs_cov: float, gsi_mean: float, gsi_std: float,
                                      T_mean: float, T_std_c: float, H_seam: float, rec_width: float,
-                                     d_factor: float, beta_th: float, depth: float, rho: float) -> Tuple[float, float, float, float]:
-    """GUM first-order sensitivity propagation for the *same* pillar FOS model.
+                                     d_factor: float, beta_th: float, depth: float, rho: float,
+                                     *, mi=10.0, extraction_ratio=0.0,
+                                     confinement_ratio=0.0, time_h=0.0) -> Tuple[float, float, float, float]:
+    """GUM linearized standard uncertainty for the SAME pillar FOS formula.
 
-    ucs_cov is dimensionless fractional 1-sigma (e.g. 0.10 = 10%).
-    gsi_std is absolute GSI-point standard uncertainty; T_std_c is absolute °C.
-    Assumes uncorrelated inputs, so covariance terms are omitted; k=2 is a
-    conventional approximate coverage factor, not an empirical confidence interval.
+    UCS uncertainty is fractional; GSI and temperature uncertainties are
+    absolute (points / Celsius). Covariances unknown and assumed zero.
     """
     if ucs_mean <= 0 or ucs_cov < 0 or gsi_std < 0 or T_std_c < 0:
-        raise ValueError('Invalid GUM input uncertainties.')
+        raise ValueError('Invalid uncertainty inputs')
+    params = dict(mi=mi, extraction_ratio=extraction_ratio,
+                  confinement_ratio=confinement_ratio, time_h=time_h)
     base = float(_quick_fos(ucs_mean, gsi_mean, T_mean, H_seam, rec_width,
-                             d_factor, beta_th, depth, rho))
+                            d_factor, beta_th, depth, rho, **params))
     def partial(which, step):
-        params = dict(ucs=float(ucs_mean), gsi=float(gsi_mean), T=float(T_mean))
-        upper = dict(params); lower = dict(params)
-        bounds = {'ucs': (1e-6, float('inf')), 'gsi': (0.0, 100.0), 'T': (-273.15, float('inf'))}
-        lower[which] = max(params[which] - step, bounds[which][0])
-        upper[which] = min(params[which] + step, bounds[which][1])
-        if upper[which] <= lower[which]:
+        p = dict(ucs=float(ucs_mean), gsi=float(gsi_mean), T=float(T_mean))
+        hi = dict(p); lo = dict(p)
+        bounds = {'ucs': (1e-6, float('inf')), 'gsi': (0.0, 100.0),
+                  'T': (-273.15, float('inf'))}
+        lo[which] = max(p[which]-step, bounds[which][0])
+        hi[which] = min(p[which]+step, bounds[which][1])
+        if hi[which] <= lo[which]:
             return 0.0
-        f_up = _quick_fos(upper['ucs'],upper['gsi'],upper['T'],H_seam,rec_width,d_factor,beta_th,depth,rho)
-        f_low = _quick_fos(lower['ucs'],lower['gsi'],lower['T'],H_seam,rec_width,d_factor,beta_th,depth,rho)
-        return float((f_up-f_low)/(upper[which]-lower[which]))
+        def calc(arg):
+            return _quick_fos(arg['ucs'], arg['gsi'], arg['T'], H_seam,
+                              rec_width, d_factor, beta_th, depth, rho, **params)
+        return float((calc(hi) - calc(lo)) / (hi[which]-lo[which]))
     d_u = partial('ucs', max(1e-4, abs(ucs_mean)*1e-4))
     d_g = partial('gsi', 0.01)
     d_t = partial('T', 0.05)
-    combined = float(np.sqrt((d_u*ucs_mean*ucs_cov)**2 + (d_g*gsi_std)**2 + (d_t*T_std_c)**2))
+    combined = float(np.sqrt((d_u*ucs_mean*ucs_cov)**2 +
+                             (d_g*gsi_std)**2 + (d_t*T_std_c)**2))
     return base, combined, 2.0*combined, 2.0
 
 
@@ -24159,18 +24210,18 @@ class UCGKineticDashboard:
                 for i in range(5):
                     fig_rates.add_trace(go.Scatter(x=t, y=rates[i, :], mode='lines', name=rxn_labels[i], line=dict(color=rxn_colors[i], width=2)))
                 fig_rates.update_layout(title="Reaksiya Tezliklari Dinamikasi", xaxis_title="Vaqt (min)", yaxis_title="Tezlik (mol/min)", hovermode='x unified', legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1))
-                st.plotly_chart(fig_rates, use_container_width=True)
+                st.plotly_chart(fig_rates, width="stretch")
                 st.markdown("#### 📚 Kinetik Parametrlar Manbalari")
                 ref_data = []
                 for key, p in UCGKineticModel.REACTIONS.items():
                     ref_data.append({"Reaksiya": p['label'], "A (1/s)": f"{p['A']:.1e}", "Ea (kJ/mol)": f"{p['Ea']/1000:.1f}", "dH (kJ/mol)": f"{p['dH']/1000:.1f}", "Turi": p['type'], "Manba": UCGKineticModel.LITERATURE_REFS[key]})
-                st.dataframe(pd.DataFrame(ref_data), use_container_width=True)
+                st.dataframe(pd.DataFrame(ref_data), width="stretch")
             with col2:
                 X_c = (C[0] - C) / C[0] * 100
                 fig_conv = go.Figure()
                 fig_conv.add_trace(go.Scatter(x=t, y=X_c, mode='lines', name='Konversiya (%)', line=dict(color='#2ca02c', width=3), fill='tozeroy', fillcolor='rgba(44, 160, 44, 0.1)'))
                 fig_conv.update_layout(title="Uglerod Konversiyasi (Xc)", xaxis_title="Vaqt (min)", yaxis_title="Konversiya (%)", yaxis=dict(range=[0, max(105, X_c[-1] * 1.1)]))
-                st.plotly_chart(fig_conv, use_container_width=True)
+                st.plotly_chart(fig_conv, width="stretch")
                 k1, k2, k3 = st.columns(3)
                 k1.metric("Yakuniy Konversiya", f"{X_c[-1]:.2f}%")
                 k2.metric("Maks Tezlik", f"{np.max(rates[2, :]):.2f} mol/min")
@@ -24186,21 +24237,21 @@ class UCGKineticDashboard:
             with col1:
                 fig_pie = go.Figure(go.Pie(labels=['Endotermik (Yutilgan)', 'Ekzotermik (Ajralgan)'], values=[abs(Q_endo_total), Q_exo_total], hole=0.3, marker=dict(colors=['#1f77b4', '#d62728']), textinfo='label+percent+value', texttemplate='%{label}<br>%{percent}<br>%{value:.0f} kJ'))
                 fig_pie.update_layout(title="Umumiy Issiqlik Balansi (%)")
-                st.plotly_chart(fig_pie, use_container_width=True)
+                st.plotly_chart(fig_pie, width="stretch")
             with col2:
                 fig_waterfall = go.Figure(go.Waterfall(name="Heat Balance", orientation="v", measure=["absolute", "relative", "relative", "relative", "relative", "relative", "total"], x=["C Boshlang'ich", "Yonish", "CO Ox", "H2 Ox", "Gazifikatsiya", "Buduar", "Sof Energiya"], y=[50000, abs(Q[2]), abs(Q[3]), abs(Q[4]), -abs(Q[0]), -abs(Q[1]), 0], connector={"line": {"color": "rgb(63, 63, 63)"}}, increasing=dict(marker=dict(color="#2ca02c")), decreasing=dict(marker=dict(color="#d62728")), totals=dict(marker=dict(color="#1f77b4"))))
                 fig_waterfall.update_layout(title="Waterfall (Dinamik integrallangan kJ)")
-                st.plotly_chart(fig_waterfall, use_container_width=True)
+                st.plotly_chart(fig_waterfall, width="stretch")
             st.markdown("---")
             st.subheader("🔗 Sankey Energiya Oqimi (Dinamik)")
             fig_sankey = go.Figure(data=[go.Sankey(node=dict(pad=15, thickness=20, line=dict(color="black", width=0.5), label=["Umumiy Energiya", "Ekzotermik", "Endotermik", "Syngas Energiyasi", "Yo'qotishlar"], color=["gray", "red", "blue", "green", "orange"]), link=dict(source=[0, 0, 1, 1], target=[1, 2, 3, 4], value=[Q_exo_total, abs(Q_endo_total), Q_exo_total * 0.6, Q_exo_total * 0.4]))])
             fig_sankey.update_layout(title_text="Sankey Energiya Oqimi (Dinamik)", font_size=12)
-            st.plotly_chart(fig_sankey, use_container_width=True)
+            st.plotly_chart(fig_sankey, width="stretch")
             st.markdown("#### 📋 Reaksiya Issiqlik Hissalari (kJ)")
             heat_data = []
             for i, (key, p) in enumerate(UCGKineticModel.REACTIONS.items()):
                 heat_data.append({"Reaksiya": p['label'], "dH (kJ/mol)": f"{p['dH']/1000:.1f}", "Turi": p['type'], "Q integral (kJ)": f"{Q[i]:.1f}", "Formula": p['name']})
-            st.dataframe(pd.DataFrame(heat_data), use_container_width=True)
+            st.dataframe(pd.DataFrame(heat_data), width="stretch")
 
         # TAB 3: Gibbs Erkin Energiyasi
         with tab3:
@@ -24213,14 +24264,14 @@ class UCGKineticDashboard:
                 fig_gibbs.add_trace(go.Scatter(x=T_range, y=dG, mode='lines', name=f"dG {UCGKineticModel.REACTIONS[key]['label']}", line=dict(color=gibbs_colors[idx], width=2)))
             fig_gibbs.add_hline(y=0, line_dash="dash", line_color="black", annotation_text="dG = 0 (Muvozanat)")
             fig_gibbs.update_layout(title="Termodinamik Muvozanat (dG vs T)", xaxis_title="Harorat (K)", yaxis_title="dG (kJ/mol)", hovermode='x unified', legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1))
-            st.plotly_chart(fig_gibbs, use_container_width=True)
+            st.plotly_chart(fig_gibbs, width="stretch")
             st.markdown("#### 📋 Termodinamik Parametrlar va Muvozanat Harorati")
             gibbs_table = []
             for key, p in UCGKineticModel.REACTIONS.items():
                 T_eq = p['dH'] / p['dS'] if abs(p['dS']) > 1e-6 else float('inf')
                 spontan = "Ha" if T_eq > 0 else "Yo'q"
                 gibbs_table.append({"Reaksiya": p['label'], "dH (kJ/mol)": f"{p['dH']/1000:.1f}", "dS (J/mol*K)": f"{p['dS']:.1f}", "T_eq (K)": f"{T_eq:.1f}", f"dG({int(T_range[0])}K)": f"{gibbs[key][0]:.1f} kJ/mol", f"dG({int(T_range[-1])}K)": f"{gibbs[key][-1]:.1f} kJ/mol", "Spontan (T>T_eq)": spontan})
-            st.dataframe(pd.DataFrame(gibbs_table), use_container_width=True)
+            st.dataframe(pd.DataFrame(gibbs_table), width="stretch")
             st.markdown("#### 📚 Adabiyot Manbalari")
             for key, ref in UCGKineticModel.LITERATURE_REFS.items():
                 st.markdown(f"- **{UCGKineticModel.REACTIONS[key]['label']}**: {ref}")
@@ -24238,7 +24289,7 @@ class UCGKineticDashboard:
                 fig_ratio.add_hline(y=2.0, line_dash="dash", line_color="red", annotation_text="FT optimal (2.0)")
                 fig_ratio.add_hline(y=1.0, line_dash="dot", line_color="blue", annotation_text="Gasification (1.0)")
                 fig_ratio.update_layout(title="Syngas Sifati (H2/CO)", xaxis_title="Vaqt (min)", yaxis_title="H2/CO Nisbati")
-                st.plotly_chart(fig_ratio, use_container_width=True)
+                st.plotly_chart(fig_ratio, width="stretch")
             with col2:
                 st.subheader("Yakuniy Samaradorlik Ko'rsatkichlari")
                 st.metric("Cold Gas Efficiency (CGE)", f"{syngas['CGE']:.2f} %")
@@ -24256,7 +24307,7 @@ class UCGKineticDashboard:
             fig_syngas.add_trace(go.Scatter(x=t, y=H2, mode='lines', name='H2 (mol)', line=dict(color='#1f77b4', width=2)))
             fig_syngas.add_trace(go.Scatter(x=t, y=CO2, mode='lines', name='CO2 (mol)', line=dict(color='#2ca02c', width=2)))
             fig_syngas.update_layout(title="Gaz Konsentratsiyalari (ODE yechimidan)", xaxis_title="Vaqt (min)", yaxis_title="Mol")
-            st.plotly_chart(fig_syngas, use_container_width=True)
+            st.plotly_chart(fig_syngas, width="stretch")
 
         # TAB 5: 3D & Validatsiya
         with tab5:
@@ -24266,7 +24317,7 @@ class UCGKineticDashboard:
                 st.markdown("**Haqiqiy 3D Reaction Path Diagram (ODE yechimidan)**")
                 fig_3d = go.Figure(data=[go.Scatter3d(x=t, y=T, z=CO, mode='lines+markers', marker=dict(size=4, color=CO, colorscale='Viridis', showscale=True, colorbar=dict(title="CO (mol)")), line=dict(width=4, color=CO, colorscale='Viridis'))])
                 fig_3d.update_layout(scene=dict(xaxis_title="Vaqt (min)", yaxis_title="Harorat (K)", zaxis_title="CO (mol)"), title="3D: Vaqt x Harorat x CO")
-                st.plotly_chart(fig_3d, use_container_width=True)
+                st.plotly_chart(fig_3d, width="stretch")
             with col2:
                 st.markdown("**CO taqqoslash: manba aniq ko'rsatiladi**")
                 obs_file = st.file_uploader("CO kuzatuv CSV (time_min,CO_mol) — manba tasdiqlanmagan",
@@ -24296,7 +24347,7 @@ class UCGKineticDashboard:
                                       marker=dict(color='red', size=4, opacity=0.6)))
                 fig_val.update_layout(title=f"CO: {val['source_status']}",
                                       xaxis_title="Vaqt (min)", yaxis_title="CO (mol)")
-                st.plotly_chart(fig_val, use_container_width=True)
+                st.plotly_chart(fig_val, width="stretch")
                 st.caption(f"Ma'lumot maqomi: {val['status']}. CSV yuklash dalilning mustaqil tasdig'i emas.")
                 st.markdown("#### 📏 Validatsiya Metrikalari")
                 m1, m2, m3 = st.columns(3)
@@ -24403,7 +24454,7 @@ class UCGKineticDashboard:
             st.subheader("📚 Arrhenius Parametrlari Manbalari (#28)")
             try:
                 sources_df = ArrheniusParameterSources.get_source_table()
-                st.dataframe(sources_df, use_container_width=True)
+                st.dataframe(sources_df, width="stretch")
             except Exception as e:
                 st.warning(f"Manbalar jadvali: {e}")
 
@@ -24433,7 +24484,7 @@ class UCGKineticDashboard:
                         'Mole Fraction': [f"{v:.4f}" for v in mole_fr_norm.values()],
                         'Mass Fraction': [f"{mass_fr.get(k, 0):.4f}" for k in mole_fr_norm.keys()],
                     })
-                    st.dataframe(compare_df, use_container_width=True)
+                    st.dataframe(compare_df, width="stretch")
             except Exception as e:
                 st.warning(f"Mole/Mass fraction: {e}")
 
@@ -24867,7 +24918,7 @@ def render_v7_patent_grade_panel():
                          "Year": r["year"], "Source": r["source"], "IPC": r["ipc"]}
                         for r in sample
                     ])
-                    st.dataframe(df, use_container_width=True)
+                    st.dataframe(df, width="stretch")
                 except Exception as exc:
                     st.error(f"Error: {exc}")
 
@@ -24924,7 +24975,7 @@ def render_v7_patent_grade_panel():
                     cal_df = pd.DataFrame(cal["CALIBRATION_DATA"] if "CALIBRATION_DATA" in cal else
                                           AHPCalibration.CALIBRATION_DATA)
                     cal_df["predicted"] = cal["predicted_scores"]
-                    st.dataframe(cal_df, use_container_width=True)
+                    st.dataframe(cal_df, width="stretch")
                 except Exception as exc:
                     st.error(f"AHP error: {exc}")
 
@@ -24951,7 +25002,7 @@ def render_v7_patent_grade_panel():
                 db_path = _resolve_db_path(os.getenv("UCG_SQLITE_PATH", "ucg_platform.db"), "ucg_platform.db")  # FIX v9.11.21
                 history = AlembicMigrationManager.migration_history(db_path=db_path)
                 if history:
-                    st.dataframe(pd.DataFrame(history), use_container_width=True)
+                    st.dataframe(pd.DataFrame(history), width="stretch")
                 else:
                     st.info("No migrations applied yet. Click 'Run All Migrations' first.")
         with col_mig3:
@@ -24969,7 +25020,7 @@ def render_v7_patent_grade_panel():
              "Down Revision": m["down_revision"]}
             for m in AlembicMigrationManager.MIGRATIONS
         ])
-        st.dataframe(mig_df, use_container_width=True)
+        st.dataframe(mig_df, width="stretch")
 
         st.markdown("---")
 
@@ -24992,7 +25043,7 @@ def render_v7_patent_grade_panel():
                 "Current Tokens": round(info["current_tokens"], 2),
                 "Block": info["block"],
             })
-        st.dataframe(pd.DataFrame(rl_rows), use_container_width=True)
+        st.dataframe(pd.DataFrame(rl_rows), width="stretch")
         st.info("Rate limiters prevent HTTP 429 Too Many Requests from external patent APIs.")
 
         st.markdown("---")
@@ -25020,7 +25071,7 @@ def render_v7_patent_grade_panel():
                 vault = DigitalPatentVault()
                 docs = vault.list_documents()
                 if docs:
-                    st.dataframe(pd.DataFrame(docs), use_container_width=True)
+                    st.dataframe(pd.DataFrame(docs), width="stretch")
                 else:
                     st.info("Vault is empty.")
                 st.json(vault.info())
@@ -25184,7 +25235,7 @@ def render_v7_patent_grade_panel():
                 st.success(f"Training complete. Final avg loss: {result['final_avg_loss']:.4f}")
                 st.json({k: v for k, v in result.items() if k != "history"})
                 st.subheader("Round History")
-                st.dataframe(pd.DataFrame(result["history"]), use_container_width=True)
+                st.dataframe(pd.DataFrame(result["history"]), width="stretch")
             except Exception as exc:
                 st.error(f"Federated error: {exc}")
 
@@ -25280,7 +25331,7 @@ def render_v7_patent_grade_panel():
                 st.write(f"oqs-python Available: **{info['oqs_available']}**")
                 if info.get("algorithms"):
                     st.subheader("Available Algorithms")
-                    st.dataframe(pd.DataFrame(info["algorithms"]), use_container_width=True)
+                    st.dataframe(pd.DataFrame(info["algorithms"]), width="stretch")
                 st.info(info["install_instructions"])
             except Exception as exc:
                 st.error(f"PQC error: {exc}")
@@ -25382,7 +25433,7 @@ def render_v7_patent_grade_panel():
                 st.write(f"Backend: **{shap_result['backend']}**")
                 st.write(f"Samples used: {shap_result['n_samples_used']}")
                 if shap_result.get("shap_summary") is not None and len(shap_result["shap_summary"]) > 0:
-                    st.dataframe(shap_result["shap_summary"], use_container_width=True)
+                    st.dataframe(shap_result["shap_summary"], width="stretch")
                 st.subheader("LIME (via safe_lime_explain)")
                 lime_result = safe_lime_explain(model, X, [f"f{i}" for i in range(5)])
                 st.write(f"Backend: **{lime_result['backend']}**")
@@ -25409,7 +25460,7 @@ def render_v7_patent_grade_panel():
             with st.spinner("Validating against lab + field data..."):
                 try:
                     result = RealExperimentalValidator.full_validation_suite()
-                    st.dataframe(result["summary_table"], use_container_width=True)
+                    st.dataframe(result["summary_table"], width="stretch")
                     st.write(f"**Overall pass (R² > 0.85):** {'✅' if result['overall_pass'] else '❌'}")
                     st.json(result["detailed_results"])
                 except Exception as exc:
@@ -25427,7 +25478,7 @@ def render_v7_patent_grade_panel():
             with st.spinner(f"Training 4 models on {abl_samples} samples..."):
                 try:
                     result = AblationStudy.run_study(n_samples=abl_samples, cv_folds=abl_cv)
-                    st.dataframe(result["comparison_table"], use_container_width=True)
+                    st.dataframe(result["comparison_table"], width="stretch")
                     st.success(f"Best model: **{result['best_model']}**")
                     st.subheader("Statistical Significance")
                     st.json(result["statistical_significance"])
@@ -25569,7 +25620,7 @@ def render_v7_patent_grade_panel():
             with st.spinner("Running 4 benchmark cases..."):
                 try:
                     result = FEMBenchmarkTable.run_benchmark_suite()
-                    st.dataframe(result["benchmark_table"], use_container_width=True)
+                    st.dataframe(result["benchmark_table"], width="stretch")
                     st.warning(result["conclusion"])
                 except Exception as exc:
                     st.error(f"Benchmark error: {exc}")
@@ -25655,7 +25706,7 @@ def render_v7_patent_grade_panel():
         )
         if st.button("📋 Show Traceability Table"):
             trace_df = FormulaGraphChain.generate_traceability_table()
-            st.dataframe(trace_df, use_container_width=True)
+            st.dataframe(trace_df, width="stretch")
         chains = FormulaGraphChain.get_all_chains()
         selected_chain = st.selectbox(
             "Select chain to verify numerically:",
@@ -25730,10 +25781,10 @@ def render_v7_patent_grade_panel():
                     })
                     plots = CorrelationPlotter.generate_all_correlations(df)
                     for name, fig in plots.items():
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, width="stretch")
                     # Correlation matrix
                     st.subheader("Correlation Matrix")
-                    st.plotly_chart(CorrelationPlotter.correlation_matrix(df), use_container_width=True)
+                    st.plotly_chart(CorrelationPlotter.correlation_matrix(df), width="stretch")
                 except Exception as exc:
                     st.error(f"Correlation plot error: {exc}")
 
@@ -25750,11 +25801,11 @@ def render_v7_patent_grade_panel():
                     result = ExperimentalVsModelPlotter.validate_all_experiments()
                     if result.get("status") == "ok":
                         st.success(f"Generated plots for {result['n_experiments']} experiments")
-                        st.dataframe(result["summary"], use_container_width=True)
+                        st.dataframe(result["summary"], width="stretch")
                         for key, plots in result["plots"].items():
                             st.subheader(f"Experiment: {key}")
-                            st.plotly_chart(plots["parity"], use_container_width=True)
-                            st.plotly_chart(plots["residual"], use_container_width=True)
+                            st.plotly_chart(plots["parity"], width="stretch")
+                            st.plotly_chart(plots["residual"], width="stretch")
                             st.json(plots["metrics"])
                     else:
                         st.error(f"Validation error: {result.get('error')}")
@@ -25839,7 +25890,7 @@ def render_v7_patent_grade_panel():
                 "Category": info["category"],
                 "Available": "✅" if info["class"] is not None else "❌",
             })
-        st.dataframe(pd.DataFrame(rows), use_container_width=True)
+        st.dataframe(pd.DataFrame(rows), width="stretch")
         st.success(f"**{len(rows)} modules** registered and available in this panel.")
     except Exception as exc:
         st.warning(f"Registry error: {exc}")
@@ -26564,7 +26615,7 @@ def run_v7_app():
     if menu == "Dashboard":
         # Kinetik Dashboard (ODE-based) + Asl Dashboard (UCGEngine-based)
         # Lazy simulation: faqat tugma bosilganda hisoblash
-        run_sim_btn = st.button("▶️ Run Simulation (UCGEngine)", type="primary", use_container_width=True, key="run_dashboard_sim")
+        run_sim_btn = st.button("▶️ Run Simulation (UCGEngine)", type="primary", width="stretch", key="run_dashboard_sim")
         if run_sim_btn:
             with st.spinner("Simulyatsiya hisoblanmoqda..."):
                 df_dash, engine_dash, coal_dash = run_simulation(coal_name, n_steps, dt, T0, P0)
@@ -26606,7 +26657,7 @@ def run_v7_app():
                 "ΔS (J/mol·K)": f"{rxn.dS:.1f}",
                 "ΔG_ref (kJ/mol)": f"{rxn.dG_ref/1000:.1f}",
             })
-        st.dataframe(pd.DataFrame(rxn_data), use_container_width=True)
+        st.dataframe(pd.DataFrame(rxn_data), width="stretch")
 
         st.markdown("---")
         st.subheader("Simulyatsiyani Ishga Tushirish")
@@ -26625,7 +26676,7 @@ def run_v7_app():
                 plot_temperature(df)
 
             st.subheader("📋 Natijalar Jadvali")
-            st.dataframe(df.tail(10), use_container_width=True)
+            st.dataframe(df.tail(10), width="stretch")
 
     # ─── Monte Carlo UQ ────────────────────────────────────────────────────
     elif menu == "Monte Carlo UQ":
@@ -26660,7 +26711,7 @@ def run_v7_app():
                     "95% CI Low": f"{s['ci95_low'][final_idx]:.4f}",
                     "95% CI High": f"{s['ci95_high'][final_idx]:.4f}",
                 })
-            st.dataframe(pd.DataFrame(mc_table), use_container_width=True)
+            st.dataframe(pd.DataFrame(mc_table), width="stretch")
 
     # ─── Info ──────────────────────────────────────────────────────────────
     elif menu == "Info":
@@ -26828,7 +26879,7 @@ def run_v7_app():
                 st.dataframe(pd.DataFrame([
                     {"Reaksiya": name, "ΔG (J/mol)": val["value"], "Manba": val["source_status"]}
                     for name, val in bundle["gibbs_metrics"].items()
-                ]), use_container_width=True)
+                ]), width="stretch")
             else:
                 st.info("NOT_EVALUATED — Gibbs ko‘rsatkichlari mavjud emas")
 
@@ -26836,7 +26887,7 @@ def run_v7_app():
             st.dataframe(pd.DataFrame([
                 {"Tekshiruv": name.replace("_", " "), "Maqom": status}
                 for name, status in bundle["evidence"].items()
-            ]), use_container_width=True)
+            ]), width="stretch")
             st.caption(f"Traektoriya SHA-256: {bundle['run_sha256']} — bu raqamli imzo EMAS.")
 
             with st.expander("Model grafiklari (faqat MODEL_OUTPUT)", expanded=False):
@@ -26857,11 +26908,11 @@ def run_v7_app():
                 st.dataframe(pd.DataFrame([
                     {'ID': f['id'], 'Formula': f['name'], 'Kod': f['code'],
                      'Manbalar': ', '.join(f['refs']), 'Maqom': f['status']}
-                    for f in science['equations']]), use_container_width=True)
+                    for f in science['equations']]), width="stretch")
                 st.dataframe(pd.DataFrame([
                     {'Grafik': g['id'], 'Nomi': g['name'], 'Formula': g['formula_ids'],
                      'Manba': g['source_data'], 'Holat': g['status']}
-                    for g in science['figures']]), use_container_width=True)
+                    for g in science['figures']]), width="stretch")
                 st.caption("Ilmiy qonuniyatga havola empirik koeffitsiyentni tasdiqlamaydi.")
 
             st.subheader("📥 Hujjatlar eksporti")
@@ -26898,7 +26949,7 @@ def run_v7_app():
     elif menu == "ISO Report":
         st.title("ISO / ISRM — Auditga tayyorgarlik (sertifikat emas)")
         st.warning("NOT_ASSESSED — modul mavjudligi ISO muvofiqligi yoki sertifikatni isbotlamaydi.")
-        st.dataframe(generate_compliance_matrix(), use_container_width=True)
+        st.dataframe(generate_compliance_matrix(), width="stretch")
         st.caption("Standart bo‘yicha mustaqil audit, metodika va tashqi dalillar talab qilinadi.")
         evidence_payload = {"angren_validation": st.session_state.get("angren_evidence_run_v43")}
         _iso_hash = hashlib.sha256(json.dumps(evidence_payload, sort_keys=True, default=str).encode('utf-8')).hexdigest()
@@ -26996,7 +27047,7 @@ def run_v7_app():
                 "Status": "✅ Available" if any(info.values()) else "⚠️ Degraded",
                 "Info": str(info)[:120],
             })
-        st.dataframe(pd.DataFrame(rows), use_container_width=True)
+        st.dataframe(pd.DataFrame(rows), width="stretch")
 
         st.markdown("---")
         st.subheader("1️⃣ Digital Twin Engine")
@@ -27097,7 +27148,7 @@ def run_v7_app():
                 "Status": status_str,
                 "Info": str(info)[:120],
             })
-        st.dataframe(pd.DataFrame(rows), use_container_width=True)
+        st.dataframe(pd.DataFrame(rows), width="stretch")
 
         st.markdown("---")
         st.subheader("🏗️ Block 1: Architecture (M01-M07)")
@@ -27250,7 +27301,7 @@ def run_v7_app():
                 "Hajm (bytes)": meta["size"],
                 "Qatorlar": meta["lines"],
             })
-        st.dataframe(pd.DataFrame(rows), use_container_width=True)
+        st.dataframe(pd.DataFrame(rows), width="stretch")
 
         st.markdown("---")
         st.subheader("⬇️ Fayllarni Yuklab Olish")
@@ -30435,7 +30486,7 @@ def render_angren_validation_panel():
             "FEA THCM Model [mm]": "{:.1f}",
             "Absolute Residual [mm]": "{:.1f}",
             "Relative Error (%)": "{:.2f}",
-        }), use_container_width=True)
+        }), width="stretch")
         m = calculate_angren_station_metrics(df)
         a,b,c,d = st.columns(4)
         a.metric("7 stansiya RMSE", f"{m['RMSE_mm']:.3f} mm")
@@ -30448,7 +30499,7 @@ def render_angren_validation_panel():
         for label,col in (("Nivelirlash", "Measured Leveling [mm]"), ("InSAR", "InSAR Extracted [mm]"), ("Muallif bergan FEA natijasi", "FEA THCM Model [mm]")):
             fig.add_trace(go.Scatter(x=x, y=df[col], mode="lines+markers", name=label))
         fig.update_layout(xaxis_title="Profil koordinatasi (m)", yaxis_title="Cho‘kish (mm)", title="Angren: taqdim etilgan 7 stansiya profili")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
         st.download_button("7 stansiya CSV yuklab olish", df.to_csv(index=False).encode("utf-8-sig"), file_name="angren_validation_7_stations.csv", mime="text/csv")
         st.download_button(
             "Muallif yuborgan CSV (asl ustun nomlari va foizlari)",
@@ -30675,7 +30726,7 @@ def render_angren_user_monitoring_panel() -> None:
            'y_m':'Koordinata Y (m)','day':'Monitoring kuni','temperature_c':'Harorat (°C)',
            'ucs_mpa':'Laboratoriya UCS (MPa)', 'insar_subsidence_cm':'InSAR choʼkish (cm)',
            'partition':'Maʼlumot turi','data_provenance':'Manba holati'})
-        st.dataframe(view,use_container_width=True,hide_index=True)
+        st.dataframe(view,width="stretch",hide_index=True)
         c1,c2,c3=st.columns(3)
         c1.metric('Jami yozuv',len(df));c2.metric('TRAIN',18);c3.metric('TEST',12)
         st.download_button('30 yozuvni CSV formatda olish',
@@ -30701,7 +30752,7 @@ def render_angren_user_monitoring_panel() -> None:
                 if report['r2'] < 0:
                     st.warning('R² manfiy: testda model oʼrtacha test qiymatni taxmin qilishdan ham yomon. '
                                'RF kelajakdagi va uzoqdagi punktlarga ekstrapolyatsiya qilolmaydi.')
-                st.dataframe(report['predictions'],use_container_width=True,hide_index=True)
+                st.dataframe(report['predictions'],width="stretch",hide_index=True)
                 st.caption(report['limitation'])
 
 def analytic_heat_diffusion_benchmark(n_grid: int = 41, total_time_s: float = 100000.0) -> dict:
@@ -30745,7 +30796,10 @@ def _require_streamlit_auth() -> bool:
     enabled = (os.getenv('UCG_ENV', 'development').lower() == 'production'
                or os.getenv('UCG_REQUIRE_LOGIN', '').lower() in ('1','true','yes'))
     if not enabled:
-        return True  # Local development; do not expose publicly without login.
+        st.warning("AUTHENTICATION OFF (development/demo only). Do not expose private "
+                   "research data. For deployment set UCG_ENV=production, "
+                   "UCG_ALLOWED_EMAILS and valid [auth] OIDC secrets.")
+        return True
     if not hasattr(st, 'login') or not hasattr(st, 'user'):
         st.error('Authentication unavailable: install recent Streamlit and configure OIDC.')
         st.stop()
@@ -30808,7 +30862,7 @@ def main():
             st.warning('Illustrative Gaussian draws ONLY. Not Angren measurements; '
                        'do not cite as laboratory or validation evidence.')
             lab_demo = generate_angren_synthetic_lab_demo()
-            st.dataframe(lab_demo, use_container_width=True)
+            st.dataframe(lab_demo, width="stretch")
             st.json(describe_angren_lab_demo(lab_demo, 'siltstone_ucs_20c'))
             st.download_button('Download SYNTHETIC demo CSV',
                                lab_demo.to_csv(index=False).encode('utf-8'),
@@ -30849,11 +30903,11 @@ def main():
         __import__("logging").getLogger("ucg_platform").debug("Suppressed optional-operation exception", exc_info=True)  # FIX v9.11.36: traceable fallback
     # ── Til tanlash ─────────────────────────────────────────────────────────
     lang_col1, lang_col2, lang_col3 = st.sidebar.columns(3)
-    if lang_col1.button("🇺🇿 UZ", use_container_width=True):
+    if lang_col1.button("🇺🇿 UZ", width="stretch"):
         st.session_state.language = "uz"
-    if lang_col2.button("🇬🇧 EN", use_container_width=True):
+    if lang_col2.button("🇬🇧 EN", width="stretch"):
         st.session_state.language = "en"
-    if lang_col3.button("🇷🇺 RU", use_container_width=True):
+    if lang_col3.button("🇷🇺 RU", width="stretch"):
         st.session_state.language = "ru"
 
     if st.session_state.get('last_language') != st.session_state.language:
@@ -31107,6 +31161,9 @@ def main():
     void_fraction = gaussian_filter(overstress * (temp_2d > 600.0), sigma=2.0)
     void_mask_permanent = void_fraction > 0.5
     void_volume = float(np.sum(void_mask_permanent) * dx_val * dz_val)
+    hot_zone_area_m2 = float(np.sum(temp_2d > 600.0) * dx_val * dz_val)
+    # NOTE: void_volume remains a legacy variable, but its unit is m² (2D
+    # thresholded damage area), NEVER a measured cavity volume in m³.
 
     K_bulk = E_field / (3.0 * (1.0 - 2.0 * nu_poisson) + EPS_GENERAL)
     volumetric_strain = sigma_thermal * 1e6 / (K_bulk + EPS_GENERAL)
@@ -31249,7 +31306,15 @@ def main():
         5.0, 100.0
     ))
 
-    pillar_strength_creep = pillar_creep_strength(pillar_strength_val, time_h)
+    # Exactly the same illustrative strength/demand is used in main, GUM and MC.
+    pillar_state = pillar_capacity_demand_model(
+        ucs_seam, float(target_layer['gsi']), avg_t_p, H_seam, rec_width,
+        D_factor, beta_thermal, depth_seam, avg_rho,
+        mi=float(target_layer['mi']), extraction_ratio=extraction_ratio_slider,
+        confinement_ratio=k_ratio, time_h=time_h)
+    pillar_strength_val = float(pillar_state['strength_before_creep_mpa'])
+    pillar_strength_creep = float(pillar_state['capacity_mpa'])
+    # rec_width is still heuristic; recalculation above is NOT an optimization proof.
 
     st.sidebar.markdown("---")
     st.sidebar.subheader(t('well_config'))
@@ -31315,8 +31380,10 @@ def main():
     )
     fos_mean_unc, fos_std_unc, fos_expanded_unc, coverage_k = propagate_uncertainty_analytical(
         ucs_seam, 0.10, float(target_layer['gsi']), 5.0,
-        T_source_max, 50.0, H_seam, rec_width,
+        avg_t_p, 50.0, H_seam, rec_width,
         D_factor, beta_thermal, depth_seam, avg_rho,
+        mi=float(target_layer['mi']), extraction_ratio=extraction_ratio_slider,
+        confinement_ratio=k_ratio, time_h=time_h,
     )
 
     # The old label (overstress>0.8) was computed from physics represented in X;
@@ -31351,18 +31418,38 @@ def main():
     st.subheader(t('monitoring_header', obj_name=obj_name))
 
     m1, m2, m3, m4, m5, m6 = st.columns(6)
-    m1.metric(t('pillar_strength'), f"{pillar_strength_creep:.1f} MPa")
+    m1.metric("Pillar capacity (incl. creep, illustrative)", f"{pillar_strength_creep:.2f} MPa",
+              help="Same model as GUM and Monte Carlo; not calibrated or design-certified.")
     m2.metric(t('plastic_zone'), f"{y_zone:.1f} m")
-    m3.metric(t('cavity_volume'), f"{void_volume:.1f} m²")
+    m3.metric("Damage-threshold area (2D, proxy)", f"{void_volume:.1f} m²",
+              help="2D region where smoothed overstress×(T>600°C) exceeds 0.5. This is NOT cavity volume.")
     m4.metric(t('max_permeability'), f"{float(np.max(perm)):.1e} m²")
     m5.metric(t('ai_recommendation'), f"{analytical_width:.1f} m",
               delta=f"Classic: {rec_width} m", delta_color="off")
+    if fos_mean_unc < 1.0:
+        st.warning("Current exploratory inputs yield pillar FOS < 1. This is a model "
+                   "stress-test warning, not confirmed field failure; avoid interpreting "
+                   "these uncalibrated defaults as an Angren site assessment.")
     m6.metric("Pillar FOS ± u_c (GUM, model)",
               f"{fos_mean_unc:.2f} ± {fos_std_unc:.3f}",
               help="Illustrative capacity/demand pillar FOS; not the spatial Hoek–Brown rock-mass FOS. UCS 10% relative; GSI ±5 points; temperature ±50 °C absolute.")
-    st.caption("FOS definitions: spatial rock-mass FOS = Hoek–Brown limit / applied stress; "
-               "pillar FOS (GUM and Monte Carlo) = degraded pillar capacity / vertical demand. "
-               "These are distinct failure modes and must NOT be compared as identical outputs.")
+    st.caption(
+        f"Pillar-model inputs: mi={target_layer['mi']:.2f}; GSI={target_layer['gsi']:.1f}; "
+        f"T_seam_avg={avg_t_p:.1f}°C (not source Tmax={T_source_max}°C); "
+        f"K0={k_ratio:.2f} (assumed confinement); e_local={extraction_ratio_slider:.2f} "
+        f"(assumed tributary-area extraction); creep time={time_h} h. "
+        f"Capacity={pillar_state['capacity_mpa']:.2f} MPa; "
+        f"load={pillar_state['demand_mpa']:.2f} MPa. No field calibration."
+    )
+    st.caption("Spatial Hoek–Brown grid FOS, pillar capacity/load FOS, and legacy "
+               "Biot-based diagnostic are distinct model outputs, not interchangeable design criteria.")
+    if void_volume == 0:
+        st.info(f"Damage proxy area = 0 m²: no grid cells exceed the chosen 0.5 "
+                f"damage threshold. Heated area above 600°C = {hot_zone_area_m2:.1f} m²; "
+                "zero does not prove zero excavation, and the computed area is not m³ volume.")
+    else:
+        st.caption(f"Heated area >600°C: {hot_zone_area_m2:.1f} m²; model damage proxy area: "
+                   f"{void_volume:.1f} m² (not measured cavity volume).")
     st.markdown("---")
 
     if rf_model is not None:
@@ -31388,7 +31475,7 @@ def main():
                 'Importance': rf_model.feature_importances_
             }).sort_values('Importance', ascending=False)
             with st.expander('📊 RF Feature Importance (demo)'):
-                st.dataframe(fi_df, hide_index=True, use_container_width=True)
+                st.dataframe(fi_df, hide_index=True, width="stretch")
         else:
             st.info('AUC cannot be computed: only one class in holdout.')
 
@@ -31476,7 +31563,7 @@ def main():
                 )
             )
         fig_sub.update_layout(title=t('subsidence_title'), template="plotly_dark", height=300)
-        st.plotly_chart(fig_sub, use_container_width=True)
+        st.plotly_chart(fig_sub, width="stretch")
 
     with col_g2:
         fig_h = go.Figure(go.Scatter(
@@ -31484,7 +31571,7 @@ def main():
             line=dict(color='cyan', width=3)
         ))
         fig_h.update_layout(title=t('thermal_deform_title'), template="plotly_dark", height=300)
-        st.plotly_chart(fig_h, use_container_width=True)
+        st.plotly_chart(fig_h, width="stretch")
 
     with col_g3:
         fig_hb = go.Figure()
@@ -31502,7 +31589,7 @@ def main():
             title=t('hb_envelopes_title'), template="plotly_dark", height=300,
             legend=dict(orientation="h", y=-0.3, x=0.5, xanchor="center")
         )
-        st.plotly_chart(fig_hb, use_container_width=True)
+        st.plotly_chart(fig_hb, width="stretch")
 
     if comparison_metrics is not None and comparison_benchmark is not None:
         c1_val, c2_val, c3_val, c4_val, c5_val, c6_val, c7_val, c8_val = st.columns(8)
@@ -31532,7 +31619,7 @@ def main():
             yaxis_title="Difference (cm)",
             height=300,
         )
-        st.plotly_chart(fig_diff, use_container_width=True)
+        st.plotly_chart(fig_diff, width="stretch")
 
         error_surface_main = comparison_metrics["error_samples"][: min(60, comparison_metrics["error_samples"].shape[0]), :]
         fig_err_heat = go.Figure(
@@ -31553,10 +31640,10 @@ def main():
             yaxis_title="Simulation",
             height=320,
         )
-        st.plotly_chart(fig_err_heat, use_container_width=True)
+        st.plotly_chart(fig_err_heat, width="stretch")
 
         if comparison_sensitivity_df is not None:
-            st.dataframe(comparison_sensitivity_df, use_container_width=True, hide_index=True)
+            st.dataframe(comparison_sensitivity_df, width="stretch", hide_index=True)
 
         sig_report = compute_statistical_significance(
             comparison_metrics["benchmark_y_eval"],
@@ -31592,7 +31679,7 @@ def main():
             barmode='stack', template="plotly_dark",
             yaxis=dict(autorange='reversed'), height=450, showlegend=False
         )
-        st.plotly_chart(fig_layers, use_container_width=True)
+        st.plotly_chart(fig_layers, width="stretch")
 
     with c2:
         st.subheader(t('ucg_stages_title'))
@@ -31681,7 +31768,7 @@ def main():
         fig_tm.update_yaxes(
             range=[source_z + zoom_margin / 2, source_z - zoom_margin], row=2, col=1
         )
-        st.plotly_chart(fig_tm, use_container_width=True)
+        st.plotly_chart(fig_tm, width="stretch")
 
         if st.checkbox(t('auto_animation')):
             anim_ph = st.empty()
@@ -31695,7 +31782,7 @@ def main():
                     title=f"Stage {s_k}", template='plotly_dark', height=350,
                     yaxis=dict(autorange='reversed')
                 )
-                anim_ph.plotly_chart(fig_s, use_container_width=True)
+                anim_ph.plotly_chart(fig_s, width="stretch")
                 time.sleep(1.0)
             st.success(t('animation_done'))
 
@@ -31760,7 +31847,7 @@ def main():
                 title="Phase-field damage (1 step)", template='plotly_dark',
                 yaxis=dict(autorange='reversed')
             )
-            st.plotly_chart(fig_pf, use_container_width=True)
+            st.plotly_chart(fig_pf, width="stretch")
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("Crack length", f"{pf_metrics.crack_length:.3f}")
             m2.metric("Surface density", f"{pf_metrics.crack_surface_density:.4f}")
@@ -31823,9 +31910,12 @@ def main():
         rng_uq = np.random.default_rng(seed=RANDOM_SEED)
         ucs_samp = np.maximum(rng_uq.normal(ucs_seam, 0.10 * ucs_seam, 10000), 1e-6)
         gsi_samp = np.clip(rng_uq.normal(float(target_layer['gsi']), 5.0, 10000), 0.0, 100.0)
-        temp_samp = np.maximum(rng_uq.normal(T_source_max, 50.0, 10000), -273.15)
-        fos_samp = pillar_fos_consistent(ucs_samp, gsi_samp, temp_samp, H_seam,
-                                          rec_width, D_factor, beta_thermal, depth_seam, avg_rho)
+        temp_samp = np.maximum(rng_uq.normal(avg_t_p, 50.0, 10000), -273.15)
+        fos_samp = pillar_fos_consistent(
+            ucs_samp, gsi_samp, temp_samp, H_seam, rec_width,
+            D_factor, beta_thermal, depth_seam, avg_rho,
+            mi=float(target_layer['mi']), extraction_ratio=extraction_ratio_slider,
+            confinement_ratio=k_ratio, time_h=time_h)
         fig_uq = go.Figure()
         fig_uq.add_histogram(x=fos_samp, nbinsx=40, marker_color='teal', name='FOS dist.')
         fig_uq.add_vline(x=float(np.median(fos_samp)), line_color='red', annotation_text='Median')
@@ -31833,7 +31923,7 @@ def main():
         fig_uq.add_vline(x=float(np.percentile(fos_samp, 2.5)), line_color='orange', line_dash='dash', annotation_text='2.5%')
         fig_uq.add_vline(x=float(np.percentile(fos_samp, 97.5)), line_color='orange', line_dash='dash', annotation_text='97.5%')
         fig_uq.update_layout(title='Illustrative PILLAR FOS uncertainty (not spatial FOS)', template='plotly_dark')
-        st.plotly_chart(fig_uq, use_container_width=True)
+        st.plotly_chart(fig_uq, width="stretch")
         st.write(f"95% parametric distribution interval (not a confidence interval): [{np.percentile(fos_samp, 2.5):.3f}, {np.percentile(fos_samp, 97.5):.3f}]")
         st.write(f"Pillar FOS combined standard uncertainty u_c (GUM): {fos_std_unc:.4f}")
         st.write(f"Expanded uncertainty (k={coverage_k:.1f}): {fos_expanded_unc:.4f}")
@@ -31859,7 +31949,7 @@ def main():
                 if explain_art.backend != "shap":
                     st.info("SHAP unavailable: displaying feature importance from the named fallback method.")
                 display_summary = explain_art.shap_summary.rename(columns={"mean_abs_shap": "importance"})
-                st.dataframe(display_summary, use_container_width=True, hide_index=True)
+                st.dataframe(display_summary, width="stretch", hide_index=True)
                 st.subheader("Feature Importance (Bar Chart)")
                 fig_imp = go.Figure(go.Bar(
                     x=explain_art.shap_summary["mean_abs_shap"],
@@ -31868,7 +31958,7 @@ def main():
                     marker_color='darkorange'
                 ))
                 fig_imp.update_layout(title=f"Feature importance ({explain_art.backend})", template="plotly_dark", height=400)
-                st.plotly_chart(fig_imp, use_container_width=True)
+                st.plotly_chart(fig_imp, width="stretch")
             except Exception as e:
                 st.error(f"Majburiy SHAP explainability ishga tushmadi: {e}")
 
@@ -31954,7 +32044,7 @@ def main():
                 title="Collapse Probability Distribution (LHS)", template='plotly_dark',
                 xaxis_title="P(collapse)", yaxis_title="Count"
             )
-            st.plotly_chart(fig_lhs, use_container_width=True)
+            st.plotly_chart(fig_lhs, width="stretch")
             ci_low = float(np.percentile(collapse_prob_lhs, 2.5))
             ci_high = float(np.percentile(collapse_prob_lhs, 97.5))
             st.write(f"95% CI: [{ci_low:.3f}, {ci_high:.3f}]")
@@ -31980,7 +32070,7 @@ def main():
                     df_sensor['ucs_lab'].values
                 )
                 df_sensor['risk'] = risk_vals
-                st.dataframe(df_sensor, use_container_width=True)
+                st.dataframe(df_sensor, width="stretch")
                 fig_risk_l = go.Figure()
                 fig_risk_l.add_trace(go.Scatter(
                     y=risk_vals, mode='lines+markers', name='Risk (0–1)',
@@ -31994,7 +32084,7 @@ def main():
                     title="AI Risk Prediction", template='plotly_dark',
                     xaxis_title="Row index", yaxis_title="Risk [0–1]"
                 )
-                st.plotly_chart(fig_risk_l, use_container_width=True)
+                st.plotly_chart(fig_risk_l, width="stretch")
                 avg_risk_val = float(np.mean(risk_vals))
                 st.metric("Mean Risk", f"{avg_risk_val:.3f}",
                           delta="High" if avg_risk_val > 0.7 else ("Medium" if avg_risk_val > 0.5 else "Low"))
@@ -32013,14 +32103,20 @@ def main():
         time_h, layers_data, T_source_max, rec_width, beta_thermal
     )
     mk1, mk2, mk3, mk4 = st.columns(4)
-    mk1.metric(t('pillar_live'), f"{p_str_live:.1f} MPa", delta=f"{t_now:.0f} °C", delta_color="inverse")
+    mk1.metric("Pillar capacity (same model)", f"{pillar_strength_creep:.2f} MPa",
+               help="Same capacity as the monitoring and UQ panels; not a separate simplified UCS estimate.")
+    st.caption("Monitoring data in this panel are GENERATED model outputs, not connected "
+               "SCADA or real-time in-situ sensors.")
     mk2.metric(t('rec_width_live'), f"{w_rec_live:.1f} m")
     mk3.metric(t('max_subsidence_live'), f"{s_max_3d*100:.1f} cm")
     mk4.metric(t('process_stage'), t('stage_active') if time_h < 100 else t('stage_cooling'))
     st.markdown("---")
 
     # ── FOS vaqt bashorati ─────────────────────────────────────────────────────
-    with st.expander("📈 FOS Time Forecast (Trend Analysis)"):
+    with st.expander("📈 ILLUSTRATIVE Pillar FOS Trend (Not a validated forecast)"):
+        st.warning("This time-series assumes a prescribed temperature ramp. "
+                   "It is NOT based on independently observed time histories and "
+                   "its values need not match the current spatial temperature field.")
         time_points = np.arange(1, time_h + 1, max(1, time_h // 20))
         if len(time_points) < 2:
             st.info("Trend analysis requires at least 2 time points.")
@@ -32029,10 +32125,11 @@ def main():
             for ct in time_points:
                 T_at_ct = (T_REF_AMBIENT + (T_source_max - T_REF_AMBIENT) * min(ct, burn_duration) / max(burn_duration, 1)
                            if burn_duration > 0 else T_REF_AMBIENT)
-                ucs_T_ct = float(apply_thermal_degradation(ucs_seam, T_at_ct, beta_thermal))
-                p_str_ct = ucs_T_ct * (BIENIAWSKI_C1 + BIENIAWSKI_C2 * rec_width / (H_seam + EPS_STRESS))
-                sv_ct = sv_seam * (1.0 + 0.001 * ct)
-                fos_timeline.append(float(np.clip(p_str_ct / (sv_ct + EPS_STRESS), 0.0, 10.0)))
+                fos_timeline.append(float(pillar_fos_consistent(
+                    ucs_seam, target_layer['gsi'], T_at_ct, H_seam, rec_width,
+                    D_factor, beta_thermal, depth_seam, avg_rho,
+                    mi=float(target_layer['mi']), extraction_ratio=extraction_ratio_slider,
+                    confinement_ratio=k_ratio, time_h=float(ct))))
 
             slope, intercept, r_value, _, _ = linregress(time_points, fos_timeline)
             future_times = np.arange(time_h, min(time_h * 2, 300), max(1, time_h // 10))
@@ -32042,7 +32139,7 @@ def main():
                 t_critical = (1.0 - intercept) / slope
                 critical_info = f"⚠️ FOS=1.0 at approx. **{t_critical:.0f}** h"
             else:
-                critical_info = "✅ Current trend: no risk of reaching FOS=1.0"
+                critical_info = "Linear extrapolation does not cross 1.0; this is NOT a safety guarantee."
 
             fig_trend = go.Figure()
             fig_trend.add_trace(go.Scatter(
@@ -32072,7 +32169,7 @@ def main():
                 xaxis_title='Time (h)', yaxis_title='FOS',
                 legend=dict(orientation='h', y=-0.2)
             )
-            st.plotly_chart(fig_trend, use_container_width=True)
+            st.plotly_chart(fig_trend, width="stretch")
             tc1, tc2, tc3 = st.columns(3)
             tc1.metric("Trend rate", f"{slope:+.5f} FOS/h",
                        delta="Decreasing" if slope < 0 else "Increasing",
@@ -32088,47 +32185,51 @@ def main():
             ucs_std_val = st.number_input("UCS std dev (MPa)", value=5.0, min_value=0.1)
             gsi_std_val = st.number_input("GSI std dev", value=5.0, min_value=0.1)
             n_mc = st.selectbox("Simulations", [10000, 20000, 50000], index=0)
-        with mc_col2:
-            fos_mc, pf_mc, mean_mc, std_mc, ci_low_mc, ci_high_mc = monte_carlo_fos(
-                layers_data[-1]['ucs'], ucs_std_val,
-                layers_data[-1]['gsi'], gsi_std_val,
-                layers_data[-1]['mi'], D_factor, avg_t_p,
-                H_seam, depth_seam, avg_rho, rec_width, beta_thermal, n_sim=int(n_mc)
-            )
-            fig_mc = go.Figure()
-            fail_mask = fos_mc < 1.0
-            if np.any(fail_mask):
-                fig_mc.add_histogram(
-                    x=fos_mc[fail_mask], nbinsx=20,
-                    marker_color='#E74C3C', name='Failure (FOS<1.0)'
+        st.caption("Runs only when requested; large 50k samples may still block the UI. "
+                   "For multi-user deployment use an external job queue (not installed here).")
+        if st.button("Run illustrative pillar Monte Carlo", key="run_pillar_mc_45"):
+            with mc_col2:
+                fos_mc, pf_mc, mean_mc, std_mc, ci_low_mc, ci_high_mc = monte_carlo_fos(
+                    layers_data[-1]['ucs'], ucs_std_val,
+                    layers_data[-1]['gsi'], gsi_std_val,
+                    layers_data[-1]['mi'], D_factor, avg_t_p,
+                    H_seam, depth_seam, avg_rho, rec_width, beta_thermal, n_sim=int(n_mc),
+                    extraction_ratio=extraction_ratio_slider, confinement_ratio=k_ratio, time_h=time_h
                 )
-            if np.any(~fail_mask):
-                fig_mc.add_histogram(
-                    x=fos_mc[~fail_mask], nbinsx=20,
-                    marker_color='#27AE60', name='Stable (FOS≥1.0)'
+                fig_mc = go.Figure()
+                fail_mask = fos_mc < 1.0
+                if np.any(fail_mask):
+                    fig_mc.add_histogram(
+                        x=fos_mc[fail_mask], nbinsx=20,
+                        marker_color='#E74C3C', name='Failure (FOS<1.0)'
+                    )
+                if np.any(~fail_mask):
+                    fig_mc.add_histogram(
+                        x=fos_mc[~fail_mask], nbinsx=20,
+                        marker_color='#27AE60', name='Stable (FOS≥1.0)'
+                    )
+                fig_mc.add_vline(x=1.0, line_color='red', line_dash='dash', annotation_text='FOS=1.0')
+                fig_mc.add_vline(x=1.5, line_color='yellow', line_dash='dash', annotation_text='FOS=1.5')
+                fig_mc.add_vline(x=mean_mc, line_color='cyan',
+                                  line_dash='dot', annotation_text=f"Mean={mean_mc:.2f}")
+                fig_mc.add_vline(x=ci_low_mc, line_color='orange', line_dash='dash', annotation_text='2.5%')
+                fig_mc.add_vline(x=ci_high_mc, line_color='orange', line_dash='dash', annotation_text='97.5%')
+                fig_mc.update_layout(
+                    template='plotly_dark', height=350, barmode='overlay',
+                    title=f"FOS Distribution | P(failure) = {pf_mc*100:.1f}%",
+                    xaxis_title='FOS', yaxis_title='Frequency'
                 )
-            fig_mc.add_vline(x=1.0, line_color='red', line_dash='dash', annotation_text='FOS=1.0')
-            fig_mc.add_vline(x=1.5, line_color='yellow', line_dash='dash', annotation_text='FOS=1.5')
-            fig_mc.add_vline(x=mean_mc, line_color='cyan',
-                              line_dash='dot', annotation_text=f"Mean={mean_mc:.2f}")
-            fig_mc.add_vline(x=ci_low_mc, line_color='orange', line_dash='dash', annotation_text='2.5%')
-            fig_mc.add_vline(x=ci_high_mc, line_color='orange', line_dash='dash', annotation_text='97.5%')
-            fig_mc.update_layout(
-                template='plotly_dark', height=350, barmode='overlay',
-                title=f"FOS Distribution | P(failure) = {pf_mc*100:.1f}%",
-                xaxis_title='FOS', yaxis_title='Frequency'
-            )
-            st.plotly_chart(fig_mc, use_container_width=True)
+                st.plotly_chart(fig_mc, width="stretch")
 
-        mc_stats = pd.DataFrame({
-            'Statistic': ['Mean FOS', 'Median', 'Std Dev', '2.5% CI', '97.5% CI', 'P(failure)'],
-            'Value': [
-                f"{mean_mc:.3f}", f"{np.median(fos_mc):.3f}",
-                f"{std_mc:.3f}", f"{ci_low_mc:.3f}",
-                f"{ci_high_mc:.3f}", f"{pf_mc*100:.2f}%"
-            ]
-        })
-        st.dataframe(mc_stats, hide_index=True, use_container_width=True)
+            mc_stats = pd.DataFrame({
+                'Statistic': ['Mean FOS', 'Median', 'Std Dev', '2.5% CI', '97.5% CI', 'P(failure)'],
+                'Value': [
+                    f"{mean_mc:.3f}", f"{np.median(fos_mc):.3f}",
+                    f"{std_mc:.3f}", f"{ci_low_mc:.3f}",
+                    f"{ci_high_mc:.3f}", f"{pf_mc*100:.2f}%"
+                ]
+            })
+            st.dataframe(mc_stats, hide_index=True, width="stretch")
 
     # ── Ssenariy taqqoslash ───────────────────────────────────────────────────
     with st.expander("⚖️ Scenario Comparison (A vs B)"):
@@ -32147,14 +32248,23 @@ def main():
         def norm_val(val, mn, mx):
             return float((val - mn) / (mx - mn + EPS_GENERAL))
 
-        sv_ref = layers_data[-1]['rho'] * 9.81 * H_seam / 1e6
-        fos_a = float(apply_thermal_degradation(a_ucs, a_temp, beta_thermal)) / (sv_ref + EPS_STRESS)
-        fos_b = float(apply_thermal_degradation(b_ucs, b_temp, beta_thermal)) / (sv_ref + EPS_STRESS)
+        fos_a = float(pillar_fos_consistent(
+            a_ucs, a_gsi, a_temp, H_seam, rec_width, D_factor,
+            beta_thermal, depth_seam, avg_rho,
+            mi=float(target_layer['mi']), extraction_ratio=extraction_ratio_slider,
+            confinement_ratio=k_ratio, time_h=time_h))
+        fos_b = float(pillar_fos_consistent(
+            b_ucs, b_gsi, b_temp, H_seam, rec_width, D_factor,
+            beta_thermal, depth_seam, avg_rho,
+            mi=float(target_layer['mi']), extraction_ratio=extraction_ratio_slider,
+            confinement_ratio=k_ratio, time_h=time_h))
+        st.caption("Scenario pillar FOS uses the same uncalibrated capacity/load "
+                   "function; scenarios have independently selected UCS/GSI/T.")
         vals_a = [norm_val(a_ucs, 0, 100), norm_val(a_gsi, 10, 100),
                   norm_val(fos_a, 0, 3), 1 - norm_val(a_temp, T_REF_AMBIENT, 1200)]
         vals_b = [norm_val(b_ucs, 0, 100), norm_val(b_gsi, 10, 100),
                   norm_val(fos_b, 0, 3), 1 - norm_val(b_temp, T_REF_AMBIENT, 1200)]
-        categories = ['UCS', 'GSI', 'FOS (approx)', 'Thermal risk']
+        categories = ['UCS', 'GSI', 'Pillar FOS (model)', 'Thermal risk']
         fig_radar = go.Figure()
         for sc_name, vals, color_r in [("A", vals_a, '#3498DB'), ("B", vals_b, '#E74C3C')]:
             fig_radar.add_trace(go.Scatterpolar(
@@ -32167,7 +32277,7 @@ def main():
             template='plotly_dark', height=400,
             title="Scenario Radar Comparison"
         )
-        st.plotly_chart(fig_radar, use_container_width=True)
+        st.plotly_chart(fig_radar, width="stretch")
 
     # ── Tornado plot ──────────────────────────────────────────────────────────
     with st.expander("🌪️ Sensitivity Analysis (Tornado Plot)"):
@@ -32192,7 +32302,7 @@ def main():
             barmode='overlay', template='plotly_dark', height=350,
             xaxis_title='ΔFOS', bargap=0.3
         )
-        st.plotly_chart(fig_tornado, use_container_width=True)
+        st.plotly_chart(fig_tornado, width="stretch")
 
     # ── Experimental Validation ────────────────────────────────────────────────
     with st.expander("🧪 Experimental Validation"):
@@ -32219,7 +32329,7 @@ def main():
                         title=f"Validation: RMSE={exp_metrics.rmse:.2f} cm, R²={exp_metrics.r2:.3f}",
                         template='plotly_dark'
                     )
-                    st.plotly_chart(fig_val, use_container_width=True)
+                    st.plotly_chart(fig_val, width="stretch")
                     vc1, vc2, vc3 = st.columns(3)
                     vc1.metric("RMSE (cm)", f"{exp_metrics.rmse:.2f}")
                     vc2.metric("MAE (cm)", f"{exp_metrics.mae:.2f}")
@@ -32249,7 +32359,7 @@ def main():
             prepared_inp = st.text_input("Prepared by", value="UCG Engineering Team")
             approved_inp = st.text_input("Approved by", value="Chief Engineer")
 
-        if st.button("📄 Generate Report", type="primary", use_container_width=True, key="generate_iso_report"):
+        if st.button("📄 Generate Report", type="primary", width="stretch", key="generate_iso_report"):
             with st.spinner("Generating ISRM/ISO report..."):
                 try:
                     fig_r, ax_r = plt.subplots(figsize=(6, 4))
@@ -32412,7 +32522,7 @@ def main():
                         data=docx_bytes,
                         file_name=fname,
                         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                        use_container_width=True
+                        width="stretch"
                     )
 
                     # ── FIX: 3-language download buttons (uz/en/ru) ──
@@ -32442,7 +32552,7 @@ def main():
                                 data=docx_uz,
                                 file_name=f"{doc_num_input}_Rev{revision_inp}_{pd.Timestamp.now().strftime('%Y%m%d')}_uz.docx",
                                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                use_container_width=True
+                                width="stretch"
                             )
                         except Exception as e:
                             st.error(f"UZ: {e}")
@@ -32467,7 +32577,7 @@ def main():
                                 data=docx_en,
                                 file_name=f"{doc_num_input}_Rev{revision_inp}_{pd.Timestamp.now().strftime('%Y%m%d')}_en.docx",
                                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                use_container_width=True
+                                width="stretch"
                             )
                         except Exception as e:
                             st.error(f"EN: {e}")
@@ -32492,7 +32602,7 @@ def main():
                                 data=docx_ru,
                                 file_name=f"{doc_num_input}_Rev{revision_inp}_{pd.Timestamp.now().strftime('%Y%m%d')}_ru.docx",
                                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                use_container_width=True
+                                width="stretch"
                             )
                         except Exception as e:
                             st.error(f"RU: {e}")
@@ -32565,13 +32675,13 @@ def main():
                     pore_p_live = float(pore_pressure_field(
                         np.array([T_avg_live]), np.array([depth_seam]), water_table=20.0
                     )[0])
-                    pillar_live_v = float(apply_thermal_degradation(ucs_seam, T_avg_live, beta_thermal)) * (
-                        BIENIAWSKI_C1 + BIENIAWSKI_C2 * rec_width / (H_seam + EPS_STRESS)
-                    )
-                    FOS_live = float(np.clip(
-                        pillar_live_v / (sigma_v_live + sigma_th_live + pore_p_live + EPS_GENERAL),
-                        0.0, 10.0
-                    ))
+                    live_pillar_state = pillar_capacity_demand_model(
+                        ucs_seam, float(target_layer['gsi']), T_avg_live,
+                        H_seam, rec_width, D_factor, beta_thermal, depth_seam, avg_rho,
+                        mi=float(target_layer['mi']), extraction_ratio=extraction_ratio_slider,
+                        confinement_ratio=k_ratio, time_h=float(time_h))
+                    pillar_live_v = float(live_pillar_state['capacity_mpa'])
+                    FOS_live = float(live_pillar_state['fos'])  # simulated T only, not sensor data
                     mean_subs_v = float(np.mean(Z_subs))
                     subs_hist.append(mean_subs_v)
                     fos_hist.append(FOS_live)
@@ -32592,20 +32702,20 @@ def main():
                         st.plotly_chart(
                             go.Figure(go.Heatmap(z=Z_subs * 100.0, x=X_live, y=Y_live, colorscale='Viridis'))
                             .update_layout(title='Surface Subsidence (cm)', height=300, template='plotly_dark'),
-                            use_container_width=True
+                            width="stretch"
                         )
                     with temp_ph.container():
                         st.plotly_chart(
                             go.Figure(go.Heatmap(z=Z_temp, x=X_live, y=Y_live, colorscale='Hot'))
                             .update_layout(title='Temperature Field (°C)', height=300, template='plotly_dark'),
-                            use_container_width=True
+                            width="stretch"
                         )
                     pillar_ph.metric("Pillar Width (m)", f"{pillar_w_pred:.2f}", delta=f"FOS={FOS_live:.2f}")
                     with trend_ph.container():
                         st.plotly_chart(
                             go.Figure(go.Scatter(y=subs_hist, mode='lines+markers'))
                             .update_layout(title='Subsidence Trend', height=300, template='plotly_dark'),
-                            use_container_width=True
+                            width="stretch"
                         )
                     anom_pts = np.where(anomalies_mask)
                     with surface_ph.container():
@@ -32619,7 +32729,7 @@ def main():
                                 marker=dict(color='red', size=5), name='Anomaly'
                             ))
                         surf_fig.update_layout(title='3D Surface & Anomalies', height=450)
-                        st.plotly_chart(surf_fig, use_container_width=True)
+                        st.plotly_chart(surf_fig, width="stretch")
 
                     alerts_list = []
                     if FOS_live < 1.2: alerts_list.append("⚠️ FOS Critical!")
@@ -32680,7 +32790,7 @@ def main():
                 ),
                 template='plotly_dark', height=600
             )
-            st.plotly_chart(fig_3d, use_container_width=True)
+            st.plotly_chart(fig_3d, width="stretch")
             st.caption(
                 f"Smax={float(Smax):.2f} m | i={influence_radius:.1f} m | "
                 "Manba: Peck (1969), O'Reilly & New (1982)"
@@ -32741,7 +32851,7 @@ def main():
             with t1c2:
                 anomaly_thresh = st.slider("Anomaly threshold (σ)", 1.0, 4.0, 2.0, 0.5, key="thresh_1")
             with t1c3:
-                run_ai_1 = st.button(t('ai_run_btn'), type="primary", use_container_width=True, key="run_ai_1")
+                run_ai_1 = st.button(t('ai_run_btn'), type="primary", width="stretch", key="run_ai_1")
 
             if run_ai_1:
                 ph1 = st.empty()
@@ -32787,7 +32897,7 @@ def main():
                                 template="plotly_dark", height=500, showlegend=False,
                                 margin=dict(t=60, b=60)
                             )
-                            st.plotly_chart(fig_a, use_container_width=True)
+                            st.plotly_chart(fig_a, width="stretch")
                             anom_count = sum(1 for a in anomalies_eff if a is not None)
                             if is_anom:
                                 st.error(f"🚨 ANOMALY DETECTED! (Total: {anom_count})")
@@ -32838,7 +32948,7 @@ def main():
                         data=df_export,
                         file_name=_anom_fn,
                         mime="text/csv",
-                        use_container_width=True
+                        width="stretch"
                     )
 
         with ai_tab2:
@@ -32860,7 +32970,7 @@ def main():
                 ai_steps_2 = st.number_input(t('ai_steps'), min_value=10, max_value=500, value=50, key="ai_steps_2")
                 fos_target = st.number_input("Target FOS", min_value=1.0, max_value=3.0, value=1.5, key="fos_tgt")
             with t2c2:
-                run_ai_2 = st.button(t('ai_run_btn'), type="primary", use_container_width=True, key="run_ai_2")
+                run_ai_2 = st.button(t('ai_run_btn'), type="primary", width="stretch", key="run_ai_2")
 
             if run_ai_2:
                 ph2 = st.empty()
@@ -32909,7 +33019,7 @@ def main():
                                            )), row=1, col=2
                             )
                             fig_fos_t2.update_layout(template="plotly_dark", height=380, showlegend=False)
-                            st.plotly_chart(fig_fos_t2, use_container_width=True)
+                            st.plotly_chart(fig_fos_t2, width="stretch")
                             st.progress((i_tab2 + 1) / int(ai_steps_2))
                         time.sleep(0.05)
                     except Exception as e:
@@ -32945,7 +33055,7 @@ def main():
                         data=df_fos_exp,
                         file_name=_fos_fn,
                         mime="text/csv",
-                        use_container_width=True
+                        width="stretch"
                     )
 
                 if len(preds_tab2) >= 4:
@@ -32985,8 +33095,10 @@ def main():
             sv_eff = max(sv - biot_coef * pp, 0.01)
             return pillar_str / (sv_eff + EPS_STRESS)
 
-        fos_final = fos_with_pore_adaptive(p_str_adv, sigma_v_tot, avg_pore_p, biot_adaptive)
-        fos_final = float(np.clip(fos_final if np.isfinite(fos_final) else 0.0, 0.0, 20.0))
+        fos_biot_diagnostic = float(fos_with_pore_adaptive(
+            p_str_adv, sigma_v_tot, avg_pore_p, biot_adaptive))
+        # The same headline pillar FOS in the main panel, GUM, MC and conclusions.
+        fos_final = float(pillar_state['fos'])
 
         t1_adv, t2_adv, t3_adv, t4_adv = st.tabs([
             t('tab_mass'), t('tab_thermal'), t('tab_stability'), "📜 Patent"
@@ -33096,7 +33208,7 @@ def main():
                 fig_deg.add_hline(y=gsi_val, line_dash='dash', line_color='red', annotation_text='Initial GSI')
                 fig_deg.update_layout(title='GSI Degradation over Time', template='plotly_dark',
                                        xaxis_title='Time (h)', yaxis_title='GSI')
-                st.plotly_chart(fig_deg, use_container_width=True)
+                st.plotly_chart(fig_deg, width="stretch")
                 st.caption(f"Final GSI after {time_demo[-1]} h: {gsi_history[-1]:.1f}")
 
         with t3_adv:
@@ -33112,13 +33224,19 @@ def main():
             fos_tensile = tensile_failure_fos(sigma_t_val, sigma_min_val)
 
             cols_fos = st.columns(3)
-            cols_fos[0].metric("FOS (shear)", f"{fos_final:.2f}",
-                               delta="Stable" if fos_final >= 1.5 else "Unstable")
+            cols_fos[0].metric("Pillar FOS (same capacity/load model)", f"{fos_final:.2f}",
+                               help="Same capacity/load, K0, mi, e and creep as GUM & MC; uncalibrated.")
+            st.caption(f"Separate old Biot-adjusted index = {fos_biot_diagnostic:.2f} "
+                       "(diagnostic only: different stress/temperature assumptions). "
+                       "Spatial rock-mass FOS is a different failure mode.")
             cols_fos[1].metric("FOS (tensile)", f"{fos_tensile:.2f}",
                                help="[FIX #59] Jaeger et al. (2007)")
             cols_fos[2].metric("σ_min (MPa)", f"{sigma_min_val:.2f}")
 
-            st.write(t('pillar_wilson', w=rec_width, sv=sigma_v_tot, y=y_zone))
+            st.caption(f"Pillar width proxy={rec_width:.1f} m; model demand "
+                       f"={pillar_state['demand_mpa']:.2f} MPa, capacity "
+                       f"={pillar_state['capacity_mpa']:.2f} MPa; "
+                       "plastic zone is a separate approximate calculation.")
 
             sigma_eff_coal = max(sigma_v_tot - biot_adaptive * avg_pore_p, 0.01)
             perm_sd = stress_dependent_permeability(1e-15, sigma_eff_coal)
@@ -33157,10 +33275,11 @@ def main():
                     "model bashoratini solishtirish. Target: R² ≥ 0.85."
                 )
 
-            if fos_final < 1.3:
-                st.error(t('conclusion_danger', fos=fos_final))
-            else:
-                st.success(t('conclusion_safe', fos=fos_final))
+            st.warning(
+                f"EXPLORATORY pillar FOS = {fos_final:.2f}. "
+                "This is an uncalibrated model index, not proof of safety or failure; "
+                "no engineering design decision is authorized by this output."
+            )
 
         with t4_adv:
             patent_analysis_ui(sub_p * 100.0, x_axis)
@@ -33181,7 +33300,7 @@ def main():
             fig_biot.update_layout(title='Biot koeffitsienti validatsiyasi (Laboratoriya)',
                                    template='plotly_dark', xaxis_title='Saturation ratio (Sr)',
                                    yaxis_title='Biot coefficient α')
-            st.plotly_chart(fig_biot, use_container_width=True)
+            st.plotly_chart(fig_biot, width="stretch")
             st.caption("Eksperimental ma'lumotlar: Biot (1941) va Terzaghi (1943) asosida. Model RMSE < 0.05 maqbul.")
 
         with st.expander("🧪 Hoek-Brown Validation (FLAC3D benchmark) (FIX #111)"):
@@ -33227,7 +33346,7 @@ def main():
                 fig_conv.update_layout(title='Grid independence (computed FOS)',
                                        template='plotly_dark', xaxis_title='nx (grid points)',
                                        yaxis_title='Mean FOS')
-                st.plotly_chart(fig_conv, use_container_width=True)
+                st.plotly_chart(fig_conv, width="stretch")
             if len(df_valid) >= 2:
                 denominator = df_valid['mean_FOS'].iloc[-2]
                 if abs(denominator) > EPS_GENERAL:
@@ -33341,7 +33460,7 @@ def main():
         surface_x, h_disp_dash, v_disp_dash,
         t_steps_dash, fos_thresh_dash, disp_cscale
     )
-    st.plotly_chart(dash_fig, use_container_width=True)
+    st.plotly_chart(dash_fig, width="stretch")
 
     # ── Footer ─────────────────────────────────────────────────────────────────
     st.sidebar.markdown("---")
@@ -49811,7 +49930,7 @@ class ExpertReviewStreamlitRenderer:
             {"Reaksiya": "H2 oxidation", "Ea (kJ/mol)": C.EA_H2_OX,
              "Manba": "ArrheniusParameterSources"},
         ])
-        st.dataframe(ea_df, use_container_width=True)
+        st.dataframe(ea_df, width="stretch")
 
         # ── TRL ──
         st.header(f"T.2 TRL Darajasi (Yagona: {C.TRL_LEVEL}/{C.TRL_SCALE})")
@@ -49872,7 +49991,7 @@ class ExpertReviewStreamlitRenderer:
             {"Metrika": "R²", "Qiymat": C.R2_VALUE, "Birligi": "dimensionless",
              "Parametr": C.R2_REGRESSION, "Formula": "Eq.16"},
         ])
-        st.dataframe(metrics_df, use_container_width=True)
+        st.dataframe(metrics_df, width="stretch")
 
         # ── Monte Carlo convergence ──
         st.header("T.8 Monte Carlo Convergence va Distribution")
@@ -49914,7 +50033,7 @@ class ExpertReviewStreamlitRenderer:
             {"Parametrlar juftligi": f"{k[0]} × {k[1]}", "S2": v}
             for k, v in C.SOBOL_S2.items()
         ])
-        st.dataframe(s2_df, use_container_width=True)
+        st.dataframe(s2_df, width="stretch")
         fig_s2, ax_s2 = plt.subplots(figsize=(10, 5))
         pairs = [f"{k[0]}\n× {k[1]}" for k in C.SOBOL_S2.keys()]
         values = list(C.SOBOL_S2.values())
@@ -49935,7 +50054,7 @@ class ExpertReviewStreamlitRenderer:
             {"Parametr": k, "Qiymat": str(v)}
             for k, v in C.AI_ARCHITECTURE.items()
         ])
-        st.dataframe(arch_df, use_container_width=True)
+        st.dataframe(arch_df, width="stretch")
 
         # ── Dataset ratios ──
         st.header("T.11 Dataset Training/Validation/Test Nisbatlari")
@@ -49947,7 +50066,7 @@ class ExpertReviewStreamlitRenderer:
             {"To'plam": "Test", "Namunalar": C.DATASET_SPLIT['test'],
              "Foiz": f"{C.DATASET_SPLIT['test_pct']:.0f}%"},
         ])
-        st.dataframe(split_df, use_container_width=True)
+        st.dataframe(split_df, width="stretch")
 
         # Dataset split visualization
         fig_split, ax_split = plt.subplots(figsize=(8, 6))
@@ -50019,19 +50138,19 @@ class ExpertReviewStreamlitRenderer:
         # ── Patent FTO ──
         st.header("T.13 Patent FTO - Patent Raqamlari")
         fto_df = pd.DataFrame(C.FTO_PATENTS)
-        st.dataframe(fto_df, use_container_width=True)
+        st.dataframe(fto_df, width="stretch")
         st.warning("FTO: NOT_EVALUATED. Raqamlar mahalliy namuna; patentning huquqiy holati va claim to‘qnashuvi tasdiqlanmagan.")
 
         # ── Claim chart ──
         st.header("T.14 Patent Claim Chart (Element-by-Element)")
         claim_df = pd.DataFrame(C.PATENT_NOVELTY_COMPARISON)
-        st.dataframe(claim_df, use_container_width=True)
+        st.dataframe(claim_df, width="stretch")
 
         # ── Angren raw data ──
         st.header("T.15 Angren UCG-1 — manbasi tasdiqlanmagan NAMUNA ma’lumotlar")
         st.warning("UNVERIFIED SAMPLE DATA — xom dala fayli, uskunalar kalibrlashi va mustaqil test taqsimoti yo‘q. Ilmiy dalil sifatida ishlatmang.")
         angren_df = pd.DataFrame(C.ANGREN_RAW_DATA)
-        st.dataframe(angren_df, use_container_width=True)
+        st.dataframe(angren_df, width="stretch")
         st.info(
             "Namuna jadvali: bu sonlar haqiqiy dala validatsiyasi yoki mustaqil R² natijasi emas."
         )
@@ -50040,7 +50159,7 @@ class ExpertReviewStreamlitRenderer:
         st.header("T.16 Sensor CSV — kelib chiqishi tekshirilmagan NAMUNA")
         st.warning("CSV manbasi mustaqil tekshirilmagan. Real-time sensor dalili sifatida ko‘rsatilmasin.")
         sensor_df = pd.read_csv(io.StringIO(C.SENSOR_DATA_CSV))
-        st.dataframe(sensor_df, use_container_width=True)
+        st.dataframe(sensor_df, width="stretch")
 
         # Sensor visualization
         fig_sensor, axes = plt.subplots(2, 2, figsize=(12, 8))
@@ -50081,7 +50200,7 @@ class ExpertReviewStreamlitRenderer:
             'Mesh olchami': C.MESH_INDEPENDENCE['mesh_sizes'],
             'RMSE (mol)': C.MESH_INDEPENDENCE['rmse_vs_reference'],
         })
-        st.dataframe(mesh_df, use_container_width=True)
+        st.dataframe(mesh_df, width="stretch")
         fig_mesh, ax_mesh = plt.subplots(figsize=(10, 5))
         ax_mesh.plot(C.MESH_INDEPENDENCE['mesh_sizes'],
                     C.MESH_INDEPENDENCE['rmse_vs_reference'],
@@ -50105,7 +50224,7 @@ class ExpertReviewStreamlitRenderer:
             'dt (min)': C.TIME_CONVERGENCE['dt_values'],
             'RMSE (mol)': C.TIME_CONVERGENCE['rmse_vs_dt_001'],
         })
-        st.dataframe(time_df, use_container_width=True)
+        st.dataframe(time_df, width="stretch")
         fig_time, ax_time = plt.subplots(figsize=(10, 5))
         ax_time.plot(C.TIME_CONVERGENCE['dt_values'],
                     C.TIME_CONVERGENCE['rmse_vs_dt_001'],
@@ -50130,7 +50249,7 @@ class ExpertReviewStreamlitRenderer:
             'mu_star': list(C.MORRIS_RESULTS['mu_star'].values()),
             'sigma': list(C.MORRIS_RESULTS['sigma'].values()),
         })
-        st.dataframe(morris_df, use_container_width=True)
+        st.dataframe(morris_df, width="stretch")
         fig_morris, ax_m = plt.subplots(figsize=(10, 6))
         params = list(C.MORRIS_RESULTS['mu_star'].keys())
         mu_vals = list(C.MORRIS_RESULTS['mu_star'].values())
@@ -50208,7 +50327,7 @@ class ExpertReviewStreamlitRenderer:
             {"Bosqich": "Posterior convergence", "Tavsif": C.CALIBRATION['posterior_convergence']},
             {"Bosqich": "Reference data", "Tavsif": C.CALIBRATION['reference_data']},
         ])
-        st.dataframe(cal_df, use_container_width=True)
+        st.dataframe(cal_df, width="stretch")
 
         # ── Code verification ──
         st.header("T.23 Code Verification (Manufactured Solution)")
@@ -50219,7 +50338,7 @@ class ExpertReviewStreamlitRenderer:
             {"Bosqich": "Theoretical order", "Tavsif": str(C.CODE_VERIFICATION['theoretical_order'])},
             {"Bosqich": "Result", "Tavsif": "PASSED" if C.CODE_VERIFICATION['passed'] else "FAILED"},
         ])
-        st.dataframe(ver_df, use_container_width=True)
+        st.dataframe(ver_df, width="stretch")
         st.success(
             f"Code verification PASSED - observed order = "
             f"{C.CODE_VERIFICATION['observed_order']} approx theoretical "
@@ -50274,20 +50393,20 @@ class ExpertReviewStreamlitRenderer:
         # T.25: IPC/CPC
         st.header("T.25 IPC/CPC Patent Klassifikatsiyasi (v9.11.2)")
         ipc_df = pd.DataFrame(C.IPC_CPC_CLASSIFICATION)
-        st.dataframe(ipc_df, use_container_width=True)
+        st.dataframe(ipc_df, width="stretch")
         st.info("Tavsiya etilgan: C10J 3/46 (UCG). CPC Y02E 50/00 - climate mitigation.")
 
         # T.26: Patent Family
         st.header("T.26 Patent Family Tahlili (v9.11.2)")
         fam_df = pd.DataFrame(C.PATENT_FAMILY)
-        st.dataframe(fam_df, use_container_width=True)
+        st.dataframe(fam_df, width="stretch")
         st.info("Bizning family: UZ FAP 2024 00345 (2024-08-20). PCT 2025-08-20 gacha rejalashtirilgan.")
 
         # T.27: Solver benchmark
         st.header("T.27 Solver Benchmark - Radau vs BDF vs LSODA vs RK45 (v9.11.2)")
         solver_df = pd.DataFrame(C.SOLVER_BENCHMARK)
         solver_df["order"] = solver_df["order"].astype(str)
-        st.dataframe(solver_df, use_container_width=True)
+        st.dataframe(solver_df, width="stretch")
         fig_solver, ax_solver = plt.subplots(figsize=(10, 5))
         solvers = [s['solver'].split(' (')[0] for s in C.SOLVER_BENCHMARK]
         cpu_times = [s['cpu_time_s'] for s in C.SOLVER_BENCHMARK]
@@ -50313,7 +50432,7 @@ class ExpertReviewStreamlitRenderer:
             'Vaqt qadamlari': C.GRID_CONVERGENCE['time_steps'],
             'RMSE (mol)': C.GRID_CONVERGENCE['rmse_combined'],
         })
-        st.dataframe(grid_df, use_container_width=True)
+        st.dataframe(grid_df, width="stretch")
         st.info(f"Richardson extrapolation: observed p={C.GRID_CONVERGENCE['observed_order_p']} "
                 f"(teoritik={C.GRID_CONVERGENCE['theoretical_order_p']}). Converged at mesh="
                 f"{C.GRID_CONVERGENCE['converged_at_space']}, time={C.GRID_CONVERGENCE['converged_at_time']}")
@@ -50324,7 +50443,7 @@ class ExpertReviewStreamlitRenderer:
         perm_df = pd.DataFrame([
             {'Feature': k, 'Importance': v} for k, v in perm_data.items()
         ]).sort_values('Importance', ascending=False)
-        st.dataframe(perm_df, use_container_width=True)
+        st.dataframe(perm_df, width="stretch")
         fig_perm, ax_perm = plt.subplots(figsize=(10, 5))
         ax_perm.barh(perm_df['Feature'], perm_df['Importance'], color='steelblue')
         ax_perm.set_xlabel("Permutation Importance (R² decrease)")
@@ -50340,7 +50459,7 @@ class ExpertReviewStreamlitRenderer:
         # T.31: Experimental CSV
         st.header("T.31 Eksperimental Dataset (CSV, v9.11.2)")
         exp_df = pd.read_csv(io.StringIO(C.EXPERIMENTAL_DATASET_CSV))
-        st.dataframe(exp_df, use_container_width=True)
+        st.dataframe(exp_df, width="stretch")
         st.download_button(
             "Eksperimental dataset CSV yuklab olish",
             C.EXPERIMENTAL_DATASET_CSV.encode(),
@@ -50352,7 +50471,7 @@ class ExpertReviewStreamlitRenderer:
         st.header("T.32 Iqtisodiy Samaradorlik (v9.11.2)")
         econ_items = [(k, v) for k, v in C.ECONOMIC_EFFICIENCY.items() if isinstance(v, (int, float))]
         econ_df = pd.DataFrame(econ_items, columns=['Ko\'rsatkich', 'Qiymat'])
-        st.dataframe(econ_df, use_container_width=True)
+        st.dataframe(econ_df, width="stretch")
         # Bar chart
         fig_econ, ax_econ = plt.subplots(figsize=(10, 5))
         env_metrics = ['co2_reduction_pct', 'water_reduction_pct', 'land_use_reduction_pct']
@@ -50373,7 +50492,7 @@ class ExpertReviewStreamlitRenderer:
         # T.33: CO2 reduction tavsiyalari
         st.header("T.33 CO₂ Emissiyasini Kamaytirish Tavsiyalari (v9.11.2)")
         co2_df = pd.DataFrame(C.CO2_REDUCTION_RECOMMENDATIONS)
-        st.dataframe(co2_df, use_container_width=True)
+        st.dataframe(co2_df, width="stretch")
         fig_co2, ax_co2 = plt.subplots(figsize=(11, 5))
         co2_measures = [r['measure'][:30] for r in C.CO2_REDUCTION_RECOMMENDATIONS]
         co2_reductions = [r['co2_reduction_pct'] for r in C.CO2_REDUCTION_RECOMMENDATIONS]
@@ -50391,7 +50510,7 @@ class ExpertReviewStreamlitRenderer:
         # T.34: Deployment phases
         st.header("T.34 Sanoatga Joriy Etish Bosqichlari (v9.11.2)")
         dep_df = pd.DataFrame(C.INDUSTRY_DEPLOYMENT_PHASES)
-        st.dataframe(dep_df, use_container_width=True)
+        st.dataframe(dep_df, width="stretch")
         # Timeline vizualizatsiyasi
         fig_dep, ax_dep = plt.subplots(figsize=(12, 4))
         phases = [p['phase'] for p in C.INDUSTRY_DEPLOYMENT_PHASES]
@@ -50419,20 +50538,20 @@ class ExpertReviewStreamlitRenderer:
         eqref_df = pd.DataFrame([
             {'Formula': k, 'Matn': v} for k, v in C.EQUATION_CROSS_REF.items()
         ])
-        st.dataframe(eqref_df, use_container_width=True)
+        st.dataframe(eqref_df, width="stretch")
 
         # T.36: Image Quality (300 dpi)
         st.header("T.36 Grafik Sifati - 300 dpi IEEE Standard (v9.11.2)")
         img_df = pd.DataFrame([
             {'Parametr': k, 'Qiymat': str(v)} for k, v in C.IMAGE_QUALITY.items()
         ])
-        st.dataframe(img_df, use_container_width=True)
+        st.dataframe(img_df, width="stretch")
         st.info("Standart: IEEE Std 1012-2017 figure caption format. Publication-quality (300 dpi).")
 
         # T.37: IEEE Figure Captions
         st.header("T.37 IEEE Uslubidagi Figure Captions (v9.11.2)")
         cap_df = pd.DataFrame(C.IEEE_FIGURE_CAPTIONS)
-        st.dataframe(cap_df, use_container_width=True)
+        st.dataframe(cap_df, width="stretch")
 
         # T.38: Yakuniy izchillik tekshiruvi
         st.header("T.38 Yakuniy Izchillik Tekshiruvi (v9.11.2)")
