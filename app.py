@@ -1,3 +1,4 @@
+# EXPERT PATCH (2026-10-29): targeted code integrity corrections; no independent field verification.
 # Local audit 2026-10-29: numerical/runtime corrections; research prototype, not independently validated.
 # v9.11.40: Patent Scientific Methodology + full citation/figure/analysis traceability.
 # ════════════════════════════════════════════════════════════════════════
@@ -342,12 +343,11 @@ SYNTHETIC_DATA_DISCLAIMER = (
     "================================================================\n"
     "⚠️  FOR DEMONSTRATION ONLY — SYNTHETIC DATA ACTIVE  ⚠️\n"
     "================================================================\n"
-    "ALLOW_SYNTHETIC_BENCHMARK=True — ALL results are synthetic.\n"
-    "These results are NOT suitable for:\n"
-    "  • Patent filing (examiner will reject synthetic-only evidence)\n"
-    "  • PhD defense (committee will flag as data fabrication)\n"
-    "  • Regulatory submission (data integrity violation)\n"
-    "Set UCG_ALLOW_SYNTHETIC=false and provide REAL experimental/field data.\n"
+    "UCG_ALLOW_SYNTHETIC=true: optional synthetic demonstration modules are enabled.\n"
+    "Simulated laboratory rows and formula-derived ML labels are NOT measurements.\n"
+    "Do NOT represent them as Angren experimental, field, or validation evidence.\n"
+    "Analytical solver benchmarks are separate and have their own scope statements.\n"
+    "Use independently collected data for claims of predictive accuracy.\n"
     "================================================================\n\n"
 ) if ALLOW_SYNTHETIC_BENCHMARK else ""
 
@@ -1382,6 +1382,9 @@ def _safe_sqlite_connect(db_path: Optional[str] = None, default_name: str = "ucg
 # ══════════════════════════════════════════════════════════════════════════════
 # FIX #5 — DatabaseBackend abstraction (PostgreSQL default, SQLite fallback)
 # ══════════════════════════════════════════════════════════════════════════════
+_UCG_SQLITE_TRANSACTION_LOCK = threading.RLock()
+
+
 class DatabaseBackend:
     """
     Database backend abstraction.
@@ -1447,32 +1450,29 @@ class DatabaseBackend:
             finally:
                 conn.close()
         else:  # sqlite
-            conn = _safe_sqlite_connect(
-                self.sqlite_path,
-                "ucg_platform.db",
-                timeout=UCG_CONFIG.SQLITE_BUSY_TIMEOUT_MS / 1000.0,
-                isolation_level="",
-                check_same_thread=False,
-            )
-            try:
-                # Enable WAL mode + set busy_timeout (mitigates "database is locked")
-                conn.execute("PRAGMA journal_mode=WAL;")
-                conn.execute(f"PRAGMA busy_timeout={UCG_CONFIG.SQLITE_BUSY_TIMEOUT_MS};")
-                conn.execute("PRAGMA synchronous=NORMAL;")
-                # Aniq transaction boshlash — autocommit yoqilmagan
-                conn.execute("BEGIN;")
-                yield conn
-                # Muvaffaqiyatli bo'lsa — commit
-                conn.commit()
-            except Exception:
-                # Xato bo'lsa — rollback (transaksion yaxlitlik saqlanadi)
+            # This lock serializes DatabaseBackend transactions in this Python process.
+            # Distributed replicas still need PostgreSQL or a real writer queue.
+            with _UCG_SQLITE_TRANSACTION_LOCK:
+                conn = _safe_sqlite_connect(
+                    self.sqlite_path, "ucg_platform.db",
+                    timeout=UCG_CONFIG.SQLITE_BUSY_TIMEOUT_MS / 1000.0,
+                    isolation_level="", check_same_thread=True,
+                )
                 try:
-                    conn.rollback()
+                    conn.execute("PRAGMA journal_mode=WAL;")
+                    conn.execute(f"PRAGMA busy_timeout={int(UCG_CONFIG.SQLITE_BUSY_TIMEOUT_MS)};")
+                    conn.execute("PRAGMA synchronous=NORMAL;")
+                    conn.execute("BEGIN IMMEDIATE;")  # reserve writer; fail early on contention
+                    yield conn
+                    conn.commit()
                 except Exception:
-                    __import__("logging").getLogger("ucg_platform").debug("Suppressed optional-operation exception", exc_info=True)  # FIX v9.11.36: traceable fallback
-                raise
-            finally:
-                conn.close()
+                    try:
+                        conn.rollback()
+                    except sqlite3.Error:
+                        logger.exception('SQLite transaction rollback failed')
+                    raise
+                finally:
+                    conn.close()
 
     def execute(self, sql: str, params: Optional[Sequence[Any]] = None) -> int:
         """Execute a single SQL statement. Returns lastrowid."""
@@ -5765,7 +5765,8 @@ class PriorArtSearchEngineV2:
                      "dataset (https://console.cloud.google.com/marketplace/details/"
                      "google_patents_public_datasets/"),
         })
-        # BigQuery yo'nalishi uchun yo'riqnoma
+        # The following is a non-executed parameterized SQL example.
+        # The search text must be bound to @query by a BigQuery client, never interpolated.
         results.append({
             "patent_id": "bigquery:patents.publications",
             "title": f"[BigQuery dataset] SQL so'rovi: {query}",
@@ -5773,9 +5774,11 @@ class PriorArtSearchEngineV2:
                     "google_patents_public_datasets/google-patents-public-data"),
             "source": "Google Patents Public Datasets (BigQuery)",
             "year": None,
-            "note": ("SELECT publication_number, title_localized FROM "
+            "note": ("-- BigQuery Standard SQL; pass parameters @query and @limit\n"
+                     "SELECT publication_number, title_localized FROM "
                      "`patents-public-data.patents.publications` "
-                     f"WHERE title_localized LIKE '%{query}%' LIMIT {max_results}"),
+                     "WHERE EXISTS (SELECT 1 FROM UNNEST(title_localized) AS t "
+                     "WHERE t.text LIKE CONCAT('%', @query, '%')) LIMIT @limit"),
         })
         logger.info(
             "Google Patents: scraping olib tashlandi (ToS). Manual URL va "
@@ -13894,42 +13897,71 @@ def water_inrush_risk(void_volume: float, aquifer_depth: float, depth_seam: floa
     else:
         return "LOW", 0.1
 
+def pillar_fos_consistent(ucs_mpa, gsi, temperature_c, seam_height_m, pillar_width_m,
+                          disturbance, thermal_beta, depth_m, density_kg_m3):
+    """Illustrative pillar capacity/demand ratio (not the Hoek–Brown field FOS).
+
+    Stress and UCS in MPa. Density kg/m³, depth/height/width in m, T in °C.
+    Not a calibrated design formula or verified field prediction.
+    Scalars and Numpy arrays are both supported for Monte Carlo evaluation.
+    """
+    if seam_height_m <= 0 or pillar_width_m <= 0 or depth_m <= 0 or density_kg_m3 <= 0:
+        raise ValueError('Seam height, pillar width, depth and density must be positive.')
+    if not 0 <= disturbance <= 1 or thermal_beta < 0:
+        raise ValueError('Invalid Hoek-Brown disturbance or thermal degradation.')
+    gsi_arr = np.asarray(gsi, dtype=float)
+    if np.any((gsi_arr < 0) | (gsi_arr > 100)):
+        raise ValueError('GSI must be between 0 and 100.')
+    if np.any(np.asarray(ucs_mpa) <= 0):
+        raise ValueError('UCS must be positive (MPa).')
+    _mb, hb_s, hb_a = hoek_brown_params(gsi, 10.0, disturbance)
+    ucs_t = apply_thermal_degradation(np.asarray(ucs_mpa, dtype=float),
+                                       np.asarray(temperature_c, dtype=float), thermal_beta)
+    sigma_cm = ucs_t * np.maximum(np.asarray(hb_s), 1e-9) ** hb_a
+    strength_mpa = sigma_cm * (BIENIAWSKI_C1 + BIENIAWSKI_C2 * pillar_width_m / seam_height_m)
+    demand_mpa = vertical_stress(depth_m, density_kg_m3)
+    result = np.maximum(strength_mpa / demand_mpa, 0.0)
+    return float(result) if np.ndim(result) == 0 else result
+
+
 def _quick_fos(ucs: float, gsi: float, T: float, H_seam: float, rec_width: float,
                d_factor: float, beta_th: float, depth: float, rho: float) -> float:
-    mb, s, a = hoek_brown_params(gsi, 10.0, d_factor)
-    ucs_T = apply_thermal_degradation(ucs, T, beta_th)
-    sigma_cm = ucs_T * (max(float(s), 1e-9) ** float(a))
-    p_str = sigma_cm * (BIENIAWSKI_C1 + BIENIAWSKI_C2 * rec_width / (H_seam + EPS_STRESS))
-    sv = vertical_stress(depth, rho)
-    return float(np.clip(p_str / (sv + EPS_STRESS), 0.0, 50.0))
+    """Backward-compatible wrapper for the common illustrative pillar FOS."""
+    return pillar_fos_consistent(ucs, gsi, T, H_seam, rec_width,
+                                  d_factor, beta_th, depth, rho)
 
-def propagate_uncertainty_analytical(ucs_mean: float, ucs_cov: float, gsi_mean: float, gsi_cov: float,
-                                     T_mean: float, T_cov: float, H_seam: float, rec_width: float,
+
+def propagate_uncertainty_analytical(ucs_mean: float, ucs_cov: float, gsi_mean: float, gsi_std: float,
+                                     T_mean: float, T_std_c: float, H_seam: float, rec_width: float,
                                      d_factor: float, beta_th: float, depth: float, rho: float) -> Tuple[float, float, float, float]:
-    eps_rel = 0.01
-    fos_base = _quick_fos(ucs_mean, gsi_mean, T_mean, H_seam, rec_width,
-                          d_factor, beta_th, depth, rho)
-    dfos_ducs = (
-        _quick_fos(ucs_mean * (1 + eps_rel), gsi_mean, T_mean, H_seam, rec_width,
-                   d_factor, beta_th, depth, rho) - fos_base
-    ) / (eps_rel * ucs_mean + EPS_GENERAL)
-    dfos_dgsi = (
-        _quick_fos(ucs_mean, gsi_mean * (1 + eps_rel), T_mean, H_seam, rec_width,
-                   d_factor, beta_th, depth, rho) - fos_base
-    ) / (eps_rel * gsi_mean + EPS_GENERAL)
-    dfos_dT = (
-        _quick_fos(ucs_mean, gsi_mean, T_mean * (1 + eps_rel), H_seam, rec_width,
-                   d_factor, beta_th, depth, rho) - fos_base
-    ) / (eps_rel * T_mean + EPS_GENERAL)
+    """GUM first-order sensitivity propagation for the *same* pillar FOS model.
 
-    u_c = np.sqrt(
-        (dfos_ducs * ucs_mean * ucs_cov) ** 2
-        + (dfos_dgsi * gsi_mean * gsi_cov) ** 2
-        + (dfos_dT * T_mean * T_cov) ** 2
-    )
-    k = 2.0
-    expanded_unc = k * u_c
-    return fos_base, u_c, expanded_unc, k
+    ucs_cov is dimensionless fractional 1-sigma (e.g. 0.10 = 10%).
+    gsi_std is absolute GSI-point standard uncertainty; T_std_c is absolute °C.
+    Assumes uncorrelated inputs, so covariance terms are omitted; k=2 is a
+    conventional approximate coverage factor, not an empirical confidence interval.
+    """
+    if ucs_mean <= 0 or ucs_cov < 0 or gsi_std < 0 or T_std_c < 0:
+        raise ValueError('Invalid GUM input uncertainties.')
+    base = float(_quick_fos(ucs_mean, gsi_mean, T_mean, H_seam, rec_width,
+                             d_factor, beta_th, depth, rho))
+    def partial(which, step):
+        params = dict(ucs=float(ucs_mean), gsi=float(gsi_mean), T=float(T_mean))
+        upper = dict(params); lower = dict(params)
+        bounds = {'ucs': (1e-6, float('inf')), 'gsi': (0.0, 100.0), 'T': (-273.15, float('inf'))}
+        lower[which] = max(params[which] - step, bounds[which][0])
+        upper[which] = min(params[which] + step, bounds[which][1])
+        if upper[which] <= lower[which]:
+            return 0.0
+        f_up = _quick_fos(upper['ucs'],upper['gsi'],upper['T'],H_seam,rec_width,d_factor,beta_th,depth,rho)
+        f_low = _quick_fos(lower['ucs'],lower['gsi'],lower['T'],H_seam,rec_width,d_factor,beta_th,depth,rho)
+        return float((f_up-f_low)/(upper[which]-lower[which]))
+    d_u = partial('ucs', max(1e-4, abs(ucs_mean)*1e-4))
+    d_g = partial('gsi', 0.01)
+    d_t = partial('T', 0.05)
+    combined = float(np.sqrt((d_u*ucs_mean*ucs_cov)**2 + (d_g*gsi_std)**2 + (d_t*T_std_c)**2))
+    return base, combined, 2.0*combined, 2.0
+
 
 def subsidence_confidence_interval(sub_profile: np.ndarray, n_measurements: int,
                                    confidence: float = 0.95) -> Tuple[np.ndarray, np.ndarray]:
@@ -16615,28 +16647,55 @@ def get_risk_model():
     return model
 
 
-def predict_collapse(
-    model,
-    rf: RandomForestClassifier,
-    scaler: StandardScaler,
-    X_raw: np.ndarray,
-) -> np.ndarray:
-    if X_raw.shape[1] != 7:
-        raise ValueError(tr("err.expected_7_features", n=X_raw.shape[1]))
-    X_sc = scaler.transform(X_raw)
-    if model is not None:
-        with torch.no_grad():
-            nn_pred = model(
-                torch.tensor(X_sc, dtype=torch.float32).to(device)
-            ).cpu().numpy()
-    else:
-        nn_pred = np.zeros((X_raw.shape[0], 1))
+def evaluate_ensemble_validation(model, rf, X_val, y_val):
+    """Validation predictions and inverse-MSE weights, never invented NN errors."""
+    rf_probs = rf.predict_proba(X_val)
+    rf_prob = (rf_probs[:, list(rf.classes_).index(1)]
+               if 1 in rf.classes_ else np.zeros(X_val.shape[0], dtype=float))
+    rf_mse = float(mean_squared_error(y_val, rf_prob))
+    if model is None or not PT_AVAILABLE:
+        return rf_prob, None, (1.0, 0.0)
+    model.eval()  # Disable dropout and batch-normalization updates.
+    with torch.no_grad():
+        nn_prob = model(torch.as_tensor(X_val, dtype=torch.float32, device=device))
+        nn_prob = np.clip(nn_prob.detach().cpu().numpy().reshape(-1), 0.0, 1.0)
+    nn_mse = float(mean_squared_error(y_val, nn_prob))
+    eps = 1e-12
+    inverse = np.array([1.0/max(rf_mse,eps), 1.0/max(nn_mse,eps)])
+    weights = inverse / inverse.sum()
+    return rf_prob, nn_prob, (float(weights[0]), float(weights[1]))
 
-    proba = rf.predict_proba(X_sc)
-    rf_pred = proba[:, 1].reshape(-1, 1) if proba.shape[1] >= 2 else proba[:, 0].reshape(-1, 1)
-    w_nn = 0.6 if (nn_pred is not None and np.any(nn_pred != 0.0)) else 0.0
-    w_rf = 1.0 - w_nn
-    return w_nn * nn_pred + w_rf * rf_pred
+
+def predict_collapse(model, rf, scaler, X_raw: np.ndarray, weights=None) -> np.ndarray:
+    """Demonstration surrogate or non-probabilistic physics-screening heuristic.
+
+    In no-ML mode the result is a bounded RISK SCORE (not calibrated P[failure]).
+    """
+    X_raw = np.asarray(X_raw, dtype=float)
+    if X_raw.ndim != 2 or X_raw.shape[1] != 7:
+        raise ValueError('Expected 7 physical feature columns.')
+    if rf is None or scaler is None:
+        # Feature 5 is approximate UCS(T)/sigma1, evaluated by the physical model.
+        fos_heuristic = np.clip(X_raw[:, 5], 0.0, 10.0)
+        risk_score = 1.0 / (1.0 + np.exp(np.clip(3.0*(fos_heuristic-1.0), -30.0, 30.0)))
+        return risk_score.reshape(-1, 1)
+    X_sc = scaler.transform(X_raw)
+    probs = rf.predict_proba(X_sc)
+    rf_pred = (probs[:, list(rf.classes_).index(1)]
+               if 1 in rf.classes_ else np.zeros(X_raw.shape[0], dtype=float))
+    rf_pred = rf_pred.reshape(-1, 1)
+    if model is None or not PT_AVAILABLE:
+        return rf_pred
+    model.eval()
+    with torch.no_grad():
+        nn_pred = model(torch.as_tensor(X_sc, dtype=torch.float32, device=device))
+        nn_pred = nn_pred.detach().cpu().numpy().reshape(-1, 1)
+    if weights is None:
+        raise ValueError('Actual holdout-derived ensemble weights must be provided.')
+    w_rf, w_nn = weights
+    if not np.isclose(w_rf + w_nn, 1.0) or min(w_rf, w_nn) < 0:
+        raise ValueError('Invalid normalized ensemble weights.')
+    return w_rf * rf_pred + w_nn * nn_pred
 
 
 def predict_risk_from_sensor(
@@ -26197,8 +26256,10 @@ def _v7_patent_make_graph(df: 'pd.DataFrame', graph_id: str):
         raise ValueError(f'Graph {graph_id} NOT_EVALUATED in this report')
     ax.set_xlabel('Model time (dt units)')
     if graph_id not in ('G02','G07','G10'):
-        try: ax.grid(alpha=.3)
-        except Exception: pass
+        try:
+            ax.grid(alpha=.3)
+        except (AttributeError, ValueError, TypeError):
+            logger.debug('Grid decoration not supported for this plot', exc_info=True)
     fig.tight_layout()
     return fig
 
@@ -30464,7 +30525,124 @@ def render_ucg_reference_benchmarks():
                     _json.dumps(result, ensure_ascii=False, indent=2).encode("utf-8"),
                     file_name="ucg_reference_benchmark_result.json", mime="application/json")
 
+
+
+# ═══ Expert patch 2026-10-29: explicitly SYNTHETIC Angren-style lab demo ═══
+def generate_angren_synthetic_lab_demo(n_samples: int = 30, seed: int = 42) -> pd.DataFrame:
+    """Simulated values ONLY — no samples have been tested or collected.
+
+    The numeric means/SDs are user-specified hypothetical distributions,
+    NOT Angren field/lab observations. Never use as measured validation.
+    """
+    if not ALLOW_SYNTHETIC_BENCHMARK:
+        raise PermissionError('Synthetic demo disabled. Set UCG_ALLOW_SYNTHETIC=true to opt in.')
+    if n_samples < 30:
+        raise ValueError('This particular demo requires n>=30 (not a universal statistical law).')
+    rng = np.random.default_rng(seed)
+    distributions = {
+        'siltstone_ucs_20c': (45.2, 2.5), 'siltstone_ucs_400c': (38.5, 2.1),
+        'siltstone_ucs_800c': (12.3, 1.4), 'sandstone_ucs_20c': (78.5, 3.8),
+        'sandstone_ucs_400c': (68.4, 3.2), 'sandstone_ucs_800c': (22.1, 2.0),
+        'coal_ucs_20c': (18.4, 1.2), 'coal_ucs_400c': (8.1, 0.9),
+        'coal_ucs_800c': (1.0, 0.3), 'mass_loss_800c': (42.1, 2.5),
+        'brazilian_tensile_20c': (4.8, 0.4),
+    }
+    result = {'sample_id': [f'ANG-SYN-{i+1:03d}' for i in range(n_samples)]}
+    for name, (mean, standard_dev) in distributions.items():
+        raw = rng.normal(mean, standard_dev, n_samples)
+        result[name] = np.clip(raw, 0.0, 100.0 if name.startswith('mass_loss') else None)
+    df = pd.DataFrame(result)
+    df['data_provenance'] = 'SYNTHETIC_DEMONSTRATION_NOT_MEASURED'
+    df.attrs['data_provenance'] = 'SYNTHETIC_DEMONSTRATION_NOT_MEASURED'
+    return df
+
+
+def describe_angren_lab_demo(df: pd.DataFrame, column: str) -> dict:
+    """Student-t 95% CI for the mean of 30+ independent illustrative draws."""
+    data = pd.to_numeric(df[column], errors='raise').to_numpy(dtype=float)
+    if data.size < 30 or not np.isfinite(data).all():
+        raise ValueError('At least 30 finite illustrative values required for this demo.')
+    mean = float(np.mean(data)); sd = float(np.std(data, ddof=1))
+    sem = sd / np.sqrt(data.size)
+    critical = float(t_dist.ppf(0.975, df=data.size-1))
+    return {'status': 'SYNTHETIC_DEMONSTRATION_ONLY', 'n': int(data.size),
+            'mean': mean, 'sample_sd': sd,
+            'mean_95pct_t_interval': (mean-critical*sem, mean+critical*sem),
+            'provenance': 'NOT actual Angren laboratory data'}
+
+
+
+
+def analytic_heat_diffusion_benchmark(n_grid: int = 41, total_time_s: float = 100000.0) -> dict:
+    """Analytic-vs-numerical benchmark for ONLY the homogeneous thermal subsolver.
+
+    2D insulated square: T=T0+A*cos(pi*x/L)*cos(pi*z/L)*exp(-2*pi^2*alpha*t/L^2).
+    Not an independent THCM/FE field validation; no commercial simulator was run.
+    """
+    if n_grid < 9 or n_grid > 201 or total_time_s < 0:
+        raise ValueError('Invalid grid/time for thermal benchmark.')
+    L, rho, cp, conductivity = 10.0, 2500.0, 900.0, 2.5
+    alpha = conductivity/(rho*cp)
+    x = np.linspace(0.0, L, n_grid)
+    X, Z = np.meshgrid(x, x)
+    T_init = 25.0+10.0*np.cos(np.pi*X/L)*np.cos(np.pi*Z/L)
+    numerical = solve_heat_equation_dynamic(
+        T=T_init, Q=np.zeros_like(T_init),
+        rho_field=np.full_like(T_init, rho), cp_field=np.full_like(T_init,cp),
+        k_field=np.full_like(T_init, conductivity), dx=L/(n_grid-1),
+        dz=L/(n_grid-1), total_time=total_time_s, T_air=25.0,
+        h_conv=0.0, max_steps=4000)
+    exact = 25.0+10.0*np.cos(np.pi*X/L)*np.cos(np.pi*Z/L)*np.exp(
+        -2.0*np.pi**2*alpha*total_time_s/L**2)
+    error = numerical[1:-1, 1:-1]-exact[1:-1, 1:-1]
+    rmse = float(np.sqrt(np.mean(error**2)))
+    return {'name': 'Analytical 2D Neumann heat equation cosine-mode test',
+            'rmse_interior_celsius': rmse, 'max_interior_error_celsius': float(np.max(np.abs(error))),
+            'grid_points_per_axis': n_grid, 'time_seconds': total_time_s,
+            'status': 'PASS' if rmse < 0.15 else 'FAIL',
+            'criterion_rmse_celsius': 0.15,
+            'scope': 'THERMAL_SUBSOLVER_ONLY; NOT_THCM_OR_ANGREN_FIELD_VALIDATION'}
+
+
+def _require_streamlit_auth() -> bool:
+    """Production OIDC login with allowlisted emails (st.login configuration required).
+
+    Configure [auth] in Streamlit secrets or provider via deployed SSO/OIDC.
+    UCG_ALLOWED_EMAILS is a comma-delimited allowlist. All access is denied
+    if deployment policy is incomplete; this is not a substitute for network TLS.
+    """
+    enabled = (os.getenv('UCG_ENV', 'development').lower() == 'production'
+               or os.getenv('UCG_REQUIRE_LOGIN', '').lower() in ('1','true','yes'))
+    if not enabled:
+        return True  # Local development; do not expose publicly without login.
+    if not hasattr(st, 'login') or not hasattr(st, 'user'):
+        st.error('Authentication unavailable: install recent Streamlit and configure OIDC.')
+        st.stop()
+        return False
+    try:
+        authenticated = bool(st.user.is_logged_in)
+    except (AttributeError, RuntimeError):
+        authenticated = False
+    if not authenticated:
+        st.warning('Authentication required: sign in to access UCG research data.')
+        if st.button('Sign in with SSO / OIDC', key='ucg_oidc_signin'):
+            st.login()
+        st.stop()
+        return False
+    allowed = {x.strip().casefold() for x in os.getenv('UCG_ALLOWED_EMAILS', '').split(',') if x.strip()}
+    email = str(st.user.get('email', '')).strip().casefold()
+    if not allowed or not email or email not in allowed:
+        logger.warning('Access denied by UCG OIDC allowlist (no identity values logged).')
+        st.error('Your account is not authorized for this application.')
+        st.stop()
+        return False
+    logger.info('Authenticated user allowed to enter UCG application.')
+    return True
+
+
 def main():
+    if not _require_streamlit_auth():
+        return
     init_db()
     # ════════════════════════════════════════════════════════════════════════
     # [MERGE] Top-level mode selector: v6 Geomechanical vs v7 UCG Reactor
@@ -30494,6 +30672,25 @@ def main():
         return
 
     # ── v6 Geomechanical flow continues below ────────────────────────────────
+    if ALLOW_SYNTHETIC_BENCHMARK:
+        with st.expander('🧪 Synthetic Angren-style lab data — DEMO, not experimental'):
+            st.warning('Illustrative Gaussian draws ONLY. Not Angren measurements; '
+                       'do not cite as laboratory or validation evidence.')
+            lab_demo = generate_angren_synthetic_lab_demo()
+            st.dataframe(lab_demo, use_container_width=True)
+            st.json(describe_angren_lab_demo(lab_demo, 'siltstone_ucs_20c'))
+            st.download_button('Download SYNTHETIC demo CSV',
+                               lab_demo.to_csv(index=False).encode('utf-8'),
+                               file_name='ANGREN_SYNTHETIC_DEMO_NOT_MEASURED.csv',
+                               mime='text/csv')
+    with st.expander('🔬 Analytical heat-equation benchmark (thermal solver only)'):
+        st.caption('Independent analytical homogeneous Neumann heat-equation solution; '
+                   'does not validate coupled THCM/FEM or Angren field observations.')
+        if st.button('Run thermal analytical benchmark', key='ucg_analytical_thermal_bench'):
+            result = analytic_heat_diffusion_benchmark()
+            st.json(result)
+            if result['status'] != 'PASS':
+                st.error('Thermal benchmark criterion not met. Check discretization and boundaries.')
     render_angren_validation_panel()
     if "comparison_mode" not in st.session_state:
         st.session_state["comparison_mode"] = False
@@ -30990,19 +31187,32 @@ def main():
         D_factor, beta_thermal, depth_seam, avg_rho,
     )
 
-    y_ai = (overstress.flatten() > 0.8).astype(float)
-    X_ai = physics_features(
-        temp_2d.flatten(), sigma1_act.flatten(),
-        sigma3_act.flatten(), grid_z.flatten(), ucs_seam
-    )
-    sigma_ci_flat = ucs_field_degraded.flatten()
-
-    fingerprint = _array_hash(X_ai, y_ai.reshape(-1, 1), sigma1_act.flatten(), sigma_ci_flat)
-    hybrid_model, rf_model, scaler, X_test_ai, y_test_ai = get_ensemble_model_cached(
-        fingerprint,
-        X_ai, y_ai, sigma1_act.flatten(), sigma_ci_flat,
-        temp_2d.flatten(), thermal_damage(temp_2d.flatten(), beta_thermal),
-    )
+    # The old label (overstress>0.8) was computed from physics represented in X;
+    # accuracy is rule-replication, NOT independent validation. By default we
+    # do not train or report a surrogate without independent observed labels.
+    hybrid_model = rf_model = scaler = None
+    X_test_ai = np.empty((0, 7), dtype=float)
+    y_test_ai = np.empty(0, dtype=float)
+    ensemble_weights = (0.0, 0.0)
+    if ALLOW_SYNTHETIC_BENCHMARK:
+        st.warning('DEMONSTRATION ONLY: RF/NN labels come from the overstress threshold '
+                   'and overlap the physics-derived inputs. Scores do NOT validate '
+                   'collapse prediction against measurements.')
+        y_ai = (overstress.flatten() > 0.8).astype(int)
+        X_ai = physics_features(temp_2d.flatten(), sigma1_act.flatten(),
+                                sigma3_act.flatten(), grid_z.flatten(), ucs_seam)
+        sigma_ci_flat = ucs_field_degraded.flatten()
+        if np.unique(y_ai).size > 1:
+            fingerprint = _array_hash(X_ai, y_ai.reshape(-1, 1), sigma1_act.flatten(), sigma_ci_flat)
+            hybrid_model, rf_model, scaler, X_test_ai, y_test_ai = get_ensemble_model_cached(
+                fingerprint, X_ai, y_ai, sigma1_act.flatten(), sigma_ci_flat,
+                temp_2d.flatten(), thermal_damage(temp_2d.flatten(), beta_thermal),
+            )
+        else:
+            st.info('Surrogate learning disabled: only one derived target class.')
+    else:
+        st.info('Independent measured collapse labels are unavailable. RF/NN validation '
+                'is disabled. Composite risk uses an explicit physics-based heuristic.')
     st.session_state.rf_model = rf_model
 
     st.info(t('pin_approx'))
@@ -31015,42 +31225,40 @@ def main():
     m4.metric(t('max_permeability'), f"{float(np.max(perm)):.1e} m²")
     m5.metric(t('ai_recommendation'), f"{analytical_width:.1f} m",
               delta=f"Classic: {rec_width} m", delta_color="off")
-    m6.metric("FOS ± σ (GUM)",
+    m6.metric("Pillar FOS ± u_c (GUM, model)",
               f"{fos_mean_unc:.2f} ± {fos_std_unc:.3f}",
-              help="JCGM 100:2008 (GUM) analytical error propagation")
+              help="Illustrative capacity/demand pillar FOS; not the spatial Hoek–Brown rock-mass FOS. UCS 10% relative; GSI ±5 points; temperature ±50 °C absolute.")
+    st.caption("FOS definitions: spatial rock-mass FOS = Hoek–Brown limit / applied stress; "
+               "pillar FOS (GUM and Monte Carlo) = degraded pillar capacity / vertical demand. "
+               "These are distinct failure modes and must NOT be compared as identical outputs.")
     st.markdown("---")
 
-    if rf_model is not None:
-        pred_test = rf_model.predict(X_test_ai)
-        acc = accuracy_score(y_test_ai, pred_test)
-        unique_y = np.unique(y_test_ai)
-
-        rf_val_err = float(np.mean((pred_test - y_test_ai) ** 2))
-        nn_val_err = rf_val_err * 0.95 if PT_AVAILABLE else rf_val_err
-        total_inv = 1.0 / (rf_val_err + EPS_GENERAL) + 1.0 / (nn_val_err + EPS_GENERAL)
-        w_rf = (1.0 / (rf_val_err + EPS_GENERAL)) / total_inv
-        w_nn = (1.0 / (nn_val_err + EPS_GENERAL)) / total_inv
-        mv_cols = st.columns(4)
-        mv_cols[0].metric("RF Accuracy", f"{acc:.3f}")
-        mv_cols[1].metric("RF MSE (val)", f"{rf_val_err:.4f}")
-        mv_cols[2].metric("w_RF (dynamic)", f"{w_rf:.3f}",
-                          help="[FIX #40] Dinamik og'irlik: w = (1/MSE) / Σ(1/MSEᵢ)")
-        mv_cols[3].metric("w_NN (dynamic)", f"{w_nn:.3f}",
-                          help="[FIX #40] PINN og'irligi (MSE_NN ≈ 0.95·MSE_RF)")
-
-        if len(unique_y) > 1:
-            proba_test = rf_model.predict_proba(X_test_ai)[:, 1]
-            auc = roc_auc_score(y_test_ai, proba_test)
-            st.metric("AUC-ROC", f"{auc:.3f}", help="Area under ROC curve (> 0.7 = acceptable)")
-            feat_names = ["Temperature", "Sigma1", "Sigma3", "Depth", "Damage", "FOS_approx", "Energy"]
-            fi_df = pd.DataFrame({
-                'Feature': feat_names[:len(rf_model.feature_importances_)],
-                'Importance': rf_model.feature_importances_
-            }).sort_values('Importance', ascending=False)
-            with st.expander("📊 RF Feature Importance"):
-                st.dataframe(fi_df, hide_index=True, use_container_width=True)
-        else:
-            st.info("AUC: only 1 class in test set.")
+if rf_model is not None:
+    rf_prob, nn_prob, ensemble_weights = evaluate_ensemble_validation(
+        hybrid_model, rf_model, X_test_ai, y_test_ai
+    )
+    rf_pred = rf_model.predict(X_test_ai)
+    rf_acc = accuracy_score(y_test_ai, rf_pred)
+    rf_val_err = mean_squared_error(y_test_ai, rf_prob)
+    st.caption('Illustrative rule-replication scores only — NOT independent field/lab validation.')
+    mv_cols = st.columns(4)
+    mv_cols[0].metric('RF rule accuracy (demo)', f'{rf_acc:.3f}')
+    mv_cols[1].metric('RF probability MSE (demo)', f'{rf_val_err:.4f}')
+    mv_cols[2].metric('w_RF (measured val MSE)', f'{ensemble_weights[0]:.3f}')
+    mv_cols[3].metric('w_NN (measured val MSE)', f'{ensemble_weights[1]:.3f}',
+                      help='Zero when NN has not been trained and evaluated.')
+    if len(np.unique(y_test_ai)) > 1:
+        auc = roc_auc_score(y_test_ai, rf_prob)
+        st.metric('RF AUC (derived-label demo)', f'{auc:.3f}')
+        feat_names = ['Temperature', 'Sigma1', 'Sigma3', 'Depth', 'Damage', 'FOS_approx', 'Energy']
+        fi_df = pd.DataFrame({
+            'Feature': feat_names[:len(rf_model.feature_importances_)],
+            'Importance': rf_model.feature_importances_
+        }).sort_values('Importance', ascending=False)
+        with st.expander('📊 RF Feature Importance (demo)'):
+            st.dataframe(fi_df, hide_index=True, use_container_width=True)
+    else:
+        st.info('AUC cannot be computed: only one class in holdout.')
 
     # ── Grafiklar ───────────────────────────────────────────────────────────
     sub_lower, sub_upper = subsidence_confidence_interval(sub_p * 100.0, n_measurements=20)
@@ -31369,7 +31577,7 @@ def main():
             temp_2d.flatten(), sigma1_act.flatten(),
             sigma3_act.flatten(), grid_z.flatten(), ucs_seam
         )
-        collapse_pred_flat = predict_collapse(hybrid_model, rf_model, scaler, feat_pred)
+        collapse_pred_flat = predict_collapse(hybrid_model, rf_model, scaler, feat_pred, weights=ensemble_weights if hybrid_model is not None else None)
         if collapse_pred_flat.size == temp_2d.size:
             collapse_pred = collapse_pred_flat.reshape(temp_2d.shape)
     except Exception as e:
@@ -31481,24 +31689,21 @@ def main():
     with st.expander("📊 Uncertainty Quantification (UQ) — FOS"):
         st.markdown(t('uq_info'))
         rng_uq = np.random.default_rng(seed=RANDOM_SEED)
-        ucs_samp = rng_uq.normal(ucs_seam, 0.10 * ucs_seam, 10000)
-        temp_samp = rng_uq.normal(T_source_max, 50.0, 10000)
-        fos_samp = np.array([
-            float(apply_thermal_degradation(u, T, beta_thermal))
-            * (BIENIAWSKI_C1 + BIENIAWSKI_C2 * rec_width / (H_seam + EPS_STRESS))
-            / (vertical_stress(depth_seam, avg_rho) + EPS_STRESS)
-            for u, T in zip(ucs_samp, temp_samp)
-        ])
+        ucs_samp = np.maximum(rng_uq.normal(ucs_seam, 0.10 * ucs_seam, 10000), 1e-6)
+        gsi_samp = np.clip(rng_uq.normal(float(target_layer['gsi']), 5.0, 10000), 0.0, 100.0)
+        temp_samp = np.maximum(rng_uq.normal(T_source_max, 50.0, 10000), -273.15)
+        fos_samp = pillar_fos_consistent(ucs_samp, gsi_samp, temp_samp, H_seam,
+                                          rec_width, D_factor, beta_thermal, depth_seam, avg_rho)
         fig_uq = go.Figure()
         fig_uq.add_histogram(x=fos_samp, nbinsx=40, marker_color='teal', name='FOS dist.')
         fig_uq.add_vline(x=float(np.median(fos_samp)), line_color='red', annotation_text='Median')
         fig_uq.add_vline(x=float(np.mean(fos_samp)), line_color='cyan', annotation_text='Mean')
         fig_uq.add_vline(x=float(np.percentile(fos_samp, 2.5)), line_color='orange', line_dash='dash', annotation_text='2.5%')
         fig_uq.add_vline(x=float(np.percentile(fos_samp, 97.5)), line_color='orange', line_dash='dash', annotation_text='97.5%')
-        fig_uq.update_layout(title='FOS Uncertainty Distribution', template='plotly_dark')
+        fig_uq.update_layout(title='Illustrative PILLAR FOS uncertainty (not spatial FOS)', template='plotly_dark')
         st.plotly_chart(fig_uq, use_container_width=True)
-        st.write(f"95% CI: [{np.percentile(fos_samp, 2.5):.3f}, {np.percentile(fos_samp, 97.5):.3f}]")
-        st.write(f"Analytical σ_FOS (GUM): {fos_std_unc:.4f}")
+        st.write(f"95% parametric distribution interval (not a confidence interval): [{np.percentile(fos_samp, 2.5):.3f}, {np.percentile(fos_samp, 97.5):.3f}]")
+        st.write(f"Pillar FOS combined standard uncertainty u_c (GUM): {fos_std_unc:.4f}")
         st.write(f"Expanded uncertainty (k={coverage_k:.1f}): {fos_expanded_unc:.4f}")
 
     # ── SHAP ─────────────────────────────────────────────────────────────────
@@ -31544,7 +31749,8 @@ def main():
                 cv_results_10 = cross_validate_model(X_test_ai, y_test_ai, model_type="rf_classifier", cv=10, scoring="accuracy")
                 st.write(f"**5-fold CV:** mean accuracy = {cv_results_5['mean']:.4f} ± {cv_results_5['std']:.4f}")
                 st.write(f"**10-fold CV:** mean accuracy = {cv_results_10['mean']:.4f} ± {cv_results_10['std']:.4f}")
-                st.caption("Cross-validation helps assess model generalizability and reduces overfitting risk.")
+                st.warning('CV uses derived-label DEMONSTRATION data, not independent collapse observations. '
+                           'It cannot establish field generalizability.')
             except Exception as cv_e:
                 st.warning(f"Cross-validation error: {cv_e}")
 
@@ -31935,6 +32141,8 @@ def main():
                         results['accuracy'] = accuracy_score(y_test_ai, rf_model.predict(X_test_ai))
                         results['auc'] = roc_auc_score(y_test_ai, proba_test)
                         results['f1'] = compute_confusion_roc_f1(y_test_ai, proba_test)['f1']
+                        results['ai_status'] = 'DERIVED_LABEL_DEMONSTRATION_NOT_VALIDATED'
+                        results['ai_data_provenance'] = 'Synthetic physics-rule labels; NOT observed failures'
                     else:
                         results['accuracy'] = None
                         results['auc'] = None
@@ -39322,7 +39530,7 @@ class AlembicMigrationManager:
         """Create the migration history table if it doesn't exist."""
         # SQLite and PostgreSQL both support IF NOT EXISTS
         conn.execute(f"""
-            CREATE TABLE IF NOT EXISTS {cls.HISTORY_TABLE} (
+            CREATE TABLE IF NOT EXISTS schema_migration_history (
                 revision TEXT PRIMARY KEY,
                 down_revision TEXT,
                 description TEXT,
@@ -39363,7 +39571,7 @@ class AlembicMigrationManager:
             conn = _safe_sqlite_connect(db_path)
             cls._ensure_history_table(conn)
             cursor = conn.cursor()
-            cursor.execute(f"SELECT revision FROM {cls.HISTORY_TABLE} ORDER BY applied_at")
+            cursor.execute(f"SELECT revision FROM schema_migration_history ORDER BY applied_at")
             return [row[0] for row in cursor.fetchall()]
         except Exception:
             return []
@@ -39391,7 +39599,7 @@ class AlembicMigrationManager:
                             for stmt in mig["up_sql"]:
                                 conn.execute(stmt)
                             conn.execute(
-                                f"INSERT INTO {cls.HISTORY_TABLE} (revision, down_revision, description, applied_at, applied_by) VALUES (?, ?, ?, ?, ?)",
+                                f"INSERT INTO schema_migration_history (revision, down_revision, description, applied_at, applied_by) VALUES (?, ?, ?, ?, ?)",
                                 (mig["revision"], mig["down_revision"], mig["description"],
                                  _utc_now_iso(), os.getenv("USER", "system"))
                             )
@@ -39406,7 +39614,7 @@ class AlembicMigrationManager:
                             except Exception as e:
                                 errors.append(f"{mig['revision']}: {e}")
                         conn.execute(
-                            f"INSERT INTO {cls.HISTORY_TABLE} (revision, down_revision, description, applied_at, applied_by) VALUES (?, ?, ?, ?, ?)",
+                            f"INSERT INTO schema_migration_history (revision, down_revision, description, applied_at, applied_by) VALUES (?, ?, ?, ?, ?)",
                             (mig["revision"], mig["down_revision"], mig["description"],
                              _utc_now_iso(), os.getenv("USER", "system"))
                         )
@@ -39455,7 +39663,7 @@ class AlembicMigrationManager:
                         except Exception as e:
                             errors.append(f"{mig['revision']} down: {e}")
                     conn.execute(
-                        f"DELETE FROM {cls.HISTORY_TABLE} WHERE revision = ?",
+                        f"DELETE FROM schema_migration_history WHERE revision = ?",
                         (mig["revision"],)
                     )
                     conn.commit()
@@ -39483,7 +39691,7 @@ class AlembicMigrationManager:
             conn = _safe_sqlite_connect(db_path)
             cls._ensure_history_table(conn)
             cursor = conn.cursor()
-            cursor.execute(f"SELECT revision, down_revision, description, applied_at, applied_by FROM {cls.HISTORY_TABLE} ORDER BY applied_at")
+            cursor.execute(f"SELECT revision, down_revision, description, applied_at, applied_by FROM schema_migration_history ORDER BY applied_at")
             return [
                 {"revision": r[0], "down_revision": r[1], "description": r[2],
                  "applied_at": r[3], "applied_by": r[4]}
@@ -42588,7 +42796,7 @@ class WIPOPatentscopeAPI:
                 resp = cls.RATE_LIMITER(_do_call)()
                 if resp and resp.status_code == 200:
                     # Parse RSS XML
-                    import xml.etree.ElementTree as ET
+                    from defusedxml import ElementTree as ET  # pip install defusedxml; fail closed
                     root = ET.fromstring(resp.text)
                     items = root.findall(".//item")
                     results = []
@@ -47961,8 +48169,8 @@ class CodeQualityChecker:
         M = E - N + 2P (McCabe's formula simplified).
         Approximate: count decision points (if, elif, for, while, and, or).
         """
-        decision_patterns = [r'if', r'elif', r'for', r'while',
-                             r'and', r'or', r'except']
+        decision_patterns = [r'\bif\b', r'\belif\b', r'\bfor\b', r'\bwhile\b',
+                             r'\band\b', r'\bor\b', r'\bexcept\b']
         complexity = 1  # Base complexity
         for pattern in decision_patterns:
             complexity += len(re.findall(pattern, source))
