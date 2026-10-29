@@ -30573,6 +30573,137 @@ def describe_angren_lab_demo(df: pd.DataFrame, column: str) -> dict:
 
 
 
+
+# ============================================================================
+# UCG OCT-29 HOTFIX: USER-SUPPLIED Angren 30-record monitoring table.
+# Provenance NOT VERIFIED: names/coordinates/temperatures/levels are supplied in
+# chat, without raw core tests, calibration, coordinate reference system, InSAR
+# products, instrument metadata, acquisition date/time, or source documents.
+# No claim of physical independence or real Angren field validation is made.
+# DO NOT merge this table with the independently SYNTHETIC Gaussian demo above.
+# ============================================================================
+ANGREN_USER_MONITORING_CSV = 'sample_id,x_m,y_m,day,temperature_c,ucs_mpa,insar_subsidence_cm,partition\nANG-LB-001,120.5,240.1,5,20,45.2,0.2,Train (Asosiy)\nANG-LB-002,150.2,290.4,8,20,46.1,0.4,Train (Asosiy)\nANG-LB-003,180.9,310.0,12,200,43.8,1.1,Train (Asosiy)\nANG-LB-004,210.4,350.2,15,200,42.5,1.5,Train (Asosiy)\nANG-LB-005,250.0,410.8,18,400,38.5,2.4,Train (Asosiy)\nANG-LB-006,290.1,450.5,22,400,37.2,3.2,Train (Asosiy)\nANG-LB-007,320.6,480.9,25,600,24.1,4.8,Train (Asosiy)\nANG-LB-008,350.8,510.3,28,600,23.0,6.2,Train (Asosiy)\nANG-LB-009,410.2,550.7,32,800,12.3,8.9,Train (Asosiy)\nANG-LB-010,450.5,600.1,35,800,11.5,11.4,Train (Asosiy)\nANG-LB-011,480.1,630.4,38,20,44.9,13.5,Train (Asosiy)\nANG-LB-012,520.3,680.9,42,200,43.1,17.2,Train (Asosiy)\nANG-LB-013,550.8,710.2,45,400,38.0,20.1,Train (Asosiy)\nANG-LB-014,600.4,750.5,48,600,24.5,22.4,Train (Asosiy)\nANG-LB-015,640.2,800.8,52,800,12.0,24.5,Train (Asosiy)\nANG-LB-016,680.9,830.1,55,20,45.5,28.1,Train (Asosiy)\nANG-LB-017,710.3,880.4,58,200,44.0,31.0,Train (Asosiy)\nANG-LB-018,750.5,920.7,60,400,39.1,33.5,Train (Asosiy)\nANG-LB-019,800.1,950.2,62,20,45.0,35.1,Test (Mustaqil)\nANG-LB-020,850.4,1010.5,65,200,43.5,38.2,Test (Mustaqil)\nANG-LB-021,910.8,1050.8,68,400,37.8,40.5,Test (Mustaqil)\nANG-LB-022,950.2,1100.1,70,600,23.8,42.8,Test (Mustaqil)\nANG-LB-023,1020.5,1150.4,72,800,11.8,44.2,Test (Mustaqil)\nANG-LB-024,1080.1,1200.7,75,20,44.8,46.0,Test (Mustaqil)\nANG-LB-025,1120.6,1250.2,78,200,42.9,47.1,Test (Mustaqil)\nANG-LB-026,1180.3,1300.5,80,400,38.2,48.0,Test (Mustaqil)\nANG-LB-027,1240.7,1350.8,82,600,24.2,46.5,Test (Mustaqil)\nANG-LB-028,1300.2,1400.1,85,800,12.1,43.2,Test (Mustaqil)\nANG-LB-029,1380.5,1480.4,88,20,45.3,38.0,Test (Mustaqil)\nANG-LB-030,1450.9,1550.2,90,400,38.9,30.2,Test (Mustaqil)\n'
+ANGREN_USER_MONITORING_FEATURES = ('x_m', 'y_m', 'day', 'temperature_c', 'ucs_mpa')
+ANGREN_USER_MONITORING_TARGET = 'insar_subsidence_cm'
+ANGREN_USER_MONITORING_PROVENANCE = 'USER_SUPPLIED_UNVERIFIED_NOT_CERTIFIED'
+
+
+def load_angren_user_monitoring_dataset() -> pd.DataFrame:
+    """Return the 30 EXACT user-supplied numbers, without normalization/fabrication.
+
+    Coordinates are local X/Y as supplied: CRS unspecified. InSAR subsidence
+    is in cm as supplied; do not mix with the appʼs existing mm or metre fields.
+    """
+    data = pd.read_csv(io.StringIO(ANGREN_USER_MONITORING_CSV), dtype={'sample_id':str,'partition':str})
+    expected = {'sample_id','x_m','y_m','day','temperature_c','ucs_mpa',
+                'insar_subsidence_cm','partition'}
+    if set(data.columns) != expected or len(data) != 30:
+        raise ValueError('Angren monitoring dataset schema or row count is incorrect.')
+    if data['sample_id'].duplicated().any():
+        raise ValueError('Monitoring sample IDs must be unique.')
+    numeric = ['x_m','y_m','day','temperature_c','ucs_mpa','insar_subsidence_cm']
+    for col in numeric:
+        data[col] = pd.to_numeric(data[col],errors='raise')
+    if not np.isfinite(data[numeric].to_numpy(dtype=float)).all():
+        raise ValueError('Monitoring values must be finite.')
+    if (data[['day','temperature_c','ucs_mpa','insar_subsidence_cm']] < 0).any().any():
+        raise ValueError('Negative day/temperature/UCS/subsidence values not supported in supplied table.')
+    if (data['ucs_mpa'] <= 0).any():
+        raise ValueError('UCS must be positive.')
+    expected_split = ['Train (Asosiy)']*18 + ['Test (Mustaqil)']*12
+    if data['partition'].tolist() != expected_split:
+        raise ValueError('Train/test partition was unexpectedly changed.')
+    if data.iloc[:18]['day'].max() >= data.iloc[18:]['day'].min():
+        raise ValueError('The expected chronological holdout is no longer intact.')
+    data['data_provenance'] = ANGREN_USER_MONITORING_PROVENANCE
+    data.attrs['source'] = ANGREN_USER_MONITORING_PROVENANCE
+    return data
+
+
+def evaluate_angren_user_monitoring_regression(data: Optional[pd.DataFrame] = None) -> dict:
+    """Explainable, separate RF regression of InSAR subsidence [cm].
+
+    This is NOT a collapse/failure classification label. 18 early observations
+    are used for training, 12 later observations are held out. Test is temporal
+    AND spatial out-of-range; RF extrapolation is poor in this situation.
+    No internal random train_test_split or test-set tuning is permitted.
+    """
+    if data is None:
+        data = load_angren_user_monitoring_dataset()
+    if len(data) != 30 or data['partition'].tolist() != ['Train (Asosiy)']*18 + ['Test (Mustaqil)']*12:
+        raise ValueError('Dataset partition invalid; holdout evaluation refused.')
+    from sklearn.ensemble import RandomForestRegressor
+    from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+    X_train = data.loc[data['partition']=='Train (Asosiy)',list(ANGREN_USER_MONITORING_FEATURES)]
+    X_test = data.loc[data['partition']=='Test (Mustaqil)',list(ANGREN_USER_MONITORING_FEATURES)]
+    y_train = data.loc[data['partition']=='Train (Asosiy)',ANGREN_USER_MONITORING_TARGET].to_numpy(dtype=float)
+    y_test = data.loc[data['partition']=='Test (Mustaqil)',ANGREN_USER_MONITORING_TARGET].to_numpy(dtype=float)
+    model = RandomForestRegressor(n_estimators=200, max_depth=5, min_samples_leaf=2, random_state=42, n_jobs=1)
+    model.fit(X_train,y_train)
+    y_pred = model.predict(X_test)
+    # A transparent constant baseline, not a misleading zero baseline.
+    baseline = np.full_like(y_test, y_train[-1], dtype=float)
+    prediction_table = data.loc[data['partition']=='Test (Mustaqil)', ['sample_id','day']].copy()
+    prediction_table['observed_subsidence_cm'] = y_test
+    prediction_table['predicted_subsidence_cm'] = y_pred
+    prediction_table['absolute_error_cm'] = np.abs(y_test-y_pred)
+    return {'model':'RandomForestRegressor (separate observational target)',
+            'target':ANGREN_USER_MONITORING_TARGET,
+            'features':list(ANGREN_USER_MONITORING_FEATURES),
+            'training_samples':int(len(y_train)),'test_samples':int(len(y_test)),
+            'rmse_cm':float(np.sqrt(mean_squared_error(y_test,y_pred))),
+            'mae_cm':float(mean_absolute_error(y_test,y_pred)),
+            'r2':float(r2_score(y_test,y_pred)),
+            'persistence_baseline_rmse_cm':float(np.sqrt(mean_squared_error(y_test,baseline))),
+            'predictions':prediction_table,
+            'data_provenance':ANGREN_USER_MONITORING_PROVENANCE,
+            'validation_status':'USER_PROVIDED_UNVERIFIED_OUT_OF_RANGE_HOLDOUT_NOT_FIELD_VALIDATION',
+            'limitation':'The 12 test rows occur later in time and further in space than all 18 training rows; do not describe these results as independently verified physical validation.'}
+
+
+def render_angren_user_monitoring_panel() -> None:
+    """UI: user dataset is visible even with the synthetic flag disabled."""
+    with st.expander('📍 Angren — 30 ta laboratoriya / InSAR monitoring yozuvi (taqdim etilgan)'):
+        df = load_angren_user_monitoring_dataset()
+        st.warning('Jadval foydalanuvchi tomonidan taqdim etilgan, asl laboratoriya protokoli, '
+                   'InSAR ishlov berish natijasi va koordinata tizimi hali tekshirilmagan. '
+                   '18 ta TRAIN va 12 ta TEST yozuv bor. Bu maʼlumotlar fizik '
+                   'qulash (collapse) klassifikatori uchun kuzatilgan yorliqlar emas.')
+        st.caption('UCS: MPa | InSAR choʼkish: cm | X, Y: metr (CRS nomaʼlum). '
+                   'Test nuqtalari vaqt va fazo boʼyicha train oraliqlaridan tashqarida.')
+        view = df.rename(columns={'sample_id':'Namuna ID','x_m':'Koordinata X (m)',
+           'y_m':'Koordinata Y (m)','day':'Monitoring kuni','temperature_c':'Harorat (°C)',
+           'ucs_mpa':'Laboratoriya UCS (MPa)', 'insar_subsidence_cm':'InSAR choʼkish (cm)',
+           'partition':'Maʼlumot turi','data_provenance':'Manba holati'})
+        st.dataframe(view,use_container_width=True,hide_index=True)
+        c1,c2,c3=st.columns(3)
+        c1.metric('Jami yozuv',len(df));c2.metric('TRAIN',18);c3.metric('TEST',12)
+        st.download_button('30 yozuvni CSV formatda olish',
+                           ANGREN_USER_MONITORING_CSV.encode('utf-8'),
+                           file_name='Angren_30_user_supplied_UNVERIFIED.csv',mime='text/csv',
+                           key='angren_user_30_download')
+        if st.button('RF ni mustaqil vaqt boʼyicha TESTda hisoblash (demo)',
+                     key='ucg_user_angren_evaluate_rf'):
+            try:
+                report = evaluate_angren_user_monitoring_regression(df)
+            except (ValueError, TypeError, RuntimeError) as exc:
+                logger.exception('Angren user monitoring regression evaluation failed')
+                st.error(f'Dataset regression failed: {type(exc).__name__}: {exc}')
+            else:
+                st.info('Bu RF choʼkish regressiyasi; collapse/FOS neyron modeli emas. '
+                        'TEST oldin hech qachon oʼqitishda ishlatilmagan; kuzatuvlar '
+                        'mustaqilligi va real kelib chiqishi tasdiqlanmagan.')
+                a,b,c,d=st.columns(4)
+                a.metric('TEST RMSE (cm)',f"{report['rmse_cm']:.2f}")
+                b.metric('TEST MAE (cm)',f"{report['mae_cm']:.2f}")
+                c.metric('TEST R²',f"{report['r2']:.3f}")
+                d.metric('Persistence baseline RMSE (cm)',f"{report['persistence_baseline_rmse_cm']:.2f}")
+                if report['r2'] < 0:
+                    st.warning('R² manfiy: testda model oʼrtacha test qiymatni taxmin qilishdan ham yomon. '
+                               'RF kelajakdagi va uzoqdagi punktlarga ekstrapolyatsiya qilolmaydi.')
+                st.dataframe(report['predictions'],use_container_width=True,hide_index=True)
+                st.caption(report['limitation'])
+
 def analytic_heat_diffusion_benchmark(n_grid: int = 41, total_time_s: float = 100000.0) -> dict:
     """Analytic-vs-numerical benchmark for ONLY the homogeneous thermal subsolver.
 
@@ -30692,6 +30823,7 @@ def main():
             if result['status'] != 'PASS':
                 st.error('Thermal benchmark criterion not met. Check discretization and boundaries.')
     render_angren_validation_panel()
+    render_angren_user_monitoring_panel()
     if "comparison_mode" not in st.session_state:
         st.session_state["comparison_mode"] = False
     if "benchmark_data" not in st.session_state:
@@ -31233,32 +31365,32 @@ def main():
                "These are distinct failure modes and must NOT be compared as identical outputs.")
     st.markdown("---")
 
-if rf_model is not None:
-    rf_prob, nn_prob, ensemble_weights = evaluate_ensemble_validation(
-        hybrid_model, rf_model, X_test_ai, y_test_ai
-    )
-    rf_pred = rf_model.predict(X_test_ai)
-    rf_acc = accuracy_score(y_test_ai, rf_pred)
-    rf_val_err = mean_squared_error(y_test_ai, rf_prob)
-    st.caption('Illustrative rule-replication scores only — NOT independent field/lab validation.')
-    mv_cols = st.columns(4)
-    mv_cols[0].metric('RF rule accuracy (demo)', f'{rf_acc:.3f}')
-    mv_cols[1].metric('RF probability MSE (demo)', f'{rf_val_err:.4f}')
-    mv_cols[2].metric('w_RF (measured val MSE)', f'{ensemble_weights[0]:.3f}')
-    mv_cols[3].metric('w_NN (measured val MSE)', f'{ensemble_weights[1]:.3f}',
-                      help='Zero when NN has not been trained and evaluated.')
-    if len(np.unique(y_test_ai)) > 1:
-        auc = roc_auc_score(y_test_ai, rf_prob)
-        st.metric('RF AUC (derived-label demo)', f'{auc:.3f}')
-        feat_names = ['Temperature', 'Sigma1', 'Sigma3', 'Depth', 'Damage', 'FOS_approx', 'Energy']
-        fi_df = pd.DataFrame({
-            'Feature': feat_names[:len(rf_model.feature_importances_)],
-            'Importance': rf_model.feature_importances_
-        }).sort_values('Importance', ascending=False)
-        with st.expander('📊 RF Feature Importance (demo)'):
-            st.dataframe(fi_df, hide_index=True, use_container_width=True)
-    else:
-        st.info('AUC cannot be computed: only one class in holdout.')
+    if rf_model is not None:
+        rf_prob, nn_prob, ensemble_weights = evaluate_ensemble_validation(
+            hybrid_model, rf_model, X_test_ai, y_test_ai
+        )
+        rf_pred = rf_model.predict(X_test_ai)
+        rf_acc = accuracy_score(y_test_ai, rf_pred)
+        rf_val_err = mean_squared_error(y_test_ai, rf_prob)
+        st.caption('Illustrative rule-replication scores only — NOT independent field/lab validation.')
+        mv_cols = st.columns(4)
+        mv_cols[0].metric('RF rule accuracy (demo)', f'{rf_acc:.3f}')
+        mv_cols[1].metric('RF probability MSE (demo)', f'{rf_val_err:.4f}')
+        mv_cols[2].metric('w_RF (measured val MSE)', f'{ensemble_weights[0]:.3f}')
+        mv_cols[3].metric('w_NN (measured val MSE)', f'{ensemble_weights[1]:.3f}',
+                          help='Zero when NN has not been trained and evaluated.')
+        if len(np.unique(y_test_ai)) > 1:
+            auc = roc_auc_score(y_test_ai, rf_prob)
+            st.metric('RF AUC (derived-label demo)', f'{auc:.3f}')
+            feat_names = ['Temperature', 'Sigma1', 'Sigma3', 'Depth', 'Damage', 'FOS_approx', 'Energy']
+            fi_df = pd.DataFrame({
+                'Feature': feat_names[:len(rf_model.feature_importances_)],
+                'Importance': rf_model.feature_importances_
+            }).sort_values('Importance', ascending=False)
+            with st.expander('📊 RF Feature Importance (demo)'):
+                st.dataframe(fi_df, hide_index=True, use_container_width=True)
+        else:
+            st.info('AUC cannot be computed: only one class in holdout.')
 
     # ── Grafiklar ───────────────────────────────────────────────────────────
     sub_lower, sub_upper = subsidence_confidence_interval(sub_p * 100.0, n_measurements=20)
