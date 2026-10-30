@@ -1,6 +1,7 @@
 # v9.11.49 (2026-10-31): integrated Academic Validation / RS2 Monitoring mode.
 # Extended metrics, conditional IID BCa, actual-input GCI, CSV/Excel/PDF/LaTeX export.
-# Validation scope: syntax + 16 isolated module/integration tests; full Streamlit runtime not tested.
+# Validation: syntax, 16 module tests, 36 built-in regression tests, and full-file Streamlit AppTest in development mode.
+# Optional integrations (PyTorch/SHAP/LIME/external solvers/production OIDC) remain unverified.
 # UCG Statistical Validation update: target metrics are not forced or calibrated.
 # EXPERT PATCH (2026-10-30): targeted integrity corrections; scientific validation remains outstanding.
 # PATCH POLICY: no auto-insertion of fabricated observations; no pseudo R-hat; no fake Nu sensitivity.
@@ -197,7 +198,7 @@
 from __future__ import annotations
 
 # v9.11.45 — focused research-integrity patch (2026-10-29).
-UCG_APP_VERSION = "9.11.48"  # Single source for RUNTIME versioning
+UCG_APP_VERSION = "9.11.49"  # Single source for RUNTIME versioning
 # Project outputs are uncalibrated; analytical THERMAL check != Angren THCM V&V.
 
 # FIX v9.11.23: TYPE_CHECKING — globals().get() ning haddan tashqar ko'pligi
