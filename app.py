@@ -1,3 +1,7 @@
+# UCG Statistical Validation update: target metrics are not forced or calibrated.
+# EXPERT PATCH (2026-10-30): targeted integrity corrections; scientific validation remains outstanding.
+# PATCH POLICY: no auto-insertion of fabricated observations; no pseudo R-hat; no fake Nu sensitivity.
+# This release is a research prototype, not a certified/field-validated tool.
 # EXPERT PATCH (2026-10-29): targeted code integrity corrections; no independent field verification.
 # Local audit 2026-10-29: numerical/runtime corrections; research prototype, not independently validated.
 # Current maintenance patch v9.11.46 (2026-10-29): research prototype, not field-validated.
@@ -34,7 +38,7 @@
 # 3. DOI Generator: Creates internal ID only. NOT registered with DataCite/Crossref.
 # 4. Audit Trail: Self-signed RSA-4096 + local SQLite. NO notarial confirmation,
 #    NO TSA timestamp (RFC-3161 code exists but requires external TSA server).
-# 5. Test Coverage: ~5-10% (stub tests). NOT ~5-10% (stub tests, NOT 78%)  # FIX v9.11.26 (old claim removed).
+# 5. Test Coverage: NOT independently measured in this release; historical stub estimate only.
 # 6. Monte Carlo: BCa bootstrap has silent fail risk (try/except with logger).
 # 7. AHP Weights: Hardcoded baseline matrix (Saaty conservative). NOT "dynamic".
 # 8. Synthetic Data: ALLOW_SYNTHETIC_BENCHMARK flag exists. When True, ALL
@@ -190,7 +194,7 @@
 from __future__ import annotations
 
 # v9.11.45 — focused research-integrity patch (2026-10-29).
-UCG_APP_VERSION = "9.11.46"  # Single source for RUNTIME versioning
+UCG_APP_VERSION = "9.11.48"  # Single source for RUNTIME versioning
 # Project outputs are uncalibrated; analytical THERMAL check != Angren THCM V&V.
 
 # FIX v9.11.23: TYPE_CHECKING — globals().get() ning haddan tashqar ko'pligi
@@ -848,7 +852,8 @@ class ServiceLayer:
                         "warning": (
                             f"BCa CI requires at least 30 samples; got {_n_samples}. "
                             "BCa CI NOT computed — report this honestly. "
-                            "Run more Monte Carlo iterations."
+                            "Collect more independent observed prediction-reference pairs; "
+                            "additional simulated draws do not increase observed sample size."
                         ),
                         "ci_lower": None,
                         "ci_upper": None,
@@ -897,8 +902,11 @@ class ServiceLayer:
                 "offline_indicator": "OFFLINE ANALYSIS" if is_offline() else "ONLINE",
             }
 
-            logger.info("[AUDIT] Patent search: query=[SANITIZED] offline=%s", is_offline())
-            return {"status": "OK", "result": result}
+            result["search_performed"] = False
+            result["verified_prior_art_count"] = 0
+            result["evidence_status"] = "NOT_EVALUATED — no external patent database queried"
+            logger.info("[AUDIT] Patent search NOT performed: query=[SANITIZED] offline=%s", is_offline())
+            return {"status": "NOT_EVALUATED", "result": result}
         except Exception as exc:
             return {"status": "error", "error": str(exc)}
 
@@ -3091,25 +3099,15 @@ def _safe_rng() -> np.random.Generator:
     return _rng
 
 def spawn_worker_rng(worker_id: int) -> np.random.Generator:
-    """IMPROVEMENT #27: Spawn a deterministic child RNG for parallel workers.
-    Uses SeedSequence.spawn to guarantee reproducibility across workers.
-    """
-    global _rng_seed_seq
-    # FIX v9.11.12: Proper double-checked locking with lock for both init and spawn
-    if _rng_seed_seq is None:
-        with _rng_lock:
-            if _rng_seed_seq is None:
-                # FIX v9.11.15 #25: Direct init (no re-entrant lock call)
-                _master_seed = int(os.getenv("UCG_RNG_SEED", "42"))
-                _rng_seed_seq = np.random.SeedSequence(_master_seed)
-                _rng = np.random.default_rng(_rng_seed_seq)
-    with _rng_lock:
-        if _rng_seed_seq is not None:
-            children = _rng_seed_seq.spawn(max(worker_id + 1, 1))  # FIX v9.11.16 #54: guard negative
-            return np.random.default_rng(children[max(worker_id, 0)])
-    # Fallback if still None (should not happen)
-    return np.random.default_rng(seed=42 + worker_id)
+    """Deterministic independent RNG stream indexed by worker ID.
 
+    Repeated calls with the same seed and worker ID return the same stream;
+    execution order and simultaneous Streamlit sessions do not change it.
+    """
+    if isinstance(worker_id, bool) or not isinstance(worker_id, (int, np.integer)) or worker_id < 0:
+        raise ValueError("worker_id must be a non-negative integer")
+    master_seed = int(os.getenv("UCG_RNG_SEED", str(RANDOM_SEED)))
+    return np.random.default_rng(np.random.SeedSequence([master_seed, int(worker_id)]))
 
 # ==============================================
 # Patent readiness extensions
@@ -3173,6 +3171,7 @@ class AcceptanceCriteria:
     WILLMOTT_D_MIN = 0.80  # FIX v9.11.16 #60: Willmott (1981) Bull. Am. Meteorol. Soc. 63(11):1309-1313        # Minimum index of agreement
     BIAS_MAX_PCT = 10.0          # Maximum allowable bias (%)
     RELATIVE_RMSE_MAX = 0.15     # Maximum relative RMSE
+    KGE_MIN = 0.50  # User-requested project acceptance threshold, not universal ASME standard
     NASH_SUTCLIFFE_MIN = 0.70  # FIX v9.11.16 #59: Nash & Sutcliffe (1970) J. Hydrol. 10(3):282-290    # Minimum NSE
 
     # Uncertainty Quantification
@@ -3202,12 +3201,13 @@ class AcceptanceCriteria:
     def evaluate(cls, metric_name: str, value: float) -> Dict[str, Any]:
         """Evaluate a metric against its acceptance criterion."""
         thresholds = {
-            "pearson_r": (cls.PEARSON_R_MIN, "greater"),
+            "pearson_r": (cls.PEARSON_R_MIN, "strict_greater"),
             "spearman_rho": (cls.SPEARMAN_RHO_MIN, "greater"),
-            "willmott_d": (cls.WILLMOTT_D_MIN, "greater"),
+            "willmott_d": (cls.WILLMOTT_D_MIN, "strict_greater"),
             "bias_pct": (cls.BIAS_MAX_PCT, "less"),
             "relative_rmse": (cls.RELATIVE_RMSE_MAX, "less"),
-            "nash_sutcliffe": (cls.NASH_SUTCLIFFE_MIN, "greater"),
+            "nash_sutcliffe": (cls.NASH_SUTCLIFFE_MIN, "strict_greater"),
+            "kge": (cls.KGE_MIN, "strict_greater"),
             "r_hat": (cls.R_HAT_THRESHOLD, "less"),
             "novelty_index": (cls.NOVELTY_INDEX_MIN, "greater"),
             "similarity": (cls.SIMILARITY_MAX, "less"),
@@ -3220,8 +3220,14 @@ class AcceptanceCriteria:
             return {"metric": metric_name, "status": "UNKNOWN", "threshold": None, "value": value}
 
         threshold, direction = thresholds[metric_name]
+        if value is None or not np.isfinite(value):
+            return {"metric": metric_name, "status": "NOT_EVALUATED",
+                    "threshold": threshold, "value": None, "direction": direction,
+                    "margin": None, "deficit": None, "surplus": None}
         if direction == "greater":
             passed = value >= threshold
+        elif direction == "strict_greater":
+            passed = value > threshold
         else:
             passed = value <= threshold
 
@@ -3231,7 +3237,7 @@ class AcceptanceCriteria:
         #   margin  — signed float (value - threshold yoki threshold - value)
         #   deficit — margin manfiy bo'lganda |margin|, aks holda 0
         #   surplus — margin musbat bo'lganda margin, aks holda 0
-        raw_margin = value - threshold if direction == "greater" else threshold - value
+        raw_margin = value - threshold if direction in ("greater", "strict_greater") else threshold - value
         return {
             "metric": metric_name,
             "value": value,
@@ -5556,6 +5562,174 @@ worm_storage = WORMManifestStorage()
 
 
 
+
+# ── v9.11.48: evidence-preserving scientific fit and conditional BCa inference ──
+def assess_ucg_fit_quality(
+    observed: Any,
+    predicted: Any,
+    *,
+    n_bootstrap: int = 2000,
+    alpha: float = 0.05,
+    seed: int = 42,
+) -> Dict[str, Any]:
+    """Compute raw NSE/KGE/Pearson r/Willmott d and explicit user-set criteria.
+
+    Strict thresholds are project targets, NOT external validation standards.
+    BCa is applied only to paired residual mean (bias) and paired absolute
+    residual mean (MAE), NOT to individual predictions or an entire error PDF.
+    Its nominal confidence requires independent/exchangeable representative
+    pairs and stable sampling; spatial/temporal correlations call for a
+    justified block/cluster bootstrap designed around the experiment.
+    Nothing in this function calibrates predictions or authenticates field data.
+    """
+    obs = _to_1d_float_array(observed, 'observed')
+    pred = _to_1d_float_array(predicted, 'predicted')
+    if obs.shape != pred.shape:
+        raise ValueError('Observed and predicted measurements must be paired and equal-length.')
+    if isinstance(n_bootstrap, (bool, np.bool_)) or not isinstance(n_bootstrap, (int, np.integer)) or n_bootstrap < 2:
+        raise ValueError('n_bootstrap must be an integer >= 2.')
+    if not np.isfinite(alpha) or not 0.0 < alpha < 1.0:
+        raise ValueError('alpha must be between 0 and 1.')
+    if isinstance(seed, (bool, np.bool_)) or not isinstance(seed, (int, np.integer)) or seed < 0:
+        raise ValueError('seed must be a nonnegative integer.')
+
+    n = int(obs.size)
+    errors = pred - obs
+    obs_mean = float(np.mean(obs))
+    pred_mean = float(np.mean(pred))
+    ss_err = float(np.sum(errors**2))
+    ss_obs = float(np.sum((obs - obs_mean)**2))
+    std_obs = float(np.std(obs))
+    std_pred = float(np.std(pred))
+    scale = max(float(np.max(np.abs(obs))), float(np.max(np.abs(pred))), 1.0)
+    # Numerical zero checks only. Do not invent small variance by adding eps.
+    tol = np.finfo(float).eps * scale * 32
+    obs_var_ok = n >= 3 and std_obs > tol
+    pred_var_ok = n >= 3 and std_pred > tol
+    mean_ok = abs(obs_mean) > tol
+
+    warnings = []
+    if n < 3:
+        warnings.append('At least 3 paired records are needed to assess correlation and fit.')
+    if not obs_var_ok:
+        warnings.append('Observed variance is zero or numerically negligible: NSE and KGE undefined.')
+    if not pred_var_ok:
+        warnings.append('Predicted variance is zero or numerically negligible: Pearson r and KGE undefined.')
+    if not mean_ok:
+        warnings.append('Observed mean is zero or numerically negligible: KGE beta undefined.')
+
+    nse = float(1 - ss_err / ss_obs) if obs_var_ok and ss_obs > 0 else None
+    pearson_r = float(np.corrcoef(obs, pred)[0, 1]) if obs_var_ok and pred_var_ok else None
+    if pearson_r is not None and not np.isfinite(pearson_r):
+        pearson_r = None
+    if pearson_r is not None and mean_ok:
+        alpha_ratio = std_pred / std_obs
+        beta_ratio = pred_mean / obs_mean
+        kge = float(1 - np.sqrt((pearson_r - 1)**2 + (alpha_ratio - 1)**2 + (beta_ratio - 1)**2))
+    else:
+        kge = None
+    den_d = float(np.sum((np.abs(pred - obs_mean) + np.abs(obs - obs_mean)) ** 2))
+    willmott_d = float(1 - ss_err / den_d) if n >= 3 and den_d > tol**2 else None
+
+    values = {'nse': nse, 'kge': kge, 'pearson_r': pearson_r, 'willmott_d': willmott_d}
+    thresholds = {'nse': 0.70, 'kge': 0.50, 'pearson_r': 0.85, 'willmott_d': 0.80}
+    statuses = {key: ('UNDEFINED' if values[key] is None else
+                      'PASS' if values[key] > target else 'FAIL')
+                for key, target in thresholds.items()}
+    overall = ('NOT_EVALUATED' if 'UNDEFINED' in statuses.values() else
+               'PASS' if all(status == 'PASS' for status in statuses.values()) else 'FAIL')
+    result = {
+        'n_pairs': n,
+        'metrics': values,
+        'thresholds_exclusive': thresholds,
+        'criteria': statuses,
+        'criteria_overall': overall,
+        'rmse': float(np.sqrt(np.mean(errors**2))),
+        'mae': float(np.mean(np.abs(errors))),
+        'mean_bias': float(np.mean(errors)),
+        'warnings': warnings,
+        'data_provenance': 'USER_INPUT_UNVERIFIED',
+        'independent_field_validation': False,
+        'threshold_origin': 'USER_REQUESTED_PROJECT_TARGETS_NOT_UNIVERSAL_STANDARD',
+        'bca': {
+            'status': 'NOT_COMPUTED', 'bias': None, 'mae': None,
+            'n_bootstrap': int(n_bootstrap),
+            'confidence_level': float(1 - alpha),
+            'assumptions': 'IID/exchangeable paired measurements; independence and external data provenance NOT verified',
+            'warning': 'A BCa interval estimates uncertainty in a statistic; it cannot prove the residual distribution or model validity.',
+        },
+    }
+    if n < 30:
+        result['bca']['status'] = 'INSUFFICIENT_PAIRS_PROJECT_POLICY'
+        warnings.append('BCa not computed: fewer than 30 paired values (project policy, not universal statistical rule).')
+        return result
+
+    if np.ptp(errors) <= tol:
+        result['bca']['status'] = 'DEGENERATE_RESIDUALS'
+        warnings.append('Residuals are constant: no meaningful empirical uncertainty interval can be inferred.')
+        return result
+
+    # Assumption diagnostic (not a formal independence test). Within-station
+    # correlation and spatial dependence require experimental design metadata.
+    if n >= 5 and np.std(errors[:-1]) > tol and np.std(errors[1:]) > tol:
+        lag1 = float(np.corrcoef(errors[:-1], errors[1:])[0, 1])
+        result['bca']['lag1_residual_correlation_input_order'] = lag1
+        if abs(lag1) > 0.30:
+            warnings.append('Ordered residuals exhibit possible serial dependence (|lag-1 r| > 0.30): IID BCa coverage may be unreliable; prefer a defensible block/cluster bootstrap.')
+
+    try:
+        bias_ci = bca_bootstrap_ci(errors, statistic=np.mean, n_bootstrap=int(n_bootstrap),
+                                   alpha=float(alpha), rng=np.random.default_rng(int(seed)))
+        mae_ci = bca_bootstrap_ci(np.abs(errors), statistic=np.mean,
+                                  n_bootstrap=int(n_bootstrap), alpha=float(alpha),
+                                  rng=np.random.default_rng(int(seed) + 1))
+        # Both statistics refer to the same paired observations. Intervals are
+        # conditional on exchangeability, never guaranteed coverage.
+        result['bca'].update({
+            'status': 'COMPUTED_CONDITIONAL_IID',
+            'bias': bias_ci,
+            'mae': mae_ci,
+        })
+    except (ValueError, TypeError, FloatingPointError) as exc:
+        result['bca']['status'] = 'FAILED'
+        result['bca']['error'] = f'{type(exc).__name__}: {exc}'
+        warnings.append('BCa calculation failed; do not report an interval.')
+    return result
+
+
+def render_ucg_fit_quality_panel(fit: Dict[str, Any], heading: str = 'Ilmiy moslik: NSE, KGE, r, d va BCa') -> None:
+    """Streamlit readout of raw fit metrics and conditional statistical intervals."""
+    st.subheader(heading)
+    thresholds = fit['thresholds_exclusive']
+    rows = []
+    for key, label in [('nse', 'NSE'), ('kge', 'KGE'),
+                       ('pearson_r', 'Pearson r'), ('willmott_d', 'Willmott d')]:
+        rows.append({'Mezon': label, 'Hisoblangan qiymat': fit['metrics'][key],
+                     'Talab (qat’iy >)': thresholds[key],
+                     'Natija': fit['criteria'][key]})
+    st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
+    overall = fit['criteria_overall']
+    if overall == 'PASS':
+        st.success('To‘rtta sonli moslik mezoni bajarildi (ma’lumotlar haqiqiyligi va mustaqilligi tasdiqlangan degani emas).')
+    elif overall == 'FAIL':
+        st.warning('Kamida bitta sonli moslik mezoni bajarilmadi. Natijani o‘zgartirib yoki yashirib bo‘lmaydi.')
+    else:
+        st.warning('Bir yoki bir necha mezon hisoblash uchun aniqlanmagan (NOT_EVALUATED).')
+    bca = fit['bca']
+    st.caption('BCa: 95% (yoki tanlangan daraja) oralig‘i O‘RTACHA qoldiq xatolik va MAE uchun. Bashorat diapazoni yoki qoldiq taqsimoti isboti emas.')
+    st.write('BCa holati:', bca['status'])
+    if bca['bias'] and bca['mae']:
+        st.dataframe(pd.DataFrame([
+            {'Ko‘rsatkich': 'O‘rtacha xatolik (bias)', 'Nuqtaviy baho': bca['bias']['point_estimate'],
+             'CI past': bca['bias']['ci_lower'], 'CI yuqori': bca['bias']['ci_upper']},
+            {'Ko‘rsatkich': 'MAE', 'Nuqtaviy baho': bca['mae']['point_estimate'],
+             'CI past': bca['mae']['ci_lower'], 'CI yuqori': bca['mae']['ci_upper']},
+        ]), width='stretch', hide_index=True)
+    st.caption('Statistika faqat kiritilgan juftliklar uchun. Mustaqil Angren dala validatsiyasi: NOT_VERIFIED.')
+    for warning in fit['warnings']:
+        st.warning(warning)
+
+
 # ── FIX 1: compute_validation_metrics with Pearson R, Spearman R, Willmott d ──
 def compute_validation_metrics(observed: np.ndarray, predicted: np.ndarray) -> ExperimentalMetrics:
     obs = np.asarray(observed, dtype=float).reshape(-1)
@@ -6472,8 +6646,8 @@ def bootstrap_prediction_interval(prediction: np.ndarray, residuals: np.ndarray,
 
 # ══════════════════════════════════════════════════════════════════════════════
 # IMPROVEMENT #33: BCa (Bias-Corrected and Accelerated) Bootstrap CI
-# Superior to percentile bootstrap for skewed distributions.
-# Required for PhD-level statistical rigor.
+# Can improve coverage for some smooth statistics; not universally superior.
+# Neither BCa nor any single interval is proof of experimental validity.
 # ══════════════════════════════════════════════════════════════════════════════
 def bca_bootstrap_ci(data: np.ndarray, statistic: Callable = np.mean,
                       n_bootstrap: int = 10000, alpha: float = 0.05,
@@ -6637,6 +6811,10 @@ def calculate_comparison_metrics(
     
     # Extended metrics (FIX 1-6)
     ext_metrics = compute_validation_metrics_extended(bench_y_eval, pred)
+    # The strict assessment does not modify the model or observations.
+    fit_quality = assess_ucg_fit_quality(bench_y_eval, pred, n_bootstrap=2000,
+                                         alpha=1.0-confidence_level,
+                                         seed=RANDOM_SEED)
     
     observed_span = float(np.ptp(bench_y_eval)) + EPS_GENERAL
     intervals = compute_prediction_intervals(pred, errors, confidence_levels=(0.95, 0.99))
@@ -6670,8 +6848,9 @@ def calculate_comparison_metrics(
         boot_ci_low = float(np.percentile(bootstrap_scores, (1.0 - confidence_level) / 2.0 * 100))
         boot_ci_high = float(np.percentile(bootstrap_scores, (1.0 + confidence_level) / 2.0 * 100))
     else:
-        boot_ci_low = validation_score * 0.9
-        boot_ci_high = validation_score * 1.1
+        # Do not fabricate confidence bounds when bootstrap samples are invalid.
+        boot_ci_low = None
+        boot_ci_high = None
     
     # FIX 6: skewness and kurtosis already in ext_metrics
 
@@ -6723,6 +6902,7 @@ def calculate_comparison_metrics(
         "benchmark_y_eval": bench_y_eval,
         "domain_info": domain_info,
         "observed_span": observed_span,
+        "scientific_fit_audit": fit_quality,
         "pearson_r": ext_metrics["pearson_r"],
         "spearman_r": ext_metrics["spearman_r"],
         "willmott_d": ext_metrics["willmott_d"],
@@ -7395,6 +7575,7 @@ def monte_carlo_uncertainty_analysis(
         "prediction_mean": running_mean,
         "prediction_std": prediction_std,
         "error_samples": error_samples_last if error_samples_last is not None else np.zeros((1, pred.size)),
+        "error_samples_scope": "LAST_SIMULATION_CHUNK_ONLY_NOT_FULL_MONTE_CARLO_ENSEMBLE",
         "observed_residuals": residuals.copy(),
         "synthetic_data": False,  # Caller must relabel this if its *input* was synthetic.
         "interval_method": "Gaussian analytical approximation; not empirical percentiles",
@@ -11672,7 +11853,10 @@ def patent_analysis_ui(ucg_subsidence_cm: np.ndarray, x_axis: np.ndarray):
         c6.metric("KGE", f"{comparison_metrics['kge']:.4f}")
         c7.metric("Bias", f"{comparison_metrics['bias']:.4f}")
         c8.metric("Rel. RMSE", f"{comparison_metrics['relative_rmse']:.4f}")
-        c9.metric("Bootstrap CI", f"[{comparison_metrics['bootstrap_ci_low']:.1f}, {comparison_metrics['bootstrap_ci_high']:.1f}]")
+        c9.metric("Bootstrap CI", (f"[{comparison_metrics['bootstrap_ci_low']:.1f}, {comparison_metrics['bootstrap_ci_high']:.1f}]"
+                         if comparison_metrics['bootstrap_ci_low'] is not None and comparison_metrics['bootstrap_ci_high'] is not None else "NOT_COMPUTED"))
+
+        render_ucg_fit_quality_panel(comparison_metrics['scientific_fit_audit'])
 
         if domain_info["used_extrapolation"]:
             st.warning(
@@ -12130,30 +12314,13 @@ def init_db():
         pressure REAL,
         timestamp TEXT
     );
-    INSERT INTO sensor_data (temperature, pressure, gas_co, gas_h2, gas_ch4)
-    SELECT 450.5, 2.4, 12.5, 18.2, 5.4
-    WHERE NOT EXISTS (
-        SELECT 1 FROM sensor_data
-        WHERE temperature = 450.5 AND pressure = 2.4 AND gas_co = 12.5
-          AND gas_h2 = 18.2 AND gas_ch4 = 5.4
-    );
-    INSERT INTO rock_properties (rock_type, init_ucs, curr_ucs, temp_exposed)
-    SELECT 'Siltstone', 65.0, 32.4, 600.0
-    WHERE NOT EXISTS (
-        SELECT 1 FROM rock_properties
-        WHERE rock_type = 'Siltstone' AND init_ucs = 65.0
-          AND curr_ucs = 32.4 AND temp_exposed = 600.0
-    );
-    INSERT INTO predictions (collapse_risk, pinn_accuracy, status)
-    SELECT 15.4, 0.94, 'Safe'
-    WHERE NOT EXISTS (
-        SELECT 1 FROM predictions
-        WHERE collapse_risk = 15.4 AND pinn_accuracy = 0.94 AND status = 'Safe'
-    );
+    -- The production monitoring database is initialized with SCHEMA ONLY.
+    -- Demonstration rows must NOT be inserted as observed sensor data.
     """)
     conn.commit()
     conn.close()
-    logger.info("SQLite3 ma'lumotlar bazasi tayyor: ucg_monitoring.db (WAL mode enabled)")
+    logger.info("SQLite3 monitoring schema initialized without artificial observations (WAL enabled). "
+                "Previously stored demonstration rows, if any, require separate provenance review.")
 
 # Database creation and demo-row seeding are deferred to main(). Importing
 # this module as a library must not modify the caller's filesystem or database.
@@ -16569,19 +16736,23 @@ def sensitivity_analysis(
     }
     results = []
     for name, (base_v, low_v, high_v) in params_range.items():
+        # _quick_fos does NOT accept Poisson nu. This factor cannot legitimately
+        # be assigned a zero sensitivity or compared with actual model inputs.
+        if name == 'Poisson (ν)':
+            results.append({'param': name, 'low': float('nan'), 'high': float('nan'),
+                            'status': 'NOT_MODELLED',
+                            'note': 'Poisson ratio is absent from the pillar FOS approximation.'})
+            continue
         kw = dict(ucs=base_ucs, gsi=base_gsi, d=base_d, nu=base_nu, T=base_t)
-        key_map = {
-            'UCS (MPa)': 'ucs', 'GSI': 'gsi', 'D factor': 'd',
-            'Poisson (ν)': 'nu', 'Temperature (°C)': 'T'
-        }
+        key_map = {'UCS (MPa)': 'ucs', 'GSI': 'gsi',
+                   'D factor': 'd', 'Temperature (°C)': 'T'}
         k = key_map[name]
         kw_low = dict(kw); kw_low[k] = low_v
         kw_high = dict(kw); kw_high[k] = high_v
-        results.append({
-            'param': name,
-            'low': qfos(**kw_low) - base_fos,
-            'high': qfos(**kw_high) - base_fos,
-        })
+        results.append({'param': name,
+                        'low': qfos(**kw_low) - base_fos,
+                        'high': qfos(**kw_high) - base_fos,
+                        'status': 'COMPUTED', 'note': 'One-factor-at-a-time finite difference'})
     return pd.DataFrame(results), base_fos
 
 
@@ -24838,7 +25009,9 @@ def render_v7_patent_grade_panel():
                         core_features=features,
                         technical_complexity=tech_complexity,
                     )
-                    # Display scores
+                    # All scores below are heuristics, not legal FTO or novelty conclusions.
+                    st.warning("UNVERIFIED SCORING — local text-similarity/AHP proxies only. "
+                               "No patent examination or legal FTO clearance has been performed.")
                     c1, c2, c3, c4 = st.columns(4)
                     c1.metric("Patentability Index", f"{verdict['patentability_index']:.1f}")
                     c2.metric("Novelty Index", f"{verdict['novelty_index']:.1f}")
@@ -24846,20 +25019,13 @@ def render_v7_patent_grade_panel():
                     c4.metric("Industrial Applic.", f"{verdict['industrial_applicability']:.1f}")
 
                     c5, c6, c7 = st.columns(3)
-                    c5.metric("FTO Score", f"{verdict['fto_score']:.1f}")
+                    c5.metric("FTO similarity proxy (not legal)", f"{verdict['fto_score']:.1f}")
                     c6.metric("Claim Strength", f"{verdict['claim_strength']:.1f}")
                     c7.metric("Prior Art Docs", f"{verdict['n_prior_art_documents']}")
 
-                    # Recommendation
+                    # No filing advice may be derived from scoring proxies.
                     rec = verdict["recommendation"]
-                    if "STRONG" in rec:
-                        st.success(f"✅ {rec}")
-                    elif "MODERATE" in rec:
-                        st.warning(f"⚠️ {rec}")
-                    elif "WEAK" in rec:
-                        st.warning(f"⚠️ {rec}")
-                    else:
-                        st.error(f"❌ {rec}")
+                    st.info(rec)
 
                     # AHP consistency
                     st.subheader("AHP Consistency")
@@ -31728,9 +31894,11 @@ def main():
         c5_val.metric("NSE", f"{comparison_metrics['nse']:.4f}")
         c6_val.metric("KGE", f"{comparison_metrics['kge']:.4f}")
         c7_val.metric("Bias", f"{comparison_metrics['bias']:.4f}")
-        c8_val.metric("Bootstrap CI", f"[{comparison_metrics['bootstrap_ci_low']:.1f}, {comparison_metrics['bootstrap_ci_high']:.1f}]")
+        c8_val.metric("Bootstrap CI", (f"[{comparison_metrics['bootstrap_ci_low']:.1f}, {comparison_metrics['bootstrap_ci_high']:.1f}]"
+                         if comparison_metrics['bootstrap_ci_low'] is not None and comparison_metrics['bootstrap_ci_high'] is not None else "NOT_COMPUTED"))
         if comparison_snapshot_path:
             st.caption(f"Validation snapshot: {comparison_snapshot_path}")
+        render_ucg_fit_quality_panel(comparison_metrics['scientific_fit_audit'])
 
         fig_diff = go.Figure()
         fig_diff.add_trace(
@@ -39325,6 +39493,9 @@ class PatentEngine:
             "ahp_consistency": ahp_result.get("ahp_consistency", {}),
             "ahp_consistent": ahp_result.get("ahp_consistent", False),
             "fto_score": fto_score,
+            "fto_score_type": "TEXT_SIMILARITY_PROXY_NOT_LEGAL_FTO",
+            "legal_fto_status": "NOT_EVALUATED",
+            "patentability_status": "ILLUSTRATIVE_HEURISTIC_NOT_EXAMINER_ASSESSMENT",
             "claim_strength": claim_strength,
             "mean_similarity_to_prior_art": mean_similarity,
             "n_prior_art_documents": len(prior_art_texts),
@@ -39338,15 +39509,10 @@ class PatentEngine:
 
     @staticmethod
     def _recommendation(patentability: float, fto: float) -> str:
-        """Plain-text filing recommendation based on scores."""
-        if patentability >= 85 and fto >= 75:
-            return "STRONG — file patent application immediately (UzPatent + PCT)"
-        elif patentability >= 70 and fto >= 60:
-            return "MODERATE — file provisional application, continue R&D"
-        elif patentability >= 50:
-            return "WEAK — refine inventive step before filing"
-        else:
-            return "DO NOT FILE — insufficient novelty or FTO risk"
+        """Never convert text-similarity heuristics into legal patent decisions."""
+        return ("NOT_ASSESSED — these illustrative scores cannot establish patentability "
+                "or freedom to operate. Obtain verified claims/prior-art evidence and "
+                "qualified patent counsel review before deciding whether to file.")
 
     def generate_patent_report(self, verdict: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -39367,6 +39533,8 @@ class PatentEngine:
             },
             "ahp_consistency": verdict["ahp_consistency"],
             "recommendation": verdict["recommendation"],
+            "legal_fto_status": verdict.get("legal_fto_status", "NOT_EVALUATED"),
+            "fto_score_type": verdict.get("fto_score_type", "TEXT_SIMILARITY_PROXY"),
             "n_prior_art": verdict["n_prior_art_documents"],
             "novelty_backend": verdict["novelty_backend"],
             "claims": verdict["recommended_claims"],
@@ -42155,10 +42323,17 @@ def validate_angren_evidence(
             v = float(np.sum((o-o.mean())**2))
             rmse = float(np.sqrt(np.mean(d*d)))
             pearson = float(np.corrcoef(o,p)[0,1]) if len(o)>2 and np.std(o)>0 and np.std(p)>0 else None
+            fit_quality = assess_ucg_fit_quality(o, p, n_bootstrap=2000,
+                                                 alpha=0.05, seed=RANDOM_SEED)
             groups[str(quantity)] = {
                 'n': int(len(o)), 'unit': str(unit), 'rmse': rmse, 'mae': float(np.mean(np.abs(d))),
                 'mean_bias': float(np.mean(d)), 'r2': float(1-np.sum(d*d)/v) if len(o)>=3 and v>0 else None,
-                'pearson_r': pearson,
+                'pearson_r': fit_quality['metrics']['pearson_r'],
+                'nse': fit_quality['metrics']['nse'],
+                'kge': fit_quality['metrics']['kge'],
+                'willmott_d': fit_quality['metrics']['willmott_d'],
+                'criteria_overall': fit_quality['criteria_overall'],
+                'fit_quality': fit_quality,
                 'source_status': 'USER_SUPPLIED_UNVERIFIED', 'is_independent_experiment': False,
             }
             for row, difference in zip(group.itertuples(index=False), d):
@@ -42226,6 +42401,10 @@ def render_angren_validation_ui():
             st.error(result['error'])
         if result.get('metrics'):
             st.dataframe(pd.DataFrame([{'quantity': key, **value} for key,value in result['metrics'].items()]))
+            for qty, detail in result['metrics'].items():
+                if detail.get('fit_quality'):
+                    render_ucg_fit_quality_panel(detail['fit_quality'],
+                        heading=f"{qty} — NSE / KGE / r / d / BCa ({detail.get('unit', '')})")
             st.download_button('⬇️ Natijalar va manba holati — JSON',
                 data=json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False).encode('utf-8'),
                 file_name='Angren_Validation_Evidence_v9_11_43.json',mime='application/json')
@@ -50869,12 +51048,11 @@ class ScientificConstants:
 
 # ── 12. Adaptive Monte Carlo Sampling ───────────────────────────────────────
 class AdaptiveMonteCarlo:
-    """
-    v9.11.5: Adaptive Sampling - MC ni to'xtash mezoniga qarab to'xtatadi.
+    """Adaptive independent Monte Carlo draws, with explicit scope of diagnostics.
 
-    Patent darajasida adaptiv sampling talab qilinadi - bu 30-50% CPU tejaydi.
-    Algoritma: har N_min namunadan keyin convergence tekshiriladi,
-    agar MCSE < threshold va R-hat < 1.01 bo'lsa - to'xtaydi.
+    MCSE for the mean can be estimated for IID Gaussian draws. A Gelman-Rubin
+    R-hat statistic requires multiple MCMC chains and is NOT available here.
+    This estimates numerical sampling variability only, not model validity.
     """
 
     @staticmethod
@@ -50885,98 +51063,86 @@ class AdaptiveMonteCarlo:
                     mcse_threshold: float = 0.01,
                     r_hat_threshold: float = 1.01,
                     seed: int = 42) -> Dict[str, Any]:
-        """
-        Adaptive Monte Carlo - convergence ga qarab to'xtaydi.
-
-        Returns dict with:
-        - n_samples_used: actual samples used (<= max_samples)
-        - converged: bool
-        - convergence_iteration: when convergence was detected
-        - prediction_mean, prediction_std
-        - ci95, ci99 (percentile-based)
-        - mcse, r_hat
-        - cpu_time_s
-        """
         import time as _time_amc
         start_time = _time_amc.time()
-
-        pred = np.asarray(prediction, dtype=float).flatten()
-        bench = np.asarray(benchmark_y, dtype=float).flatten()
+        pred = np.asarray(prediction, dtype=float).reshape(-1)
+        bench = np.asarray(benchmark_y, dtype=float).reshape(-1)
+        if pred.size == 0 or pred.size != bench.size:
+            raise ValueError("prediction and benchmark_y must have matching nonempty lengths")
+        if not np.isfinite(pred).all() or not np.isfinite(bench).all():
+            raise ValueError("prediction and benchmark_y must be finite")
+        for label, value in (("max_samples", max_samples), ("min_samples", min_samples),
+                             ("check_interval", check_interval)):
+            if isinstance(value, bool) or not isinstance(value, (int, np.integer)) or value <= 0:
+                raise ValueError(f"{label} must be a positive integer")
+        if max_samples < min_samples:
+            raise ValueError("max_samples must not be smaller than min_samples")
+        if max_samples > UCG_CONFIG.MAX_MC_SAMPLES:
+            raise ValueError("max_samples exceeds configured UCG maximum")
+        if not np.isfinite(mcse_threshold) or mcse_threshold <= 0:
+            raise ValueError("mcse_threshold must be positive and finite")
+        # Kept for backward API compatibility only, not used as a stopping criterion.
+        if not np.isfinite(r_hat_threshold) or r_hat_threshold <= 0:
+            raise ValueError("r_hat_threshold must be positive and finite")
         residuals = pred - bench
-        noise_scale = max(float(np.std(residuals, ddof=1)) if residuals.size > 1 else 0.0, 1e-10)
-
+        noise_scale = float(np.std(residuals, ddof=1)) if pred.size > 1 else 0.0
+        if noise_scale <= 0:
+            raise ValueError("Residual variance is zero; no noise distribution is identifiable. "
+                             "Supply a defensible uncertainty scale or observed varying residuals.")
         rng = np.random.default_rng(seed=seed)
-        running_mean = np.zeros_like(pred, dtype=float)
-        running_M2 = np.zeros_like(pred, dtype=float)
+        mean = np.zeros_like(pred, dtype=float)
+        m2 = np.zeros_like(pred, dtype=float)
         total_n = 0
         converged = False
         convergence_iteration = None
-        last_chunk = None
-
+        # Up to ~10 million float64 elements per chunk; no last-chunk quantile bias.
+        safe_chunk_size = max(1, min(int(check_interval), 10_000_000 // max(1, pred.size)))
         while total_n < max_samples:
-            chunk_n = min(check_interval, max_samples - total_n)
-            chunk = pred[None, :] + rng.normal(0.0, noise_scale, size=(chunk_n, pred.size))
-
-            batch_mean = chunk.mean(axis=0)
-            batch_var = chunk.var(axis=0, ddof=0)
+            chunk_n = min(safe_chunk_size, max_samples - total_n)
+            batch = pred[None, :] + rng.normal(0.0, noise_scale, size=(chunk_n, pred.size))
+            batch_mean = batch.mean(axis=0)
+            batch_m2 = batch.var(axis=0, ddof=0) * chunk_n
             if total_n == 0:
-                running_mean = batch_mean.copy()
-                running_M2 = batch_var * chunk_n
+                mean = batch_mean.copy()
+                m2 = batch_m2
             else:
-                delta = batch_mean - running_mean
-                new_total = total_n + chunk_n
-                running_mean = running_mean + delta * (chunk_n / new_total)
-                running_M2 = running_M2 + batch_var * chunk_n + (delta ** 2) * (total_n * chunk_n / new_total)
+                delta = batch_mean - mean
+                n_new = total_n + chunk_n
+                mean += delta * (chunk_n / n_new)
+                m2 += batch_m2 + delta**2 * (total_n * chunk_n / n_new)
             total_n += chunk_n
-            last_chunk = chunk
-
-            # Convergence check (after min_samples)
-            if total_n >= min_samples:
-                prediction_std = np.sqrt(running_M2 / max(total_n - 1, 1))
-                # MCSE = std / sqrt(n)
-                mcse = float(np.mean(prediction_std / np.sqrt(total_n)))
-                # Simple R-hat approximation (split-Rhat would be better)
-                # For single chain, use coefficient of variation
-                cv = float(np.mean(prediction_std / np.maximum(np.abs(running_mean), 1e-10)))
-                r_hat_approx = 1.0 + cv / np.sqrt(total_n)
-
-                if mcse < mcse_threshold and r_hat_approx < r_hat_threshold:
+            if total_n >= min_samples and total_n > 1:
+                std = np.sqrt(np.maximum(m2 / (total_n - 1), 0.0))
+                # Conservative: maximum MCSE across spatial/response coordinates.
+                mcse_max = float(np.max(std / np.sqrt(total_n)))
+                if mcse_max <= mcse_threshold:
                     converged = True
                     convergence_iteration = total_n
                     break
-
-        prediction_std = np.sqrt(running_M2 / max(total_n - 1, 1)) if total_n > 1 else np.zeros_like(pred)
-
-        # Percentile-based CI from last chunk
-        if last_chunk is not None and last_chunk.shape[0] > 30:
-            ci95_low = np.percentile(last_chunk, 2.5, axis=0)
-            ci95_high = np.percentile(last_chunk, 97.5, axis=0)
-            ci99_low = np.percentile(last_chunk, 0.5, axis=0)
-            ci99_high = np.percentile(last_chunk, 99.5, axis=0)
-        else:
-            ci95_low = running_mean - 1.96 * prediction_std
-            ci95_high = running_mean + 1.96 * prediction_std
-            ci99_low = running_mean - 2.576 * prediction_std
-            ci99_high = running_mean + 2.576 * prediction_std
-
-        cpu_time = _time_amc.time() - start_time
-        # Savings calculation
-        savings_pct = (1.0 - total_n / max_samples) * 100 if converged else 0.0
-
+        std = np.sqrt(np.maximum(m2 / max(total_n - 1, 1), 0.0))
+        mcse_max = float(np.max(std / np.sqrt(total_n)))
         return {
             'n_samples_used': total_n,
             'max_samples': max_samples,
             'converged': converged,
             'convergence_iteration': convergence_iteration,
-            'prediction_mean': running_mean,
-            'prediction_std': prediction_std,
-            'ci95': (ci95_low, ci95_high),
-            'ci99': (ci99_low, ci99_high),
-            'mcse': mcse if converged else float(np.mean(prediction_std / np.sqrt(total_n))),
-            'r_hat': r_hat_approx if converged else 1.0 + float(np.mean(prediction_std / np.maximum(np.abs(running_mean), 1e-10))) / np.sqrt(total_n),
-            'cpu_time_s': cpu_time,
-            'savings_pct': savings_pct,
-            'method': 'adaptive_monte_carlo',
+            'prediction_mean': mean,
+            'prediction_std': std,
+            # Gaussian parametric prediction intervals (NOT empirical quantiles).
+            'ci95': (mean - 1.96 * std, mean + 1.96 * std),
+            'ci99': (mean - 2.576 * std, mean + 2.576 * std),
+            'ci95_mean': (mean - 1.96 * std / np.sqrt(total_n),
+                          mean + 1.96 * std / np.sqrt(total_n)),
+            'interval_method': 'GAUSSIAN_APPROXIMATION_NOT_EMPIRICAL_PERCENTILES',
+            'mcse': mcse_max,
+            'mcse_scope': 'max coordinate; absolute units of prediction',
+            'r_hat': None,
+            'r_hat_status': 'NOT_APPLICABLE_IID_DRAWS_NO_MCMC_CHAINS',
+            'r_hat_threshold_used': False,
+            'cpu_time_s': _time_amc.time() - start_time,
+            'savings_pct': 100.0 * (1.0 - total_n / max_samples) if converged else 0.0,
+            'method': 'adaptive_iid_monte_carlo_mcse_only',
+            'validation_status': 'NOT_FIELD_VALIDATED',
         }
 
 
@@ -51033,9 +51199,10 @@ class NetworkMode:
             if not REQUESTS_AVAILABLE:
                 return True
             import socket
-            socket.setdefaulttimeout(3)
-            socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect(("8.8.8.8", 53))
-            return False
+            # No process-global setdefaulttimeout(); release socket even on failure.
+            # Reachability of a public endpoint is only a heuristic, not API health.
+            with socket.create_connection(("api.crossref.org", 443), timeout=3.0):
+                return False
         except Exception:
             return True
 
@@ -58430,7 +58597,8 @@ class ExtendedConstants:
     # Validation
     PEARSON_R_MIN = 0.85
     WILLMOTT_D_MIN = 0.80
-    NSE_MIN = 0.65
+    NSE_MIN = 0.70  # Unified project threshold (exclusive comparison)
+    KGE_MIN = 0.50  # Unified project threshold
     NOVELTY_INDEX_MIN = 0.60
     FTO_SCORE_MIN = 0.70
 
@@ -59454,6 +59622,12 @@ class ComprehensiveStatusReport:
 
 
 
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FIX v9.11.26: ComprehensiveStatusReport — halol holat hisoboti
+
+# Script entry point must follow all class/function declarations.
 if __name__ == "__main__":
     import sys as _sys_inline
 
@@ -59520,6 +59694,3 @@ if __name__ == "__main__":
         print(f"[NOT Patent-Ready (Research Stage)  # FIX v9.11.28 (audit consolidation)] Failed to apply patches: {_patch_exc}")
     main()
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# FIX v9.11.26: ComprehensiveStatusReport — halol holat hisoboti
