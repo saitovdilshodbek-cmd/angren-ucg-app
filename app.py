@@ -1,3 +1,4 @@
+# v9.11.51: Streamlit input-state validation patch (academic report exports).
 # v9.11.50 (2026-10-31): expert-reviewed, source-of-truth ISRM/ISO Appendix A + generalized three-grid GCI.
 # Research-stage only: unverified uploads, no independent RS2/field authentication.
 # v9.11.49: integrated Academic Validation / RS2 Monitoring mode.
@@ -200,7 +201,7 @@
 from __future__ import annotations
 
 # v9.11.45 — focused research-integrity patch (2026-10-29).
-UCG_APP_VERSION = "9.11.50"  # Single source for RUNTIME versioning
+UCG_APP_VERSION = "9.11.51"  # Single source for RUNTIME versioning
 # Project outputs are uncalibrated; analytical THERMAL check != Angren THCM V&V.
 
 # FIX v9.11.23: TYPE_CHECKING — globals().get() ning haddan tashqar ko'pligi
@@ -31112,11 +31113,11 @@ def main():
         "🎛️ App Mode",
         ["v6 — Geomechanical Twin", "v7 — UCG Reactor / Kinetics",
          "🔬 v9.11.1 — Ekspert Tahlili (40 muammo tuzatishlari)",
-         "v9.11.50 — Academic Validation / RS2 Monitoring"],
+         "v9.11.51 — Academic Validation / RS2 Monitoring"],
         index=0,
         help="v6: yer osti geomekanik model (PhD). v7: reaktor kinetikasi + Monte Carlo UQ. v9.11.1: 40 ta ekspert tahlili tuzatishlari.",
     )
-    if _app_mode == "v9.11.50 — Academic Validation / RS2 Monitoring":
+    if _app_mode == "v9.11.51 — Academic Validation / RS2 Monitoring":
         render_academic_validation_panel()
         return
 
@@ -32751,7 +32752,10 @@ def main():
                     results['sha256'] = trace_bundle.sha256
                     results['timestamp_utc'] = trace_bundle.timestamp_utc
                     results['git_commit'] = trace_bundle.git_commit
-                    results['doi'] = generate_real_doi({"title": obj_name, "year": datetime.now(timezone.utc).year, "hash": trace_bundle.sha256})
+                    # v9.11.50: an internally generated ID is NOT a registered DOI.
+                    # Preserve a user-verified registered DOI only via a separate
+                    # publication provenance workflow; never fabricate it here.
+                    results['doi'] = 'NOT_REGISTERED (no DataCite/Crossref registration evidence)' 
                     results['claims'] = generate_patent_claim_set([
                         "Adaptive Biot",
                         "Thermal Degradation",
@@ -60068,6 +60072,24 @@ def render_academic_validation_panel():
     confidence = st.slider('Ishonch darajasi',.80,.99,.95,.01,key='av49_conf')
     seed = st.number_input('Random seed',min_value=0,value=42,step=1,key='av49_seed')
     tolerance = st.number_input('Foiz xatosidan chiqariladigan |observed| chegarasi (cm)',min_value=0.,value=0.,format='%.4f',key='av49_tol')
+    # v9.11.51: invalidate cached RS2/monitoring reports whenever ANY input
+    # changes. This prevents a newly uploaded file from displaying the prior
+    # file's results as current data (scientific provenance correctness).
+    _av51_hash = hashlib.sha256()
+    for _av51_upload in (rs_upload, mon_upload, mesh_upload):
+        _av51_data = _av51_upload.getvalue() if _av51_upload is not None else None
+        _av51_hash.update(b'FILE' if _av51_data is not None else b'NONE')
+        if _av51_data is not None:
+            _av51_hash.update(len(_av51_data).to_bytes(8, 'big'))
+            _av51_hash.update(_av51_data)
+    _av51_hash.update(json.dumps({
+        'example': bool(use_example), 'n': int(n), 'confidence': float(confidence),
+        'seed': int(seed), 'zero_tolerance': float(tolerance)
+    }, sort_keys=True).encode('utf-8'))
+    _av51_fp = _av51_hash.hexdigest()
+    if st.session_state.get('av49_input_fingerprint_v51') != _av51_fp:
+        st.session_state.pop('av49_result', None)
+        st.session_state['av49_input_fingerprint_v51'] = _av51_fp
     if st.button('Hisoblash va eksport tayyorlash',key='av49_run'):
         st.session_state.pop('av49_result',None)
         try:
@@ -60090,6 +60112,22 @@ def render_academic_validation_panel():
                             key='ucg50_conditional_bca',value=False)
         a_cut = st.number_input('Near-zero observation cutoff (cm)',min_value=0.0,
                                  value=0.5,step=0.1,key='ucg50_station_cutoff')
+        # v9.11.51: reject stale Appendix A results if a file or option
+        # changes, including removing a formerly uploaded mesh CSV.
+        _ucg51_hash = hashlib.sha256()
+        for _ucg51_upload in (a_station, a_mesh):
+            _ucg51_data = _ucg51_upload.getvalue() if _ucg51_upload is not None else None
+            _ucg51_hash.update(b'FILE' if _ucg51_data is not None else b'NONE')
+            if _ucg51_data is not None:
+                _ucg51_hash.update(len(_ucg51_data).to_bytes(8, 'big'))
+                _ucg51_hash.update(_ucg51_data)
+        _ucg51_hash.update(json.dumps({
+            'conditional_iid_bca': bool(a_bca), 'relative_cutoff_cm': float(a_cut)
+        }, sort_keys=True).encode('utf-8'))
+        _ucg51_fp = _ucg51_hash.hexdigest()
+        if st.session_state.get('ucg51_appendix_input_fingerprint') != _ucg51_fp:
+            st.session_state.pop('ucg50_appendix', None)
+            st.session_state['ucg51_appendix_input_fingerprint'] = _ucg51_fp
         st.download_button('Station CSV blank template',b'x_m,observed_cm,predicted_cm\n',
                            'station_data_unverified_template.csv','text/csv',key='ucg50_station_tpl')
         st.download_button('Mesh CSV blank template',b'h,value\n',
