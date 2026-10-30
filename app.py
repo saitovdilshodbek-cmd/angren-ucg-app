@@ -1,4 +1,6 @@
-# v9.11.49 (2026-10-31): integrated Academic Validation / RS2 Monitoring mode.
+# v9.11.50 (2026-10-31): expert-reviewed, source-of-truth ISRM/ISO Appendix A + generalized three-grid GCI.
+# Research-stage only: unverified uploads, no independent RS2/field authentication.
+# v9.11.49: integrated Academic Validation / RS2 Monitoring mode.
 # Extended metrics, conditional IID BCa, actual-input GCI, CSV/Excel/PDF/LaTeX export.
 # Validation: syntax, 16 module tests, 36 built-in regression tests, and full-file Streamlit AppTest in development mode.
 # Optional integrations (PyTorch/SHAP/LIME/external solvers/production OIDC) remain unverified.
@@ -198,7 +200,7 @@
 from __future__ import annotations
 
 # v9.11.45 — focused research-integrity patch (2026-10-29).
-UCG_APP_VERSION = "9.11.49"  # Single source for RUNTIME versioning
+UCG_APP_VERSION = "9.11.50"  # Single source for RUNTIME versioning
 # Project outputs are uncalibrated; analytical THERMAL check != Angren THCM V&V.
 
 # FIX v9.11.23: TYPE_CHECKING — globals().get() ning haddan tashqar ko'pligi
@@ -8705,6 +8707,8 @@ def generate_iso_compliance_report(report_payload: Dict[str, Any]) -> bytes:
     doc.add_paragraph('Independent auditor or laboratory protocol, scope, sampled records, '
                       'instrument calibration, uncertainty budget, raw field records, '
                       'versioned model predictions, and documented corrective actions.')
+    # v9.11.50: shared Appendix A generator; missing data => explicit NOT_EVALUATED.
+    ucg_append_docx_evidence(doc, payload.get('academic_validation_appendix'))
     buffer=io.BytesIO();doc.save(buffer);return buffer.getvalue()
 
 
@@ -16628,6 +16632,9 @@ def generate_full_iso_report(
     ]
     for ref in refs:
         doc.add_paragraph(f"• {ref}")
+
+    # v9.11.50: one evidence annex is reused across UZ/EN/RU full reports.
+    ucg_append_docx_evidence(doc, (results or {}).get('academic_validation_appendix'))
 
     buf = io.BytesIO()
     doc.save(buf)
@@ -31105,11 +31112,11 @@ def main():
         "🎛️ App Mode",
         ["v6 — Geomechanical Twin", "v7 — UCG Reactor / Kinetics",
          "🔬 v9.11.1 — Ekspert Tahlili (40 muammo tuzatishlari)",
-         "v9.11.49 — Academic Validation / RS2 Monitoring"],
+         "v9.11.50 — Academic Validation / RS2 Monitoring"],
         index=0,
         help="v6: yer osti geomekanik model (PhD). v7: reaktor kinetikasi + Monte Carlo UQ. v9.11.1: 40 ta ekspert tahlili tuzatishlari.",
     )
-    if _app_mode == "v9.11.49 — Academic Validation / RS2 Monitoring":
+    if _app_mode == "v9.11.50 — Academic Validation / RS2 Monitoring":
         render_academic_validation_panel()
         return
 
@@ -32664,6 +32671,28 @@ def main():
             prepared_inp = st.text_input("Prepared by", value="UCG Engineering Team")
             approved_inp = st.text_input("Approved by", value="Chief Engineer")
 
+        st.caption('Appendix A: qoʻshimcha monitoring va GCI uchun alohida CSV yuklang. '
+                   'Haqiqiy RS2/Angren manbasi dastur tomonidan mustaqil tasdiqlanmaydi.')
+        _ucg_iso_station_upload = st.file_uploader(
+            'Appendix A — station_data_unverified.csv (x_m, observed_cm, predicted_cm)',
+            type=['csv'], key='ucg50_iso_station_csv')
+        _ucg_iso_mesh_upload = st.file_uploader(
+            'Appendix A — 3-mesh RS2 CSV (h,value), optional',
+            type=['csv'], key='ucg50_iso_mesh_csv')
+        _ucg_iso_bca_enabled = st.checkbox(
+            'Conditional 95% IID BCa (n>=30; spatial independence NOT verified)',
+            value=False, key='ucg50_iso_bca')
+        _ucg_iso_rel_limit = st.number_input(
+            'Relative-error exclusion for |observed| < cutoff (cm)',
+            min_value=0., value=0.5, step=0.1, key='ucg50_iso_cutoff')
+        st.download_button('Blank station CSV template',
+            data=b'x_m,observed_cm,predicted_cm\n',
+            file_name='station_data_unverified_template.csv',mime='text/csv',
+            key='ucg50_iso_station_template')
+        st.download_button('Blank three-mesh CSV template',
+            data=b'h,value\n',file_name='three_mesh_template.csv',
+            mime='text/csv',key='ucg50_iso_mesh_template')
+
         if st.button("📄 Generate Report", type="primary", width="stretch", key="generate_iso_report"):
             with st.spinner("Generating ISRM/ISO report..."):
                 try:
@@ -32683,6 +32712,16 @@ def main():
                     plt.close(fig_r)
 
                     results = {}
+                    _ucg50_bundle = None
+                    if _ucg_iso_station_upload is not None:
+                        _ucg50_bundle = ucg_build_appendix_bundle(
+                            _ucg_iso_station_upload.getvalue(),
+                            _ucg_iso_mesh_upload.getvalue() if _ucg_iso_mesh_upload is not None else None,
+                            enable_iid_bca=bool(_ucg_iso_bca_enabled),
+                            relative_cutoff_cm=float(_ucg_iso_rel_limit))
+                        results['academic_validation_appendix'] = _ucg50_bundle
+                    elif _ucg_iso_mesh_upload is not None:
+                        st.warning('GCI CSV berildi, ammo station CSV yoʻq. Appendix A NOT_EVALUATED.')
                     if rf_model is not None and len(np.unique(y_test_ai)) > 1:
                         proba_test = rf_model.predict_proba(X_test_ai)[:, 1]
                         results['accuracy'] = accuracy_score(y_test_ai, rf_model.predict(X_test_ai))
@@ -32829,6 +32868,16 @@ def main():
                         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                         width="stretch"
                     )
+
+                    if _ucg50_bundle is not None:
+                        st.download_button('⬇️ Appendix A LaTeX (.tex)',
+                            _ucg50_bundle['latex'].encode('utf-8'),
+                            file_name='UCG_Appendix_A_Expert_Corrected.tex',
+                            mime='text/plain',key='ucg50_iso_tex')
+                        st.download_button('⬇️ Recomputed metrics + provenance (.json)',
+                            ucg_appendix_metrics_json(_ucg50_bundle),
+                            file_name='recomputed_metrics.json',
+                            mime='application/json',key='ucg50_iso_json')
 
                     # ── FIX: 3-language download buttons (uz/en/ru) ──
                     # Generate the same report in all 3 languages so the user
@@ -59828,17 +59877,12 @@ def _av_profile(source):
 
 
 def _av_mesh_csv(source):
-    df = source.copy() if isinstance(source, _av_pd.DataFrame) else _av_pd.read_csv(source)
-    if not {'h', 'value'}.issubset(df.columns) or len(df)!=3:
-        raise ValueError('Mesh CSV requires exactly 3 rows with h and value (same quantity and unit).')
-    df = df[['h','value']].apply(_av_pd.to_numeric, errors='raise').sort_values('h')
-    if not _av_np.isfinite(df.to_numpy()).all() or (df.h<=0).any() or df.h.duplicated().any():
-        raise ValueError('Mesh sizes must be distinct, positive and finite; values must be finite.')
-    h = df.h.to_numpy(); r1, r2 = h[1]/h[0], h[2]/h[1]
-    if not _av_np.isclose(r1,r2,rtol=1e-6):
-        raise ValueError('This estimator supports equal refinement ratios only.')
-    result = AcademicTHCMValidator.richardson_gci(*df.value.to_numpy(), refine_ratio=r1)
-    result['mesh_sizes'] = h.tolist()
+    """v9.11.50: reuse the single GCI implementation, including unequal ratios."""
+    gci, input_sha, mesh_sizes = ucg_parse_mesh_csv(source)
+    result = asdict(gci)
+    result['mesh_sizes'] = mesh_sizes
+    result['input_sha256'] = input_sha
+    result['data_provenance'] = 'USER_SUPPLIED_MESH_RESULTS_UNVERIFIED'
     return result
 
 
@@ -60019,7 +60063,7 @@ def render_academic_validation_panel():
     use_example = st.checkbox('Siz bergan 31 / 61 nuqtali namunani ishlatish (manba tasdiqlanmagan)',key='av49_example')
     rs_upload = st.file_uploader('RS2 CSV',type=['csv'],key='av49_rs')
     mon_upload = st.file_uploader('Monitoring CSV',type=['csv'],key='av49_mon')
-    mesh_upload = st.file_uploader('Ixtiyoriy GCI CSV: h,value — 3 haqiqiy mesh natijasi, teng nisbat',type=['csv'],key='av49_mesh')
+    mesh_upload = st.file_uploader('Ixtiyoriy GCI CSV: h,value — 3 mustaqil mesh yechimi (r21 va r32 farq qilishi mumkin)',type=['csv'],key='av49_mesh')
     n = st.number_input('Bootstrap qayta tanlash soni',min_value=100,max_value=50000,value=2000,step=100,key='av49_n')
     confidence = st.slider('Ishonch darajasi',.80,.99,.95,.01,key='av49_conf')
     seed = st.number_input('Random seed',min_value=0,value=42,step=1,key='av49_seed')
@@ -60037,6 +60081,44 @@ def render_academic_validation_panel():
                 provenance='USER_SUPPLIED_EXAMPLE_UNVERIFIED' if use_example else 'UPLOADED_DATA_UNVERIFIED')
             st.session_state['av49_result'] = result
         except (ValueError,TypeError,KeyError) as exc: st.error(str(exc))
+    with st.expander('📄 ISRM/ISO Report + Appendix A (Reproducible, source of truth)', expanded=False):
+        st.caption('CSV x_m,observed_cm,predicted_cm; optional mesh h,value (exactly three independent runs). '
+                   'No fabricated GCI, no journal-ready or independent field validation claims.')
+        a_station = st.file_uploader('Appendix A paired stations CSV',type=['csv'],key='ucg50_station')
+        a_mesh = st.file_uploader('Appendix A actual three-grid CSV (optional)',type=['csv'],key='ucg50_mesh')
+        a_bca = st.checkbox('Conditional IID BCa 95% (requires >=30 pairs; not spatial CI)',
+                            key='ucg50_conditional_bca',value=False)
+        a_cut = st.number_input('Near-zero observation cutoff (cm)',min_value=0.0,
+                                 value=0.5,step=0.1,key='ucg50_station_cutoff')
+        st.download_button('Station CSV blank template',b'x_m,observed_cm,predicted_cm\n',
+                           'station_data_unverified_template.csv','text/csv',key='ucg50_station_tpl')
+        st.download_button('Mesh CSV blank template',b'h,value\n',
+                           'three_mesh_template.csv','text/csv',key='ucg50_mesh_tpl')
+        if st.button('Calculate Appendix A + prepare DOCX / TeX / JSON',key='ucg50_generate'):
+            st.session_state.pop('ucg50_appendix',None)
+            try:
+                if a_station is None:
+                    raise ValueError('Upload a paired-station CSV; no measurements will be fabricated.')
+                st.session_state['ucg50_appendix'] = ucg_build_appendix_bundle(
+                    a_station.getvalue(),a_mesh.getvalue() if a_mesh is not None else None,
+                    enable_iid_bca=a_bca,relative_cutoff_cm=float(a_cut))
+            except (ValueError,KeyError,TypeError) as exc:
+                st.error(str(exc))
+        appendix=st.session_state.get('ucg50_appendix')
+        if appendix is not None:
+            st.json(_av_clean_json({'metrics':appendix['metrics'],'gci':appendix['gci'],
+                                    'data_provenance':appendix['status']}))
+            st.download_button('ISRM/ISO Evidence Report + Appendix A (.docx)',
+                generate_iso_compliance_report({'academic_validation_appendix':appendix}),
+                file_name='UCG_ISRM_ISO_Evidence_Appendix_A.docx',
+                mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                key='ucg50_docx')
+            st.download_button('Appendix A LaTeX (.tex)',appendix['latex'].encode('utf-8'),
+                file_name='UCG_Appendix_A_Expert_Corrected.tex',
+                mime='text/plain',key='ucg50_latex')
+            st.download_button('Recomputed metrics JSON',ucg_appendix_metrics_json(appendix),
+                file_name='recomputed_metrics.json',mime='application/json',key='ucg50_json')
+
     result = st.session_state.get('av49_result')
     if result is None: return
     st.caption('Quyida oxirgi Hisoblash natijasi. Kirishni o‘zgartirsangiz, qayta Hisoblash tugmasini bosing.')
@@ -60057,6 +60139,440 @@ def render_academic_validation_panel():
         st.download_button('Excel jadval',buf.getvalue(),file_name='ucg_validation.xlsx',mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',key='av49_xlsx')
     except ImportError:
         st.info('Excel eksport uchun openpyxl o‘rnating; CSV eksport mavjud.')
+
+# BEGIN UCG APPENDIX A SOURCE-OF-TRUTH v9.11.50
+# This block deliberately has no demo measurements or hard-coded RS2 grid outputs.
+# It produces a Word evidence annex, LaTeX and JSON from the SAME validated input.
+# Neither a project-target pass nor mesh convergence proves independent validation.
+from scipy.optimize import brentq as _ucg_brentq
+
+
+@dataclass(frozen=True)
+class GCIResults:
+    """Three distinct numerical solution values for one fixed physical QoI.
+
+    'converged' is ONLY a configurable numerical screening outcome, not proof
+    of mesh independence, independent RS2 solves, an audit, or field accuracy.
+    """
+    fine_val: float
+    medium_val: float
+    coarse_val: float
+    refine_ratio_21: float
+    refine_ratio_32: float
+    observed_order_p: Optional[float]
+    ea_21_pct: Optional[float]
+    gci_fine_pct: Optional[float]
+    gci_coarse_pct: Optional[float]
+    asymptotic_ratio: Optional[float]
+    converged: bool
+    status_note: str
+    status: str = 'INDETERMINATE'
+    extrapolated_value: Optional[float] = None
+    gci_fine_absolute: Optional[float] = None
+    reference_value_unit: str = 'cm'
+
+
+class AcademicGCIValidator:
+    """General unequal-ratio 3-grid Richardson/GCI numerical screening.
+
+    h1<h2<h3, r21=h2/h1 and r32=h3/h2; all solutions must represent
+    the SAME quantity, physical location, loading, constitutive assumptions,
+    solver tolerances and units. Ratios alone cannot verify those conditions.
+    """
+
+    @staticmethod
+    def compute_three_grid_gci(
+        f1: float, f2: float, f3: float,
+        r21: float = 2.0, r32: float = 2.0,
+        fs: float = 1.25, *, gci_limit_pct: float = 5.0,
+        asymptotic_bounds: Tuple[float, float] = (0.95, 1.05),
+    ) -> GCIResults:
+        vals = np.asarray([f1, f2, f3, r21, r32, fs, gci_limit_pct,
+                           *asymptotic_bounds], dtype=float)
+        if not np.isfinite(vals).all():
+            raise ValueError('GCI requires finite numbers, without NaN or infinity.')
+        if r21 <= 1.0 or r32 <= 1.0 or fs <= 0 or gci_limit_pct <= 0:
+            raise ValueError('r21 and r32 must exceed 1; safety factor and limit must be positive.')
+        if not (0 < asymptotic_bounds[0] < asymptotic_bounds[1]):
+            raise ValueError('Invalid asymptotic screening bounds.')
+        base = dict(fine_val=float(f1), medium_val=float(f2), coarse_val=float(f3),
+                    refine_ratio_21=float(r21), refine_ratio_32=float(r32))
+
+        def unresolved(note: str, **extra) -> GCIResults:
+            return GCIResults(**base, observed_order_p=extra.get('p'),
+                              ea_21_pct=extra.get('ea21'), gci_fine_pct=None,
+                              gci_coarse_pct=None, asymptotic_ratio=None,
+                              converged=False, status_note=note,
+                              gci_fine_absolute=extra.get('gci_absolute'))
+
+        e21, e32 = f2 - f1, f3 - f2
+        tol = 32 * np.finfo(float).eps * max(1., abs(f1), abs(f2), abs(f3))
+        if abs(e21) <= tol or abs(e32) <= tol:
+            return unresolved('Indistinguishable solution changes: observed order/GCI undefined.')
+        if e21 * e32 < 0:
+            return unresolved('Oscillatory convergence: monotone Richardson/GCI not established.',
+                              ea21=100 * abs(e21 / f1) if abs(f1) > tol else None)
+        if e21 * e32 == 0:
+            return unresolved('Zero difference: GCI indeterminate.')
+
+        # f(h)=f0 + C*h**p -> |e32/e21| =
+        # r21**p * (r32**p - 1)/(r21**p - 1).
+        # For unequal refinement, p MUST be solved implicitly, not the
+        # equal-ratio shortcut nor abs(log(q))/log(r21).
+        q = abs(e32 / e21)
+        l21, l32 = np.log(r21), np.log(r32)
+        q_at_p0 = l32 / l21
+        if q <= q_at_p0 * (1 + 1e-12):
+            return unresolved('Nonpositive observed order for the supplied ratios.')
+
+        def log_q_at_p(p: float) -> float:
+            return p*l21 + np.log(np.expm1(p*l32)) - np.log(np.expm1(p*l21))
+
+        try:
+            p = float(_ucg_brentq(lambda pp: log_q_at_p(pp)-np.log(q),
+                                 1e-8, min(50., 500./max(l21, l32)),
+                                 xtol=1e-12, rtol=1e-12))
+        except (ValueError, OverflowError, FloatingPointError):
+            return unresolved('Unable to establish a finite positive observed order.')
+        den21, den32 = np.expm1(p*l21), np.expm1(p*l32)
+        if (not np.isfinite([den21, den32]).all()
+                or min(den21, den32) <= 0):
+            return unresolved('Unstable Richardson denominators.', p=p)
+        absolute_gci = float(fs * abs(e21)/den21)
+        if abs(f1) <= tol or abs(f2) <= tol:
+            return unresolved('Near-zero solution: relative GCI undefined; absolute uncertainty shown.',
+                              p=p, gci_absolute=absolute_gci)
+        ea21 = float(100 * abs(e21/f1))
+        g21 = float(100 * absolute_gci/abs(f1))
+        g32 = float(100 * fs * abs(e32/f2)/den32)
+        asymptotic = float(g32 / ((r21**p)*g21)) if g21 > 0 else float('nan')
+        if not np.isfinite([g21, g32, asymptotic]).all():
+            return unresolved('Non-finite computed GCI estimate.', p=p)
+        screened = bool(g21 < gci_limit_pct and asymptotic_bounds[0] <= asymptotic <= asymptotic_bounds[1])
+        return GCIResults(**base, observed_order_p=p, ea_21_pct=ea21,
+                          gci_fine_pct=g21, gci_coarse_pct=g32,
+                          asymptotic_ratio=asymptotic, converged=screened,
+                          status='SCREENING_PASS_UNVERIFIED' if screened else 'SCREENING_NOT_MET',
+                          status_note=('Project mesh screening limits met; NOT proof of grid independence or verified RS2 runs.'
+                                       if screened else 'Numerical mesh screening conditions not met.'),
+                          extrapolated_value=float(f1 + (f1-f2)/den21),
+                          gci_fine_absolute=absolute_gci)
+
+
+def ucg_parse_station_csv(source) -> Tuple[pd.DataFrame, str]:
+    """Read uploaded x_m/observed_cm/predicted_cm CSV; validate all paired rows.
+
+    A DataFrame, bytes, file-like object or path can be supplied. Source hashes
+    describe only the bytes received; they never verify scientific provenance.
+    """
+    if isinstance(source, pd.DataFrame):
+        df = source.copy()
+        data = df.to_csv(index=False).encode('utf-8')
+    else:
+        if isinstance(source, (bytes, bytearray)):
+            data = bytes(source)
+        elif hasattr(source, 'getvalue'):
+            data = source.getvalue()
+            if isinstance(data, str): data = data.encode('utf-8')
+        elif hasattr(source, 'read'):
+            data = source.read()
+            if isinstance(data, str): data = data.encode('utf-8')
+        else:
+            data = Path(source).read_bytes()
+        if len(data) > 20_000_000:
+            raise ValueError('Station CSV exceeds the 20 MB upload safety limit.')
+        df = pd.read_csv(io.BytesIO(data))
+    needed = ['x_m', 'observed_cm', 'predicted_cm']
+    if not set(needed).issubset(df.columns):
+        raise ValueError('Station CSV must contain: x_m, observed_cm, predicted_cm.')
+    if len(df) < 4:
+        raise ValueError('At least four paired stations are required.')
+    df = df.copy()
+    for col in needed + (['residual_cm'] if 'residual_cm' in df.columns else []):
+        df[col] = pd.to_numeric(df[col], errors='raise')
+    if not np.isfinite(df[needed].to_numpy(dtype=float)).all():
+        raise ValueError('All station positions, observations and predictions must be finite.')
+    if df['x_m'].duplicated().any():
+        raise ValueError('Duplicate station x_m coordinates: resolve matching first.')
+    df = df.sort_values('x_m', kind='stable').reset_index(drop=True)
+    e = df['predicted_cm'].to_numpy() - df['observed_cm'].to_numpy()
+    if 'residual_cm' in df:
+        residual = df['residual_cm'].to_numpy(dtype=float)
+        if not np.isfinite(residual).all() or not np.allclose(residual, e, atol=.005, rtol=0):
+            raise ValueError('Supplied residual_cm disagrees with predicted - observed (tolerance 0.005 cm).')
+    df['residual_cm'] = e
+    return df, hashlib.sha256(data).hexdigest()
+
+
+def ucg_parse_mesh_csv(source) -> Tuple[GCIResults, str, list]:
+    """Accept exactly three h,value rows sorted fine→coarse; no implicit solves."""
+    if isinstance(source, pd.DataFrame):
+        df = source.copy()
+        data = df.to_csv(index=False).encode('utf-8')
+    else:
+        if isinstance(source, (bytes, bytearray)): data = bytes(source)
+        elif hasattr(source, 'getvalue'): data = source.getvalue()
+        elif hasattr(source, 'read'): data = source.read()
+        else: data = Path(source).read_bytes()
+        if isinstance(data, str): data = data.encode('utf-8')
+        if len(data) > 5_000_000:
+            raise ValueError('Mesh CSV exceeds the 5 MB safety limit.')
+        df = pd.read_csv(io.BytesIO(data))
+    if len(df) != 3 or not {'h', 'value'}.issubset(df.columns):
+        raise ValueError('GCI requires exactly three independent mesh rows with h,value.')
+    df = df.copy()
+    for name in ('h', 'value'):
+        df[name] = pd.to_numeric(df[name], errors='raise')
+    if not np.isfinite(df[['h','value']].to_numpy(dtype=float)).all():
+        raise ValueError('Mesh h/value entries must all be finite.')
+    if (df['h'] <= 0).any() or df['h'].duplicated().any():
+        raise ValueError('Mesh sizes must be distinct positive numbers.')
+    df = df.sort_values('h').reset_index(drop=True)
+    h = df['h'].to_numpy(dtype=float)
+    f = df['value'].to_numpy(dtype=float)
+    result = AcademicGCIValidator.compute_three_grid_gci(*f,
+                 r21=float(h[1]/h[0]), r32=float(h[2]/h[1]))
+    return result, hashlib.sha256(data).hexdigest(), [float(v) for v in h]
+
+
+def ucg_calculate_station_metrics(df: pd.DataFrame) -> Dict[str, Any]:
+    """Metric definitions are explicit; undefined correlations remain None."""
+    o = df['observed_cm'].to_numpy(dtype=float)
+    p = df['predicted_cm'].to_numpy(dtype=float)
+    e = p-o
+    tol = 32*np.finfo(float).eps*max(1., abs(o).max(), abs(p).max())
+    om = float(o.mean())
+    so = float(o.std(ddof=1))
+    sp = float(p.std(ddof=1))
+    ss_tot = float(np.sum((o-om)**2))
+    sse = float(np.sum(e**2))
+    r = float(stats.pearsonr(o,p).statistic) if so>tol and sp>tol else None
+    rho = float(stats.spearmanr(o,p).statistic) if r is not None else None
+    kge = (float(1-np.sqrt((r-1)**2+(sp/so-1)**2+(p.mean()/om-1)**2))
+           if r is not None and abs(om)>tol else None)
+    den = float(np.sum((abs(p-om)+abs(o-om))**2))
+    lag1 = (float(np.corrcoef(e[:-1],e[1:])[0,1])
+            if len(e)>3 and e[:-1].std()>tol and e[1:].std()>tol else None)
+    result = {
+        'n':len(o), 'rmse_cm':float(np.sqrt(np.mean(e**2))),
+        'mae_cm':float(np.mean(abs(e))), 'bias_cm':float(np.mean(e)),
+        'nse': float(1-sse/ss_tot) if ss_tot>tol**2 else None,
+        'pearson_r':r, 'pearson_r_squared':r*r if r is not None else None,
+        'spearman_rho':rho, 'kge_original':kge,
+        'willmott_d': float(1-sse/den) if den>tol**2 else None,
+        'relative_rmse_percent':float(np.sqrt(np.mean(e**2))/abs(om)*100) if abs(om)>tol else None,
+        'residual_lag1_corr':lag1,
+        'data_provenance':'USER_SUPPLIED_UNVERIFIED',
+        'bca_status':'NOT_ESTABLISHED (unless explicitly calculated; IID requires justification)',
+        'mesh_gci_status':'NOT_ESTABLISHED (unless 3 distinct mesh outputs supplied)',
+    }
+    return result
+
+
+def ucg_build_appendix_bundle(stations_source, mesh_source=None, *,
+                              enable_iid_bca=False, n_bootstrap=2000,
+                              relative_cutoff_cm=.50) -> Dict[str, Any]:
+    """Single source of truth for Word/LaTeX/JSON exports; provenance unverified.
+
+    BCa is not a spatial confidence band. Enable only for conditional analysis,
+    with explicit IID caveat. Report project thresholds as screening only.
+    """
+    if not np.isfinite(relative_cutoff_cm) or relative_cutoff_cm < 0:
+        raise ValueError('Relative-error exclusion threshold must be >=0 and finite.')
+    df, station_sha = ucg_parse_station_csv(stations_source)
+    metrics = ucg_calculate_station_metrics(df)
+    if mesh_source is None:
+        gci, mesh_sha, mesh_sizes = None, None, None
+    else:
+        gci, mesh_sha, mesh_sizes = ucg_parse_mesh_csv(mesh_source)
+        metrics['mesh_gci_status'] = gci.status
+    ci = {}
+    if enable_iid_bca:
+        if isinstance(n_bootstrap, bool) or int(n_bootstrap) != n_bootstrap or n_bootstrap < 100:
+            raise ValueError('BCa resamples must be a whole number >= 100.')
+        e = df['residual_cm'].to_numpy(dtype=float)
+        for name, values, func in (
+            ('RMSE', e, lambda a: np.sqrt(np.mean(a*a))),
+            ('MAE', abs(e), np.mean), ('Bias', e, np.mean)):
+            ci[name] = _av_bca_stat(values, func, int(n_bootstrap), .05, 42)
+        status = sorted({v['status'] for v in ci.values()})
+        metrics['bca_status'] = ', '.join(status) + '; CONDITIONAL_IID_ONLY; spatial dependence not assessed'
+    lag = metrics['residual_lag1_corr']
+    notes = [
+        'All source files and computed outputs are user-supplied and unverified: no field authentication.',
+        'Residual = predicted - observed; positive residual for negative subsidence means less downward displacement predicted.',
+        'NSE is not Pearson r-squared; they are distinct metrics and must not be equated.',
+        'Project screening limits are NOT ASME/ISO journal eligibility standards.',
+        'GCI needs three independent systematically refined FE solutions at the same physical output and configuration.',
+        'A favorable three-grid GCI alone cannot certify grid independence or full THCM/field validation.',
+        'IID BCa CIs, if reported, are conditional and are not spatial uncertainty or predictive coverage.',
+    ]
+    if lag is not None and abs(lag) > .30:
+        notes.append('Possible spatial residual autocorrelation (|lag-1|>0.30): IID BCa coverage may be unreliable.')
+    o = df['observed_cm'].to_numpy(dtype=float)
+    residual = df['residual_cm'].to_numpy(dtype=float)
+    rel = np.full(len(df), np.nan)
+    use = abs(o) >= relative_cutoff_cm
+    use &= abs(o) > 0
+    rel[use] = 100 * abs(residual[use]/o[use])
+    rows = [{
+        'x_m':float(x), 'observed_cm':float(obs), 'predicted_cm':float(pred),
+        'residual_cm':float(err),
+        'relative_error_percent':float(r) if np.isfinite(r) else None,
+    } for x,obs,pred,err,r in zip(df['x_m'],o,df['predicted_cm'],residual,rel)]
+    bundle = {
+        'status':'CALCULATED_FROM_USER_SUPPLIED_UNVERIFIED_INPUT',
+        'metrics':metrics,
+        'gci': asdict(gci) if gci is not None else {
+            'status':'NOT_ESTABLISHED', 'converged':False,
+            'status_note':'No independently exported coarse/medium/fine mesh CSV supplied.'},
+        'mesh_sizes_m':mesh_sizes,
+        'station_input_sha256':station_sha,
+        'mesh_input_sha256':mesh_sha,
+        'relative_cutoff_cm':float(relative_cutoff_cm),
+        'bca':ci, 'table_rows':rows, 'notes':notes,
+    }
+    bundle['latex'] = ucg_appendix_latex(bundle)
+    return bundle
+
+
+def _ucg_tex_safe(textvalue) -> str:
+    """One-pass escaping: never re-escape control characters inserted by us."""
+    replacements = {'\\':r'\textbackslash{}', '&':r'\&', '%':r'\%',
+                    '_':r'\_', '#':r'\#', '$':r'\$',
+                    '{':r'\{', '}':r'\}', '~':r'\textasciitilde{}',
+                    '^':r'\textasciicircum{}'}
+    return ''.join(replacements.get(char,char) for char in str(textvalue))
+
+
+def _ucg_tex_num(value, ndigits=4):
+    return 'not established' if value is None or not np.isfinite(float(value)) else f'{float(value):.{ndigits}f}'
+
+
+def ucg_appendix_latex(bundle: Dict[str,Any]) -> str:
+    """Portable, self-contained Appendix A (pdflatex + standard packages)."""
+    metrics, gci = bundle['metrics'], bundle['gci']
+    lines = [
+        r'\documentclass[11pt,a4paper]{article}',
+        r'\usepackage[a4paper,margin=2.3cm]{geometry}',
+        r'\usepackage{booktabs,longtable,array}',
+        r'\begin{document}',
+        r'\section*{Appendix A: UCG Numerical Profile Comparison and Mesh Screening}',
+        r'\textbf{Evidence status: USER-SUPPLIED, PROVENANCE UNVERIFIED.}',
+        r'No ISO/ISRM certification, independent Angren field validation, or journal acceptance is implied.',
+        r'\subsection*{A.1 Recomputed paired-profile statistics}',
+        r'\begin{tabular}{lr}\toprule Metric & Recomputed value \\ \midrule',
+    ]
+    names = [('n','n (paired stations)'),('rmse_cm','RMSE (cm)'),('mae_cm','MAE (cm)'),
+             ('bias_cm','Mean bias (cm)'),('nse','Nash--Sutcliffe efficiency (NSE)'),
+             ('pearson_r','Pearson r'),('pearson_r_squared','Pearson $r^2$'),
+             ('spearman_rho','Spearman rho'),('kge_original','Original KGE'),
+             ('willmott_d','Willmott d'),('relative_rmse_percent','Relative RMSE (percent)'),
+             ('residual_lag1_corr','Residual lag-1 correlation')]
+    for key, title in names:
+        lines.append(title+' & '+(str(int(metrics[key])) if key=='n' else _ucg_tex_num(metrics.get(key))) + r' \\')
+    lines.extend([r'\bottomrule\end{tabular}',
+                  r'\paragraph{Conditional IID BCa bootstrap (95\%)}'])
+    if bundle['bca']:
+        lines.append(r'\begin{tabular}{lrrl}\toprule Metric & Lower & Upper & Status \\ \midrule')
+        for name, v in bundle['bca'].items():
+            lines.append(name+' & '+_ucg_tex_num(v.get('ci_lower'))+' & '
+                         +_ucg_tex_num(v.get('ci_upper'))+' & '
+                         +_ucg_tex_safe(v.get('status','NOT_ESTABLISHED'))+r' \\')
+        lines.append(r'\bottomrule\end{tabular}')
+    else:
+        lines.append(r'NOT ESTABLISHED; spatial sampling/independence not justified or not requested.')
+    lines.extend([r'\subsection*{A.2 Three-grid GCI numerical screening}',
+                  r'Three actual, comparable FE solutions are required; computed values alone do not authenticate RS2 provenance.',
+                  r'\begin{tabular}{lr}\toprule Quantity & Value \\ \midrule'])
+    for k,title in [('fine_val','Fine solution (cm)'),('medium_val','Medium solution (cm)'),
+                    ('coarse_val','Coarse solution (cm)'),('refine_ratio_21','r21'),
+                    ('refine_ratio_32','r32'),('observed_order_p','Observed order p'),
+                    ('gci_fine_pct','GCI21 (percent)'),('gci_coarse_pct','GCI32 (percent)'),
+                    ('asymptotic_ratio','Asymptotic ratio')]:
+        lines.append(title+' & '+_ucg_tex_num(gci.get(k))+r' \\')
+    lines.extend([r'\bottomrule\end{tabular}',
+                  r'GCI numerical status: \texttt{'+_ucg_tex_safe(gci['status'])+'}.',
+                  r'\subsection*{A.3 Full station-by-station profile}',
+                  r'\small\begin{longtable}{rrrrr}',
+                  r'\toprule X (m) & Observed (cm) & Predicted (cm) & Residual (cm) & Relative error (\%) \\ \midrule\endfirsthead',
+                  r'\toprule X (m) & Observed (cm) & Predicted (cm) & Residual (cm) & Relative error (\%) \\ \midrule\endhead',
+                  r'\bottomrule\endfoot'])
+    for v in bundle['table_rows']:
+        lines.append(' & '.join((_ucg_tex_num(v['x_m'],2),_ucg_tex_num(v['observed_cm'],2),
+                                 _ucg_tex_num(v['predicted_cm'],2),_ucg_tex_num(v['residual_cm'],2),
+                                 _ucg_tex_num(v['relative_error_percent'],2) if v['relative_error_percent'] is not None else '---'))+r' \\')
+    lines.extend([r'\end{longtable}\normalsize',r'\paragraph{Data lineage and interpretation}',
+                  r'Station input SHA-256: \texttt{'+bundle['station_input_sha256']+'}.'])
+    if bundle['mesh_input_sha256']:
+        lines.append(r'Mesh input SHA-256: \texttt{'+bundle['mesh_input_sha256']+'}.')
+    for note in bundle['notes']:
+        lines.append(_ucg_tex_safe(note)+r'\par')
+    lines.extend([r'\end{document}',''])
+    return '\n'.join(lines)
+
+
+def ucg_appendix_metrics_json(bundle: Dict[str,Any]) -> bytes:
+    """JSON is a report of recomputed, provenance-tagged values, never fabricated."""
+    return (json.dumps({k:v for k,v in bundle.items() if k!='latex'},
+                       indent=2, ensure_ascii=False, allow_nan=False)+'\n').encode('utf-8')
+
+
+def ucg_append_docx_evidence(doc, appendix_bundle=None, *, page_break=True) -> None:
+    """Insert the same verified-numerics / unverified-provenance annex into Word."""
+    if page_break:
+        doc.add_page_break()
+    doc.add_heading('Appendix A — UCG profile statistics and three-grid GCI', level=1)
+    if not isinstance(appendix_bundle, dict):
+        doc.add_paragraph('NOT_EVALUATED: paired station_data_unverified.csv was not uploaded. '
+                          'No field measurements, three independent mesh runs, or GCI are asserted.')
+        doc.add_paragraph('Required station columns: x_m, observed_cm, predicted_cm. '
+                          'Optional GCI CSV columns: h,value (three distinct solver outputs).')
+        return
+    doc.add_paragraph('PROVENANCE: USER_SUPPLIED_UNVERIFIED. Statistical agreement is not '
+                      'independent field validation. Numerical mesh screening is not ISO/ISRM certification.')
+    m, g = appendix_bundle['metrics'], appendix_bundle['gci']
+    doc.add_heading('A.1 Recomputed statistical comparison', level=2)
+    t = doc.add_table(rows=1, cols=2);t.style='Table Grid'
+    t.rows[0].cells[0].text='Metric';t.rows[0].cells[1].text='Recomputed result'
+    for title,k in [('Paired stations','n'),('RMSE (cm)','rmse_cm'),('MAE (cm)','mae_cm'),
+                    ('Bias (cm)','bias_cm'),('NSE','nse'),('Pearson r','pearson_r'),
+                    ('Pearson r squared','pearson_r_squared'),('Spearman rho','spearman_rho'),
+                    ('KGE original','kge_original'),('Willmott d','willmott_d'),
+                    ('Relative RMSE (%)','relative_rmse_percent'),('Lag-1 residual correlation','residual_lag1_corr')]:
+        a,b=t.add_row().cells;a.text=title
+        value=m.get(k);b.text=f'{value:.6g}' if isinstance(value,(int,float)) and np.isfinite(value) else 'NOT_ESTABLISHED'
+    doc.add_paragraph('BCa 95%: '+m['bca_status'])
+    if appendix_bundle['bca']:
+        for name,c in appendix_bundle['bca'].items():
+            doc.add_paragraph(f'{name}: '+str(c.get('status'))+'; '+
+                  str(c.get('ci_lower'))+' .. '+str(c.get('ci_upper'))+
+                  '. Conditional IID, not spatial confidence coverage.')
+    doc.add_heading('A.2 Three-grid Richardson/GCI',level=2)
+    doc.add_paragraph('Mesh status: '+str(g['status'])+'. '+str(g.get('status_note','')))
+    t=doc.add_table(rows=1,cols=2);t.style='Table Grid'
+    t.rows[0].cells[0].text='Parameter';t.rows[0].cells[1].text='Value'
+    for key in ('fine_val','medium_val','coarse_val','refine_ratio_21','refine_ratio_32',
+                'observed_order_p','gci_fine_pct','gci_coarse_pct','asymptotic_ratio'):
+        a,b=t.add_row().cells;a.text=key
+        value=g.get(key);b.text=f'{value:.6g}' if isinstance(value,(int,float)) and np.isfinite(value) else 'NOT_ESTABLISHED'
+    doc.add_heading('A.3 Station-level profile: predicted minus observed',level=2)
+    t=doc.add_table(rows=1,cols=5);t.style='Table Grid'
+    for cell,label in zip(t.rows[0].cells,('x (m)','Observed (cm)','Predicted (cm)','Residual (cm)','Rel. error (%)')):
+        cell.text=label
+    for row in appendix_bundle['table_rows']:
+        cells=t.add_row().cells
+        for cell,key in zip(cells,('x_m','observed_cm','predicted_cm','residual_cm','relative_error_percent')):
+            value=row.get(key)
+            cell.text=(f'{value:.3f}' if value is not None else '—')
+    doc.add_heading('A.4 Lineage and limitations', level=2)
+    doc.add_paragraph('Station CSV SHA-256: '+appendix_bundle['station_input_sha256'])
+    doc.add_paragraph('Mesh CSV SHA-256: '+str(appendix_bundle['mesh_input_sha256'] or 'NOT_SUPPLIED'))
+    for note in appendix_bundle['notes']:
+        doc.add_paragraph('• '+note)
+
+# END UCG APPENDIX A SOURCE-OF-TRUTH v9.11.50
+
 
 # END ACADEMIC VALIDATION v9.11.49
 
