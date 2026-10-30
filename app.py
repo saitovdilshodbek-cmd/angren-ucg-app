@@ -1,3 +1,6 @@
+# v9.11.49 (2026-10-31): integrated Academic Validation / RS2 Monitoring mode.
+# Extended metrics, conditional IID BCa, actual-input GCI, CSV/Excel/PDF/LaTeX export.
+# Validation scope: syntax + 16 isolated module/integration tests; full Streamlit runtime not tested.
 # UCG Statistical Validation update: target metrics are not forced or calibrated.
 # EXPERT PATCH (2026-10-30): targeted integrity corrections; scientific validation remains outstanding.
 # PATCH POLICY: no auto-insertion of fabricated observations; no pseudo R-hat; no fake Nu sensitivity.
@@ -31100,10 +31103,15 @@ def main():
     _app_mode = st.sidebar.selectbox(
         "🎛️ App Mode",
         ["v6 — Geomechanical Twin", "v7 — UCG Reactor / Kinetics",
-         "🔬 v9.11.1 — Ekspert Tahlili (40 muammo tuzatishlari)"],
+         "🔬 v9.11.1 — Ekspert Tahlili (40 muammo tuzatishlari)",
+         "v9.11.49 — Academic Validation / RS2 Monitoring"],
         index=0,
         help="v6: yer osti geomekanik model (PhD). v7: reaktor kinetikasi + Monte Carlo UQ. v9.11.1: 40 ta ekspert tahlili tuzatishlari.",
     )
+    if _app_mode == "v9.11.49 — Academic Validation / RS2 Monitoring":
+        render_academic_validation_panel()
+        return
+
     if _app_mode == "v7 — UCG Reactor / Kinetics":
         # Run the v7 Streamlit UI and return early — skip the v6 geomechanical flow.
         run_v7_app()
@@ -59626,6 +59634,430 @@ class ComprehensiveStatusReport:
 
 # ══════════════════════════════════════════════════════════════════════════════
 # FIX v9.11.26: ComprehensiveStatusReport — halol holat hisoboti
+
+# BEGIN ACADEMIC VALIDATION v9.11.49
+"""UCG v9.11.49: conditional statistical validation, no solver or publication claims.
+References: scipy.stats.bootstrap documentation; NASA NPARC spatial convergence tutorial.
+"""
+import io as _av_io
+import json as _av_json
+import inspect as _av_inspect
+import warnings as _av_warnings
+from dataclasses import dataclass as _av_dataclass, asdict as _av_asdict
+import numpy as _av_np
+import pandas as _av_pd
+from scipy import stats as _av_stats
+
+
+def _av_vector(values, name):
+    a = _av_np.asarray(values, dtype=float)
+    if a.ndim != 1 or not a.size or not _av_np.all(_av_np.isfinite(a)):
+        raise ValueError(f'{name}: nonempty finite 1D values required.')
+    return a
+
+
+def _av_pairs(observed, predicted):
+    o, p = _av_vector(observed, 'observed'), _av_vector(predicted, 'predicted')
+    if o.shape != p.shape:
+        raise ValueError('Observed and predicted arrays must have equal length.')
+    return o, p
+
+
+@_av_dataclass
+class AcademicValidationMetrics:
+    rmse: float
+    mae: float
+    r2: float
+    mape: float
+    nse: float
+    kge: float
+    pearson_r: float
+    spearman_rho: float
+    willmott_d: float
+    bias: float
+    relative_rmse: float
+    n_pairs: int
+    mape_n_used: int
+    percentage_zero_tolerance: float
+
+    def assess_project_targets(self):
+        targets = {'nse': (.70, '>'), 'kge': (.50, '>'), 'pearson_r': (.85, '>'),
+                   'spearman_rho': (.80, '>'), 'willmott_d': (.80, '>'),
+                   'r2': (.85, '>'), 'relative_rmse': (.15, '<')}
+        checks = {}
+        for key, (limit, op) in targets.items():
+            v = getattr(self, key)
+            checks[key] = ('UNDEFINED' if not _av_np.isfinite(v) else
+                           'PASS' if (v > limit if op == '>' else v < limit) else 'FAIL')
+        return {'overall_status': 'NOT_EVALUATED' if 'UNDEFINED' in checks.values() else
+                'PASS_PROJECT_TARGETS' if all(v == 'PASS' for v in checks.values()) else 'REVISE_PROJECT_TARGETS',
+                'detailed_checks': checks, 'thresholds': targets,
+                'note': 'User-proposed project targets, not journal acceptance criteria. R2 and NSE are the same score here.'}
+
+    def is_q1_publication_ready(self):
+        """Compatibility alias only; never certifies journal or thesis readiness."""
+        return self.assess_project_targets()
+
+
+class AcademicTHCMValidator:
+    @staticmethod
+    def compute_extended_metrics(observed, predicted, *, zero_tolerance=1e-12):
+        o, p = _av_pairs(observed, predicted)
+        if not _av_np.isfinite(zero_tolerance) or zero_tolerance < 0:
+            raise ValueError('zero_tolerance must be finite and >= 0 (input units).')
+        e = p-o
+        om, pm = float(o.mean()), float(p.mean())
+        so, sp = float(o.std()), float(p.std())
+        tol = 32 * _av_np.finfo(float).eps * max(1., float(abs(o).max()), float(abs(p).max()))
+        nan = float('nan')
+        rmse = float(_av_np.sqrt(_av_np.mean(e**2)))
+        score = float(1 - _av_np.sum(e**2)/_av_np.sum((o-om)**2)) if so > tol else nan
+        r = float(_av_stats.pearsonr(o, p).statistic) if len(o) >= 3 and so > tol and sp > tol else nan
+        rho = float(_av_stats.spearmanr(o, p).statistic) if _av_np.isfinite(r) else nan
+        kge = float(1-_av_np.sqrt((r-1)**2+(sp/so-1)**2+(pm/om-1)**2)) if _av_np.isfinite(r) and abs(om)>tol else nan
+        den = float(_av_np.sum((abs(p-om)+abs(o-om))**2))
+        d = float(1-_av_np.sum(e**2)/den) if den > tol**2 else nan
+        mask = abs(o) > zero_tolerance
+        return AcademicValidationMetrics(rmse, float(abs(e).mean()), score,
+            float(_av_np.mean(abs(e[mask]/o[mask]))*100) if mask.any() else nan,
+            score, kge, r, rho, d, float(e.mean()), rmse/abs(om) if abs(om)>tol else nan,
+            len(o), int(mask.sum()), float(zero_tolerance))
+
+    @staticmethod
+    def bca_bootstrap_ci(data, n_bootstrap=2000, alpha=.05, seed=42):
+        return _av_bca_stat(data, _av_np.mean, n_bootstrap, alpha, seed)
+
+    @staticmethod
+    def richardson_gci(fine_val, medium_val, coarse_val, refine_ratio=2.0):
+        vals = _av_vector([fine_val, medium_val, coarse_val, refine_ratio], 'GCI inputs')
+        f, m, c, r = vals
+        if r <= 1:
+            raise ValueError('Refinement ratio must be > 1 and identical for both grid pairs.')
+        base = {'status': 'INDETERMINATE', 'converged': False,
+                'fine_value': float(f), 'medium_value': float(m), 'coarse_value': float(c),
+                'refine_ratio': float(r), 'data_provenance': 'USER_SUPPLIED_MESH_RESULTS_UNVERIFIED'}
+        e21, e32 = m-f, c-m
+        tol = 32*_av_np.finfo(float).eps*max(1.,abs(f),abs(m),abs(c))
+        if abs(e21)<=tol or abs(e32)<=tol or e21*e32<=0:
+            return dict(base, note='Equal or oscillatory differences: monotone GCI not established.')
+        q = abs(e32/e21)
+        order = float(_av_np.log(q)/_av_np.log(r))
+        if order <= 0 or not _av_np.isfinite(order):
+            return dict(base, note='Nonpositive observed order: no convergent Richardson estimate.')
+        abs_gci = float(1.25*abs(e21)/(q-1))
+        if abs(f)<=tol or abs(m)<=tol:
+            return dict(base, observed_order_p=order, gci_fine_absolute=abs_gci,
+                        note='Relative GCI undefined at zero fine/medium solution; absolute estimate only.')
+        g21, g32 = abs_gci/abs(f), 1.25*abs(e32/m)/(q-1)
+        ratio = float(g32/(q*g21))
+        passed = bool(g21<.05 and .95<=ratio<=1.05)
+        return dict(base, status='COMPUTED', observed_order_p=order,
+                    extrapolated_value=float(f+(f-m)/(q-1)), gci_fine_absolute=abs_gci,
+                    gci_fine_percent=float(100*g21), gci_medium_percent=float(100*g32),
+                    asymptotic_ratio=ratio, converged=passed,
+                    note='Converged means project screening only (<5%, ratio 0.95-1.05). Three actual systematically refined solves are required; this ratio alone is not proof of asymptotic convergence.')
+
+
+def _av_bca_stat(data, statistic, n_bootstrap=2000, alpha=.05, seed=42):
+    a = _av_vector(data, 'bootstrap data')
+    if isinstance(n_bootstrap, (bool, _av_np.bool_)) or not isinstance(n_bootstrap, (int, _av_np.integer)) or n_bootstrap < 2:
+        raise ValueError('n_bootstrap must be an integer >= 2.')
+    if not _av_np.isfinite(alpha) or not 0 < alpha < 1:
+        raise ValueError('alpha must be between 0 and 1.')
+    if isinstance(seed, (bool, _av_np.bool_)) or not isinstance(seed, (int, _av_np.integer)) or seed < 0:
+        raise ValueError('seed must be a nonnegative integer.')
+    point = float(statistic(a))
+    result = {'mean': point, 'point_estimate': point, 'ci_lower': None, 'ci_upper': None,
+              'confidence_level': float(1-alpha), 'n_samples': len(a), 'n_bootstrap': int(n_bootstrap),
+              'seed': int(seed), 'method': 'BCa', 'status': 'NOT_COMPUTED',
+              'assumptions': 'IID/exchangeable representative samples; not a pointwise prediction band.'}
+    # Preserve the existing application's minimum-pairs policy, not a statistical law.
+    if len(a) < 30:
+        return dict(result, status='INSUFFICIENT_PAIRS_PROJECT_POLICY', note='n < 30: project policy, not a universal BCa limit.')
+    if _av_np.ptp(a) <= 32*_av_np.finfo(float).eps*max(1.,float(abs(a).max())):
+        return dict(result, status='DEGENERATE_DATA')
+    rng_key = 'rng' if 'rng' in _av_inspect.signature(_av_stats.bootstrap).parameters else 'random_state'
+    with _av_warnings.catch_warnings(record=True) as caught:
+        _av_warnings.simplefilter('always')
+        b = _av_stats.bootstrap((a,), statistic, vectorized=False, n_resamples=int(n_bootstrap),
+                batch=128, confidence_level=1-alpha, method='BCa',
+                **{rng_key: _av_np.random.default_rng(seed)})
+    lo, hi = float(b.confidence_interval.low), float(b.confidence_interval.high)
+    result['warnings'] = [str(w.message) for w in caught]
+    if not _av_np.isfinite([lo, hi]).all() or lo > hi:
+        return dict(result, status='UNDEFINED_BCA')
+    return dict(result, ci_lower=lo, ci_upper=hi, status='COMPUTED_CONDITIONAL_IID')
+
+
+def compute_bca_ci(data, n_bootstrap=2000, alpha=.05, seed=42):
+    return AcademicTHCMValidator.bca_bootstrap_ci(data, n_bootstrap, alpha, seed)
+
+
+def calculate_subsidence_metrics(observed, predicted):
+    m = AcademicTHCMValidator.compute_extended_metrics(observed, predicted)
+    return {'RMSE (cm)': m.rmse, 'MAE (cm)': m.mae, 'Bias (cm)': m.bias,
+            'R2_Score': m.r2, 'NSE': m.nse, 'Relative_RMSE_pct': m.relative_rmse*100}
+
+
+def calculate_subsidence_metrics_with_bca(observed, predicted, n_bootstrap=2000, alpha=.05, seed=42):
+    o, p = _av_pairs(observed, predicted)
+    e = p-o
+    result = calculate_subsidence_metrics(o,p)
+    ci = {name: _av_bca_stat(values, stat, n_bootstrap, alpha, seed)
+          for name, values, stat in [('RMSE', e, lambda a: _av_np.sqrt(_av_np.mean(a*a))),
+                                     ('MAE', abs(e), _av_np.mean), ('Bias', e, _av_np.mean)]}
+    result['bca'] = ci
+    result['confidence_level'] = float(1-alpha)
+    # Compatibility labels reflect alpha, never label arbitrary intervals as 95%.
+    for name, interval in ci.items():
+        result[f'{name}_{(1-alpha)*100:g}%_BCa_CI'] = (interval['ci_lower'], interval['ci_upper'])
+    return result
+
+
+def _av_profile(source):
+    df = source.copy() if isinstance(source, _av_pd.DataFrame) else _av_pd.read_csv(source)
+    if not {'x', 'subsidence_cm'}.issubset(df.columns):
+        raise ValueError('CSV columns required: x (m), subsidence_cm (cm); common origin and sign convention required.')
+    df = df[['x', 'subsidence_cm']].apply(_av_pd.to_numeric, errors='raise')
+    if len(df)<2 or not _av_np.isfinite(df.to_numpy()).all():
+        raise ValueError('Profile requires at least two finite rows.')
+    if df.x.duplicated().any():
+        raise ValueError('Duplicate x coordinates: aggregate/resolve repeated stations explicitly first.')
+    return df.sort_values('x').reset_index(drop=True)
+
+
+def _av_mesh_csv(source):
+    df = source.copy() if isinstance(source, _av_pd.DataFrame) else _av_pd.read_csv(source)
+    if not {'h', 'value'}.issubset(df.columns) or len(df)!=3:
+        raise ValueError('Mesh CSV requires exactly 3 rows with h and value (same quantity and unit).')
+    df = df[['h','value']].apply(_av_pd.to_numeric, errors='raise').sort_values('h')
+    if not _av_np.isfinite(df.to_numpy()).all() or (df.h<=0).any() or df.h.duplicated().any():
+        raise ValueError('Mesh sizes must be distinct, positive and finite; values must be finite.')
+    h = df.h.to_numpy(); r1, r2 = h[1]/h[0], h[2]/h[1]
+    if not _av_np.isclose(r1,r2,rtol=1e-6):
+        raise ValueError('This estimator supports equal refinement ratios only.')
+    result = AcademicTHCMValidator.richardson_gci(*df.value.to_numpy(), refine_ratio=r1)
+    result['mesh_sizes'] = h.tolist()
+    return result
+
+
+def build_academic_subsidence_result(rs2_source, monitoring_source, *, n_bootstrap=2000,
+        alpha=.05, seed=42, zero_tolerance=1e-12, mesh_source=None,
+        provenance='USER_SUPPLIED_UNVERIFIED'):
+    rs, mon = _av_profile(rs2_source), _av_profile(monitoring_source)
+    if mon.x.min()<rs.x.min() or mon.x.max()>rs.x.max():
+        raise ValueError('Monitoring stations lie outside RS2 domain. Extrapolation is disabled.')
+    pred = _av_np.interp(mon.x, rs.x, rs.subsidence_cm)
+    obs = mon.subsidence_cm.to_numpy()
+    m = AcademicTHCMValidator.compute_extended_metrics(obs,pred,zero_tolerance=zero_tolerance)
+    residual = pred-obs
+    relative = _av_np.full(len(obs), _av_np.nan)
+    mask = abs(obs)>zero_tolerance
+    relative[mask] = abs(residual[mask]/obs[mask])*100
+    table = _av_pd.DataFrame({'Station_Distance_X_m':mon.x, 'Field_Monitoring_Subsidence_cm':obs,
+        'RS2_Predicted_Subsidence_cm':pred, 'Residual_Error_cm':residual,
+        'Abs_Relative_Error_pct':relative})
+    inference = calculate_subsidence_metrics_with_bca(obs,pred,n_bootstrap,alpha,seed)
+    notes = ['Source authenticity and independent validation not verified.',
+             'R2 and NSE are identical here, not independent evidence.',
+             'MAPE omits |observed| <= the declared tolerance; near-zero values can dominate.',
+             'BCa intervals are conditional IID statistic intervals; no synthetic local confidence bands.',
+             'Spatial dependence can invalidate nominal IID coverage. No block-bootstrap claim is made.',
+             'Good profile agreement does not validate all THCM physics or establish journal acceptance.']
+    lag1 = None
+    if len(residual)>3 and residual[:-1].std()>1e-12 and residual[1:].std()>1e-12:
+        lag1 = float(_av_np.corrcoef(residual[:-1],residual[1:])[0,1])
+        if abs(lag1)>.3:
+            notes.append('Possible spatial dependence: |lag-1 residual correlation| > 0.30 (diagnostic only).')
+    gci = _av_mesh_csv(mesh_source) if mesh_source is not None else {
+        'status':'NOT_EVALUATED', 'converged':False,
+        'note':'Provide three actual mesh solutions. Values are never fabricated from one profile.'}
+    return {'metrics':_av_asdict(m), 'project_targets':m.assess_project_targets(),
+        'inference':inference, 'gci':gci, 'table':table, 'rs2_profile':rs,
+        'provenance':str(provenance), 'lag1_residual_correlation':lag1, 'notes':notes}
+
+
+def _av_plot(result):
+    from matplotlib.figure import Figure
+    fig = Figure(figsize=(9,7), layout='constrained')
+    ax, er = fig.subplots(2,1)
+    t, rs = result['table'], result['rs2_profile']
+    x, o, p, residual, _ = t.to_numpy().T
+    ax.plot(rs.x,rs.subsidence_cm,'b--',label='RS2 supplied profile')
+    ax.plot(x,o,'ro-',markersize=3,label='Supplied monitoring')
+    ax.set(xlabel='Profile distance (m)',ylabel='Displacement (cm)',title='RS2 / monitoring comparison')
+    ax.legend(); ax.grid(alpha=.25)
+    er.plot(x,residual,'o-',color='gray',markersize=3)
+    er.axhline(0,color='black',lw=.8)
+    er.set(xlabel='Profile distance (m)',ylabel='Predicted - observed (cm)',title='Residual profile')
+    er.grid(alpha=.25)
+    return fig
+
+
+def _av_clean_json(value):
+    if isinstance(value, dict): return {k:_av_clean_json(v) for k,v in value.items()}
+    if isinstance(value, (list,tuple)): return [_av_clean_json(v) for v in value]
+    if isinstance(value, (float,_av_np.floating)) and not _av_np.isfinite(value): return None
+    if isinstance(value, _av_np.generic): return value.item()
+    return value
+
+
+def academic_report_pdf_bytes(result):
+    from matplotlib.figure import Figure
+    from matplotlib.backends.backend_pdf import PdfPages
+    import textwrap
+    out = _av_io.BytesIO()
+    with PdfPages(out) as pdf:
+        fig = _av_plot(result)
+        fig.suptitle('UCG subsidence comparison | '+result['provenance'][:70],fontsize=10)
+        pdf.savefig(fig)
+        fig = Figure(figsize=(8.27,11.69))
+        lines = ['STATISTICAL SUMMARY (cm unless dimensionless)', '']
+        for k,v in result['metrics'].items():
+            lines.append(f'{k}: {v:.6g}' if isinstance(v,(float,int)) else f'{k}: {v}')
+        lines.extend(['',f"BCa confidence level: {result['inference']['confidence_level']:.1%}"])
+        for name,c in result['inference']['bca'].items():
+            bounds = 'not available' if c['ci_lower'] is None else f"[{c['ci_lower']:.6g}, {c['ci_upper']:.6g}]"
+            lines.append(f"{name}: {bounds} | {c['status']}")
+        lines.extend(['',f"Lag-1 residual r: {result['lag1_residual_correlation']}",
+                      '', 'MESH VERIFICATION'])
+        for k,v in result['gci'].items():
+            lines.extend(textwrap.wrap(f'{k}: {v}',94))
+        lines.extend(['','INTERPRETATION'])
+        for note in result['notes']:
+            lines.extend(textwrap.wrap('- '+note,94))
+        fig.text(.07,.96,'\n'.join(lines),va='top',fontsize=8.5,family='monospace')
+        pdf.savefig(fig)
+    return out.getvalue()
+
+
+def academic_report_latex(result):
+    # All numbers generated from the same paired table; no independent hard-coded appendix.
+    lines = [r'\documentclass[10pt,a4paper]{article}',r'\usepackage[margin=2cm]{geometry}',
+             r'\usepackage{booktabs,longtable}',r'\begin{document}',
+             r'\section*{UCG profile comparison}',
+             r'Supplied data: provenance unverified. No journal-readiness certification.',
+             r'\begin{tabular}{lr}\toprule Metric & Value \\ \midrule']
+    for k,v in result['metrics'].items():
+        label = k.replace('_',r'\_')
+        value = f'{v:.6g}' if _av_np.isfinite(v) else 'undefined'
+        lines.append(label+' & '+value+r' \\')
+    lines.extend([r'\bottomrule\end{tabular}',r'\paragraph{Conditional BCa intervals}',
+                  f"Confidence level: {100*result['inference']['confidence_level']:g}"+r'\%. IID assumptions apply.',
+                  r'\begin{tabular}{lrr}\toprule Statistic & Lower & Upper \\ \midrule'])
+    for name,c in result['inference']['bca'].items():
+        bounds = [f'{c[k]:.6g}' if c[k] is not None else 'unavailable' for k in ('ci_lower','ci_upper')]
+        lines.append(name+' & '+' & '.join(bounds)+r' \\')
+    lines.extend([r'\bottomrule\end{tabular}',r'\paragraph{Mesh verification}'])
+    for k,v in result['gci'].items():
+        # Escape arbitrary diagnostic text before placing it in TeX.
+        s = f'{k}: {v}'
+        for old,new in [('&',r'\&'),('%',r'\%'),('_',r'\_'),('#',r'\#')]: s=s.replace(old,new)
+        lines.append(s+r'\par')
+    lines.extend([r'\clearpage',r'\begin{longtable}{rrrrr}',
+        r'\toprule X (m) & Observed (cm) & RS2 (cm) & Residual (cm) & Rel. error (\%) \\ \midrule\endhead'])
+    for row in result['table'].to_numpy():
+        lines.append(' & '.join(f'{v:.4f}' if _av_np.isfinite(v) else '---' for v in row)+r' \\')
+    lines.extend([r'\bottomrule\end{longtable}',r'\end{document}'])
+    return '\n'.join(lines)
+
+
+def compare_rs2_with_monitoring(rs2_csv_path, monitoring_csv_path, *, output_png_path=None):
+    result = build_academic_subsidence_result(rs2_csv_path,monitoring_csv_path)
+    if output_png_path: _av_plot(result).savefig(output_png_path,dpi=300)
+    return calculate_subsidence_metrics(result['table'].iloc[:,1],result['table'].iloc[:,2])
+
+
+def compare_rs2_with_bca_bootstrap(rs2_csv_path, monitoring_csv_path, n_bootstrap=2000, *, alpha=.05, seed=42, output_png_path=None):
+    result = build_academic_subsidence_result(rs2_csv_path,monitoring_csv_path,n_bootstrap=n_bootstrap,alpha=alpha,seed=seed)
+    if output_png_path: _av_plot(result).savefig(output_png_path,dpi=300)
+    return result['inference']
+
+
+def export_subsidence_pdf_report(rs2_csv_path, monitoring_csv_path, output_pdf_path='UCG_Subsidence_Validation_Report.pdf', **kwargs):
+    result = build_academic_subsidence_result(rs2_csv_path,monitoring_csv_path,**kwargs)
+    with open(output_pdf_path,'wb') as f: f.write(academic_report_pdf_bytes(result))
+    return result
+
+
+def export_subsidence_pdf_report_with_gci(rs2_csv_path, monitoring_csv_path, output_pdf_path='UCG_Subsidence_Validation_Report_GCI.pdf', *, mesh_csv_path=None, **kwargs):
+    return export_subsidence_pdf_report(rs2_csv_path,monitoring_csv_path,output_pdf_path,mesh_source=mesh_csv_path,**kwargs)
+
+
+_AV_MONITORING_VALUES = [0.175,-0.161,0.099,0.328,-0.735,-1.164,-0.981,-2.229,-3.939,-4.895,-6.951,-8.63,-9.9,-12.185,-12.971,-12.753,-12.651,-11.183,-10.418,-9.056,-6.083,-5.241,-3.698,-3.215,-1.937,-1.008,-1.148,-0.188,-0.463,-0.23,-0.319]
+_AV_RS2_VALUES = [0.158,-0.041,-0.165,-0.003,-0.244,-0.152,-0.436,-0.463,-0.428,-0.525,-0.773,-1.04,-1.35,-1.82,-2.163,-2.624,-3.031,-3.73,-4.634,-5.175,-6.04,-6.892,-7.594,-8.37,-9.158,-10.049,-10.621,-11.07,-11.388,-11.768,-11.819,-11.831,-11.605,-11.022,-10.455,-9.972,-9.151,-8.436,-7.72,-6.788,-5.848,-5.211,-4.301,-4.026,-3.054,-2.569,-2.12,-1.663,-1.519,-1.05,-0.754,-0.451,-0.499,-0.411,-0.29,-0.081,-0.089,-0.138,-0.008,-0.03,0.07]
+
+
+def academic_supplied_profiles():
+    return (_av_pd.DataFrame({'x':_av_np.arange(61)*5.,'subsidence_cm':_AV_RS2_VALUES}),
+            _av_pd.DataFrame({'x':_av_np.arange(31)*10.,'subsidence_cm':_AV_MONITORING_VALUES}))
+
+
+def run_academic_validation_demo():
+    """Explicit opt-in only: user-provided examples, not authenticated measurements."""
+    rs, mon = academic_supplied_profiles()
+    return build_academic_subsidence_result(rs,mon,provenance='USER_SUPPLIED_EXAMPLE_UNVERIFIED')
+
+
+def render_academic_validation_panel():
+    import streamlit as st
+    st.header('THCM / FEM: statistik taqqoslash va mesh tekshiruvi')
+    st.caption('CSV: x (m), subsidence_cm (cm). Bir xil koordinata boshi, profil, sana/bosqich va ishora zarur. Manba haqiqiyligi avtomatik tasdiqlanmaydi.')
+    kind = st.radio('Ma’lumot turi',['RS2 / monitoring','Laboratoriya: observed / predicted'],key='av49_kind')
+    if kind != 'RS2 / monitoring':
+        lab = st.file_uploader('Laboratoriya CSV: observed, predicted (bir xil birlik)',type=['csv'],key='av49_lab')
+        if lab is not None:
+            try:
+                df = _av_pd.read_csv(lab)
+                m = AcademicTHCMValidator.compute_extended_metrics(df['observed'].to_numpy(),df['predicted'].to_numpy())
+                st.json(_av_clean_json(_av_asdict(m)))
+                st.json(m.assess_project_targets())
+                st.caption('Natijalar jurnalga qabul yoki to‘liq THCM validatsiyasi kafolati emas.')
+            except (ValueError,KeyError,TypeError) as exc: st.error(str(exc))
+        return
+    use_example = st.checkbox('Siz bergan 31 / 61 nuqtali namunani ishlatish (manba tasdiqlanmagan)',key='av49_example')
+    rs_upload = st.file_uploader('RS2 CSV',type=['csv'],key='av49_rs')
+    mon_upload = st.file_uploader('Monitoring CSV',type=['csv'],key='av49_mon')
+    mesh_upload = st.file_uploader('Ixtiyoriy GCI CSV: h,value — 3 haqiqiy mesh natijasi, teng nisbat',type=['csv'],key='av49_mesh')
+    n = st.number_input('Bootstrap qayta tanlash soni',min_value=100,max_value=50000,value=2000,step=100,key='av49_n')
+    confidence = st.slider('Ishonch darajasi',.80,.99,.95,.01,key='av49_conf')
+    seed = st.number_input('Random seed',min_value=0,value=42,step=1,key='av49_seed')
+    tolerance = st.number_input('Foiz xatosidan chiqariladigan |observed| chegarasi (cm)',min_value=0.,value=0.,format='%.4f',key='av49_tol')
+    if st.button('Hisoblash va eksport tayyorlash',key='av49_run'):
+        st.session_state.pop('av49_result',None)
+        try:
+            if use_example: rs,mon = academic_supplied_profiles()
+            elif rs_upload is not None and mon_upload is not None:
+                rs,mon = _av_io.BytesIO(rs_upload.getvalue()),_av_io.BytesIO(mon_upload.getvalue())
+            else: raise ValueError('Ikkita CSV yuklang yoki namunani tanlang.')
+            mesh = _av_io.BytesIO(mesh_upload.getvalue()) if mesh_upload is not None else None
+            result = build_academic_subsidence_result(rs,mon,n_bootstrap=int(n),alpha=1-confidence,
+                seed=int(seed),zero_tolerance=float(tolerance),mesh_source=mesh,
+                provenance='USER_SUPPLIED_EXAMPLE_UNVERIFIED' if use_example else 'UPLOADED_DATA_UNVERIFIED')
+            st.session_state['av49_result'] = result
+        except (ValueError,TypeError,KeyError) as exc: st.error(str(exc))
+    result = st.session_state.get('av49_result')
+    if result is None: return
+    st.caption('Quyida oxirgi Hisoblash natijasi. Kirishni o‘zgartirsangiz, qayta Hisoblash tugmasini bosing.')
+    st.json(_av_clean_json({k:v for k,v in result.items() if k not in ('table','rs2_profile')}))
+    st.pyplot(_av_plot(result))
+    st.dataframe(result['table'])
+    st.download_button('Jadval CSV',result['table'].to_csv(index=False).encode(),file_name='ucg_profile_comparison.csv',mime='text/csv',key='av49_csv')
+    st.download_button('PDF hisobot',academic_report_pdf_bytes(result),file_name='UCG_Validation_Report.pdf',mime='application/pdf',key='av49_pdf')
+    st.download_button('LaTeX ilova',academic_report_latex(result).encode(),file_name='ucg_validation_appendix.tex',mime='text/plain',key='av49_tex')
+    try:
+        buf = _av_io.BytesIO()
+        with _av_pd.ExcelWriter(buf,engine='openpyxl') as writer:
+            result['table'].to_excel(writer,sheet_name='Profile',index=False)
+            _av_pd.DataFrame([result['metrics']]).to_excel(writer,sheet_name='Metrics',index=False)
+            _av_pd.DataFrame([{'provenance':result['provenance'],'notes':' | '.join(result['notes'])}]).to_excel(writer,sheet_name='Notes',index=False)
+            _av_pd.DataFrame(result['inference']['bca']).T.to_excel(writer,sheet_name='BCa')
+            _av_pd.DataFrame([result['gci']]).to_excel(writer,sheet_name='GCI',index=False)
+        st.download_button('Excel jadval',buf.getvalue(),file_name='ucg_validation.xlsx',mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',key='av49_xlsx')
+    except ImportError:
+        st.info('Excel eksport uchun openpyxl o‘rnating; CSV eksport mavjud.')
+
+# END ACADEMIC VALIDATION v9.11.49
 
 # Script entry point must follow all class/function declarations.
 if __name__ == "__main__":
