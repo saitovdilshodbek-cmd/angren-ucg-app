@@ -1,3 +1,4 @@
+# v9.11.52: Windows SQLite test-handle cleanup fix (WinError 32).
 # v9.11.51: Streamlit input-state validation patch (academic report exports).
 # v9.11.50 (2026-10-31): expert-reviewed, source-of-truth ISRM/ISO Appendix A + generalized three-grid GCI.
 # Research-stage only: unverified uploads, no independent RS2/field authentication.
@@ -201,7 +202,7 @@
 from __future__ import annotations
 
 # v9.11.45 — focused research-integrity patch (2026-10-29).
-UCG_APP_VERSION = "9.11.51"  # Single source for RUNTIME versioning
+UCG_APP_VERSION = "9.11.52"  # Single source for RUNTIME versioning
 # Project outputs are uncalibrated; analytical THERMAL check != Angren THCM V&V.
 
 # FIX v9.11.23: TYPE_CHECKING — globals().get() ning haddan tashqar ko'pligi
@@ -10782,15 +10783,25 @@ class TestPatentV6Full(unittest.TestCase):
 
     # ── Database Backup Tests ──
     def test_database_backup_manager(self):
+        # v9.11.52 Windows fix: sqlite3.Connection.__exit__ commits / rolls back
+        # but DOES NOT CLOSE the database handle. On Windows an open handle
+        # prevents TemporaryDirectory cleanup (PermissionError: WinError 32).
         import tempfile
+        from contextlib import closing
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "test_backup.db"
-            with _safe_sqlite_connect(str(db_path)) as conn:
-                conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)")
-                conn.execute("INSERT INTO t VALUES (1, 'hello')")
+            with closing(_safe_sqlite_connect(str(db_path))) as conn:
+                with conn:  # transaction commit/rollback
+                    conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)")
+                    conn.execute("INSERT INTO t VALUES (1, 'hello')")
+            # The handle is closed before compression and Windows directory removal.
             bm = DatabaseBackupManager(str(db_path))
             backup_path = bm.auto_backup()
             self.assertTrue(Path(backup_path).exists())
+            # Confirm the resulting gzip backup is a readable SQLite database.
+            import gzip
+            with gzip.open(backup_path, "rb") as f:
+                self.assertEqual(f.read(16), b"SQLite format 3\x00")
 
     # ── Environment Verification Tests ──
     def test_environment_verification(self):
@@ -31113,11 +31124,11 @@ def main():
         "🎛️ App Mode",
         ["v6 — Geomechanical Twin", "v7 — UCG Reactor / Kinetics",
          "🔬 v9.11.1 — Ekspert Tahlili (40 muammo tuzatishlari)",
-         "v9.11.51 — Academic Validation / RS2 Monitoring"],
+         "v9.11.52 — Academic Validation / RS2 Monitoring"],
         index=0,
         help="v6: yer osti geomekanik model (PhD). v7: reaktor kinetikasi + Monte Carlo UQ. v9.11.1: 40 ta ekspert tahlili tuzatishlari.",
     )
-    if _app_mode == "v9.11.51 — Academic Validation / RS2 Monitoring":
+    if _app_mode == "v9.11.52 — Academic Validation / RS2 Monitoring":
         render_academic_validation_panel()
         return
 
