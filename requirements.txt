@@ -14,3 +14,4 @@ psutil
 pydantic
 sqlalchemy
 kaleido==0.2.1
+reportlab>=4.0
