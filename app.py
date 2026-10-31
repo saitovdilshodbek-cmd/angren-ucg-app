@@ -1,3 +1,4 @@
+# Academic report integration v9.11.54: full Appendix A equations, tables, plots and references.
 # v9.11.52: Windows SQLite test-handle cleanup fix (WinError 32).
 # v9.11.51: Streamlit input-state validation patch (academic report exports).
 # v9.11.50 (2026-10-31): expert-reviewed, source-of-truth ISRM/ISO Appendix A + generalized three-grid GCI.
@@ -202,7 +203,7 @@
 from __future__ import annotations
 
 # v9.11.45 — focused research-integrity patch (2026-10-29).
-UCG_APP_VERSION = "9.11.52"  # Single source for RUNTIME versioning
+UCG_APP_VERSION = "9.11.54"  # Single source for RUNTIME versioning
 # Project outputs are uncalibrated; analytical THERMAL check != Angren THCM V&V.
 
 # FIX v9.11.23: TYPE_CHECKING — globals().get() ning haddan tashqar ko'pligi
@@ -59963,32 +59964,8 @@ def _av_clean_json(value):
 
 
 def academic_report_pdf_bytes(result):
-    from matplotlib.figure import Figure
-    from matplotlib.backends.backend_pdf import PdfPages
-    import textwrap
-    out = _av_io.BytesIO()
-    with PdfPages(out) as pdf:
-        fig = _av_plot(result)
-        fig.suptitle('UCG subsidence comparison | '+result['provenance'][:70],fontsize=10)
-        pdf.savefig(fig)
-        fig = Figure(figsize=(8.27,11.69))
-        lines = ['STATISTICAL SUMMARY (cm unless dimensionless)', '']
-        for k,v in result['metrics'].items():
-            lines.append(f'{k}: {v:.6g}' if isinstance(v,(float,int)) else f'{k}: {v}')
-        lines.extend(['',f"BCa confidence level: {result['inference']['confidence_level']:.1%}"])
-        for name,c in result['inference']['bca'].items():
-            bounds = 'not available' if c['ci_lower'] is None else f"[{c['ci_lower']:.6g}, {c['ci_upper']:.6g}]"
-            lines.append(f"{name}: {bounds} | {c['status']}")
-        lines.extend(['',f"Lag-1 residual r: {result['lag1_residual_correlation']}",
-                      '', 'MESH VERIFICATION'])
-        for k,v in result['gci'].items():
-            lines.extend(textwrap.wrap(f'{k}: {v}',94))
-        lines.extend(['','INTERPRETATION'])
-        for note in result['notes']:
-            lines.extend(textwrap.wrap('- '+note,94))
-        fig.text(.07,.96,'\n'.join(lines),va='top',fontsize=8.5,family='monospace')
-        pdf.savefig(fig)
-    return out.getvalue()
+    """Full Appendix A PDF, sharing the same paired-source formulas/tables as UI."""
+    return ucg54_academic_pdf_bytes(ucg54_bundle_from_academic_result(result))
 
 
 def academic_report_latex(result):
@@ -60064,6 +60041,9 @@ def render_academic_validation_panel():
     st.header('THCM / FEM: statistik taqqoslash va mesh tekshiruvi')
     st.caption('CSV: x (m), subsidence_cm (cm). Bir xil koordinata boshi, profil, sana/bosqich va ishora zarur. Manba haqiqiyligi avtomatik tasdiqlanmaydi.')
     kind = st.radio('Ma’lumot turi',['RS2 / monitoring','Laboratoriya: observed / predicted'],key='av49_kind')
+    if kind == 'RS2 / monitoring':
+        with st.expander('📐 Appendix A — formulalar, izohlar va References', expanded=True):
+            ucg54_render_equations_ui(st)
     if kind != 'RS2 / monitoring':
         lab = st.file_uploader('Laboratoriya CSV: observed, predicted (bir xil birlik)',type=['csv'],key='av49_lab')
         if lab is not None:
@@ -60117,6 +60097,13 @@ def render_academic_validation_panel():
     with st.expander('📄 ISRM/ISO Report + Appendix A (Reproducible, source of truth)', expanded=False):
         st.caption('CSV x_m,observed_cm,predicted_cm; optional mesh h,value (exactly three independent runs). '
                    'No fabricated GCI, no journal-ready or independent field validation claims.')
+        use_pdf_example = st.checkbox(
+            'PDFdagi 21 stansiya qiymatlarini NAMUNA sifatida ishlatish (manbasi tekshirilmagan)',
+            key='ucg54_pdf_example', value=False)
+        st.download_button('PDFdagi 21 nuqtali manba CSV (namuna)',
+                           UCG54_SOURCE_21_STATIONS.encode('utf-8'),
+                           file_name='ucg_pdf_21pairs_unverified.csv',
+                           mime='text/csv',key='ucg54_example_csv')
         a_station = st.file_uploader('Appendix A paired stations CSV',type=['csv'],key='ucg50_station')
         a_mesh = st.file_uploader('Appendix A actual three-grid CSV (optional)',type=['csv'],key='ucg50_mesh')
         a_bca = st.checkbox('Conditional IID BCa 95% (requires >=30 pairs; not spatial CI)',
@@ -60133,7 +60120,8 @@ def render_academic_validation_panel():
                 _ucg51_hash.update(len(_ucg51_data).to_bytes(8, 'big'))
                 _ucg51_hash.update(_ucg51_data)
         _ucg51_hash.update(json.dumps({
-            'conditional_iid_bca': bool(a_bca), 'relative_cutoff_cm': float(a_cut)
+            'conditional_iid_bca': bool(a_bca), 'relative_cutoff_cm': float(a_cut),
+            'pdf_example': bool(use_pdf_example)
         }, sort_keys=True).encode('utf-8'))
         _ucg51_fp = _ucg51_hash.hexdigest()
         if st.session_state.get('ucg51_appendix_input_fingerprint') != _ucg51_fp:
@@ -60146,17 +60134,28 @@ def render_academic_validation_panel():
         if st.button('Calculate Appendix A + prepare DOCX / TeX / JSON',key='ucg50_generate'):
             st.session_state.pop('ucg50_appendix',None)
             try:
-                if a_station is None:
+                if a_station is None and not use_pdf_example:
                     raise ValueError('Upload a paired-station CSV; no measurements will be fabricated.')
+                example_data = (a_station.getvalue() if a_station is not None
+                                else UCG54_SOURCE_21_STATIONS.encode('utf-8'))
                 st.session_state['ucg50_appendix'] = ucg_build_appendix_bundle(
-                    a_station.getvalue(),a_mesh.getvalue() if a_mesh is not None else None,
+                    example_data,a_mesh.getvalue() if a_mesh is not None else None,
                     enable_iid_bca=a_bca,relative_cutoff_cm=float(a_cut))
+                if a_station is None and use_pdf_example:
+                    st.session_state['ucg50_appendix']['status'] = 'PDF_21_STATION_USER_SUPPLIED_EXAMPLE_UNVERIFIED'
+                    st.session_state['ucg50_appendix']['notes'].append(
+                        'The 21 pairs were transcribed from the user-supplied Appendix A PDF; source authenticity is unverified.')
             except (ValueError,KeyError,TypeError) as exc:
                 st.error(str(exc))
         appendix=st.session_state.get('ucg50_appendix')
         if appendix is not None:
             st.json(_av_clean_json({'metrics':appendix['metrics'],'gci':appendix['gci'],
                                     'data_provenance':appendix['status']}))
+            ucg54_render_bundle_ui(st, appendix)
+            st.download_button('Full Appendix A PDF — formulas, 2 tables, plots, References',
+                ucg54_academic_pdf_bytes(appendix),
+                file_name='UCG_Academic_Validation_Appendix_A_Full.pdf',
+                mime='application/pdf',key='ucg54_appendix_pdf')
             st.download_button('ISRM/ISO Evidence Report + Appendix A (.docx)',
                 generate_iso_compliance_report({'academic_validation_appendix':appendix}),
                 file_name='UCG_ISRM_ISO_Evidence_Appendix_A.docx',
@@ -60172,10 +60171,10 @@ def render_academic_validation_panel():
     if result is None: return
     st.caption('Quyida oxirgi Hisoblash natijasi. Kirishni o‘zgartirsangiz, qayta Hisoblash tugmasini bosing.')
     st.json(_av_clean_json({k:v for k,v in result.items() if k not in ('table','rs2_profile')}))
-    st.pyplot(_av_plot(result))
-    st.dataframe(result['table'])
+    _ucg54_legacy_bundle = ucg54_bundle_from_academic_result(result)
+    ucg54_render_bundle_ui(st, _ucg54_legacy_bundle)
     st.download_button('Jadval CSV',result['table'].to_csv(index=False).encode(),file_name='ucg_profile_comparison.csv',mime='text/csv',key='av49_csv')
-    st.download_button('PDF hisobot',academic_report_pdf_bytes(result),file_name='UCG_Validation_Report.pdf',mime='application/pdf',key='av49_pdf')
+    st.download_button('PDF hisobot — formulalar, jadvallar, References',academic_report_pdf_bytes(result),file_name='UCG_Validation_Report_Full_Appendix_A.pdf',mime='application/pdf',key='av49_pdf')
     st.download_button('LaTeX ilova',academic_report_latex(result).encode(),file_name='ucg_validation_appendix.tex',mime='text/plain',key='av49_tex')
     try:
         buf = _av_io.BytesIO()
@@ -60619,6 +60618,331 @@ def ucg_append_docx_evidence(doc, appendix_bundle=None, *, page_break=True) -> N
     doc.add_paragraph('Mesh CSV SHA-256: '+str(appendix_bundle['mesh_input_sha256'] or 'NOT_SUPPLIED'))
     for note in appendix_bundle['notes']:
         doc.add_paragraph('• '+note)
+
+# BEGIN UCG ACADEMIC APPENDIX A UI + PDF v9.11.54
+# Scientific integrity: the equations are documentary; every numeric table is
+# derived from supplied pairs. No raw monitoring/mesh provenance is authenticated.
+UCG54_SOURCE_21_STATIONS = 'x_m,observed_cm,predicted_cm\n0.0,0.21,-0.13\n15.0,-0.12,-0.21\n30.0,0.25,-0.52\n45.0,-0.42,-0.15\n60.0,-0.15,-0.51\n75.0,-2.21,-2.18\n90.0,-3.95,-3.05\n105.0,-6.82,-6.58\n120.0,-9.85,-8.95\n135.0,-12.18,-11.45\n150.0,-12.85,-11.31\n165.0,-12.62,-11.08\n180.0,-11.18,-10.25\n195.0,-9.05,-8.32\n210.0,-6.82,-5.58\n225.0,-4.85,-3.51\n240.0,-3.21,-2.98\n255.0,-1.82,-0.88\n270.0,-0.45,-0.05\n285.0,0.15,-0.08\n300.0,-0.02,-0.01\n'
+
+UCG54_EQUATIONS = (
+    ('Residual definition', r'e_i = p_i - o_i'),
+    ('(1a) Root mean square error', r'\mathrm{RMSE}=\sqrt{\frac{1}{n}\sum_{i=1}^{n}e_i^2}'),
+    ('(1b) Mean absolute error', r'\mathrm{MAE}=\frac{1}{n}\sum_{i=1}^{n}|e_i|'),
+    ('(2a) Mean bias', r'\mathrm{Bias}=\frac{1}{n}\sum_{i=1}^{n}e_i'),
+    ('(2b) Nash-Sutcliffe efficiency', r'\mathrm{NSE}=1-\frac{\sum_{i=1}^{n}(p_i-o_i)^2}{\sum_{i=1}^{n}(o_i-\bar{o})^2}'),
+    ('(3) Original Kling-Gupta efficiency', r'\mathrm{KGE}=1-\sqrt{(r-1)^2+\left(\frac{\sigma_p}{\sigma_o}-1\right)^2+\left(\frac{\bar{p}}{\bar{o}}-1\right)^2}'),
+    ('(4) Willmott index of agreement', r'd=1-\frac{\sum_{i=1}^{n}(p_i-o_i)^2}{\sum_{i=1}^{n}\left(|p_i-\bar{o}|+|o_i-\bar{o}|\right)^2}'),
+    ('(5) Relative RMSE', r'\mathrm{rRMSE}(\%)=100\,\frac{\mathrm{RMSE}}{|\bar{o}|}'),
+)
+UCG54_REFERENCES = (
+    ('[1] NASA Glenn Research Center. Examining Spatial (Grid) Convergence.',
+     'https://www.grc.nasa.gov/www/wind/valid/tutorial/spatconv.html'),
+    ('[2] SciPy documentation. scipy.stats.bootstrap - BCa method and limitations.',
+     'https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.bootstrap.html'),
+)
+UCG54_METRIC_SPEC = (
+    ('RMSE', 'rmse_cm', 'cm', '< 1.50 cm', 'lt', 1.50),
+    ('MAE', 'mae_cm', 'cm', '< 1.00 cm', 'lt', 1.00),
+    ('Mean bias (p - o)', 'bias_cm', 'cm', 'Near zero, no fixed tolerance', 'bias', None),
+    ('NSE', 'nse', '', '> 0.70', 'gt', 0.70),
+    ('Pearson r', 'pearson_r', '', '> 0.85', 'gt', 0.85),
+    ('Pearson r-squared', 'pearson_r_squared', '', 'Not specified; distinct from NSE', None, None),
+    ('Spearman rho', 'spearman_rho', '', '> 0.80', 'gt', 0.80),
+    ('KGE (original)', 'kge_original', '', '> 0.50', 'gt', 0.50),
+    ('Willmott d', 'willmott_d', '', '> 0.80', 'gt', 0.80),
+    ('Relative RMSE', 'relative_rmse_percent', '%', '< 15%', 'lt', 15.0),
+)
+
+
+def ucg54_metrics_table(bundle):
+    """Use the same source-of-truth metrics for screen and PDF; targets are project-only."""
+    rows = []
+    metrics = bundle['metrics']
+    for title, key, unit, criterion, comparison, target in UCG54_METRIC_SPEC:
+        v = metrics.get(key)
+        if v is None or not np.isfinite(float(v)):
+            value, decision = 'NOT_ESTABLISHED', 'Not established'
+        else:
+            value = f'{float(v):.4f}' + (f' {unit}' if unit else '')
+            if comparison == 'lt':
+                decision = 'Met' if v < target else 'Not met'
+            elif comparison == 'gt':
+                decision = 'Met' if v > target else 'Not met'
+            elif comparison == 'bias':
+                decision = 'Positive offset; investigate' if v > 0 else ('Negative offset; investigate' if v < 0 else 'Zero mean offset')
+            else:
+                decision = 'Not a separate acceptance rule'
+        rows.append({'Metric': title, 'Calculated': value,
+                     'Project target': criterion, 'Finding': decision})
+    rows.extend([
+        {'Metric':'95% BCa confidence interval', 'Calculated':
+         'CONDITIONAL IID only' if bundle.get('bca') else 'NOT_ESTABLISHED',
+         'Project target':'Spatial independence not demonstrated',
+         'Finding':'Not a spatial uncertainty band'},
+        {'Metric':'Three-grid GCI', 'Calculated':str(bundle['gci'].get('status','NOT_ESTABLISHED')),
+         'Project target':'Three independent comparable FE solves required',
+         'Finding':'Numerical screening, not verified field validation'},
+    ])
+    return pd.DataFrame(rows)
+
+
+def ucg54_stations_table(bundle):
+    """Display the near-zero cutoff explicitly, retaining every observation."""
+    return pd.DataFrame([{
+        'X (m)': r['x_m'],
+        'Observed (cm)': r['observed_cm'],
+        'RS2 model (cm)': r['predicted_cm'],
+        'Residual (cm)': r['residual_cm'],
+        'Relative error (%)': (round(r['relative_error_percent'], 2)
+                               if r['relative_error_percent'] is not None else '—'),
+    } for r in bundle['table_rows']])
+
+
+def ucg54_profile_figure(bundle):
+    """Two faithful graphics without a fabricated pointwise 95% confidence band."""
+    from matplotlib.figure import Figure
+    rows = bundle['table_rows']
+    x = np.array([r['x_m'] for r in rows], dtype=float)
+    obs = np.array([r['observed_cm'] for r in rows], dtype=float)
+    pred = np.array([r['predicted_cm'] for r in rows], dtype=float)
+    fig = Figure(figsize=(8.0, 6.8), layout='constrained')
+    ax, ax2 = fig.subplots(2, 1)
+    ax.plot(x, obs, 'o-', linewidth=1.5, markersize=3,
+            label='Supplied monitoring (unverified)')
+    ax.plot(x, pred, '--', linewidth=1.6,
+            label='Supplied RS2 comparison (unverified)')
+    ax.set(xlabel='Distance along profile, x (m)',
+           ylabel='Vertical displacement (cm)',
+           title='Figure 1. Paired profile comparison')
+    ax.legend(loc='best', fontsize=8)
+    ax.grid(alpha=.25)
+    ax2.bar(x, pred-obs, width=max(1.0, float(np.median(np.diff(x)))*.55))
+    ax2.axhline(0, color='black', linewidth=.8)
+    ax2.set(xlabel='Distance along profile, x (m)',
+            ylabel='Predicted - observed (cm)',
+            title='Figure 2. Signed station residuals')
+    ax2.grid(alpha=.2, axis='y')
+    return fig
+
+
+def ucg54_render_equations_ui(st):
+    """Visible on the Streamlit app even before user data are uploaded."""
+    st.markdown('#### A.2 Formulalar / Mathematical definitions')
+    st.caption('o = observed, p = predicted, e = p - o, n = paired stations. '
+               'Pearson r-squared is NOT Nash-Sutcliffe efficiency (NSE).')
+    for label, expression in UCG54_EQUATIONS:
+        st.markdown('**'+label+'**')
+        st.latex(expression)
+    st.caption('KGE and relative RMSE may be undefined/unstable for near-zero mean observed displacement. '
+               'All rows contribute to aggregate statistics.')
+    st.markdown('#### References (source appendix)')
+    for label, url in UCG54_REFERENCES:
+        st.markdown(f'{label}  [{url}]({url})')
+    st.caption('These are methodological references, not independent authentication of Angren monitoring or RS2 results.')
+
+
+def ucg54_render_bundle_ui(st, bundle):
+    st.markdown('#### Table 1. Recomputed statistical comparison')
+    st.dataframe(ucg54_metrics_table(bundle), use_container_width=True, hide_index=True)
+    st.markdown('#### A.3 Displacement profile and signed residuals')
+    fig = ucg54_profile_figure(bundle)
+    st.pyplot(fig)
+    # Close only the figure owned by us; avoid pyplot global-state leaks.
+    st.markdown('#### Table 2. Full station-by-station profile')
+    st.dataframe(ucg54_stations_table(bundle),use_container_width=True,hide_index=True)
+    st.caption('Relative percentage errors are omitted if |observed| < '
+               f"{bundle['relative_cutoff_cm']:.2f} cm; omitted does not mean zero. "
+               'All stations remain in summary metrics.')
+    gci = bundle['gci']
+    st.markdown('#### A.4 Mesh/GCI and 95% BCa limitation')
+    if str(gci.get('status','')).startswith('SCREENING_'):
+        st.json({k:v for k,v in gci.items() if k in
+                 ('status','fine_val','medium_val','coarse_val','observed_order_p',
+                  'gci_fine_pct','gci_coarse_pct','asymptotic_ratio','status_note')})
+    else:
+        st.info('GCI: NOT_ESTABLISHED unless three actual and comparable FE mesh outputs are uploaded.')
+    lag = bundle['metrics'].get('residual_lag1_corr')
+    if lag is not None:
+        st.caption(f'Adjacent-station residual correlation (lag 1) = {lag:.3f}; '
+                   'this descriptive statistic is not evidence of independent observations.')
+    st.warning('IID BCa intervals are not verified spatial uncertainty bands. '
+               'Passing thresholds cannot certify ISRM/ISO compliance, field validation or journal readiness.')
+
+
+def ucg54_bundle_from_academic_result(result):
+    """Convert the legacy RS2/monitoring path into the same Appendix source of truth."""
+    tab = result['table']
+    df = pd.DataFrame({
+        'x_m': tab['Station_Distance_X_m'].to_numpy(dtype=float),
+        'observed_cm': tab['Field_Monitoring_Subsidence_cm'].to_numpy(dtype=float),
+        'predicted_cm': tab['RS2_Predicted_Subsidence_cm'].to_numpy(dtype=float),
+    })
+    bundle = ucg_build_appendix_bundle(df, relative_cutoff_cm=0.5,
+                                       enable_iid_bca=False)
+    gci = result.get('gci', {})
+    if gci.get('status') in ('SCREENING_PASS_UNVERIFIED','SCREENING_NOT_MET','INDETERMINATE'):
+        bundle['gci'] = {k: (v.item() if isinstance(v, np.generic) else v)
+                         for k,v in gci.items()}
+        bundle['mesh_sizes_m'] = gci.get('mesh_sizes')
+        bundle['mesh_input_sha256'] = gci.get('input_sha256')
+    bundle['notes'].append('Comparison may include interpolation of uploaded RS2 output at the monitoring positions.')
+    return bundle
+
+
+def ucg54_equation_png(expression):
+    """Typeset the same math used by Streamlit for a selectable multipage PDF."""
+    from matplotlib.figure import Figure
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from io import BytesIO
+    fig = Figure(figsize=(7.6, .50), dpi=150)
+    FigureCanvasAgg(fig)
+    fig.text(.02,.5, '$'+expression+'$', va='center', fontsize=14, color='#182849')
+    output = BytesIO()
+    fig.savefig(output,format='png',dpi=170,facecolor='white',bbox_inches='tight',pad_inches=.04)
+    # Crop white canvas around the glyphs. Otherwise shorter equations are
+    # unnecessarily shrunk to the same 7.6-inch image width in the PDF.
+    from PIL import Image as PILImage, ImageChops
+    output.seek(0)
+    with PILImage.open(output) as im:
+        rgb = im.convert('RGB')
+        white = PILImage.new('RGB', rgb.size, 'white')
+        bbox = ImageChops.difference(rgb, white).getbbox()
+        if bbox:
+            left, top, right, bottom = bbox
+            pad = 10
+            rgb = rgb.crop((max(0,left-pad),max(0,top-pad),
+                            min(rgb.width,right+pad),min(rgb.height,bottom+pad)))
+        cropped = BytesIO()
+        rgb.save(cropped, format='PNG')
+        return cropped.getvalue()
+
+
+def ucg54_academic_pdf_bytes(bundle):
+    """Full Appendix A: equations, table 1, both plots, table 2 and references."""
+    from io import BytesIO
+    from xml.sax.saxutils import escape
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_CENTER
+    from reportlab.lib.units import mm
+    from reportlab.platypus import (SimpleDocTemplate, Paragraph, Table, TableStyle,
+                                   Spacer, PageBreak, Image, KeepTogether)
+    font_file = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
+    bold_file = '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
+    # Windows needs no system font path; ReportLab's bundled Helvetica is a
+    # deliberately ASCII-only fallback, while the graphics carry math glyphs.
+    try:
+        from pathlib import Path
+        if Path(font_file).is_file() and 'UCG54Sans' not in pdfmetrics.getRegisteredFontNames():
+            pdfmetrics.registerFont(TTFont('UCG54Sans',font_file))
+            pdfmetrics.registerFont(TTFont('UCG54Sans-Bold',bold_file))
+        font = 'UCG54Sans' if 'UCG54Sans' in pdfmetrics.getRegisteredFontNames() else 'Helvetica'
+        font_bold = 'UCG54Sans-Bold' if 'UCG54Sans-Bold' in pdfmetrics.getRegisteredFontNames() else 'Helvetica-Bold'
+    except (OSError,ValueError):
+        font, font_bold = 'Helvetica','Helvetica-Bold'
+    stream = BytesIO()
+    doc = SimpleDocTemplate(stream,pagesize=A4,leftMargin=18*mm,rightMargin=18*mm,
+                            topMargin=20*mm,bottomMargin=18*mm,
+                            title='UCG Appendix A - Numerical profile and research-stage screening',
+                            author='UCG Research Platform (automated calculation, provenance unverified)')
+    styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle(name='U54H1',fontName=font_bold,fontSize=14,leading=19,textColor=colors.HexColor('#1e3971'),spaceAfter=10))
+    styles.add(ParagraphStyle(name='U54H2',fontName=font_bold,fontSize=10.2,leading=14,textColor=colors.HexColor('#1e3971'),spaceBefore=10,spaceAfter=6))
+    styles.add(ParagraphStyle(name='U54Body',fontName=font,fontSize=8.5,leading=12,spaceAfter=7))
+    styles.add(ParagraphStyle(name='U54Tiny',fontName=font,fontSize=7.0,leading=9,spaceAfter=3))
+    styles.add(ParagraphStyle(name='U54EqLabel',fontName=font_bold,fontSize=8,leading=11,spaceBefore=3))
+    styles.add(ParagraphStyle(name='U54HeadCell',fontName=font_bold,fontSize=7,leading=9,textColor=colors.white))
+    headcell=styles['U54HeadCell']
+    body = styles['U54Body']; small=styles['U54Tiny']; h1=styles['U54H1']; h2=styles['U54H2']
+    story=[]
+    story.append(Paragraph('Appendix A. UCG numerical model: formulas, tables and references',h1))
+    story.append(Paragraph('Research-stage comparison. Supplied measurements and RS2 outputs are <b>not independently authenticated</b>. This is not an ISO/ISRM certificate, a field-validation certificate or a Q1 publication approval.',body))
+    story.append(Paragraph('A.1 Data and scope',h2))
+    n = bundle['metrics']['n']
+    story.append(Paragraph(f'{n} matched profile pairs are evaluated; residual = predicted - observed. All pairs contribute to the aggregate statistics. Station-level relative errors use a disclosed cutoff; no rows are silently removed.',body))
+    story.append(Paragraph('A.2 Definitions and recomputed metrics - equations (1)-(5)',h2))
+    story.append(Paragraph('Here o = observed displacement, p = model prediction, n = paired stations, r = Pearson correlation and sigma = sample standard deviation. NSE and squared Pearson r are not interchangeable.',small))
+    max_width = 166*mm
+    for title,eq in UCG54_EQUATIONS:
+        png = ucg54_equation_png(eq)
+        # Preserve image aspect ratio; no raster glyph substitutions or clipping.
+        from PIL import Image as PILImage
+        with PILImage.open(BytesIO(png)) as img: orig_w, orig_h = img.size
+        target_w = min(max_width, orig_w*72.0/170.0)
+        target_h = target_w*orig_h/orig_w
+        story.append(KeepTogether([Paragraph(escape(title),styles['U54EqLabel']),
+                   Image(BytesIO(png),width=target_w,height=target_h),Spacer(1,2*mm)]))
+    story.append(Paragraph('The relative RMSE denominator is the absolute mean signed displacement; it can be unstable if the mean is near zero. KGE can also be undefined under zero-mean or zero-variance conditions.',small))
+    story.append(PageBreak())
+    story.append(Paragraph('Table 1. Recomputed profile statistics (project criteria only)',h1))
+    metric_df = ucg54_metrics_table(bundle)
+    raw = [['Metric','Calculated','Project target','Finding']]
+    raw += metric_df[['Metric','Calculated','Project target','Finding']].astype(str).values.tolist()
+    col_widths = [40*mm,30*mm,53*mm,43*mm]
+    table = Table([[Paragraph(escape(str(c)),headcell if ri==0 else small) for c in row] for ri,row in enumerate(raw)],colWidths=col_widths,repeatRows=1,hAlign='LEFT')
+    table.setStyle(TableStyle([
+        ('BACKGROUND',(0,0),(-1,0),colors.HexColor('#1e3971')),
+        ('TEXTCOLOR',(0,0),(-1,0),colors.white),
+        ('ROWBACKGROUNDS',(0,1),(-1,-1),[colors.white,colors.HexColor('#f1f5fa')]),
+        ('GRID',(0,0),(-1,-1),.25,colors.HexColor('#cad3df')),
+        ('VALIGN',(0,0),(-1,-1),'TOP'),('LEFTPADDING',(0,0),(-1,-1),4),('RIGHTPADDING',(0,0),(-1,-1),4),
+        ('TOPPADDING',(0,0),(-1,-1),4),('BOTTOMPADDING',(0,0),(-1,-1),4)]))
+    story.append(table)
+    story.append(Spacer(1,5*mm))
+    fig = ucg54_profile_figure(bundle)
+    pic=BytesIO();fig.savefig(pic,format='png',dpi=135,facecolor='white')
+    pic.seek(0)
+    story.append(Image(pic,width=150*mm,height=127.5*mm))
+    story.append(Paragraph('Figures 1-2. Actual supplied pairs and signed residuals; no artificial 95% BCa band is drawn.',small))
+    story.append(PageBreak())
+    story.append(Paragraph('Table 2. Full station-by-station matched profile',h1))
+    story.append(Paragraph('Relative percentage error is suppressed only where |observed| is below '
+                           f"{bundle['relative_cutoff_cm']:.2f} cm; an omitted percentage is not a zero error.",small))
+    sd = ucg54_stations_table(bundle)
+    raw = [['X (m)','Observed (cm)','RS2 (cm)','p - o (cm)','Rel. error (%)']]
+    for row in sd.itertuples(index=False,name=None):
+        raw.append([f'{row[0]:.2f}',f'{row[1]:+.2f}',f'{row[2]:+.2f}',f'{row[3]:+.2f}',str(row[4]).replace('—','--')])
+    tbl = Table(raw,colWidths=[27*mm,35*mm,33*mm,34*mm,36*mm],repeatRows=1,hAlign='LEFT')
+    tbl.setStyle(TableStyle([
+        ('BACKGROUND',(0,0),(-1,0),colors.HexColor('#1e3971')),
+        ('TEXTCOLOR',(0,0),(-1,0),colors.white),
+        ('ROWBACKGROUNDS',(0,1),(-1,-1),[colors.white,colors.HexColor('#f4f6f9')]),
+        ('GRID',(0,0),(-1,-1),.25,colors.HexColor('#d0d9e1')),
+        ('FONTNAME',(0,0),(-1,0),font_bold),('FONTNAME',(0,1),(-1,-1),font),
+        ('FONTSIZE',(0,0),(-1,-1),8),('VALIGN',(0,0),(-1,-1),'MIDDLE'),
+        ('LEFTPADDING',(0,0),(-1,-1),5),('TOPPADDING',(0,0),(-1,-1),3),
+        ('BOTTOMPADDING',(0,0),(-1,-1),3)]))
+    story.append(tbl)
+    story.append(Paragraph('A.4 Uncertainty, mesh verification and provenance',h2))
+    lag = bundle['metrics'].get('residual_lag1_corr')
+    story.append(Paragraph('Adjacent-station residual correlation (lag 1): '+
+                           (f'{lag:.3f}.' if lag is not None else 'not established.')+
+                           ' IID BCa confidence intervals are not validated spatial bands. '
+                           'Near-neighbor correlation should be investigated before an IID interpretation.',body))
+    gci=bundle['gci']; stat=str(gci.get('status','NOT_ESTABLISHED'))
+    story.append(Paragraph('Three-grid GCI status: <b>'+escape(stat)+'</b>. '+
+                           escape(str(gci.get('status_note','Three comparable independent FE solutions and records are required.'))),body))
+    if stat.startswith('SCREENING_'):
+        for key in ('fine_val','medium_val','coarse_val','refine_ratio_21','refine_ratio_32',
+                    'observed_order_p','gci_fine_pct','gci_coarse_pct','asymptotic_ratio'):
+            v=gci.get(key); story.append(Paragraph(escape(key)+': '+
+                     (f'{v:.5g}' if isinstance(v,(int,float)) and np.isfinite(v) else 'NOT_ESTABLISHED'),small))
+    story.append(Paragraph('Source input SHA-256: '+escape(bundle['station_input_sha256']),small))
+    story.append(Paragraph('Original surveying logs, RS2 project files, mesh files and independent field validation are NOT provided by this numerical report. Project screening criteria are not journal acceptance rules.',small))
+    story.append(Paragraph('References',h2))
+    for label,url in UCG54_REFERENCES:
+        story.append(Paragraph(escape(label)+'<br/><link href="'+escape(url)+'" color="#1458a0">'+escape(url)+'</link>',small))
+    def page_footer(canvas, doc_obj):
+        canvas.setFont('Helvetica',8)
+        canvas.setFillColor(colors.HexColor('#637184'))
+        canvas.drawRightString(A4[0]-18*mm,11*mm,f'UCG Academic Appendix A  |  {doc_obj.page}')
+    doc.build(story,onFirstPage=page_footer,onLaterPages=page_footer)
+    return stream.getvalue()
+# END UCG ACADEMIC APPENDIX A UI + PDF v9.11.54
+
 
 # END UCG APPENDIX A SOURCE-OF-TRUTH v9.11.50
 
