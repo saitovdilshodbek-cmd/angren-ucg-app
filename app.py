@@ -1,3 +1,4 @@
+# Audit patch v9.11.56 (2026-10-31): Gauss stress, roller BC, shared GCI/BCa, PDF deps and diagnostics.
 # Audit patch v9.11.55 (2026-10-31): targeted numerical/evidence fixes; see AUDIT_UZ.md.
 # Academic report integration v9.11.54: full Appendix A equations, tables, plots and references.
 # v9.11.52: Windows SQLite test-handle cleanup fix (WinError 32).
@@ -204,7 +205,7 @@
 from __future__ import annotations
 
 # v9.11.45 — focused research-integrity patch (2026-10-29).
-UCG_APP_VERSION = "9.11.55"  # Single source for RUNTIME versioning
+UCG_APP_VERSION = "9.11.56"  # Single source for RUNTIME versioning
 # Project outputs are uncalibrated; analytical THERMAL check != Angren THCM V&V.
 
 # FIX v9.11.23: TYPE_CHECKING — globals().get() ning haddan tashqar ko'pligi
@@ -548,6 +549,27 @@ logger = logging.getLogger("ucg_platform")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # IMPROVEMENT #2: Dependency Injection Container
+
+
+# v9.11.56: observable accounting for optional/suppressed exceptions.
+# Counter is process-local; not durable and not an application error total.
+from collections import Counter as _UCGCounter
+_UCG_SUPPRESSED_EXCEPTIONS = _UCGCounter()
+_UCG_SUPPRESSED_LOCK = threading.Lock()
+
+def _ucg_record_suppressed_exception(context: str, exc: BaseException) -> None:
+    key = f"{context}:{type(exc).__name__}"
+    with _UCG_SUPPRESSED_LOCK:
+        _UCG_SUPPRESSED_EXCEPTIONS[key] += 1
+        number = _UCG_SUPPRESSED_EXCEPTIONS[key]
+    # Log the first few occurrences and powers of 2 to avoid unbounded log spam.
+    if number <= 3 or (number & (number - 1)) == 0:
+        logger.warning("[suppressed-error] %s occurrence=%d", key, number, exc_info=False)
+
+def ucg_suppressed_error_counts() -> dict:
+    with _UCG_SUPPRESSED_LOCK:
+        return dict(_UCG_SUPPRESSED_EXCEPTIONS)
+
 # Replaces global objects with injectable services for testability and modularity.
 # ══════════════════════════════════════════════════════════════════════════════
 # ARCHITECTURE NOTE (v9.11.28 audit): DIContainer uses deferred lambdas
@@ -735,6 +757,7 @@ class ServiceLayer:
                 mesh, E, nu,
                 gravity=params.get("gravity", True),
                 body_force_z=params.get("body_force_z", -9.81 * 2500),
+                boundary_mode=params.get("boundary_mode", "roller"),
             )
 
             # Quality checks
@@ -1118,6 +1141,7 @@ def _init_thread_safe_config():
     try:
         ThreadSafeConfig.load_from_object(UCG_CONFIG)
     except (NameError, AttributeError) as e:  # FIX v9.11.26
+        _ucg_record_suppressed_exception("line_1142", e)
         try:
             logger.debug("[silent fail] %s", e)
         except Exception:
@@ -1436,6 +1460,7 @@ class DatabaseBackend:
                 self._pg_libpq_version,
             )
         except ImportError as e:  # FIX v9.11.26
+            _ucg_record_suppressed_exception("line_1460", e)
             try:
                 logger.debug("[silent fail] %s", e)
             except Exception:
@@ -1685,6 +1710,7 @@ class WORMStorageBackend:
                 import stat as _stat
                 os.chmod(data_path, _stat.S_IREAD)
             except OSError as e:  # FIX v9.11.26
+                _ucg_record_suppressed_exception("line_1709", e)
                 try:
                     logger.debug("[silent fail] %s", e)
                 except Exception:
@@ -1753,6 +1779,7 @@ def safe_loads(payload: Union[bytes, str]) -> Any:
     try:
         return json.loads(payload)
     except (ValueError, TypeError) as e:  # FIX v9.11.26
+        _ucg_record_suppressed_exception("line_1777", e)
         try:
             logger.debug("[silent fail] %s", e)
         except Exception:
@@ -2397,6 +2424,7 @@ def _init_dependency_registry():
     try:
         DependencyRegistry.auto_register_common()
     except (NameError, AttributeError) as e:  # FIX v9.11.26
+        _ucg_record_suppressed_exception("line_2421", e)
         try:
             logger.debug("[silent fail] %s", e)
         except Exception:
@@ -2509,6 +2537,7 @@ class FeatureAvailabilityReport:
                 with st.sidebar.expander("📋 Feature Availability Report"):
                     st.markdown(cls.format_report().replace("\n", "  \n"))
         except Exception as e:  # FIX v9.11.26
+            _ucg_record_suppressed_exception("line_2533", e)
             try:
                 logger.debug("[silent fail] %s", e)
             except Exception:
@@ -3578,38 +3607,27 @@ class FEMConvergenceDiagnostics:
     @staticmethod
     def richardson_gci(fine: float, medium: float, coarse: float,
                        p: int = 2, refine_ratio: float = 2) -> Dict[str, Any]:
-        """Three-level uniform-ratio GCI; refuse inconclusive convergence claims."""
-        values = np.asarray([fine, medium, coarse, refine_ratio], dtype=float)
-        if not np.all(np.isfinite(values)) or refine_ratio <= 1:
-            raise ValueError("GCI requires finite values and refinement ratio > 1")
-        e21, e32 = medium - fine, coarse - medium
-        if abs(e21) < 1e-15 or abs(e32) < 1e-15 or e21*e32 <= 0:
-            return {"status": "INDETERMINATE", "converged": False,
-                    "gci_fine": None, "gci_coarse": None, "observed_order": None,
-                    "asymptotic_ratio": None,
-                    "note": "Equal solutions or oscillatory differences do not establish GCI"}
-        observed_order = float(np.log(abs(e32/e21))/np.log(refine_ratio))
-        if (not np.isfinite(observed_order) or observed_order <= 0 or
-                abs(fine) <= 1e-15 or abs(medium) <= 1e-15):
-            return {"status": "INDETERMINATE", "converged": False,
-                    "gci_fine": None, "gci_coarse": None,
-                    "observed_order": observed_order if np.isfinite(observed_order) else None,
-                    "asymptotic_ratio": None,
-                    "note": "Observed order nonpositive or relative error denominator ~0"}
-        denominator = refine_ratio**observed_order - 1
-        gci_fine = float(1.25*abs(e21/fine)/denominator)
-        gci_coarse = float(1.25*abs(e32/medium)/denominator)
-        ratio = float(gci_coarse/(refine_ratio**observed_order*gci_fine))
-        ratio_ok = bool(.95 <= ratio <= 1.05)
-        return {
-            "status": "COMPUTED", "observed_order": observed_order,
-            "extrapolated_value": float(fine+(fine-medium)/denominator),
-            "gci": gci_fine, "gci_fine": gci_fine, "gci_coarse": gci_coarse,
-            "asymptotic_ratio": ratio, "asymptotic_ratio_in_range": ratio_ok,
-            "gci_fine_threshold_met": bool(gci_fine < .05),
-            "converged": bool(gci_fine < .05 and ratio_ok),
-            "convergence_criteria": "gci_fine<0.05 and 0.95<=asymptotic_ratio<=1.05 (project policy)",
-        }
+        """Compatibility view of canonical unequal-ratio three-grid GCI.
+
+        ``p`` is kept for API compatibility only: observed order is always
+        estimated from three independent solutions, never forced to ``p``.
+        """
+        r = AcademicGCIValidator.compute_three_grid_gci(
+            fine, medium, coarse, refine_ratio, refine_ratio)
+        gp = r.gci_fine_pct / 100.0 if r.gci_fine_pct is not None else None
+        gc = r.gci_coarse_pct / 100.0 if r.gci_coarse_pct is not None else None
+        return {"status": r.status, "screening_status": r.status,
+                "observed_order": r.observed_order_p,
+                "extrapolated_value": r.extrapolated_value,
+                "gci": gp, "gci_fine": gp, "gci_coarse": gc,
+                "asymptotic_ratio": r.asymptotic_ratio,
+                "asymptotic_ratio_in_range": (
+                    0.95 <= r.asymptotic_ratio <= 1.05
+                    if r.asymptotic_ratio is not None else False),
+                "gci_fine_threshold_met": gp is not None and gp < 0.05,
+                "converged": r.converged, "note": r.status_note,
+                "assumed_order_argument_ignored": p,
+                "data_provenance": "USER_SUPPLIED_MESH_RESULTS_UNVERIFIED"}
 
 
 
@@ -3626,7 +3644,9 @@ class FEMMesh3D:
 def _json_default_serializer(value: Any) -> Any:
     if isinstance(value, np.ndarray):
         return value.tolist()
-    if isinstance(value, (np.floating, np.integer)):
+    if isinstance(value, np.integer):
+        return int(value)  # Preserve exact integral value, including uint64.
+    if isinstance(value, np.floating):
         return float(value)
     # FIX #100 (v9.11.17): pandas.Timestamp isinstance(value, datetime) uchun
     # True qaytaradi, lekin .astimezone() boshqacha ishlaydi. Endi: pandas
@@ -3640,6 +3660,7 @@ def _json_default_serializer(value: Any) -> Any:
                 value = value.tz_convert("UTC")
             return value.isoformat()
     except ImportError as e:  # FIX v9.11.26
+        _ucg_record_suppressed_exception("line_3666", e)
         try:
             logger.debug("[silent fail] %s", e)
         except Exception:
@@ -4444,6 +4465,7 @@ class BlockchainConnectorV2:
                 if stored:
                     self.private_key_hex = stored
             except ImportError as e:  # FIX v9.11.26
+                _ucg_record_suppressed_exception("line_4470", e)
                 try:
                     logger.debug("[silent fail] %s", e)
                 except Exception:
@@ -5240,6 +5262,7 @@ class RFC3161TimestampAuthority:
             # so we build DER manually below — this is well-documented in RFC-3161
             raise ImportError("Use manual DER builder")
         except ImportError as e:  # FIX v9.11.26
+            _ucg_record_suppressed_exception("line_5266", e)
             try:
                 logger.debug("[silent fail] %s", e)
             except Exception:
@@ -5503,6 +5526,7 @@ class WORMManifestStorage:
                     import ctypes as _ctypes
                     _ctypes.windll.kernel32.SetFileAttributesW(str(data_path), 0x01)  # FILE_ATTRIBUTE_READONLY
                 except Exception as e:  # FIX v9.11.26
+                    _ucg_record_suppressed_exception("line_5529", e)
                     try:
                         logger.debug("[silent fail] %s", e)
                     except Exception:
@@ -6659,140 +6683,18 @@ def bootstrap_prediction_interval(prediction: np.ndarray, residuals: np.ndarray,
 # Can improve coverage for some smooth statistics; not universally superior.
 # Neither BCa nor any single interval is proof of experimental validity.
 # ══════════════════════════════════════════════════════════════════════════════
+
 def bca_bootstrap_ci(data: np.ndarray, statistic: Callable = np.mean,
-                      n_bootstrap: int = 10000, alpha: float = 0.05,
-                      rng: Optional[np.random.Generator] = None) -> Dict[str, Any]:
+                     n_bootstrap: int = 10000, alpha: float = 0.05,
+                     rng: Optional[np.random.Generator] = None) -> Dict[str, Any]:
+    """Compatibility adapter to the single SciPy BCa source of truth.
+
+    Conditional IID intervals only; spatially correlated stations need an
+    appropriately designed block/cluster bootstrap, not this function.
     """
-    Compute BCa (Bias-Corrected and Accelerated) bootstrap confidence interval.
+    return _av_bca_stat(data, statistic, n_bootstrap, alpha,
+                        rng if rng is not None else _safe_rng())
 
-    The BCa method corrects for both bias and skewness in the bootstrap
-    distribution, providing more accurate coverage than percentile intervals.
-
-    This implementation applies a conservative n >= 30 policy. That cutoff is
-    a project policy, not a theorem: passing it does not guarantee nominal
-    coverage, which still depends on the data-generating process and statistic.
-    Reference: Efron, B., & Tibshirani, R. J. (1993). An Introduction to the
-    Bootstrap. Chapman & Hall/CRC.
-
-    Parameters:
-    -----------
-    data : array-like
-        One-dimensional input sample (this implementation requires at least 30 observations)
-    statistic : callable
-        Function to compute on each bootstrap sample (default: np.mean)
-    n_bootstrap : int
-        Number of bootstrap resamples (recommended: >= 2000 for 95% CI)
-    alpha : float
-        Significance level (0.05 for 95% CI)
-    rng : numpy Generator
-        Random number generator for reproducibility
-
-    Returns:
-    --------
-    Dict with CI bounds and diagnostics
-    """
-    if rng is None:
-        rng = _safe_rng()
-
-    data = _to_1d_float_array(data, "data")
-    if not callable(statistic):
-        raise TypeError("statistic must be callable.")
-    if isinstance(n_bootstrap, bool) or not isinstance(n_bootstrap, (int, np.integer)) or n_bootstrap < 2:
-        raise ValueError("n_bootstrap must be an integer >= 2.")
-    if not np.isfinite(alpha) or not 0.0 < alpha < 1.0:
-        raise ValueError("alpha must be finite and strictly between 0 and 1.")
-    n = data.size
-
-    # Conservative project policy; n >= 30 is not, by itself, evidence of valid coverage.
-    if n < 30:
-        raise ValueError(
-            f"This implementation requires at least 30 samples for BCa (got n={n}). "
-            "This is a conservative project policy, not a universal validity threshold; "
-            "choose an interval method justified by the study design."
-        )
-
-    # Original statistic
-    theta_hat = float(statistic(data))
-    if not np.isfinite(theta_hat):
-        raise ValueError("statistic(data) must return a finite scalar.")
-
-    # Bootstrap resamples
-    boot_stats = np.empty(n_bootstrap)
-    for b in range(n_bootstrap):
-        sample = rng.choice(data, size=n, replace=True)
-        boot_stats[b] = float(statistic(sample))
-    if not np.all(np.isfinite(boot_stats)):
-        raise ValueError("statistic must return a finite scalar for every bootstrap sample.")
-
-    # Bias correction factor z0
-    # Proportion of bootstrap stats less than original
-    # Mid-rank ties plus a finite-bootstrap correction avoid infinite z0 for
-    # constant or highly discrete bootstrap distributions.
-    less = int(np.count_nonzero(boot_stats < theta_hat))
-    ties = int(np.count_nonzero(boot_stats == theta_hat))
-    prop_less = (less + 0.5 * ties + 0.5) / (n_bootstrap + 1.0)
-    from scipy.stats import norm
-    z0 = norm.ppf(prop_less)
-
-    # Acceleration factor a
-    # Jackknife influence values
-    # FIX v9.11.3: Jackknife O(n²) -> O(n) vektorlashtirildi.
-    # np.mean uchun jackknife statistikasi to'g'ridan-to'g'ri hisoblanishi mumkin:
-    # jack_stat[i] = (sum - data[i]) / (n - 1)
-    # Bu O(n) emas, O(n²) dan O(n) ga o'tadi.
-    if statistic is np.mean or getattr(statistic, "__name__", "") == "mean":
-        # Vektorlashtirilgan jackknife for mean
-        total_sum = np.sum(data)
-        jack_stats = (total_sum - data) / (n - 1)
-    else:
-        # Generic fallback - sekinroq, lekin to'g'ri
-        jack_stats = np.empty(n)
-        for i in range(n):
-            jack_sample = np.delete(data, i)
-            jack_stats[i] = statistic(jack_sample)
-
-    jack_mean = np.mean(jack_stats)
-    diff = jack_mean - jack_stats
-    a_hat = np.sum(diff**3) / (6.0 * (np.sum(diff**2))**1.5) if np.sum(diff**2) > 0 else 0.0
-
-    # Adjusted percentiles
-    from scipy.stats import norm as _norm
-    z_alpha_lower = _norm.ppf(alpha / 2)
-    z_alpha_upper = _norm.ppf(1 - alpha / 2)
-
-    # BCa adjusted quantiles. A zero denominator makes the transformation
-    # undefined, so report the failure rather than silently manufacturing a CI.
-    denom1 = 1.0 - a_hat * (z0 + z_alpha_lower)
-    denom2 = 1.0 - a_hat * (z0 + z_alpha_upper)
-    if abs(denom1) <= np.finfo(float).eps or abs(denom2) <= np.finfo(float).eps:
-        raise ValueError("BCa adjusted quantile is undefined for this statistic/sample.")
-    alpha1 = float(_norm.cdf(z0 + (z0 + z_alpha_lower) / denom1))
-    alpha2 = float(_norm.cdf(z0 + (z0 + z_alpha_upper) / denom2))
-    if not np.isfinite(alpha1) or not np.isfinite(alpha2):
-        raise ValueError("BCa adjusted quantile is non-finite for this statistic/sample.")
-
-    # Restrict quantiles to the finite range supported by this bootstrap run.
-    min_quantile = 1.0 / (n_bootstrap + 1.0)
-    max_quantile = 1.0 - min_quantile
-    alpha1 = float(np.clip(alpha1, min_quantile, max_quantile))
-    alpha2 = float(np.clip(alpha2, min_quantile, max_quantile))
-
-    ci_lower = float(np.percentile(boot_stats, 100 * alpha1))
-    ci_upper = float(np.percentile(boot_stats, 100 * alpha2))
-
-    return {
-        "ci_lower": ci_lower,
-        "ci_upper": ci_upper,
-        "point_estimate": float(theta_hat),
-        "bias_correction_z0": float(z0),
-        "acceleration_a": float(a_hat),
-        "method": "BCa",
-        "n_bootstrap": n_bootstrap,
-        "alpha": alpha,
-        "confidence_level": f"{100*(1-alpha):.0f}%",
-        "boot_std": float(np.std(boot_stats)),
-        "boot_mean": float(np.mean(boot_stats)),
-    }
 
 
 # ── FIX 5: calculate_comparison_metrics with bootstrap CI, skewness, kurtosis ──
@@ -9649,10 +9551,41 @@ def _apply_dirichlet_zero(K_csr, F, fixed_dofs):
     return K_new, F * mask
 
 
+
+
+def _ucg_hex8_gauss_B(node_coords, xi, eta, zeta):
+    """Hex8 B matrix at one Gauss point, engineering shear [yz,xz,xy]."""
+    c = np.asarray(node_coords, dtype=float)
+    if c.shape != (8,3) or not np.isfinite(c).all():
+        raise FEMMeshError('Hex8 coordinates require eight finite 3D nodes.')
+    signs = np.array([[-1,-1,-1],[1,-1,-1],[1,1,-1],[-1,1,-1],
+                      [-1,-1,1],[1,-1,1],[1,1,1],[-1,1,1]], dtype=float)
+    a,b,d=signs[:,0],signs[:,1],signs[:,2]
+    deriv = np.stack((a*(1+b*eta)*(1+d*zeta),
+                      b*(1+a*xi)*(1+d*zeta),
+                      d*(1+a*xi)*(1+b*eta)),axis=0) / 8.0
+    J = deriv @ c
+    det = float(np.linalg.det(J))
+    scale = float(np.max(np.ptp(c,axis=0)))
+    tol = max(100*np.finfo(float).eps*scale**3,np.finfo(float).tiny)
+    if not np.isfinite(det) or det <= tol:
+        raise FEMMeshError(f'Hex8 inverted/singular Jacobian at Gauss point: det={det:.6e}')
+    grad = np.linalg.solve(J, deriv)
+    B = np.zeros((6,24))
+    for i in range(8):
+        dx,dy,dz = grad[:,i]
+        j = 3*i
+        B[0,j]=dx; B[1,j+1]=dy; B[2,j+2]=dz
+        B[3,j+1]=dz; B[3,j+2]=dy
+        B[4,j]=dz; B[4,j+2]=dx
+        B[5,j]=dy; B[5,j+1]=dx
+    return B,det
+
 def solve_fem_3d_linear_elastic_real(mesh: FEMMesh3D, young_modulus: float, poisson_ratio: float,
                                      body_force: float = 1.0,
                                      gravity: bool = True,
-                                     body_force_z: float = -9.81 * 2500.0) -> Dict[str, np.ndarray]:
+                                     body_force_z: float = -9.81 * 2500.0,
+                                     boundary_mode: str = "roller") -> Dict[str, np.ndarray]:
     """
     FIX 21-30: Real FEM solver with:
     21: global_stiffness_matrix
@@ -9801,22 +9734,32 @@ def solve_fem_3d_linear_elastic_real(mesh: FEMMesh3D, young_modulus: float, pois
                                 shape_values[local_i] * body_force_z * det_j
                             )
     
-    # FIX #2 (v9.11.16) / FIX v9.11.18 #2 / FIX v9.11.19 #1: FEM imzosi (gravity, body_force_z).
-    # FIX v9.11.19 #2: To'liq Dirichlet chegara sharti (3 DOF: X, Y, Z).
-    # v9.11.15 da FAQAT Z o'qi qotirilgan — bu erkin qo'yma (free cantilever) sifatida
-    # yechimga olib keladi va K global matrisasi singular bo'lib qoladi (rigid body
-    # motion). PhD komissiyasi birinchi savolda topadi. Endi pastki yuza (z = z_min)
-    # dagi barcha tugunlarda UCHTA DOF (X, Y, Z) ham qotiriladi.
-    # FIX v9.11.19 #3: BoundaryConditionValidator integratsiya qilindi — endi
-    # solver BC ni amalga oshirishdan oldin validatsiya qiladi (ASME V&V 10-2006).
-    z_min = float(np.min(nodes[:, 2]))
-    fixed_dof_count = 0
-    fixed_dofs_list: List[int] = []
+
+    # Boundary tractions default to free on top. Roller side supports are a
+    # one-dimensional-strain far-field approximation, NOT automatically the
+    # right Angren in-situ stress boundary condition; perform a BC sensitivity
+    # study and supply lateral tractions where justified by measurements.
+    boundary_mode = str(boundary_mode).strip().lower()
+    if boundary_mode not in ('roller', 'base_fixed'):
+        raise ValueError('boundary_mode must be roller or base_fixed.')
+    lower = nodes.min(axis=0)
+    upper = nodes.max(axis=0)
+    span = upper - lower
+    tolerances = np.maximum(1e-10 * np.maximum(span, 1.),
+                            100 * np.finfo(float).eps * np.maximum(abs(upper), 1.))
+    fixed_dofs_set = set()
     for i, node in enumerate(nodes):
-        if abs(float(node[2]) - z_min) < 1e-10:
-            for dof in range(3):  # X, Y, Z
-                fixed_dof_count += 1
-                fixed_dofs_list.append(i*3 + dof)
+        if abs(node[2] - lower[2]) <= tolerances[2]:
+            fixed_dofs_set.add(3*i+2)           # bottom: vertical roller
+            if boundary_mode == 'base_fixed':
+                fixed_dofs_set.update((3*i, 3*i+1))
+        if boundary_mode == 'roller':
+            if abs(node[0]-lower[0]) <= tolerances[0] or abs(node[0]-upper[0]) <= tolerances[0]:
+                fixed_dofs_set.add(3*i)         # side x-normal: ux = 0
+            if abs(node[1]-lower[1]) <= tolerances[1] or abs(node[1]-upper[1]) <= tolerances[1]:
+                fixed_dofs_set.add(3*i+1)       # side y-normal: uy = 0
+    fixed_dofs_list = sorted(fixed_dofs_set)
+    fixed_dof_count = len(fixed_dofs_list)
     K, F = _apply_dirichlet_zero(K, F, fixed_dofs_list)
     # FIX v9.11.19 #3: BoundaryConditionValidator ni chaqiramiz (agar mavjud bo'lsa)
     _bcv = globals().get("BoundaryConditionValidator")
@@ -9938,69 +9881,52 @@ def solve_fem_3d_linear_elastic_real(mesh: FEMMesh3D, young_modulus: float, pois
         except Exception:
             __import__("logging").getLogger("ucg_platform").debug("Suppressed optional-operation exception", exc_info=True)  # FIX v9.11.36: traceable fallback
 
-    # FIX 29: Von Mises Stress (real formula)
-    # BUG-N03 FIX: Fazoviy o'q moslashuvi va FEM usulini to'g'rilash.
-    #
-    # build_hexahedral_mesh tugunlarni [[x,y,z] for z in zs for y in ys for x in xs]
-    # tartibida yaratadi, ya'ni tekis massivda z eng tashqi (eng sekin o'zgaruvchi)
-    # indeks. Demak, tugun ketma-ketligi: n = z*nx*ny + y*nx + x.
-    # reshape((nx, ny, nz)) NOTO'G'RI — u axis=0 ni x o'lchami deb hisoblaydi,
-    # ammo haqiqiy ma'lumotda axis=0 z o'zgarishiga mos keladi.
-    # To'g'ri shakl: reshape((nz, ny, nx)) — keyin axis=0 → z, axis=1 → y, axis=2 → x.
-    #
-    # Bendagi yondashuv: chekli-farq (np.gradient) yordamida deformatsiyani
-    # tugunlarda hisoblaymiz. To'g'ri grid spacing (dx, dy, dz) ni ishlatamiz.
-    # Ideal holda, har bir 8-tugunli olti burchakli element uchun 6×24 B-matrisa
-    # Gauss nuqtalarida hisoblanishi kerak (σ = D·B·u_e). Bu yerda biz deformatsiyani
-    # tugunlarda chekli-farq bilan hisoblaymiz — bu FEM natijalarining tezkor
-    # post-processor sifatida ishlatiladi va panjara tekis va bir hil bo'lganda
-    # to'g'ri natija beradi.
-    # FIX #33 (v9.11.16): Von Mises stress hisoblash — chekli-farq (np.gradient)
-    # post-processing usuli sifatida qoladi, lekin endi faqat to'g'ri grid spacing
-    # bilan ishlaydi va chegaralarda (boundary) noaniqliklar hujjatlashtirilgan.
-    #
-    # ESLATMA (PhD uchun): to'g'ri FEM post-processing — har bir Gauss nuqtasida
-    # σ = D · B · u_e hisoblash va keyin tugunlarga extrapolatsiya qilish (Zienkiewicz
-    # & Zhu, 1992). Bu yerda tezkor post-processor ishlatilmoqda — u uniform mesh
-    # uchun to'g'ri natija beradi, lekin distorted meshlarda chegaralarda xato katta.
-    # Production solverda element stress recovery (smoothed stress) qo'shilishi kerak.
-    nx, ny, nz = mesh.shape[0], mesh.shape[1], mesh.shape[2]
-    lx, ly, lz = mesh.lengths[0], mesh.lengths[1], mesh.lengths[2]
-    dx = lx / max(nx - 1, 1)
-    dy = ly / max(ny - 1, 1)
-    dz = lz / max(nz - 1, 1)
-    # To'g'ri reshape: (nz, ny, nx) — z eng tashqi indeks
-    ux_grid = ux.reshape((nz, ny, nx))
-    uy_grid = uy.reshape((nz, ny, nx))
-    uz_grid = uz.reshape((nz, ny, nx))
-    # Deformatsiya komponentlari — to'g'ri o'qlar bilan:
-    #   axis=0 → z, axis=1 → y, axis=2 → x
-    epsilon_xx = np.gradient(ux_grid, dx, axis=2)        # d(ux)/dx
-    epsilon_yy = np.gradient(uy_grid, dy, axis=1)        # d(uy)/dy
-    epsilon_zz = np.gradient(uz_grid, dz, axis=0)        # d(uz)/dz
-    epsilon_xy = 0.5 * (np.gradient(ux_grid, dy, axis=1) +
-                        np.gradient(uy_grid, dx, axis=2))
-    epsilon_yz = 0.5 * (np.gradient(uy_grid, dz, axis=0) +
-                        np.gradient(uz_grid, dy, axis=1))
-    epsilon_xz = 0.5 * (np.gradient(ux_grid, dz, axis=0) +
-                        np.gradient(uz_grid, dx, axis=2))
-    
-    lam = young_modulus * poisson_ratio / ((1.0 + poisson_ratio) * (1.0 - 2.0 * poisson_ratio))
-    mu = young_modulus / (2.0 * (1.0 + poisson_ratio))
-    
-    sigma_xx = lam * (epsilon_xx + epsilon_yy + epsilon_zz) + 2 * mu * epsilon_xx
-    sigma_yy = lam * (epsilon_xx + epsilon_yy + epsilon_zz) + 2 * mu * epsilon_yy
-    sigma_zz = lam * (epsilon_xx + epsilon_yy + epsilon_zz) + 2 * mu * epsilon_zz
-    sigma_xy = 2 * mu * epsilon_xy
-    sigma_yz = 2 * mu * epsilon_yz
-    sigma_xz = 2 * mu * epsilon_xz
-    
-    # Von Mises stress
-    vm_stress = np.sqrt(
-        0.5 * ((sigma_xx - sigma_yy)**2 + (sigma_yy - sigma_zz)**2 + (sigma_zz - sigma_xx)**2) +
-        3 * (sigma_xy**2 + sigma_yz**2 + sigma_xz**2)
-    )
-    
+
+    # True FE stress recovery: evaluate sigma=D*B(xi,eta,zeta)*u_e
+    # independently at all eight 2x2x2 Gauss integration points. Nodal arrays
+    # are *averages of adjacent element mean stresses* for old UI compatibility,
+    # not independently calculated nodal stresses or exact RS2 stress fields.
+    nx, ny, nz = mesh_shape
+    ux_grid, uy_grid, uz_grid = (a.reshape((nz, ny, nx)) for a in (ux, uy, uz))
+    lam = young_modulus * poisson_ratio / ((1+poisson_ratio)*(1-2*poisson_ratio))
+    mu = young_modulus / (2*(1+poisson_ratio))
+    D = np.zeros((6, 6), dtype=float)
+    D[:3, :3] = lam
+    D[0, 0] += 2*mu
+    D[1, 1] += 2*mu
+    D[2, 2] += 2*mu
+    D[3, 3] = D[4, 4] = D[5, 5] = mu
+    gp1 = (-1/np.sqrt(3.), 1/np.sqrt(3.))
+    gauss_points_local = np.asarray([(xi,eta,zeta) for xi in gp1 for eta in gp1 for zeta in gp1])
+    gauss_stress = np.zeros((num_elements, 8, 6))
+    gauss_von_mises = np.zeros((num_elements, 8))
+    element_stress = np.zeros((num_elements, 6))
+    for eidx, elem in enumerate(elements):
+        elem_disp = u[(elem[:, None]*3 + np.arange(3)).reshape(-1)]
+        coords = nodes[elem]
+        for gpidx, (xi, eta, zeta) in enumerate(gauss_points_local):
+            B, det_j = _ucg_hex8_gauss_B(coords, xi, eta, zeta)
+            stress = D @ (B @ elem_disp)  # Pa, Voigt xx yy zz yz xz xy
+            gauss_stress[eidx, gpidx] = stress
+            sxx, syy, szz, syz, sxz, sxy = stress
+            gauss_von_mises[eidx, gpidx] = np.sqrt(
+                .5*((sxx-syy)**2 + (syy-szz)**2 + (szz-sxx)**2) +
+                3*(sxy**2 + syz**2 + sxz**2))
+        element_stress[eidx] = gauss_stress[eidx].mean(axis=0)
+    # Display-only nodal recovery, not a conservative projection.
+    nodal_stress = np.zeros((num_nodes, 6))
+    nodal_counts = np.zeros(num_nodes, dtype=float)
+    for eidx, elem in enumerate(elements):
+        np.add.at(nodal_stress, elem, element_stress[eidx])
+        np.add.at(nodal_counts, elem, 1.0)
+    if np.any(nodal_counts == 0):
+        raise FEMMeshError('Mesh contains unreferenced nodes; cannot recover nodal stresses.')
+    nodal_stress /= nodal_counts[:,None]
+    nodal_stress = nodal_stress.reshape((nz, ny, nx, 6))
+    sigma_xx, sigma_yy, sigma_zz = (nodal_stress[...,i] for i in range(3))
+    sigma_yz, sigma_xz, sigma_xy = (nodal_stress[...,i] for i in (3,4,5))
+    vm_stress = np.sqrt(.5*((sigma_xx-sigma_yy)**2 + (sigma_yy-sigma_zz)**2 +
+                             (sigma_zz-sigma_xx)**2) + 3*(sigma_xy**2+sigma_yz**2+sigma_xz**2))
     # FIX 30: Mesh Quality Index (Jacobian determinant)
     mesh_quality = np.zeros(num_elements)
     for eidx, elem in enumerate(elements):
@@ -10054,6 +9980,11 @@ def solve_fem_3d_linear_elastic_real(mesh: FEMMesh3D, young_modulus: float, pois
         "sigma_xy": sigma_xy,
         "sigma_yz": sigma_yz,
         "sigma_xz": sigma_xz,
+        "gauss_stress": gauss_stress,  # (nelements, 8, 6), Pa; Voigt xx yy zz yz xz xy
+        "gauss_von_mises": gauss_von_mises,  # (nelements, 8), Pa
+        "element_stress": element_stress,  # (nelements, 6), Pa; Gauss arithmetic mean
+        "gauss_points_local": gauss_points_local,
+        "stress_recovery_note": "Nodal fields are adjacent-element averaged Gauss stresses; display only.",
         # Mesh quality metrics
         "mesh_quality": mesh_quality,
         "mesh_quality_mean": float(np.mean(mesh_quality)),
@@ -10061,6 +9992,9 @@ def solve_fem_3d_linear_elastic_real(mesh: FEMMesh3D, young_modulus: float, pois
         "mesh_quality_max": float(np.max(mesh_quality)),
         # BC audit trail (PhD reproducibility uchun)
         "fixed_dof_count": int(fixed_dof_count),
+        "boundary_mode": boundary_mode,
+        "boundary_assumptions": "Bottom uz=0 and x/y lateral normal rollers; no in-situ prestress or lateral traction."
+            if boundary_mode == 'roller' else "Legacy bottom fully fixed; perform BC sensitivity analysis.",
         "solver_method": solver_method,
         "num_nodes": int(num_nodes),
         "num_elements": int(num_elements),
@@ -14502,6 +14436,7 @@ def compute_fos_parallel(grid_x, grid_z, active_wells_tuple, well_x_tuple,
             if _rows_count > 10000:
                 gc.collect()
         except Exception as e:  # FIX v9.11.26
+            _ucg_record_suppressed_exception("line_14528", e)
             try:
                 logger.debug("[silent fail] %s", e)
             except Exception:
@@ -15238,6 +15173,7 @@ class RealSciBERTNovelty:
             self._AutoModel = AutoModel
             self.backend = "scibert_lazy"
         except ImportError as e:  # FIX v9.11.26
+            _ucg_record_suppressed_exception("line_15264", e)
             try:
                 logger.debug("[silent fail] %s", e)
             except Exception:
@@ -19477,40 +19413,23 @@ class MeshIndependenceStudy:
     """
     @staticmethod
     def compute_gci(fine: float, medium: float, coarse: float,
-                     r: float = 2.0, p: float = 2.0, Fs: float = 1.25) -> dict:
+                    r: float = 2.0, p: float = 2.0, Fs: float = 1.25) -> dict:
+        """Compatibility mapping to AcademicGCIValidator (single GCI solver).
+
+        The supplied p is not imposed: the order is inferred from three grids.
+        'mesh_independent' is a screening flag only, never a validation claim.
         """
-        Grid Convergence Index (GCI) hisoblash.
+        g = AcademicGCIValidator.compute_three_grid_gci(
+            fine, medium, coarse, r, r, fs=Fs)
+        return {'GCI_fine': g.gci_fine_pct, 'GCI_medium': g.gci_coarse_pct,
+                'richardson_extrapolation': g.extrapolated_value,
+                'convergence_type': g.status,
+                'R_ratio': g.asymptotic_ratio,
+                'mesh_independent': g.converged,
+                'status_note': g.status_note,
+                'observed_order_p': g.observed_order_p,
+                'argument_p_ignored': p}
 
-        Parameters:
-            fine, medium, coarse: natijalar 3 ta meshda
-            r: mesh refinement ratio
-            p: convergence order
-            Fs: safety factor (1.25 for 3+ grids, 3.0 for 2 grids)
-        """
-        epsilon_32 = abs(medium - coarse)
-        epsilon_21 = abs(fine - medium)
-        GCI_21 = Fs * epsilon_21 / abs(fine) / (r**p - 1) * 100 if abs(fine) > 1e-15 else 0
-        GCI_32 = Fs * epsilon_32 / abs(medium) / (r**p - 1) * 100 if abs(medium) > 1e-15 else 0
-
-        # Richardson extrapolation
-        f_ext = (r**p * fine - medium) / (r**p - 1) if abs(r**p - 1) > 1e-15 else fine
-
-        # Asymptotic range check
-        R = epsilon_21 / (epsilon_32 + 1e-15) if epsilon_32 > 1e-15 else 0
-        if 0 < R < 1:
-            convergence = 'Monotonic convergence'
-        elif R < 0:
-            convergence = 'Oscillatory convergence'
-        else:
-            convergence = 'Divergence'
-
-        return {
-            'GCI_fine': GCI_21, 'GCI_medium': GCI_32,
-            'richardson_extrapolation': float(f_ext),
-            'convergence_type': convergence,
-            'R_ratio': float(R),
-            'mesh_independent': GCI_21 < 5.0,  # < 5% is generally acceptable
-        }
 
 
 # ─── #36: FEMBenchmarkVerifier ─────────────────────────────────────────────
@@ -20823,6 +20742,7 @@ class DependencyRegistry:
             version = getattr(mod, '__version__', 'unknown')
             available = True
         except ImportError as e:  # FIX v9.11.26
+            _ucg_record_suppressed_exception("line_20849", e)
             try:
                 logger.debug("[silent fail] %s", e)
             except Exception:
@@ -29646,6 +29566,7 @@ class FTOAnalyzer:
                         # Patent expired — no FTO risk
                         continue
                 except Exception as e:  # FIX v9.11.26
+                    _ucg_record_suppressed_exception("line_29672", e)
                     try:
                         logger.debug("[silent fail] %s", e)
                     except Exception:
@@ -41590,6 +41511,7 @@ class QuantumOptimizer:
             import qiskit  # noqa: F401
             self._qiskit_available = True
         except ImportError as e:  # FIX v9.11.26
+            _ucg_record_suppressed_exception("line_41616", e)
             try:
                 logger.debug("[silent fail] %s", e)
             except Exception:
@@ -41599,6 +41521,7 @@ class QuantumOptimizer:
             import dwave  # noqa: F401
             self._dwave_available = True
         except ImportError as e:  # FIX v9.11.26
+            _ucg_record_suppressed_exception("line_41625", e)
             try:
                 logger.debug("[silent fail] %s", e)
             except Exception:
@@ -42758,6 +42681,7 @@ class GPUOptimizer:
                 from torch.amp import autocast, GradScaler  # PyTorch 2.0+
                 self._amp_available = True
             except ImportError as e:  # FIX v9.11.26
+                _ucg_record_suppressed_exception("line_42784", e)
                 try:
                     logger.debug("[silent fail] %s", e)
                 except Exception:
@@ -42767,6 +42691,7 @@ class GPUOptimizer:
                 from torch import compile as _compile  # noqa: F401
                 self._compile_available = True
             except ImportError as e:  # FIX v9.11.26
+                _ucg_record_suppressed_exception("line_42793", e)
                 try:
                     logger.debug("[silent fail] %s", e)
                 except Exception:
@@ -43527,6 +43452,7 @@ class CoverageReporter:
                     try:
                         coverage_pct = float(parts[-1].rstrip("%"))
                     except ValueError as e:  # FIX v9.11.26
+                        _ucg_record_suppressed_exception("line_43553", e)
                         try:
                             logger.debug("[silent fail] %s", e)
                         except Exception:
@@ -49631,6 +49557,7 @@ class CentralizedTimeoutConfig:
             try:
                 return float(env_val)
             except ValueError as e:  # FIX v9.11.26
+                _ucg_record_suppressed_exception("line_49657", e)
                 try:
                     logger.debug("[silent fail] %s", e)
                 except Exception:
@@ -52916,6 +52843,7 @@ class DistributedComputing:
             from mpi4py import MPI  # noqa: F401
             backends[DistributedComputing.MPI] = True
         except ImportError as e:  # FIX v9.11.26
+            _ucg_record_suppressed_exception("line_52942", e)
             try:
                 logger.debug("[silent fail] %s", e)
             except Exception:
@@ -52925,6 +52853,7 @@ class DistributedComputing:
             import dask  # noqa: F401
             backends[DistributedComputing.DASK] = True
         except ImportError as e:  # FIX v9.11.26
+            _ucg_record_suppressed_exception("line_52951", e)
             try:
                 logger.debug("[silent fail] %s", e)
             except Exception:
@@ -52934,6 +52863,7 @@ class DistributedComputing:
             import ray  # noqa: F401
             backends[DistributedComputing.RAY] = True
         except ImportError as e:  # FIX v9.11.26
+            _ucg_record_suppressed_exception("line_52960", e)
             try:
                 logger.debug("[silent fail] %s", e)
             except Exception:
@@ -52973,6 +52903,7 @@ class DistributedComputing:
                 futures = [_remote_func.remote(item) for item in items]
                 return ray.get(futures)
             except Exception as e:  # FIX v9.11.26
+                _ucg_record_suppressed_exception("line_52999", e)
                 try:
                     logger.debug("[silent fail] %s", e)
                 except Exception:
@@ -52985,6 +52916,7 @@ class DistributedComputing:
                 delayed_results = [delayed(func)(item) for item in items]
                 return list(compute(*delayed_results))
             except Exception as e:  # FIX v9.11.26
+                _ucg_record_suppressed_exception("line_53011", e)
                 try:
                     logger.debug("[silent fail] %s", e)
                 except Exception:
@@ -54926,6 +54858,7 @@ class PublicationQualityGraphs:
         try:
             plt.style.use(style)
         except OSError as e:  # FIX v9.11.26
+            _ucg_record_suppressed_exception("line_54952", e)
             try:
                 logger.debug("[silent fail] %s", e)
             except Exception:
@@ -59117,33 +59050,20 @@ class AcademicTHCMValidator:
 
     @staticmethod
     def richardson_gci(fine_val, medium_val, coarse_val, refine_ratio=2.0):
-        vals = _av_vector([fine_val, medium_val, coarse_val, refine_ratio], 'GCI inputs')
-        f, m, c, r = vals
-        if r <= 1:
-            raise ValueError('Refinement ratio must be > 1 and identical for both grid pairs.')
-        base = {'status': 'INDETERMINATE', 'converged': False,
-                'fine_value': float(f), 'medium_value': float(m), 'coarse_value': float(c),
-                'refine_ratio': float(r), 'data_provenance': 'USER_SUPPLIED_MESH_RESULTS_UNVERIFIED'}
-        e21, e32 = m-f, c-m
-        tol = 32*_av_np.finfo(float).eps*max(1.,abs(f),abs(m),abs(c))
-        if abs(e21)<=tol or abs(e32)<=tol or e21*e32<=0:
-            return dict(base, note='Equal or oscillatory differences: monotone GCI not established.')
-        q = abs(e32/e21)
-        order = float(_av_np.log(q)/_av_np.log(r))
-        if order <= 0 or not _av_np.isfinite(order):
-            return dict(base, note='Nonpositive observed order: no convergent Richardson estimate.')
-        abs_gci = float(1.25*abs(e21)/(q-1))
-        if abs(f)<=tol or abs(m)<=tol:
-            return dict(base, observed_order_p=order, gci_fine_absolute=abs_gci,
-                        note='Relative GCI undefined at zero fine/medium solution; absolute estimate only.')
-        g21, g32 = abs_gci/abs(f), 1.25*abs(e32/m)/(q-1)
-        ratio = float(g32/(q*g21))
-        passed = bool(g21<.05 and .95<=ratio<=1.05)
-        return dict(base, status='COMPUTED', observed_order_p=order,
-                    extrapolated_value=float(f+(f-m)/(q-1)), gci_fine_absolute=abs_gci,
-                    gci_fine_percent=float(100*g21), gci_medium_percent=float(100*g32),
-                    asymptotic_ratio=ratio, converged=passed,
-                    note='Converged means project screening only (<5%, ratio 0.95-1.05). Three actual systematically refined solves are required; this ratio alone is not proof of asymptotic convergence.')
+        """Historical API; delegate all mathematics to AcademicGCIValidator."""
+        g = AcademicGCIValidator.compute_three_grid_gci(
+            fine_val, medium_val, coarse_val, refine_ratio, refine_ratio)
+        return {'status': g.status, 'converged': g.converged,
+                'fine_value': g.fine_val, 'medium_value': g.medium_val,
+                'coarse_value': g.coarse_val, 'refine_ratio': refine_ratio,
+                'data_provenance': 'USER_SUPPLIED_MESH_RESULTS_UNVERIFIED',
+                'note': g.status_note, 'observed_order_p': g.observed_order_p,
+                'extrapolated_value': g.extrapolated_value,
+                'gci_fine_absolute': g.gci_fine_absolute,
+                'gci_fine_percent': g.gci_fine_pct,
+                'gci_medium_percent': g.gci_coarse_pct,
+                'asymptotic_ratio': g.asymptotic_ratio}
+
 
 
 def _av_bca_stat(data, statistic, n_bootstrap=2000, alpha=.05, seed=42):
@@ -59152,12 +59072,22 @@ def _av_bca_stat(data, statistic, n_bootstrap=2000, alpha=.05, seed=42):
         raise ValueError('n_bootstrap must be an integer in [100, 50000].')
     if not _av_np.isfinite(alpha) or not 0 < alpha < 1:
         raise ValueError('alpha must be between 0 and 1.')
-    if isinstance(seed, (bool, _av_np.bool_)) or not isinstance(seed, (int, _av_np.integer)) or seed < 0:
-        raise ValueError('seed must be a nonnegative integer.')
+    if not callable(statistic):
+        raise TypeError('statistic must be callable.')
+    if isinstance(seed, _av_np.random.Generator):
+        rng = seed
+        seed_label = None  # a preseeded generator's underlying state is not a single seed
+    else:
+        if isinstance(seed, (bool, _av_np.bool_)) or not isinstance(seed, (int, _av_np.integer)) or seed < 0:
+            raise ValueError('seed must be a nonnegative integer or NumPy Generator.')
+        seed_label = int(seed)
+        rng = _av_np.random.default_rng(seed_label)
     point = float(statistic(a))
+    if not _av_np.isfinite(point):
+        raise ValueError('Statistic returned a non-finite point estimate.')
     result = {'mean': point, 'point_estimate': point, 'ci_lower': None, 'ci_upper': None,
               'confidence_level': float(1-alpha), 'n_samples': len(a), 'n_bootstrap': int(n_bootstrap),
-              'seed': int(seed), 'method': 'BCa', 'status': 'NOT_COMPUTED',
+              'seed': seed_label, 'method': 'BCa', 'status': 'NOT_COMPUTED',
               'assumptions': 'IID/exchangeable representative samples; not a pointwise prediction band.'}
     # Preserve the existing application's minimum-pairs policy, not a statistical law.
     if len(a) < 30:
@@ -59169,7 +59099,7 @@ def _av_bca_stat(data, statistic, n_bootstrap=2000, alpha=.05, seed=42):
         _av_warnings.simplefilter('always')
         b = _av_stats.bootstrap((a,), statistic, vectorized=False, n_resamples=int(n_bootstrap),
                 batch=128, confidence_level=1-alpha, method='BCa',
-                **{rng_key: _av_np.random.default_rng(seed)})
+                **{rng_key: rng})
     lo, hi = float(b.confidence_interval.low), float(b.confidence_interval.high)
     result['warnings'] = [str(w.message) for w in caught]
     if not _av_np.isfinite([lo, hi]).all() or lo > hi:
@@ -59475,10 +59405,10 @@ def render_academic_validation_panel():
             st.json(_av_clean_json({'metrics':appendix['metrics'],'gci':appendix['gci'],
                                     'data_provenance':appendix['status']}))
             ucg54_render_bundle_ui(st, appendix)
-            st.download_button('Full Appendix A PDF — formulas, 2 tables, plots, References',
-                ucg54_academic_pdf_bytes(appendix),
+            ucg54_safe_pdf_download(st, appendix,
+                label='Full Appendix A PDF — formulas, 2 tables, plots, References',
                 file_name='UCG_Academic_Validation_Appendix_A_Full.pdf',
-                mime='application/pdf',key='ucg54_appendix_pdf')
+                key='ucg54_appendix_pdf')
             st.download_button('ISRM/ISO Evidence Report + Appendix A (.docx)',
                 generate_iso_compliance_report({'academic_validation_appendix':appendix}),
                 file_name='UCG_ISRM_ISO_Evidence_Appendix_A.docx',
@@ -59497,7 +59427,9 @@ def render_academic_validation_panel():
     _ucg54_legacy_bundle = ucg54_bundle_from_academic_result(result)
     ucg54_render_bundle_ui(st, _ucg54_legacy_bundle)
     st.download_button('Jadval CSV',result['table'].to_csv(index=False).encode(),file_name='ucg_profile_comparison.csv',mime='text/csv',key='av49_csv')
-    st.download_button('PDF hisobot — formulalar, jadvallar, References',academic_report_pdf_bytes(result),file_name='UCG_Validation_Report_Full_Appendix_A.pdf',mime='application/pdf',key='av49_pdf')
+    ucg54_safe_pdf_download(st, _ucg54_legacy_bundle,
+        label='PDF hisobot — formulalar, jadvallar, References',
+        file_name='UCG_Validation_Report_Full_Appendix_A.pdf',key='av49_pdf')
     st.download_button('LaTeX ilova',academic_report_latex(result).encode(),file_name='ucg_validation_appendix.tex',mime='text/plain',key='av49_tex')
     try:
         buf = _av_io.BytesIO()
@@ -60154,8 +60086,16 @@ def ucg54_academic_pdf_bytes(bundle):
     """Full Appendix A: equations, table 1, both plots, table 2 and references."""
     from io import BytesIO
     from xml.sax.saxutils import escape
-    from reportlab.pdfbase import pdfmetrics
-    from reportlab.pdfbase.ttfonts import TTFont
+    try:
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+    except ModuleNotFoundError as exc:
+        if exc.name == 'reportlab':
+            raise ModuleNotFoundError(
+                "PDF export requires reportlab>=4.0. Add 'reportlab>=4.0' to "
+                "your repository's requirements.txt and redeploy on Streamlit Cloud."
+            ) from exc
+        raise
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -60274,6 +60214,34 @@ def ucg54_academic_pdf_bytes(bundle):
         canvas.drawRightString(A4[0]-18*mm,11*mm,f'UCG Academic Appendix A  |  {doc_obj.page}')
     doc.build(story,onFirstPage=page_footer,onLaterPages=page_footer)
     return stream.getvalue()
+
+
+def ucg54_safe_pdf_download(st_module, bundle, *, label, file_name, key):
+    """Prevent missing optional PDF dependencies from crashing the entire UI."""
+    try:
+        import importlib.util
+        if importlib.util.find_spec('reportlab') is None:
+            st_module.warning("PDF eksport uchun reportlab yo'q. "
+                              "GitHub requirements.txt fayliga reportlab>=4.0 qo'shing va redeploy qiling. "
+                              "CSV, DOCX va LaTeX eksportlari ishlashda davom etadi.")
+            return False
+        payload = ucg54_academic_pdf_bytes(bundle)
+        if not payload.startswith(b'%PDF-'):
+            raise ValueError('PDF exporter did not generate a valid PDF header.')
+        st_module.download_button(label, payload, file_name=file_name,
+                                  mime='application/pdf', key=key)
+        return True
+    except (ImportError, ModuleNotFoundError) as exc:
+        _ucg_record_suppressed_exception('academic_pdf_missing_dependency', exc)
+        st_module.error(f'PDF dependency missing: {type(exc).__name__}. '
+                        'Ensure reportlab>=4.0, matplotlib and Pillow are in requirements.txt.')
+    except Exception as exc:
+        _ucg_record_suppressed_exception('academic_pdf_generation', exc)
+        logger.exception('[academic-PDF] Generation failed')
+        st_module.error(f'PDF generation failed ({type(exc).__name__}). '
+                        'Review Streamlit Cloud logs. Other report exports remain available.')
+    return False
+
 # END UCG ACADEMIC APPENDIX A UI + PDF v9.11.54
 
 
