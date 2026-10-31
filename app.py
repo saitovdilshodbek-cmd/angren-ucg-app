@@ -1,3 +1,4 @@
+# Audit patch v9.11.55 (2026-10-31): targeted numerical/evidence fixes; see AUDIT_UZ.md.
 # Academic report integration v9.11.54: full Appendix A equations, tables, plots and references.
 # v9.11.52: Windows SQLite test-handle cleanup fix (WinError 32).
 # v9.11.51: Streamlit input-state validation patch (academic report exports).
@@ -5,7 +6,7 @@
 # Research-stage only: unverified uploads, no independent RS2/field authentication.
 # v9.11.49: integrated Academic Validation / RS2 Monitoring mode.
 # Extended metrics, conditional IID BCa, actual-input GCI, CSV/Excel/PDF/LaTeX export.
-# Validation: syntax, 16 module tests, 36 built-in regression tests, and full-file Streamlit AppTest in development mode.
+# Historical v9.11.54 validation claim (not rerun for this patch); current checks: see AUDIT_UZ.md.
 # Optional integrations (PyTorch/SHAP/LIME/external solvers/production OIDC) remain unverified.
 # UCG Statistical Validation update: target metrics are not forced or calibrated.
 # EXPERT PATCH (2026-10-30): targeted integrity corrections; scientific validation remains outstanding.
@@ -203,7 +204,7 @@
 from __future__ import annotations
 
 # v9.11.45 — focused research-integrity patch (2026-10-29).
-UCG_APP_VERSION = "9.11.54"  # Single source for RUNTIME versioning
+UCG_APP_VERSION = "9.11.55"  # Single source for RUNTIME versioning
 # Project outputs are uncalibrated; analytical THERMAL check != Angren THCM V&V.
 
 # FIX v9.11.23: TYPE_CHECKING — globals().get() ning haddan tashqar ko'pligi
@@ -14148,6 +14149,8 @@ def pillar_capacity_demand_model(ucs_mpa, gsi, temperature_c, seam_height_m,
                       ('mi', mi)):
         if not np.isfinite(val) or val <= 0:
             raise ValueError(f'{name} must be a finite positive number')
+    if not np.isfinite([disturbance, extraction_ratio, confinement_ratio, thermal_beta, time_h]).all():
+        raise ValueError('Pillar parameters must be finite')
     if not (0 <= disturbance <= 1 and 0 <= extraction_ratio < 1
             and 0 <= confinement_ratio <= 2 and thermal_beta >= 0 and time_h >= 0):
         raise ValueError('Invalid D, extraction ratio, K0, thermal beta or time')
@@ -14244,6 +14247,8 @@ def propagate_uncertainty_analytical(ucs_mean: float, ucs_cov: float, gsi_mean: 
     UCS uncertainty is fractional; GSI and temperature uncertainties are
     absolute (points / Celsius). Covariances unknown and assumed zero.
     """
+    if not np.isfinite([ucs_mean,ucs_cov,gsi_mean,gsi_std,T_mean,T_std_c]).all():
+        raise ValueError('Uncertainty parameters must be finite')
     if ucs_mean <= 0 or ucs_cov < 0 or gsi_std < 0 or T_std_c < 0:
         raise ValueError('Invalid uncertainty inputs')
     params = dict(mi=mi, extraction_ratio=extraction_ratio,
@@ -14273,11 +14278,26 @@ def propagate_uncertainty_analytical(ucs_mean: float, ucs_cov: float, gsi_mean: 
 
 
 def subsidence_confidence_interval(sub_profile: np.ndarray, n_measurements: int,
-                                   confidence: float = 0.95) -> Tuple[np.ndarray, np.ndarray]:
-    std_est = np.std(sub_profile) * 0.15
-    t_crit = t_dist.ppf((1.0 + confidence) / 2.0, df=max(n_measurements - 1, 1))
-    margin = t_crit * std_est / np.sqrt(max(n_measurements, 1))
-    return sub_profile - margin, sub_profile + margin
+                                   confidence: float = 0.95, *, standard_error=None):
+    """Pointwise t interval only when independently estimated standard errors exist.
+
+    A spatial model curve is not repeated observations. Missing uncertainty is
+    represented by NaN, never an arbitrary percentage of spatial variation.
+    """
+    p = np.asarray(sub_profile, dtype=float)
+    if p.ndim != 1 or not p.size or not np.isfinite(p).all():
+        raise ValueError('Expected a finite one-dimensional profile')
+    if isinstance(n_measurements, (bool,np.bool_)) or not isinstance(n_measurements,(int,np.integer)) or n_measurements < 2:
+        raise ValueError('At least two independent measurements required')
+    if not np.isfinite(confidence) or not 0 < confidence < 1:
+        raise ValueError('Confidence must be between zero and one')
+    if standard_error is None:
+        return np.full_like(p,np.nan), np.full_like(p,np.nan)
+    se = np.broadcast_to(np.asarray(standard_error,dtype=float),p.shape)
+    if not np.isfinite(se).all() or np.any(se < 0):
+        raise ValueError('Standard errors must be finite and nonnegative')
+    margin = t_dist.ppf((1+confidence)/2,df=n_measurements-1)*se
+    return p-margin,p+margin
 
 
 # ── Parallel FOS ────────────────────────────────────────────────────────────
@@ -18126,7 +18146,7 @@ class UCGConfig:
 
     def __init__(self, coal: Optional[CoalType] = None, T0: float = 1200.0, P0: float = 10.0e6):
         self.coal = coal or COAL_DATABASE["Bituminous (Standard)"]
-        self.T0 = max(T0, 700.0)  # v9.11.0 FIX #2: enforce T >= 700K (AI model range)
+        self.T0 = float(T0)  # preserve supplied Kelvin temperature; no silent clipping
         self.P0 = P0  # Pa
         # Each run must own independent mutable kinetic settings. Monte Carlo
         # must never rewrite UCGConfig.REACTIONS global baseline Ea values.
@@ -18156,6 +18176,11 @@ class UCGEngine:
     """
 
     def __init__(self, config: UCGConfig, n_steps: int = 200, dt: float = 1.0):
+        if isinstance(n_steps,(bool,np.bool_)) or not isinstance(n_steps,(int,np.integer)) or n_steps < 1:
+            raise ValueError('n_steps must be a positive integer')
+        if not np.isfinite([dt,config.T0,config.P0]).all() or min(dt,config.T0,config.P0) <= 0:
+            raise ValueError('dt, initial Kelvin temperature and pressure must be finite and positive')
+        self.evidence_status = 'HEURISTIC_DEMO_NOT_MASS_ENERGY_VALIDATED'
         self.config = config
         self.n_steps = int(n_steps)
         self.dt = float(dt)
@@ -18191,8 +18216,9 @@ class UCGEngine:
         conv_rate = (rates["Oxidation"] + rates["Boudouard"] +
                      rates["Steam Gasif."] + rates["Devolatiliz."]) * 1.0e-3
         conv_rate *= (1.0 - self.char_conversion) ** 0.5  # shrinking-core
-        d_conv = conv_rate * self.dt
-        self.char_conversion = min(0.99, self.char_conversion + d_conv)  # v9.11.0 FIX #1: cap 0.99
+        d_conv = min(max(conv_rate * self.dt,0.0), max(0.0,0.99-self.char_conversion))
+        self.char_conversion += d_conv
+        self.m_C = self.m_C0*(1-self.char_conversion)  # v9.11.0 FIX #1: cap 0.99
 
         # Gas composition (mole-fraction-like, simplified)
         # v9.11.0 FIX #23: CO=0 and CH4=0 fixed - realistic UCG composition
@@ -18204,33 +18230,14 @@ class UCGEngine:
         gen_H2  = rates["Steam Gasif."] + rates["Devolatiliz."] + rates["WGS"] - 3 * rates["Methanation"]
         gen_CO2 = rates["Oxidation"] + rates["WGS"]
         gen_CH4 = rates["Methanation"] + 0.3 * rates["Devolatiliz."]
-        # v9.11.0 FIX: Ensure minimum gas production based on conversion
-        # Use absolute floor to ensure CO and CH4 are never zero
-        # Cap all gases to ensure realistic UCG composition (CO 25-35%, H2 25-35%, CO2 20-30%, CH4 5-10%)
-        min_gas_floor = max(0.01, self.char_conversion * 0.5)
-        gen_CO = max(gen_CO, min_gas_floor * 0.30)
-        gen_H2 = max(gen_H2, min_gas_floor * 0.25)
-        gen_CO2 = max(gen_CO2, min_gas_floor * 0.20)
-        gen_CH4 = max(gen_CH4, min_gas_floor * 0.05)
-        # Cap maximum values to prevent one gas dominating
-        max_gas_cap = min_gas_floor * 0.40
-        gen_CO = min(gen_CO, max_gas_cap)
-        gen_H2 = min(gen_H2, max_gas_cap)
-        gen_CO2 = min(gen_CO2, max_gas_cap)
-        gen_CH4 = min(gen_CH4, max_gas_cap * 0.3)  # CH4 lower cap
-        total_gen = max(1e-9, abs(gen_CO) + abs(gen_H2) + abs(gen_CO2) + abs(gen_CH4))
-        # Smooth update of gas composition (low-pass)
-        alpha = 0.05
-        new_CO  = max(0.0, gen_CO) / total_gen
-        new_H2  = max(0.0, gen_H2) / total_gen
-        new_CO2 = max(0.0, gen_CO2) / total_gen
-        new_CH4 = max(0.0, gen_CH4) / total_gen
-        s = new_CO + new_H2 + new_CO2 + new_CH4 + 1e-9
-        new_CO, new_H2, new_CO2, new_CH4 = new_CO/s, new_H2/s, new_CO2/s, new_CH4/s
-        self.gas["CO"]  = (1 - alpha) * self.gas["CO"]  + alpha * new_CO
-        self.gas["H2"]  = (1 - alpha) * self.gas["H2"]  + alpha * new_H2
-        self.gas["CO2"] = (1 - alpha) * self.gas["CO2"] + alpha * new_CO2
-        self.gas["CH4"] = (1 - alpha) * self.gas["CH4"] + alpha * new_CH4
+        # Positive production indicators only: NOT a species balance.
+        # No fabricated minimum gas production or prescribed composition caps.
+        production = np.maximum([gen_CO,gen_H2,gen_CO2,gen_CH4],0.0)
+        if production.sum() > 0:
+            fractions = production/production.sum()
+            self.gas = dict(zip(('CO','H2','CO2','CH4'),map(float,fractions)))
+        else:
+            self.gas = dict.fromkeys(('CO','H2','CO2','CH4'),0.0)
 
         # Heat balance
         dQ_exo = rates["Oxidation"] * abs(cfg.REACTIONS["Oxidation"].dH) + \
@@ -18246,16 +18253,11 @@ class UCGEngine:
         # Temperature update (simplified lumped-capacity)
         rho_cp = 1.5e6  # effective rho*cp (J/(m^3·K))
         dT = dQ_net / rho_cp * 1.0e3
-        # v9.11.0 FIX #1: Enforce T >= 700K (AI model applicability range 700-1800K)
-        # v9.11.0 FIX: Initial T should rise to gasification temp (1000-1200K) not stay at 700K
-        T_target = 1100.0  # gasification target temperature
-        # If conversion is happening, add exothermic heating toward T_target
-        if self.char_conversion > 0.01:
-            heating_to_target = 0.05 * (T_target - self.T)  # drive toward 1100K
-            dT += heating_to_target
-        T_amb = 700.0  # ambient (minimum)
-        cooling = 0.001 * max(0, self.T - T_target)  # only cool if above target
-        self.T = max(700.0, min(1800.0, self.T + dT - cooling * self.dt))  # v9.11.0: range [700, 1800]
+        # Heuristic lumped thermal increment, now scaled by elapsed seconds.
+        # No target-temperature forcing or silent temperature clipping.
+        self.T += dT*self.dt
+        if not np.isfinite(self.T) or self.T <= 0:
+            raise FloatingPointError('Heuristic thermal step invalid; reduce dt or use a physical reactor model')
 
         # Porosity evolution (char consumption creates void)
         d_phi = 0.6 * d_conv * (self.phi0 + 0.1)
@@ -18276,7 +18278,7 @@ class UCGEngine:
         if not hasattr(self, '_n_total_initial'):
             # Initialize on first call: P0 already in Pa, V0 = 1.0 m³ (unit volume)
             # n_total = P0 * V0 / (R * T0)  — ideal gas law
-            self._n_total_initial = max(self.P0 * 1.0 / (UCGConfig.R_GAS * self.T0), 1e-6)
+            self._n_total_initial = max(self.P0 * (1.0 + self.phi0) / (UCGConfig.R_GAS * self.T0), 1e-6)
         n_total = self._n_total_initial * (1.0 + self.char_conversion * 2.0)  # gas expands with conversion
         V = 1.0 * (1.0 + self.phi)
         # P in Pa, then convert to MPa
@@ -18347,6 +18349,13 @@ def run_monte_carlo_V2(T0: float, P0: float, coal_name: str,  # FIX v9.11.24: re
     Qaytaradi: (mc_summary, n_sim_actual)
       mc_summary[key] = {"mean": arr, "std": arr, "ci95_low": arr, "ci95_high": arr}
     """
+    if not np.isfinite([T0,P0,dt,uncertainty]).all() or min(T0,P0,dt) <= 0 or uncertainty < 0:
+        raise ValueError('Invalid Monte Carlo input')
+    for value in (n_sim,n_steps):
+        if isinstance(value,(bool,np.bool_)) or not isinstance(value,(int,np.integer)) or value < 2:
+            raise ValueError('Monte Carlo samples and steps must be integers >=2')
+    if n_sim*n_steps > 2_000_000:
+        raise ValueError('Monte Carlo storage budget exceeded: n_sim*n_steps > 2000000')
     # FIX #4: clamp sample count to prevent RAM blowup
     n_sim = clamp_mc_samples(int(n_sim), label="run_monte_carlo.n_sim")
     n_steps = int(n_steps)
@@ -18358,13 +18367,13 @@ def run_monte_carlo_V2(T0: float, P0: float, coal_name: str,  # FIX v9.11.24: re
 
     for i in range(n_sim):
         # Perturbed initial conditions
-        T0_i = T0 * (1.0 + rng.normal(0, uncertainty))
-        P0_i = P0 * (1.0 + rng.normal(0, uncertainty))
+        T0_i = T0 * rng.lognormal(-0.5*np.log1p(uncertainty**2), np.sqrt(np.log1p(uncertainty**2)))
+        P0_i = P0 * rng.lognormal(-0.5*np.log1p(uncertainty**2), np.sqrt(np.log1p(uncertainty**2)))
         coal = COAL_DATABASE[coal_name]
         config = UCGConfig(coal=coal, T0=T0_i, P0=P0_i * 1.0e6)
         # Perturb activation energies to reflect kinetic uncertainty
         for rxn in config.REACTIONS.values():
-            rxn.Ea = rxn.Ea * (1.0 + rng.normal(0, uncertainty))
+            rxn.Ea = rxn.Ea * rng.lognormal(-0.5*np.log1p(uncertainty**2), np.sqrt(np.log1p(uncertainty**2)))
         engine = UCGEngine(config=config, n_steps=n_steps, dt=dt)
         df_i = engine.run()
         for k in keys:
@@ -18383,6 +18392,9 @@ def run_monte_carlo_V2(T0: float, P0: float, coal_name: str,  # FIX v9.11.24: re
             "std": std,
             "ci95_low": ci_low,
             "ci95_high": ci_high,
+            "ensemble_q025": np.quantile(arr,.025,axis=0),
+            "ensemble_q975": np.quantile(arr,.975,axis=0),
+            "interval_note": "ci95 = normal-approximation Monte Carlo mean precision; ensemble_q = propagated input spread",
         }
     return mc_summary, n_sim
 
@@ -24096,10 +24108,10 @@ class UCGKineticModel:
                   'name': "C + O2 -> CO2 (Yonish reaksiyasi)",
                   'label': "Yonish (r3)", 'type': 'exothermic'},
         'co_ox': {'A': 1.0e7, 'Ea': 100000, 'dH': -283000, 'dS': -86.5,
-                  'name': "2CO + O2 -> 2CO2 (CO oksidlanishi)",
+                  'name': "CO + 0.5O2 -> CO2 (CO oksidlanishi)",
                   'label': "CO Oksidlanishi (r4)", 'type': 'exothermic'},
         'h2_ox': {'A': 1.2e7, 'Ea': 95000,  'dH': -241800, 'dS': -44.4,
-                  'name': "2H2 + O2 -> 2H2O (H2 oksidlanishi)",
+                  'name': "H2 + 0.5O2 -> H2O (H2 oksidlanishi)",
                   'label': "H2 Oksidlanishi (r5)", 'type': 'exothermic'},
     }
 
@@ -24118,12 +24130,17 @@ class UCGKineticModel:
     }
 
     def __init__(self, y0=None, t_span=(0, 60), t_eval_n=300):
-        self.y0 = y0 or [500.0, 50.0, 100.0, 5.0, 5.0, 5.0, 700.0]
-        # v9.11.0 FIX #2: Enforce T0 >= 700K (AI model applicability range)
-        if self.y0 and len(self.y0) >= 7:
-            self.y0[6] = max(float(self.y0[6]), 700.0)
-        self.t_span = t_span
-        self.t_eval_n = t_eval_n
+        state = np.asarray([500., 50., 100., 5., 5., 5., 700.] if y0 is None else y0, dtype=float)
+        if state.shape != (7,) or not np.isfinite(state).all() or np.any(state[:6] < 0) or state[6] <= 0 or state[:6].sum() <= 0:
+            raise ValueError("Expected six finite nonnegative inventories and positive Kelvin temperature")
+        times = np.asarray(t_span, dtype=float)
+        if times.shape != (2,) or not np.isfinite(times).all() or times[1] <= times[0]:
+            raise ValueError("t_span must contain two increasing finite times (minutes)")
+        if isinstance(t_eval_n, (bool, np.bool_)) or not isinstance(t_eval_n, (int, np.integer)) or not 2 <= t_eval_n <= 100000:
+            raise ValueError("t_eval_n must be an integer in [2, 100000]")
+        self.y0 = state.copy().tolist()  # never mutate caller's initial conditions
+        self.t_span = tuple(times)
+        self.t_eval_n = int(t_eval_n)
         self._sol = None
         self._rates = None
         self._Q = None
@@ -24146,7 +24163,7 @@ class UCGKineticModel:
         if state[6] <= 0.0:
             raise ValueError("UCG kinetic temperature must be positive (Kelvin)")
         C, O2, H2O, CO, CO2, H2 = np.maximum(state[:6], 0.0)
-        ordered = list(reactions.values())
+        ordered = [reactions[key] for key in ("gasi", "boud", "comb", "co_ox", "h2_ox")]
         if len(ordered) != 5:
             raise ValueError("UCG kinetic model requires five ordered reactions")
         T = float(state[6])
@@ -24181,7 +24198,7 @@ class UCGKineticModel:
         dCO2 = r3 - r2 + r4
         dH2  = r1 - r5
         heat_release = -sum(float(p['dH']) * float(r)
-                            for p, r in zip(reactions.values(), rates))
+                            for p, r in zip((reactions[key] for key in ('gasi','boud','comb','co_ox','h2_ox')), rates))
         inventory = C + O2 + H2O + CO + CO2 + H2
         if inventory <= 0:
             raise ValueError("Cannot compute heat balance for zero gas inventory")
@@ -24204,11 +24221,18 @@ class UCGKineticModel:
                 or int(self.t_eval_n) < 2):
             raise ValueError("Invalid time interval or number of evaluation points")
         t_eval = np.linspace(self.t_span[0], self.t_span[1], self.t_eval_n)
-        sol = solve_ivp(self.ucg_ode, self.t_span, y0,
+        # Integrate reaction extents with the adaptive solver. Trapezoids on
+        # sparse display points miss the short initial combustion transient.
+        def augmented_rhs(t, state):
+            return np.concatenate((self.ucg_ode(t,state[:7]),self._reaction_rates(state[:7])))
+        sol = solve_ivp(augmented_rhs, self.t_span, np.r_[y0,np.zeros(5)],
                         t_eval=t_eval, method='Radau', rtol=1e-8, atol=1e-10)
-        if (not sol.success or sol.y.shape != (7, len(t_eval))
+        if (not sol.success or sol.y.shape != (12, len(t_eval))
                 or not np.all(np.isfinite(sol.y))):
             raise RuntimeError(f"UCG ODE VALIDATION_FAILED: {sol.message}")
+        extents = sol.y[7:].copy()
+        sol.y = sol.y[:7].copy()
+        self._reaction_extents_mol = extents
         # Radau may overshoot depleted O2 by ~1e-10 mol. Only roundoff-sized
         # negative values are projected to zero; a physical excursion is fatal.
         numerical_tolerance = max(1e-8, 1e-11 * float(max(np.max(y0[:6]), 1.0)))
@@ -24237,8 +24261,8 @@ class UCGKineticModel:
         if elemental_error > elemental_tolerance:
             raise RuntimeError(f"UCG ODE VALIDATION_FAILED: elemental balance residual {elemental_error:.6g} mol")
         rates = np.column_stack([self._reaction_rates(sol.y[:, i]) for i in range(len(t))])
-        Q = [float(_np_trapz(rates[i] * (p['dH']/1000.0), t))
-             for i, p in enumerate(self.REACTIONS.values())]
+        Q = [float(extents[i,-1]*p['dH']/1000.0)
+             for i,p in enumerate(self.REACTIONS.values())]
         if not np.all(np.isfinite(rates)) or not np.all(np.isfinite(Q)):
             raise RuntimeError("UCG ODE VALIDATION_FAILED: non-finite rates or heat integral")
         self._sol = sol
@@ -24255,17 +24279,17 @@ class UCGKineticModel:
                 'CO2': rates[2, i] - rates[1, i] + rates[3, i],
                 'H2': rates[0, i] - rates[4, i],
             }
-            self._mass_auditor.audit_step(i, species, dspecies, 1.0)
+            self._mass_auditor.audit_step(i, species, dspecies, float(t[i]-t[max(0,i-1)]))
 
-        # v9.2.0: Energy balance logger (#27)
+        # Interval heat in joules, from integrated extents (not instantaneous J/min).
         self._energy_logger = EnergyBalanceLogger()
+        enthalpies = np.array([p['dH'] for p in self.REACTIONS.values()])
         for i in range(len(t)):
-            Q_exo_step = sum(-list(self.REACTIONS.values())[j]['dH'] * rates[j, i]
-                             for j in range(5) if list(self.REACTIONS.values())[j].get('type') == 'exothermic')
-            Q_endo_step = sum(list(self.REACTIONS.values())[j]['dH'] * rates[j, i]
-                              for j in range(5) if list(self.REACTIONS.values())[j].get('type') == 'endothermic')
-            dT = T[i] - T[max(0, i-1)] if i > 0 else 0.0
-            self._energy_logger.log_step(i, t[i], Q_exo_step, Q_endo_step, 0.0, T[i], dT)
+            delta_extent = extents[:,i]-extents[:,max(0,i-1)]
+            heat = delta_extent*enthalpies
+            exo = float(-heat[enthalpies<0].sum())
+            endo = float(heat[enthalpies>0].sum())
+            self._energy_logger.log_step(i,t[i],exo,endo,0.0,T[i],T[i]-T[max(0,i-1)])
 
         # v9.2.0: Hard physical constraints (#48)
         self._constraint_warnings = []
@@ -24315,40 +24339,32 @@ class UCGKineticModel:
         return T_range, gibbs
 
     def compute_syngas_quality(self):
+        """Batch inventory diagnostics; not steady-flow plant cold gas efficiency.
+
+        LHV_gas uses the full dry gas (O2+CO+CO2+H2); H2O is excluded.
+        CGE is net combustible inventory energy / initial solid carbon LHV.
+        Initial CO/H2 energy is subtracted. No floors, estimates or percentage caps.
+        External/sensible heat is not charged to the denominator: this is a proxy.
+        """
         sol, rates, Q = self.solution
-        t = sol.t
         C, O2, H2O, CO, CO2, H2, T = sol.y
-
-        H2_CO_ratio = H2 / np.where(CO < 1e-5, 1e-5, CO)
-        total_syngas_moles = CO + H2
-        # v9.11.0 FIX: LHV per mol of syngas mixture (kJ/mol)
-        LHV_gas = (CO * self.LHV_CO + H2 * self.LHV_H2) / np.where(total_syngas_moles < 1e-10, 1e-10, total_syngas_moles)
-        # v9.11.0 FIX #4,#5: Carbon Efficiency + CGE with proper energy balance
-        Carbon_Eff_raw = (CO[-1] + CO2[-1]) / max(C[0], 1e-10) * 100
-        Carbon_Eff = min(Carbon_Eff_raw, 100.0)  # physical cap
-        # v9.11.0: CGE = (chemical energy of syngas) / (chemical energy of coal fed)
-        # Use proper LHV values: CO=283 kJ/mol, H2=241.8 kJ/mol, Coal=32.8 kJ/mol (per mol C)
-        syngas_energy = (CO[-1] * self.LHV_CO) + (H2[-1] * self.LHV_H2)
-        coal_energy = C[0] * self.LHV_C
-        CGE_raw = syngas_energy / max(coal_energy, 1e-10) * 100
-        # v9.11.0: If syngas exists but CGE is unrealistically low, use carbon-based estimate
-        if (CO[-1] + H2[-1]) > 1e-6 and CGE_raw < 10.0:
-            # Fallback: CGE based on syngas yield relative to theoretical max
-            theoretical_max_syngas = C[0] * 2.0  # max 2 mol syngas per mol C
-            actual_syngas = CO[-1] + H2[-1]
-            CGE = min(actual_syngas / max(theoretical_max_syngas, 1e-10) * 60.0, 100.0)  # scale to 60% max
-        else:
-            CGE = min(max(CGE_raw, 0.0), 100.0)
-
-        return {
-            'H2_CO_ratio': H2_CO_ratio, 'LHV_gas': LHV_gas,
-            'CGE': CGE, 'Carbon_Eff': Carbon_Eff,
-            'CO': CO, 'H2': H2, 't': t,
-            'C0': C[0], 'CO_final': CO[-1], 'H2_final': H2[-1],
-            'CO2_final': CO2[-1], 'LHV_gas_final': LHV_gas[-1],
-            # v9.11.0: raw values for transparency
-            'CGE_raw': CGE_raw, 'Carbon_Eff_raw': Carbon_Eff_raw,
-        }
+        ratio = np.full_like(CO, np.nan, dtype=float)
+        np.divide(H2, CO, out=ratio, where=CO > 0)
+        dry = O2 + CO + CO2 + H2
+        energy = CO*self.LHV_CO + H2*self.LHV_H2
+        lhv = np.full_like(dry, np.nan, dtype=float)
+        np.divide(energy, dry, out=lhv, where=dry > 0)
+        c0 = float(C[0])
+        carbon_eff = float((c0-C[-1])/c0*100) if c0 > 0 else float('nan')
+        cge = float((energy[-1]-energy[0])/(c0*self.LHV_C)*100) if c0 > 0 else float('nan')
+        return {'H2_CO_ratio':ratio, 'LHV_gas':lhv, 'CGE':cge,
+                'Carbon_Eff':carbon_eff, 'CO':CO, 'H2':H2, 't':sol.t,
+                'C0':c0, 'CO_final':CO[-1], 'H2_final':H2[-1],
+                'CO2_final':CO2[-1], 'LHV_gas_final':lhv[-1],
+                'CGE_raw':cge, 'Carbon_Eff_raw':carbon_eff,
+                'status':'UNCALIBRATED_BATCH_INVENTORY_PROXY',
+                'CGE_definition':'Net CO+H2 inventory LHV / initial solid carbon LHV; not plant efficiency',
+                'LHV_basis':'kJ per mol of dry O2+CO+CO2+H2 mixture'}
 
     def compute_validation(self, seed=42, noise_std=5.0, *, observed_co=None,
                            observation_times=None, synthetic_demo=False):
@@ -24407,8 +24423,8 @@ class UCGKineticDashboard:
 
     @staticmethod
     @st.cache_data(ttl=300, show_spinner="Kinetik model hisoblanmoqda...")
-    def _run_ode_simulation(_y0, _t_span, _t_eval_n):
-        model = UCGKineticModel(y0=list(_y0), t_span=tuple(_t_span), t_eval_n=int(_t_eval_n))
+    def _run_ode_simulation(y0, t_span, t_eval_n):
+        model = UCGKineticModel(y0=list(y0), t_span=tuple(t_span), t_eval_n=int(t_eval_n))
         sol, rates, Q = model.solve()
         return sol, rates, Q, model
 
@@ -24479,7 +24495,7 @@ class UCGKineticDashboard:
                 st.markdown("#### 📚 Kinetik Parametrlar Manbalari")
                 ref_data = []
                 for key, p in UCGKineticModel.REACTIONS.items():
-                    ref_data.append({"Reaksiya": p['label'], "A (1/s)": f"{p['A']:.1e}", "Ea (kJ/mol)": f"{p['Ea']/1000:.1f}", "dH (kJ/mol)": f"{p['dH']/1000:.1f}", "Turi": p['type'], "Manba": UCGKineticModel.LITERATURE_REFS[key]})
+                    ref_data.append({"Reaksiya": p['label'], "A (rate-law units, minute basis; uncalibrated)": f"{p['A']:.1e}", "Ea (kJ/mol)": f"{p['Ea']/1000:.1f}", "dH (kJ/mol)": f"{p['dH']/1000:.1f}", "Turi": p['type'], "Manba": UCGKineticModel.LITERATURE_REFS[key]})
                 st.dataframe(pd.DataFrame(ref_data), width="stretch")
             with col2:
                 X_c = (C[0] - C) / C[0] * 100
@@ -24495,7 +24511,7 @@ class UCGKineticDashboard:
         # TAB 2: Issiqlik Balansi (Dinamik)
         with tab2:
             st.markdown("### ⚖️ Dinamik Issiqlik Balansi")
-            st.markdown("Issiqlik oqimlari ODE yechimidan **np.trapezoid** integratsiyasi bilan hisoblanadi. Har bir reaksiyaning issiqlik hissasi: **Q_i = integral(r_i * dH_i, dt)**.")
+            st.markdown("Reaksiya issiqliklari adaptiv ODE bilan birga integrallanadi; grafik nuqtalari soniga bog‘liq trapetsiya yaqinlashuvi ishlatilmaydi. Har bir reaksiyaning issiqlik hissasi: **Q_i = integral(r_i * dH_i, dt)**.")
             Q_endo_total = Q[0] + Q[1]
             Q_exo_total = abs(Q[2]) + abs(Q[3]) + abs(Q[4])
             col1, col2 = st.columns(2)
@@ -24504,14 +24520,11 @@ class UCGKineticDashboard:
                 fig_pie.update_layout(title="Umumiy Issiqlik Balansi (%)")
                 st.plotly_chart(fig_pie, width="stretch")
             with col2:
-                fig_waterfall = go.Figure(go.Waterfall(name="Heat Balance", orientation="v", measure=["absolute", "relative", "relative", "relative", "relative", "relative", "total"], x=["C Boshlang'ich", "Yonish", "CO Ox", "H2 Ox", "Gazifikatsiya", "Buduar", "Sof Energiya"], y=[50000, abs(Q[2]), abs(Q[3]), abs(Q[4]), -abs(Q[0]), -abs(Q[1]), 0], connector={"line": {"color": "rgb(63, 63, 63)"}}, increasing=dict(marker=dict(color="#2ca02c")), decreasing=dict(marker=dict(color="#d62728")), totals=dict(marker=dict(color="#1f77b4"))))
+                fig_waterfall = go.Figure(go.Waterfall(name="Heat Balance", orientation="v", measure=["absolute", "relative", "relative", "relative", "relative", "relative", "total"], x=["Boshlangich reaksiya issiqligi", "Yonish", "CO Ox", "H2 Ox", "Gazifikatsiya", "Buduar", "Sof Energiya"], y=[0, abs(Q[2]), abs(Q[3]), abs(Q[4]), -abs(Q[0]), -abs(Q[1]), 0], connector={"line": {"color": "rgb(63, 63, 63)"}}, increasing=dict(marker=dict(color="#2ca02c")), decreasing=dict(marker=dict(color="#d62728")), totals=dict(marker=dict(color="#1f77b4"))))
                 fig_waterfall.update_layout(title="Waterfall (Dinamik integrallangan kJ)")
                 st.plotly_chart(fig_waterfall, width="stretch")
             st.markdown("---")
-            st.subheader("🔗 Sankey Energiya Oqimi (Dinamik)")
-            fig_sankey = go.Figure(data=[go.Sankey(node=dict(pad=15, thickness=20, line=dict(color="black", width=0.5), label=["Umumiy Energiya", "Ekzotermik", "Endotermik", "Syngas Energiyasi", "Yo'qotishlar"], color=["gray", "red", "blue", "green", "orange"]), link=dict(source=[0, 0, 1, 1], target=[1, 2, 3, 4], value=[Q_exo_total, abs(Q_endo_total), Q_exo_total * 0.6, Q_exo_total * 0.4]))])
-            fig_sankey.update_layout(title_text="Sankey Energiya Oqimi (Dinamik)", font_size=12)
-            st.plotly_chart(fig_sankey, width="stretch")
+            st.caption('No prescribed 60/40 syngas/loss split. Only integrated reaction heats are reported; plant energy closure is NOT_EVALUATED.')
             st.markdown("#### 📋 Reaksiya Issiqlik Hissalari (kJ)")
             heat_data = []
             for i, (key, p) in enumerate(UCGKineticModel.REACTIONS.items()):
@@ -24521,7 +24534,7 @@ class UCGKineticDashboard:
         # TAB 3: Gibbs Erkin Energiyasi
         with tab3:
             st.markdown("### 🌡️ Termodinamik Muvozanat (Gibbs Erkin Energiyasi)")
-            st.markdown("Gibbs erkin energiyasi: **dG(T) = dH - T*dS**. dG < 0 bo'lgan harorat oralig'ida reaksiya spontan sodir bo'ladi.")
+            st.markdown("Standart holat yaqinlashuvi: **dG°(T) = dH° - T*dS°** (doimiy dH/dS). Haqiqiy yo‘nalish **dG = dG° + RT ln Q** ga bog‘liq; kinetika va gaz tarkibi ham zarur.")
             T_range, gibbs = model.compute_gibbs()
             fig_gibbs = go.Figure()
             gibbs_colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
@@ -24557,14 +24570,15 @@ class UCGKineticDashboard:
                 st.plotly_chart(fig_ratio, width="stretch")
             with col2:
                 st.subheader("Yakuniy Samaradorlik Ko'rsatkichlari")
-                st.metric("Cold Gas Efficiency (CGE)", f"{syngas['CGE']:.2f} %")
-                st.metric("Carbon Efficiency", f"{syngas['Carbon_Eff']:.2f} %")
-                st.metric("O'rtacha Syngas LHV", f"{syngas['LHV_gas_final']:.2f} kJ/mol")
+                st.metric("Net batch energy proxy (not plant CGE)", f"{syngas['CGE']:.2f} %")
+                st.metric("Solid carbon conversion", f"{syngas['Carbon_Eff']:.2f} %")
+                st.metric("Dry gas LHV (includes CO2/O2 dilution)", f"{syngas['LHV_gas_final']:.2f} kJ/mol")
                 st.markdown("---")
                 st.markdown("#### 📊 Formulalar")
-                st.latex(r"\\text{CGE} = \\frac{\\dot{n}_{CO} \\cdot LHV_{CO} + \\dot{n}_{H_2} \\cdot LHV_{H_2}}{\\dot{n}_{C,0} \\cdot LHV_C} \\times 100\\%")
-                st.latex(r"\\text{Carbon Eff} = \\frac{n_{CO} + n_{CO_2}}{n_{C,0}} \\times 100\\%")
-                st.latex(r"\\text{H}_2/\\text{CO} = \\frac{n_{H_2}}{n_{CO}}")
+                st.latex(r"E_{net}/E_{C,0}=\frac{[n_{CO}LHV_{CO}+n_{H_2}LHV_{H_2}]_t-[n_{CO}LHV_{CO}+n_{H_2}LHV_{H_2}]_0}{n_{C,0}LHV_C}\times100\%")
+                st.latex(r"X_C=\frac{n_{C,0}-n_C(t)}{n_{C,0}}\times100\%")
+                st.latex(r"H_2/CO=\frac{n_{H_2}}{n_{CO}}\quad(n_{CO}>0)")
+                st.caption('Net batch energy ratio excludes supplied heat; it is not measured plant CGE. Undefined zero-denominator ratios are shown as NaN.')
             st.markdown("---")
             st.subheader("🧪 Syngas Konsentratsiyasi Dinamikasi")
             fig_syngas = go.Figure()
@@ -26871,6 +26885,12 @@ def run_v7_app():
     st.sidebar.markdown(f"**Sana:** {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     st.sidebar.markdown("**Patent maqomi:** NOT_VERIFIED — rasmiy ariza dalili kiritilmagan")
 
+    st.warning('UCGEngine = HEURISTIC_DEMO: no closed mass/energy balance. ODE = separate uncalibrated batch model.')
+    signature = (coal_name,int(n_steps),float(dt),float(T0),float(P0))
+    if st.session_state.get('v55_engine_inputs') != signature:
+        for key in ('dashboard_df','dashboard_engine','dashboard_coal'):
+            st.session_state.pop(key,None)
+        st.session_state['v55_engine_inputs'] = signature
     # ─── Dashboard ─────────────────────────────────────────────────────────
     if menu == "Dashboard":
         # Kinetik Dashboard (ODE-based) + Asl Dashboard (UCGEngine-based)
@@ -26941,7 +26961,7 @@ def run_v7_app():
     # ─── Monte Carlo UQ ────────────────────────────────────────────────────
     elif menu == "Monte Carlo UQ":
         st.title("🎲 Monte Carlo Noaniqlikni Baholash")
-        st.markdown("Simulyatsiya parametrlariga noaniqlik kiritib, ishonchli oraliqlarni (95% CI) hisoblash.")
+        st.markdown("HEURISTIC_DEMO. 95% CI = Monte Carlo o‘rtacha qiymatining sonli aniqligi; fizik bashorat oralig‘i emas. Kirishlar musbat lognormal taqsimotdan olinadi.")
 
         mc_col1, mc_col2, mc_col3 = st.columns(3)
         with mc_col1:
@@ -31814,22 +31834,7 @@ def main():
             x=x_axis, y=sub_p * 100.0, fill='tozeroy',
             line=dict(color='magenta', width=3), name='Mean'
         ))
-        fig_sub.add_trace(go.Scatter(
-            x=x_axis, y=sub_lower_99, fill=None,
-            line=dict(dash='dash', color='rgba(255,165,0,0.7)'), name='99% CI lower'
-        ))
-        fig_sub.add_trace(go.Scatter(
-            x=x_axis, y=sub_upper_99, fill='tonexty',
-            line=dict(dash='dash', color='rgba(255,165,0,0.7)'), name='99% CI upper'
-        ))
-        fig_sub.add_trace(go.Scatter(
-            x=x_axis, y=sub_lower, fill=None,
-            line=dict(dash='dot', color='gray'), name='95% CI lower'
-        ))
-        fig_sub.add_trace(go.Scatter(
-            x=x_axis, y=sub_upper, fill='tonexty',
-            line=dict(dash='dot', color='gray'), name='95% CI upper'
-        ))
+        st.caption('Model profile only: measured standard errors were not supplied; 95%/99% confidence bands are NOT_EVALUATED.')
         if comparison_metrics is not None and comparison_benchmark is not None:
             mc_low_99, mc_high_99 = comparison_metrics["mc_ci99"]
             mc_low_95, mc_high_95 = comparison_metrics["mc_ci95"]
@@ -50276,712 +50281,29 @@ class ExpertReviewStreamlitRenderer:
 
     @staticmethod
     def render():
-        """Streamlit UI da ekspert tahlil qo'shimchasini ko'rsatish."""
-        C = ExpertReviewConstants
-
-        st.title("🔬 Tarixiy ekspert ko‘rsatkichlari — DEMO, validatsiya emas")
-        st.warning("SYNTHETIC_DEMO / UNVERIFIED: quyidagi TRL, MC, SHAP, RMSE, CGE, "
-                   "novelty va boshqa raqamlar eski ma'lumotlar katalogidan olingan. "
-                   "Ular joriy solver ishlashi yoki mustaqil Angren o‘lchovlaridan "
-                   "hisoblangan deb qaralmaydi. Patent/PhD dalili sifatida ishlatmang.")
-        st.markdown(
-            "Ushbu bo'lim 40 ta ekspert darajasidagi tekshiruv natijasida "
-            "aniqlangan barcha nomuvofiqlik va kamchiliklarni bartaraf etadi."
-        )
-
-        # ── Yagona Manba ──
-        st.header("T.1 Yagona Manba - Aktivatsiya Energiyalari")
-        st.markdown(
-            "Barcha bo'limlarda bir xil Ea qiymatlari ishlatiladi. "
-            "Yagona manba: UCGReaction.REACTIONS."
-        )
-        ea_df = pd.DataFrame([
-            {"Reaksiya": "Oxidation (C+O2 → CO2)", "Ea (kJ/mol)": C.EA_OXIDATION,
-             "Manba": "UCGReaction.REACTIONS"},
-            {"Reaksiya": "Boudouard (C+CO2 → 2CO)", "Ea (kJ/mol)": C.EA_BOUDOUARD,
-             "Manba": "UCGReaction.REACTIONS"},
-            {"Reaksiya": "Steam Gasif. (C+H2O → CO+H2)", "Ea (kJ/mol)": C.EA_STEAM_GASIF,
-             "Manba": "UCGReaction.REACTIONS"},
-            {"Reaksiya": "Methanation", "Ea (kJ/mol)": C.EA_METHANATION,
-             "Manba": "UCGReaction.REACTIONS"},
-            {"Reaksiya": "WGS", "Ea (kJ/mol)": C.EA_WGS,
-             "Manba": "UCGReaction.REACTIONS"},
-            {"Reaksiya": "CO oxidation", "Ea (kJ/mol)": C.EA_CO_OX,
-             "Manba": "ArrheniusParameterSources"},
-            {"Reaksiya": "H2 oxidation", "Ea (kJ/mol)": C.EA_H2_OX,
-             "Manba": "ArrheniusParameterSources"},
-        ])
-        st.dataframe(ea_df, width="stretch")
-
-        # ── TRL ──
-        st.header(f"T.2 TRL Darajasi (Yagona: {C.TRL_LEVEL}/{C.TRL_SCALE})")
-        st.metric("Tarixiy TRL taxmini (NOT_ASSESSED)", f"{C.TRL_LEVEL}/{C.TRL_SCALE}")
-        st.write(f"Tavsif: {C.TRL_NAME}")
-        st.info(
-            "TRL 6/9 — oldingi shablon qiymati, NOT_ASSESSED. "
-            "Angren bo‘yicha sertifikatlangan field demonstration dalili biriktirilmagan."
-        )
-
-        # ── Harorat ──
-        st.header("T.3 Harorat KPI va Grafik Izohi")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("T_final (KPI)", f"{C.T_FINAL_OPERATIONAL}K")
-        with col2:
-            st.metric("T_optimal (gasification)", f"{C.T_OPTIMAL_MIN}-{C.T_OPTIMAL_MAX}K")
-        with col3:
-            st.metric("T_model (Applicability)", f"{C.T_MODEL_MIN}-{C.T_MODEL_MAX}K")
-        st.info(C.T_NOTE)
-
-        # ── CGE va Carbon Eff ──
-        st.header("T.4 Samaradorlik Ko'rsatkichlari (Fizik Mos)")
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("CGE (%)", f"{C.CGE_TYPICAL}", f"95% CI: {C.CGE_CI_95}")
-            st.write(f"Fizik minimum (gaz mavjud bo'lsa): {C.CGE_PHYSICAL_MIN}%")
-        with col2:
-            st.metric("Carbon Efficiency (%)", f"{C.CARBON_EFF_TYPICAL}",
-                     f"95% CI: {C.CARBON_EFF_CI_95}")
-            st.write("100% faqat ideal holatda; amaliy: 78.4% (Angren UCG-1)")
-
-        # ── H2/CO ──
-        st.header("T.5 H2/CO Nisbati")
-        st.metric("H2/CO (to'g'ri hisoblangan)", f"{C.H2_CO_TIPIK}")
-        st.write(f"Fischer-Tropsch optimal: {C.H2_CO_FT_OPTIMAL}")
-        st.warning(
-            "Eski hisobotda 0.003 qiymati noto'g'ri (CO=0 bo'lganda 1e-5 ga bo'linish xatosi). "
-            f"To'g'ri hisob: H2/CO = max(n_H2, 1e-5) / max(n_CO, 1e-5) = {C.H2_CO_TIPIK}"
-        )
-
-        # ── Novelty Index ──
-        st.header("T.6 Novelty Index (Ikki Metodologiya)")
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Semantic Novelty (TF-IDF)", f"{C.NOVELTY_INDEX}%")
-        with col2:
-            st.metric("Patent Scoring Dashboard", f"{C.NOVELTY_INDEX_100}/100")
-        st.info(C.NOVELTY_NOTE)
-
-        # ── RMSE, MAE, R² ──
-        st.header("T.7 RMSE, MAE va R² (Parametr Izohlari Bilan)")
-        metrics_df = pd.DataFrame([
-            {"Metrika": "RMSE", "Qiymat": C.RMSE_VALUE, "Birligi": "mol",
-             "Parametr": C.RMSE_PARAMETER, "Formula": "Eq.14"},
-            {"Metrika": "MAE", "Qiymat": C.MAE_VALUE, "Birligi": "mol",
-             "Parametr": C.MAE_PARAMETER, "Formula": "Eq.15"},
-            {"Metrika": "R²", "Qiymat": C.R2_VALUE, "Birligi": "dimensionless",
-             "Parametr": C.R2_REGRESSION, "Formula": "Eq.16"},
-        ])
-        st.dataframe(metrics_df, width="stretch")
-
-        # ── Monte Carlo convergence ──
-        st.header("T.8 Monte Carlo Convergence va Distribution")
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("N samples", f"{C.MC_SAMPLES:,}")
-        with col2:
-            st.metric("MCSE", f"{C.MC_CONVERGENCE['MCSE']}")
-        with col3:
-            st.metric("Geweke z", f"{C.MC_CONVERGENCE['geweke_z']}")
-        with col4:
-            st.metric("R-hat", f"{C.MC_CONVERGENCE['r_hat']}")
-        if C.MC_CONVERGENCE['passed']:
-            st.warning("SYNTHETIC_DEMO: shablon konvergentsiya mezonlari, real hisobdan o‘tmagan.")
-        else:
-            st.error("❌ Monte Carlo convergence FAILED")
-
-        # Histogram simulyatsiyasi
-        st.subheader("Monte Carlo Distribution (CGE)")
-        rng = np.random.RandomState(42)
-        mc_samples = rng.normal(62.1, 2.8, 50000)
-        fig_mc, ax_mc = plt.subplots(figsize=(10, 5))
-        ax_mc.hist(mc_samples, bins=50, density=True, alpha=0.7,
-                  color='steelblue', edgecolor='white')
-        ax_mc.axvline(62.1, color='red', linestyle='--', linewidth=2, label='Mean = 62.1%')
-        ax_mc.axvline(56.7, color='orange', linestyle=':', linewidth=2, label='95% CI lower = 56.7%')
-        ax_mc.axvline(67.5, color='orange', linestyle=':', linewidth=2, label='95% CI upper = 67.5%')
-        ax_mc.set_xlabel("CGE (%)", fontsize=12)
-        ax_mc.set_ylabel("Density (1/%)", fontsize=12)
-        ax_mc.set_title("Monte Carlo Distribution of CGE (50,000 samples)", fontsize=13)
-        ax_mc.legend()
-        ax_mc.grid(True, alpha=0.3)
-        st.pyplot(fig_mc)
-        plt.close(fig_mc)
-
-        # ── Sobol S2 ──
-        st.header("T.9 Sobol S2 Interaction (Ikkinchi Tartibli)")
-        s2_df = pd.DataFrame([
-            {"Parametrlar juftligi": f"{k[0]} × {k[1]}", "S2": v}
-            for k, v in C.SOBOL_S2.items()
-        ])
-        st.dataframe(s2_df, width="stretch")
-        fig_s2, ax_s2 = plt.subplots(figsize=(10, 5))
-        pairs = [f"{k[0]}\n× {k[1]}" for k in C.SOBOL_S2.keys()]
-        values = list(C.SOBOL_S2.values())
-        colors = ['steelblue' if v < 0.05 else 'orange' if v < 0.07 else 'red'
-                  for v in values]
-        ax_s2.barh(pairs, values, color=colors)
-        ax_s2.set_xlabel("S2 (second-order Sobol index)", fontsize=12)
-        ax_s2.set_title("Sobol S2 Interaction Indices", fontsize=13)
-        ax_s2.axvline(0.05, color='black', linestyle='--', alpha=0.5, label='Threshold (0.05)')
-        ax_s2.legend()
-        ax_s2.grid(True, alpha=0.3)
-        st.pyplot(fig_s2)
-        plt.close(fig_s2)
-
-        # ── AI architecture ──
-        st.header("T.10 AI Model Architecture")
-        arch_df = pd.DataFrame([
-            {"Parametr": k, "Qiymat": str(v)}
-            for k, v in C.AI_ARCHITECTURE.items()
-        ])
-        st.dataframe(arch_df, width="stretch")
-
-        # ── Dataset ratios ──
-        st.header("T.11 Dataset Training/Validation/Test Nisbatlari")
-        split_df = pd.DataFrame([
-            {"To'plam": "Training", "Namunalar": C.DATASET_SPLIT['training'],
-             "Foiz": f"{C.DATASET_SPLIT['training_pct']:.0f}%"},
-            {"To'plam": "Validation", "Namunalar": C.DATASET_SPLIT['validation'],
-             "Foiz": f"{C.DATASET_SPLIT['validation_pct']:.0f}%"},
-            {"To'plam": "Test", "Namunalar": C.DATASET_SPLIT['test'],
-             "Foiz": f"{C.DATASET_SPLIT['test_pct']:.0f}%"},
-        ])
-        st.dataframe(split_df, width="stretch")
-
-        # Dataset split visualization
-        fig_split, ax_split = plt.subplots(figsize=(8, 6))
-        sizes = [C.DATASET_SPLIT['training'], C.DATASET_SPLIT['validation'],
-                 C.DATASET_SPLIT['test']]
-        labels = [f"Training\n({C.DATASET_SPLIT['training_pct']:.0f}%)",
-                  f"Validation\n({C.DATASET_SPLIT['validation_pct']:.0f}%)",
-                  f"Test\n({C.DATASET_SPLIT['test_pct']:.0f}%)"]
-        colors_pie = ['#4C72B0', '#55A868', '#C44E52']
-        ax_split.pie(sizes, labels=labels, colors=colors_pie, autopct='%1.0f',
-                    startangle=90, textprops={'fontsize': 11})
-        ax_split.set_title("Dataset Split (Total: 5,000 samples)", fontsize=13)
-        st.pyplot(fig_split)
-        plt.close(fig_split)
-
-        # ── SHAP tahlili ──
-        st.header("T.12 SHAP Tahlili (Beeswarm, Waterfall, Force Plot)")
-        st.markdown("**1. BEESWARM PLOT** (Global feature importance)")
-        features = ['Temperature', 'C_initial', 'Pressure', 'H2O_initial',
-                    'O2_initial', 'Porosity', 'Permeability', 'Coal type']
-        shap_means = [0.32, 0.21, 0.15, 0.12, 0.10, 0.07, 0.05, 0.03]
-        fig_beeswarm, ax_bs = plt.subplots(figsize=(10, 6))
-        rng_shap = np.random.RandomState(42)
-        for i, (feat, mean) in enumerate(zip(features, shap_means)):
-            samples = rng_shap.uniform(-mean, mean, 100)
-            colors_bs = ['#d62728' if s > 0 else '#1f77b4' for s in samples]
-            ax_bs.scatter(samples, np.full(100, i) + rng_shap.uniform(-0.15, 0.15, 100),
-                         c=colors_bs, alpha=0.5, s=15)
-        ax_bs.set_yticks(range(len(features)))
-        ax_bs.set_yticklabels(features)
-        ax_bs.set_xlabel("SHAP value (impact on CO output, mol)", fontsize=12)
-        ax_bs.set_title("SHAP Beeswarm Plot (Global Feature Importance)", fontsize=13)
-        ax_bs.axvline(0, color='black', linewidth=0.8)
-        ax_bs.grid(True, alpha=0.3)
-        st.pyplot(fig_beeswarm)
-        plt.close(fig_beeswarm)
-
-        st.markdown("**2. WATERFALL PLOT** (Local explanation, sample #42)")
-        waterfall_features = ['E[f(x)]', 'Temperature', 'C_initial', 'H2O',
-                              'Pressure', 'O2']
-        waterfall_values = [14.5, 2.8, 1.2, 0.6, -0.3, -0.1]
-        waterfall_cumulative = [14.5, 17.3, 18.5, 19.1, 18.8, 18.7]
-        fig_wf, ax_wf = plt.subplots(figsize=(10, 6))
-        colors_wf = ['gray', 'green', 'green', 'green', 'red', 'red']
-        for i, (f, v, c) in enumerate(zip(waterfall_features, waterfall_values, colors_wf)):
-            bottom = waterfall_cumulative[i-1] if i > 0 else 0
-            if v >= 0:
-                ax_wf.bar(i, v, bottom=bottom, color=c, alpha=0.7)
-            else:
-                ax_wf.bar(i, v, bottom=bottom+v, color=c, alpha=0.7)
-            ax_wf.text(i, waterfall_cumulative[i] + 0.1, f'{v:+.1f}',
-                      ha='center', fontsize=10, fontweight='bold')
-        ax_wf.set_xticks(range(len(waterfall_features)))
-        ax_wf.set_xticklabels(waterfall_features, rotation=15)
-        ax_wf.set_ylabel("CO output (mol)", fontsize=12)
-        ax_wf.set_title("SHAP Waterfall Plot (Sample #42: f(x) = 18.7 mol)", fontsize=13)
-        ax_wf.grid(True, alpha=0.3, axis='y')
-        st.pyplot(fig_wf)
-        plt.close(fig_wf)
-
-        st.markdown("**3. FORCE PLOT** (Sample #42)")
-        st.info(
-            "Base value: 14.5 mol (o'rtacha bashorat)\n\n"
-            "**Push right (musbat):** Temperature (+2.8), C_initial (+1.2), H2O (+0.6)\n\n"
-            "**Push left (manfiy):** Pressure (-0.3), O2 (-0.1)\n\n"
-            "**Output value:** 18.7 mol"
-        )
-
-        # ── Patent FTO ──
-        st.header("T.13 Patent FTO - Patent Raqamlari")
-        fto_df = pd.DataFrame(C.FTO_PATENTS)
-        st.dataframe(fto_df, width="stretch")
-        st.warning("FTO: NOT_EVALUATED. Raqamlar mahalliy namuna; patentning huquqiy holati va claim to‘qnashuvi tasdiqlanmagan.")
-
-        # ── Claim chart ──
-        st.header("T.14 Patent Claim Chart (Element-by-Element)")
-        claim_df = pd.DataFrame(C.PATENT_NOVELTY_COMPARISON)
-        st.dataframe(claim_df, width="stretch")
-
-        # ── Angren raw data ──
-        st.header("T.15 Angren UCG-1 — manbasi tasdiqlanmagan NAMUNA ma’lumotlar")
-        st.warning("UNVERIFIED SAMPLE DATA — xom dala fayli, uskunalar kalibrlashi va mustaqil test taqsimoti yo‘q. Ilmiy dalil sifatida ishlatmang.")
-        angren_df = pd.DataFrame(C.ANGREN_RAW_DATA)
-        st.dataframe(angren_df, width="stretch")
-        st.info(
-            "Namuna jadvali: bu sonlar haqiqiy dala validatsiyasi yoki mustaqil R² natijasi emas."
-        )
-
-        # ── Sensor data ──
-        st.header("T.16 Sensor CSV — kelib chiqishi tekshirilmagan NAMUNA")
-        st.warning("CSV manbasi mustaqil tekshirilmagan. Real-time sensor dalili sifatida ko‘rsatilmasin.")
-        sensor_df = pd.read_csv(io.StringIO(C.SENSOR_DATA_CSV))
-        st.dataframe(sensor_df, width="stretch")
-
-        # Sensor visualization
-        fig_sensor, axes = plt.subplots(2, 2, figsize=(12, 8))
-        axes[0, 0].plot(sensor_df['timestamp'].str[11:], sensor_df['T_cavity_K'],
-                       'b-o', linewidth=2, markersize=6)
-        axes[0, 0].set_xlabel("Vaqt", fontsize=11)
-        axes[0, 0].set_ylabel("T (K)", fontsize=11)
-        axes[0, 0].set_title("Cavity Temperature", fontsize=12)
-        axes[0, 0].grid(True, alpha=0.3)
-        axes[0, 1].plot(sensor_df['timestamp'].str[11:], sensor_df['P_cavity_MPa'],
-                       'r-o', linewidth=2, markersize=6)
-        axes[0, 1].set_xlabel("Vaqt", fontsize=11)
-        axes[0, 1].set_ylabel("P (MPa)", fontsize=11)
-        axes[0, 1].set_title("Cavity Pressure", fontsize=12)
-        axes[0, 1].grid(True, alpha=0.3)
-        axes[1, 0].plot(sensor_df['timestamp'].str[11:], sensor_df['CO_pct'],
-                       'g-o', label='CO', linewidth=2, markersize=6)
-        axes[1, 0].plot(sensor_df['timestamp'].str[11:], sensor_df['H2_pct'],
-                       'b-s', label='H2', linewidth=2, markersize=6)
-        axes[1, 0].set_xlabel("Vaqt", fontsize=11)
-        axes[1, 0].set_ylabel("Konsentratsiya (%)", fontsize=11)
-        axes[1, 0].set_title("Syngas Composition", fontsize=12)
-        axes[1, 0].legend()
-        axes[1, 0].grid(True, alpha=0.3)
-        axes[1, 1].plot(sensor_df['timestamp'].str[11:], sensor_df['flow_m3h'],
-                       'purple', marker='o', linewidth=2, markersize=6)
-        axes[1, 1].set_xlabel("Vaqt", fontsize=11)
-        axes[1, 1].set_ylabel("Oqim (m³/h)", fontsize=11)
-        axes[1, 1].set_title("Syngas Flow Rate", fontsize=12)
-        axes[1, 1].grid(True, alpha=0.3)
-        plt.tight_layout()
-        st.pyplot(fig_sensor)
-        plt.close(fig_sensor)
-
-        # ── Mesh independence ──
-        st.header("T.17 Mesh Independence Study")
-        mesh_df = pd.DataFrame({
-            'Mesh olchami': C.MESH_INDEPENDENCE['mesh_sizes'],
-            'RMSE (mol)': C.MESH_INDEPENDENCE['rmse_vs_reference'],
-        })
-        st.dataframe(mesh_df, width="stretch")
-        fig_mesh, ax_mesh = plt.subplots(figsize=(10, 5))
-        ax_mesh.plot(C.MESH_INDEPENDENCE['mesh_sizes'],
-                    C.MESH_INDEPENDENCE['rmse_vs_reference'],
-                    'b-o', linewidth=2, markersize=8)
-        ax_mesh.axhline(0.02, color='r', linestyle='--', alpha=0.5,
-                       label='Threshold (0.02)')
-        ax_mesh.set_xlabel("Mesh olchami", fontsize=12)
-        ax_mesh.set_ylabel("RMSE (mol)", fontsize=12)
-        ax_mesh.set_title("Mesh Independence Study", fontsize=13)
-        ax_mesh.set_xscale('log')
-        ax_mesh.set_yscale('log')
-        ax_mesh.legend()
-        ax_mesh.grid(True, alpha=0.3)
-        st.pyplot(fig_mesh)
-        plt.close(fig_mesh)
-        st.success(f"Converged at mesh = {C.MESH_INDEPENDENCE['converged_at']} (rel. error < 2%)")
-
-        # ── Time convergence ──
-        st.header("T.18 Time Convergence Study")
-        time_df = pd.DataFrame({
-            'dt (min)': C.TIME_CONVERGENCE['dt_values'],
-            'RMSE (mol)': C.TIME_CONVERGENCE['rmse_vs_dt_001'],
-        })
-        st.dataframe(time_df, width="stretch")
-        fig_time, ax_time = plt.subplots(figsize=(10, 5))
-        ax_time.plot(C.TIME_CONVERGENCE['dt_values'],
-                    C.TIME_CONVERGENCE['rmse_vs_dt_001'],
-                    'g-o', linewidth=2, markersize=8)
-        ax_time.axhline(0.005, color='r', linestyle='--', alpha=0.5,
-                       label='Threshold (0.005)')
-        ax_time.set_xlabel("dt (min)", fontsize=12)
-        ax_time.set_ylabel("RMSE (mol)", fontsize=12)
-        ax_time.set_title("Time Convergence Study", fontsize=13)
-        ax_time.set_xscale('log')
-        ax_time.set_yscale('log')
-        ax_time.legend()
-        ax_time.grid(True, alpha=0.3)
-        st.pyplot(fig_time)
-        plt.close(fig_time)
-        st.success(f"Converged at dt = {C.TIME_CONVERGENCE['converged_at']} min")
-
-        # ── Morris ──
-        st.header("T.19 Morris Sensitivity (Elementary Effects)")
-        morris_df = pd.DataFrame({
-            'Parametr': list(C.MORRIS_RESULTS['mu_star'].keys()),
-            'mu_star': list(C.MORRIS_RESULTS['mu_star'].values()),
-            'sigma': list(C.MORRIS_RESULTS['sigma'].values()),
-        })
-        st.dataframe(morris_df, width="stretch")
-        fig_morris, ax_m = plt.subplots(figsize=(10, 6))
-        params = list(C.MORRIS_RESULTS['mu_star'].keys())
-        mu_vals = list(C.MORRIS_RESULTS['mu_star'].values())
-        sigma_vals = list(C.MORRIS_RESULTS['sigma'].values())
-        ax_m.scatter(mu_vals, sigma_vals, s=200, c='steelblue',
-                    edgecolor='black', zorder=3)
-        for i, p in enumerate(params):
-            ax_m.annotate(p, (mu_vals[i], sigma_vals[i]),
-                         xytext=(8, 5), textcoords='offset points',
-                         fontsize=11)
-        ax_m.set_xlabel("mu* (mean absolute elementary effect)", fontsize=12)
-        ax_m.set_ylabel("sigma (std of elementary effects)", fontsize=12)
-        ax_m.set_title("Morris Sensitivity Analysis (mu* vs sigma)", fontsize=13)
-        ax_m.grid(True, alpha=0.3)
-        st.pyplot(fig_morris)
-        plt.close(fig_morris)
-
-        # ── Atom Conservation ──
-        st.header("T.20 Atom Conservation (C, H, O)")
-        t_arr = np.linspace(0, 60, 300)
-        c_atoms = 500 + 0.08 * np.sin(t_arr / 5) + np.random.RandomState(42).normal(0, 0.05, 300)
-        h_atoms = 200 + 0.05 * np.cos(t_arr / 7) + np.random.RandomState(42).normal(0, 0.04, 300)
-        o_atoms = 250 + 0.07 * np.sin(t_arr / 6 + 1) + np.random.RandomState(42).normal(0, 0.06, 300)
-        fig_atom, ax_atom = plt.subplots(figsize=(11, 6))
-        ax_atom.plot(t_arr, c_atoms, 'b-', label='C atoms (initial = 500)', linewidth=1.5)
-        ax_atom.plot(t_arr, h_atoms, 'g-', label='H atoms (initial = 200)', linewidth=1.5)
-        ax_atom.plot(t_arr, o_atoms, 'r-', label='O atoms (initial = 250)', linewidth=1.5)
-        ax_atom.axhline(500, color='b', linestyle='--', alpha=0.3)
-        ax_atom.axhline(200, color='g', linestyle='--', alpha=0.3)
-        ax_atom.axhline(250, color='r', linestyle='--', alpha=0.3)
-        ax_atom.set_xlabel("Vaqt (min)", fontsize=12)
-        ax_atom.set_ylabel("Atom soni (mol)", fontsize=12)
-        ax_atom.set_title("Atom Conservation Over Time (C, H, O)", fontsize=13)
-        ax_atom.legend()
-        ax_atom.grid(True, alpha=0.3)
-        st.pyplot(fig_atom)
-        plt.close(fig_atom)
-        st.success("Atom conservation PASSED - barcha elementlar uchun og'ish < 0.1%")
-
-        # ── Energy Conservation ──
-        st.header("T.21 Energy Conservation")
-        fig_energy, axes_e = plt.subplots(1, 2, figsize=(14, 5))
-        q_exo = 308 * np.ones_like(t_arr) + 20 * np.sin(t_arr / 4)
-        q_endo = -121 * np.ones_like(t_arr) + 10 * np.cos(t_arr / 5)
-        q_loss = -0.7 * np.ones_like(t_arr)
-        delta_e = q_exo + q_endo + q_loss
-        axes_e[0].plot(t_arr, q_exo, 'g-', label='Q_exo (oxidation)', linewidth=2)
-        axes_e[0].plot(t_arr, q_endo, 'r-', label='Q_endo (gasification)', linewidth=2)
-        axes_e[0].plot(t_arr, q_loss, 'k-', label='Q_loss', linewidth=2)
-        axes_e[0].plot(t_arr, delta_e, 'b--', label='dE_internal', linewidth=2)
-        axes_e[0].set_xlabel("Vaqt (min)", fontsize=11)
-        axes_e[0].set_ylabel("Quvvat (kJ/min)", fontsize=11)
-        axes_e[0].set_title("Energy Balance Components", fontsize=12)
-        axes_e[0].legend()
-        axes_e[0].grid(True, alpha=0.3)
-        abs_q = [18452, 7234, 42]
-        labels_pie = ['Q_exo\n(99.8%)', 'Q_endo\n(-39.2%)', 'Q_loss\n(-0.2%)']
-        colors_pie_e = ['#4C72B0', '#C44E52', '#55A868']
-        axes_e[1].pie(abs_q, labels=labels_pie, colors=colors_pie_e,
-                     autopct='%1.1f%%', startangle=90,
-                     textprops={'fontsize': 10})
-        axes_e[1].set_title("Energy Distribution (absolute values)", fontsize=12)
-        plt.tight_layout()
-        st.pyplot(fig_energy)
-        plt.close(fig_energy)
-        st.success("Energy conservation PASSED - residual < 0.5%")
-
-        # ── Calibration ──
-        st.header("T.22 Model Kalibrlash (Bayesian MCMC)")
-        cal_df = pd.DataFrame([
-            {"Bosqich": "Method", "Tavsif": C.CALIBRATION['method']},
-            {"Bosqich": "Iterations", "Tavsif": str(C.CALIBRATION['n_iterations'])},
-            {"Bosqich": "Burn-in", "Tavsif": str(C.CALIBRATION['burn_in'])},
-            {"Bosqich": "Prior", "Tavsif": C.CALIBRATION['prior_distribution']},
-            {"Bosqich": "Posterior convergence", "Tavsif": C.CALIBRATION['posterior_convergence']},
-            {"Bosqich": "Reference data", "Tavsif": C.CALIBRATION['reference_data']},
-        ])
-        st.dataframe(cal_df, width="stretch")
-
-        # ── Code verification ──
-        st.header("T.23 Code Verification (Manufactured Solution)")
-        ver_df = pd.DataFrame([
-            {"Bosqich": "Method", "Tavsif": C.CODE_VERIFICATION['method']},
-            {"Bosqich": "Manufactured solution", "Tavsif": C.CODE_VERIFICATION['manufactured_solution']},
-            {"Bosqich": "Observed order", "Tavsif": str(C.CODE_VERIFICATION['observed_order'])},
-            {"Bosqich": "Theoretical order", "Tavsif": str(C.CODE_VERIFICATION['theoretical_order'])},
-            {"Bosqich": "Result", "Tavsif": "PASSED" if C.CODE_VERIFICATION['passed'] else "FAILED"},
-        ])
-        st.dataframe(ver_df, width="stretch")
-        st.success(
-            f"Code verification PASSED - observed order = "
-            f"{C.CODE_VERIFICATION['observed_order']} approx theoretical "
-            f"{C.CODE_VERIFICATION['theoretical_order']}"
-        )
-
-        # ── Yakuniy xulosa ──
-        st.header("T.24 Yakuniy Ilmiy Xulosa (Kengaytirilgan)")
-        st.subheader("Ilmiy Yangilik")
-        st.markdown(
-            "7 ta asosiy element: atom-balanslangan kinetik model, field-calibrated Ea, "
-            "P-1 radiation, keng qamrovli UQ, to'liq XAI suite, MMS verification, FTO tahlil."
-        )
-
-        st.subheader("Amaliy Afzalliklari")
-        st.markdown(
-            "Real-time monitoring (8 sensor), operatsion optimizatsiya (T=1000-1200K), "
-            "prognoz qobiliyati (95% CI bilan), texnik xavfsizlik, patent himoyasi, "
-            "sanoat standartlariga muvofiqlik."
-        )
-
-        st.subheader("Cheklovlari")
-        st.markdown(
-            "1D lumped parameter, 700-1800K oralig'i, 0.5-30 MPa, 4 ko'mir turi, "
-            "Darcy flow, tar/ash kimyosi yo'q, Langmuir-Hinshelwood, single-well."
-        )
-
-        st.subheader("Kelajakdagi Tadqiqot Yo'nalishlari")
-        st.markdown(
-            "3D CFD, multi-physics coupling, ML enhancement, multi-well, "
-            "CO2 sequestration, H2 production, real-time digital twin, "
-            "tar/ash kimyosi, xavfsizlik baholash, TRL 7-9 ga ko'tarish."
-        )
-
-        st.subheader("Sanoatga Joriy Etish Istiqbollari")
-        st.markdown(
-            "O'zbekiston konlari (Angren, Shargun, Baysun), Markaziy Osiyo bozori, "
-            "energetika sektori (200-500 MW), kimyo sanoati (FT, metanol), "
-            "vodorod iqtisodiyoti, CCS integratsiyasi, investorlar uchun jozibadorlik, "
-            "davlat siyosati, xalqaro hamkorlik, 2025-2030 deployment rejasi."
-        )
-
-        st.success(
-            "EKSPERT TAHLILI YAKUNLANDI (v9.11.1): 40 ta muammoning barchasi bartaraf etildi. "
-            "Model ilmiy jihatdan yangi, amaliy jihatdan foydali, sanoatga joriy etishga tayyor."
-        )
-
-        # ═══════════════════════════════════════════════════════════════
-        # v9.11.2: YANGI BO'LIMLAR (30 ta qo'shimcha muammo tuzatishlari)
-        # ═══════════════════════════════════════════════════════════════
-
-        # T.25: IPC/CPC
-        st.header("T.25 IPC/CPC Patent Klassifikatsiyasi (v9.11.2)")
-        ipc_df = pd.DataFrame(C.IPC_CPC_CLASSIFICATION)
-        st.dataframe(ipc_df, width="stretch")
-        st.info("Tavsiya etilgan: C10J 3/46 (UCG). CPC Y02E 50/00 - climate mitigation.")
-
-        # T.26: Patent Family
-        st.header("T.26 Patent Family Tahlili (v9.11.2)")
-        fam_df = pd.DataFrame(C.PATENT_FAMILY)
-        st.dataframe(fam_df, width="stretch")
-        st.info("Bizning family: UZ FAP 2024 00345 (2024-08-20). PCT 2025-08-20 gacha rejalashtirilgan.")
-
-        # T.27: Solver benchmark
-        st.header("T.27 Solver Benchmark - Radau vs BDF vs LSODA vs RK45 (v9.11.2)")
-        solver_df = pd.DataFrame(C.SOLVER_BENCHMARK)
-        solver_df["order"] = solver_df["order"].astype(str)
-        st.dataframe(solver_df, width="stretch")
-        fig_solver, ax_solver = plt.subplots(figsize=(10, 5))
-        solvers = [s['solver'].split(' (')[0] for s in C.SOLVER_BENCHMARK]
-        cpu_times = [s['cpu_time_s'] for s in C.SOLVER_BENCHMARK]
-        rmses = [s['rmse_vs_analytical'] for s in C.SOLVER_BENCHMARK]
-        colors_slv = ['green' if s['selected'] else 'gray' for s in C.SOLVER_BENCHMARK]
-        x_pos = np.arange(len(solvers))
-        ax_solver.bar(x_pos - 0.2, cpu_times, 0.4, label='CPU time (s)', color=colors_slv, alpha=0.7)
-        ax_solver.bar(x_pos + 0.2, np.log10(rmses) + 5, 0.4, label='log10(RMSE) + 5', color='steelblue', alpha=0.7)
-        ax_solver.set_xticks(x_pos)
-        ax_solver.set_xticklabels(solvers, rotation=15)
-        ax_solver.set_ylabel("Qiymat (CPU time yoki log RMSE)")
-        ax_solver.set_title("Solver Benchmark: CPU Time vs RMSE (Radau selected)")
-        ax_solver.legend()
-        ax_solver.grid(True, alpha=0.3)
-        st.pyplot(fig_solver)
-        plt.close(fig_solver)
-        st.success("Radau tanlandi: 2.34s CPU, 1.2e-4 RMSE. RK45 T>1200K da muvaffaqiyatsiz.")
-
-        # T.28: Grid convergence
-        st.header("T.28 Grid Convergence (Fazoviy + Vaqt, v9.11.2)")
-        grid_df = pd.DataFrame({
-            'Mesh (fazoviy)': C.GRID_CONVERGENCE['space_mesh'],
-            'Vaqt qadamlari': C.GRID_CONVERGENCE['time_steps'],
-            'RMSE (mol)': C.GRID_CONVERGENCE['rmse_combined'],
-        })
-        st.dataframe(grid_df, width="stretch")
-        st.info(f"Richardson extrapolation: observed p={C.GRID_CONVERGENCE['observed_order_p']} "
-                f"(teoritik={C.GRID_CONVERGENCE['theoretical_order_p']}). Converged at mesh="
-                f"{C.GRID_CONVERGENCE['converged_at_space']}, time={C.GRID_CONVERGENCE['converged_at_time']}")
-
-        # T.29: Permutation importance
-        st.header("T.29 Permutation Importance (v9.11.2)")
-        perm_data = {k: v for k, v in C.PERMUTATION_IMPORTANCE.items() if isinstance(v, (int, float))}
-        perm_df = pd.DataFrame([
-            {'Feature': k, 'Importance': v} for k, v in perm_data.items()
-        ]).sort_values('Importance', ascending=False)
-        st.dataframe(perm_df, width="stretch")
-        fig_perm, ax_perm = plt.subplots(figsize=(10, 5))
-        ax_perm.barh(perm_df['Feature'], perm_df['Importance'], color='steelblue')
-        ax_perm.set_xlabel("Permutation Importance (R² decrease)")
-        ax_perm.set_title(f"Permutation Importance (n_repeats={C.PERMUTATION_IMPORTANCE['n_repeats']})")
-        ax_perm.grid(True, alpha=0.3)
-        st.pyplot(fig_perm)
-        plt.close(fig_perm)
-
-        # T.30: AI Pipeline
-        st.header("T.30 AI Pipeline Diagrammasi (v9.11.2)")
-        st.code(C.AI_PIPELINE_DIAGRAM, language='text')
-
-        # T.31: Experimental CSV
-        st.header("T.31 Eksperimental Dataset (CSV, v9.11.2)")
-        exp_df = pd.read_csv(io.StringIO(C.EXPERIMENTAL_DATASET_CSV))
-        st.dataframe(exp_df, width="stretch")
-        st.download_button(
-            "Eksperimental dataset CSV yuklab olish",
-            C.EXPERIMENTAL_DATASET_CSV.encode(),
-            file_name="experimental_dataset_v9_11_2.csv",
-            mime="text/csv"
-        )
-
-        # T.32: Iqtisodiy samaradorlik
-        st.header("T.32 Iqtisodiy Samaradorlik (v9.11.2)")
-        econ_items = [(k, v) for k, v in C.ECONOMIC_EFFICIENCY.items() if isinstance(v, (int, float))]
-        econ_df = pd.DataFrame(econ_items, columns=['Ko\'rsatkich', 'Qiymat'])
-        st.dataframe(econ_df, width="stretch")
-        # Bar chart
-        fig_econ, ax_econ = plt.subplots(figsize=(10, 5))
-        env_metrics = ['co2_reduction_pct', 'water_reduction_pct', 'land_use_reduction_pct']
-        env_labels = ['CO₂ kamayishi (%)', 'Suv kamayishi (%)', 'Yer kamayishi (%)']
-        env_values = [C.ECONOMIC_EFFICIENCY[m] for m in env_metrics]
-        ax_econ.bar(env_labels, env_values, color=['#2ca02c', '#1f77b4', '#ff7f0e'], alpha=0.8)
-        ax_econ.set_ylabel("Kamayishi (%)")
-        ax_econ.set_title("UCG vs An'anaviy ko'mir qazib olish: Ekologik afzalliklar")
-        ax_econ.grid(True, alpha=0.3)
-        for i, v in enumerate(env_values):
-            ax_econ.text(i, v + 1, f"{v:.1f}%", ha='center', fontweight='bold')
-        st.pyplot(fig_econ)
-        plt.close(fig_econ)
-        st.success(f"IRR = {C.ECONOMIC_EFFICIENCY['irr_pct']}%, "
-                  f"NPV 15y = {C.ECONOMIC_EFFICIENCY['npv_15yr_mln_usd']} mln USD, "
-                  f"Payback = {C.ECONOMIC_EFFICIENCY['payback_period_years']} yil")
-
-        # T.33: CO2 reduction tavsiyalari
-        st.header("T.33 CO₂ Emissiyasini Kamaytirish Tavsiyalari (v9.11.2)")
-        co2_df = pd.DataFrame(C.CO2_REDUCTION_RECOMMENDATIONS)
-        st.dataframe(co2_df, width="stretch")
-        fig_co2, ax_co2 = plt.subplots(figsize=(11, 5))
-        co2_measures = [r['measure'][:30] for r in C.CO2_REDUCTION_RECOMMENDATIONS]
-        co2_reductions = [r['co2_reduction_pct'] for r in C.CO2_REDUCTION_RECOMMENDATIONS]
-        co2_costs = [r['cost_usd_per_t_co2'] for r in C.CO2_REDUCTION_RECOMMENDATIONS]
-        priorities = [r['priority'] for r in C.CO2_REDUCTION_RECOMMENDATIONS]
-        colors_co2 = {'HIGH': '#d62728', 'MEDIUM': '#ff7f0e', 'LOW': '#2ca02c'}
-        bar_colors = [colors_co2[p] for p in priorities]
-        ax_co2.barh(co2_measures, co2_reductions, color=bar_colors, alpha=0.8)
-        ax_co2.set_xlabel("CO₂ kamayishi (%)")
-        ax_co2.set_title("CO₂ Reduction Tavsiyalari (HIGH=qizil, MEDIUM=to'q sariq, LOW=yashil)")
-        ax_co2.grid(True, alpha=0.3)
-        st.pyplot(fig_co2)
-        plt.close(fig_co2)
-
-        # T.34: Deployment phases
-        st.header("T.34 Sanoatga Joriy Etish Bosqichlari (v9.11.2)")
-        dep_df = pd.DataFrame(C.INDUSTRY_DEPLOYMENT_PHASES)
-        st.dataframe(dep_df, width="stretch")
-        # Timeline vizualizatsiyasi
-        fig_dep, ax_dep = plt.subplots(figsize=(12, 4))
-        phases = [p['phase'] for p in C.INDUSTRY_DEPLOYMENT_PHASES]
-        periods = [p['period'] for p in C.INDUSTRY_DEPLOYMENT_PHASES]
-        names = [p['name'] for p in C.INDUSTRY_DEPLOYMENT_PHASES]
-        statuses = [p['status'] for p in C.INDUSTRY_DEPLOYMENT_PHASES]
-        status_colors = {'Completed': '#2ca02c', 'Planned': '#1f77b4', 'Vision': '#9467bd'}
-        bar_colors = [status_colors[s] for s in statuses]
-        start_years = [int(p.split('-')[0]) for p in periods]
-        end_years = [int(p.split('-')[1]) for p in periods]
-        for i, (sy, ey, n, c) in enumerate(zip(start_years, end_years, names, bar_colors)):
-            ax_dep.barh(i, ey - sy, left=sy, color=c, alpha=0.8, edgecolor='black')
-            ax_dep.text(sy + (ey-sy)/2, i, n, ha='center', va='center', fontsize=9, fontweight='bold')
-        ax_dep.set_yticks(range(len(phases)))
-        ax_dep.set_yticklabels([f"Bosqich {p}" for p in phases])
-        ax_dep.set_xlabel("Yil")
-        ax_dep.set_title("UCG Sanoatga Joriy Etish Yo'l Xaritasi (2018-2040)")
-        ax_dep.set_xlim(2017, 2041)
-        ax_dep.grid(True, alpha=0.3, axis='x')
-        st.pyplot(fig_dep)
-        plt.close(fig_dep)
-
-        # T.35: Equation Cross-Reference
-        st.header("T.35 Equation Cross-Reference (Eq.1 - Eq.24, v9.11.2)")
-        eqref_df = pd.DataFrame([
-            {'Formula': k, 'Matn': v} for k, v in C.EQUATION_CROSS_REF.items()
-        ])
-        st.dataframe(eqref_df, width="stretch")
-
-        # T.36: Image Quality (300 dpi)
-        st.header("T.36 Grafik Sifati - 300 dpi IEEE Standard (v9.11.2)")
-        img_df = pd.DataFrame([
-            {'Parametr': k, 'Qiymat': str(v)} for k, v in C.IMAGE_QUALITY.items()
-        ])
-        st.dataframe(img_df, width="stretch")
-        st.info("Standart: IEEE Std 1012-2017 figure caption format. Publication-quality (300 dpi).")
-
-        # T.37: IEEE Figure Captions
-        st.header("T.37 IEEE Uslubidagi Figure Captions (v9.11.2)")
-        cap_df = pd.DataFrame(C.IEEE_FIGURE_CAPTIONS)
-        st.dataframe(cap_df, width="stretch")
-
-        # T.38: Yakuniy izchillik tekshiruvi
-        st.header("T.38 Yakuniy Izchillik Tekshiruvi (v9.11.2)")
-        st.success(
-            f"✅ KPI va Dashboard natijalari MOS:\n"
-            f"   - CGE = {C.CGE_TYPICAL}% (har ikkala bo'limda bir xil)\n"
-            f"   - Carbon Efficiency = {C.CARBON_EFF_TYPICAL}% (har ikkala bo'limda)\n"
-            f"   - H₂/CO = {C.H2_CO_TIPIK} (har ikkala bo'limda)\n\n"
-            f"✅ Massa balansi BITTA natija:\n"
-            f"   - Pass Rate = 95%+ (eski 0.3% OLIB TASHLANDI)\n"
-            f"   - Buzilishlar = 0 (eski 299 OLIB TASHLANDI)\n"
-            f"   - Hammasi o'tdi = True (eski False OLIB TASHLANDI)\n\n"
-            f"✅ Arrhenius parametrlari aniq ajratilgan:\n"
-            f"   - Model: 228/248/120/125/83/100/95 kJ/mol\n"
-            f"   - Adabiyot: 130-160/210-260/100-130/110-140/70-90/80-110/70-100 (taqqoslash uchun)\n\n"
-            f"✅ Harorat KPI izohi KPI yonida:\n"
-            f"   - KPI: T = {C.T_FINAL_OPERATIONAL}K (oxidation zone)\n"
-            f"   - Optimal: {C.T_OPTIMAL_MIN}-{C.T_OPTIMAL_MAX}K (gasification zone)\n\n"
-            f"✅ RMSE/MAE/R² parametr izohlari bilan asosiy jadvalda\n"
-            f"✅ Monte Carlo histogram + distribution asosiy hisobotda\n"
-            f"✅ Sobol S1, ST VA S2 interaction\n"
-            f"✅ Morris sensitivity qo'shildi\n"
-            f"✅ SHAP beeswarm + waterfall + force plot\n"
-            f"✅ Permutation importance qo'shildi\n"
-            f"✅ AI pipeline diagrammasi qo'shildi\n"
-            f"✅ Dataset train/val/test ratios (70/15/15)\n"
-            f"✅ Eksperimental dataset CSV formatda\n"
-            f"✅ Angren raw data jadvali (12 oylik)\n"
-            f"✅ Calibration batafsil (Bayesian MCMC)\n"
-            f"✅ Solver benchmark (Radau vs BDF vs LSODA vs RK45)\n"
-            f"✅ Mesh independence + Grid convergence\n"
-            f"✅ Energy + Atom conservation grafiklari\n"
-            f"✅ Patent Claim Chart (element-by-element)\n"
-            f"✅ FTO patent raqamlari (5 ta: US, EP, CN, AU)\n"
-            f"✅ IPC/CPC klassifikatsiyasi (9 ta kod)\n"
-            f"✅ Patent family tahlili (4 family, 13 patent)\n"
-            f"✅ Equation cross-reference (Eq.1-Eq.24)\n"
-            f"✅ Grafik sifati 300 dpi (IEEE Std 1012-2017)\n"
-            f"✅ IEEE uslubidagi Figure captions (18 ta rasm)\n"
-            f"✅ Yakuniy xulosa kengaytirildi:\n"
-            f"   - Tadqiqot cheklovlari (12 ta)\n"
-            f"   - Sanoatga joriy etish bosqichlari (5 ta, 2018-2040)\n"
-            f"   - Iqtisodiy samaradorlik (IRR=14.2%, NPV=28.5 mln USD)\n"
-            f"   - CO₂ kamaytirish tavsiyalari (6 ta)\n"
-            f"   - Kelajakdagi ishlar (12 ta aniq reja)\n\n"
-            f"🎯 YAKUNIY XULOSA: Hisobot v9.11.2 versiyasida ICHKI IZCHILLIK "
-            f"to'liq ta'minlangan. Eski qiymatlar (CGE=0%, Carbon=100%, "
-            f"H₂/CO=0.003, Pass Rate=0.3%, 299 buzilish) BUTUNLAY OLIB TASHLANDI."
-        )
+        st.title('🔬 Ekspert tahlili — hisoblash va dalil holati')
+        st.warning('RESEARCH_STAGE: kod tekshiruvi mustaqil dala validatsiyasi yoki ISO/ISRM sertifikati emas.')
+        st.subheader('Faol ODE model parametrlari')
+        st.dataframe(pd.DataFrame([
+            {'Reaction':p['name'], 'Ea_kJ_mol':p['Ea']/1000,
+             'A_rate_law_units':p['A'], 'dH_kJ_mol':p['dH']/1000,
+             'source':'UCGKineticModel.REACTIONS', 'calibration':'NOT_VERIFIED'}
+            for p in UCGKineticModel.REACTIONS.values()]), width='stretch')
+        st.caption('ODE va UCGEngine boshqa-boshqa modellar. Ularning Ea qiymatlari yagona kalibrlangan to‘plam emas.')
+        st.subheader('Tekshirish holati')
+        st.dataframe(pd.DataFrame([
+            {'Section':'v6', 'Status':'ILLUSTRATIVE_NOT_CALIBRATED',
+             'Detail':'Hoek–Brown capacity/demand; empirical width/creep. No invented profile CI.'},
+            {'Section':'v7 ODE', 'Status':'MODEL_OUTPUT',
+             'Detail':'Element conservation checked at solve; batch energy proxy, not plant CGE.'},
+            {'Section':'v7 UCGEngine', 'Status':'HEURISTIC_DEMO',
+             'Detail':'No closed species/energy balance or independent calibration.'},
+            {'Section':'RS2 / monitoring', 'Status':'USER_SUPPLIED_UNVERIFIED',
+             'Detail':'Upload matched profiles and actual three-grid solutions in Academic Validation.'},
+            {'Section':'TRL / novelty / FTO / MCMC', 'Status':'NOT_EVALUATED',
+             'Detail':'Historical constants are not measurements or completed assessments.'},
+        ]), width='stretch')
+        st.info('RMSE, BCa va GCI natijalari Academic Validation bo‘limida yuklangan ma’lumotlardan hisoblanadi. Tayyor tarixiy raqamlar bu yerda natija sifatida ko‘rsatilmaydi.')
 
 
 def render_expert_review_to_docx(doc):
@@ -59778,7 +59100,7 @@ class AcademicTHCMValidator:
         nan = float('nan')
         rmse = float(_av_np.sqrt(_av_np.mean(e**2)))
         score = float(1 - _av_np.sum(e**2)/_av_np.sum((o-om)**2)) if so > tol else nan
-        r = float(_av_stats.pearsonr(o, p).statistic) if len(o) >= 3 and so > tol and sp > tol else nan
+        r = float(_av_stats.pearsonr(o, p).statistic) if len(o) >= 2 and so > tol and sp > tol else nan
         rho = float(_av_stats.spearmanr(o, p).statistic) if _av_np.isfinite(r) else nan
         kge = float(1-_av_np.sqrt((r-1)**2+(sp/so-1)**2+(pm/om-1)**2)) if _av_np.isfinite(r) and abs(om)>tol else nan
         den = float(_av_np.sum((abs(p-om)+abs(o-om))**2))
@@ -59826,8 +59148,8 @@ class AcademicTHCMValidator:
 
 def _av_bca_stat(data, statistic, n_bootstrap=2000, alpha=.05, seed=42):
     a = _av_vector(data, 'bootstrap data')
-    if isinstance(n_bootstrap, (bool, _av_np.bool_)) or not isinstance(n_bootstrap, (int, _av_np.integer)) or n_bootstrap < 2:
-        raise ValueError('n_bootstrap must be an integer >= 2.')
+    if isinstance(n_bootstrap, (bool, _av_np.bool_)) or not isinstance(n_bootstrap, (int, _av_np.integer)) or not 100 <= n_bootstrap <= 50000:
+        raise ValueError('n_bootstrap must be an integer in [100, 50000].')
     if not _av_np.isfinite(alpha) or not 0 < alpha < 1:
         raise ValueError('alpha must be between 0 and 1.')
     if isinstance(seed, (bool, _av_np.bool_)) or not isinstance(seed, (int, _av_np.integer)) or seed < 0:
@@ -60145,6 +59467,7 @@ def render_academic_validation_panel():
                     st.session_state['ucg50_appendix']['status'] = 'PDF_21_STATION_USER_SUPPLIED_EXAMPLE_UNVERIFIED'
                     st.session_state['ucg50_appendix']['notes'].append(
                         'The 21 pairs were transcribed from the user-supplied Appendix A PDF; source authenticity is unverified.')
+                    st.session_state['ucg50_appendix']['latex'] = ucg_appendix_latex(st.session_state['ucg50_appendix'])
             except (ValueError,KeyError,TypeError) as exc:
                 st.error(str(exc))
         appendix=st.session_state.get('ucg50_appendix')
@@ -60333,8 +59656,8 @@ def ucg_parse_station_csv(source) -> Tuple[pd.DataFrame, str]:
     needed = ['x_m', 'observed_cm', 'predicted_cm']
     if not set(needed).issubset(df.columns):
         raise ValueError('Station CSV must contain: x_m, observed_cm, predicted_cm.')
-    if len(df) < 4:
-        raise ValueError('At least four paired stations are required.')
+    if len(df) < 2:
+        raise ValueError('At least two paired stations are required; small samples do not establish validation.')
     df = df.copy()
     for col in needed + (['residual_cm'] if 'residual_cm' in df.columns else []):
         df[col] = pd.to_numeric(df[col], errors='raise')
@@ -60478,6 +59801,7 @@ def ucg_build_appendix_bundle(stations_source, mesh_source=None, *,
         'station_input_sha256':station_sha,
         'mesh_input_sha256':mesh_sha,
         'relative_cutoff_cm':float(relative_cutoff_cm),
+        'confidence_level':.95,
         'bca':ci, 'table_rows':rows, 'notes':notes,
     }
     bundle['latex'] = ucg_appendix_latex(bundle)
@@ -60520,7 +59844,7 @@ def ucg_appendix_latex(bundle: Dict[str,Any]) -> str:
     for key, title in names:
         lines.append(title+' & '+(str(int(metrics[key])) if key=='n' else _ucg_tex_num(metrics.get(key))) + r' \\')
     lines.extend([r'\bottomrule\end{tabular}',
-                  r'\paragraph{Conditional IID BCa bootstrap (95\%)}'])
+                  r'\paragraph{Conditional IID BCa bootstrap (' + f"{100*bundle.get('confidence_level',.95):g}" + r'\%)}'])
     if bundle['bca']:
         lines.append(r'\begin{tabular}{lrrl}\toprule Metric & Lower & Upper & Status \\ \midrule')
         for name, v in bundle['bca'].items():
@@ -60590,7 +59914,7 @@ def ucg_append_docx_evidence(doc, appendix_bundle=None, *, page_break=True) -> N
                     ('Relative RMSE (%)','relative_rmse_percent'),('Lag-1 residual correlation','residual_lag1_corr')]:
         a,b=t.add_row().cells;a.text=title
         value=m.get(k);b.text=f'{value:.6g}' if isinstance(value,(int,float)) and np.isfinite(value) else 'NOT_ESTABLISHED'
-    doc.add_paragraph('BCa 95%: '+m['bca_status'])
+    doc.add_paragraph(f"BCa {100*appendix_bundle.get('confidence_level',.95):g}%: "+m['bca_status'])
     if appendix_bundle['bca']:
         for name,c in appendix_bundle['bca'].items():
             doc.add_paragraph(f'{name}: '+str(c.get('status'))+'; '+
@@ -60675,7 +59999,7 @@ def ucg54_metrics_table(bundle):
         rows.append({'Metric': title, 'Calculated': value,
                      'Project target': criterion, 'Finding': decision})
     rows.extend([
-        {'Metric':'95% BCa confidence interval', 'Calculated':
+        {'Metric':f"{100*bundle.get('confidence_level',.95):g}% BCa confidence interval", 'Calculated':
          'CONDITIONAL IID only' if bundle.get('bca') else 'NOT_ESTABLISHED',
          'Project target':'Spatial independence not demonstrated',
          'Finding':'Not a spatial uncertainty band'},
@@ -60754,7 +60078,7 @@ def ucg54_render_bundle_ui(st, bundle):
                f"{bundle['relative_cutoff_cm']:.2f} cm; omitted does not mean zero. "
                'All stations remain in summary metrics.')
     gci = bundle['gci']
-    st.markdown('#### A.4 Mesh/GCI and 95% BCa limitation')
+    st.markdown(f"#### A.4 Mesh/GCI and {100*bundle.get('confidence_level',.95):g}% BCa limitation")
     if str(gci.get('status','')).startswith('SCREENING_'):
         st.json({k:v for k,v in gci.items() if k in
                  ('status','fine_val','medium_val','coarse_val','observed_order_p',
@@ -60770,22 +60094,31 @@ def ucg54_render_bundle_ui(st, bundle):
 
 
 def ucg54_bundle_from_academic_result(result):
-    """Convert the legacy RS2/monitoring path into the same Appendix source of truth."""
+    """Preserve the computed CI, cutoff, provenance and mesh data in every export."""
     tab = result['table']
-    df = pd.DataFrame({
-        'x_m': tab['Station_Distance_X_m'].to_numpy(dtype=float),
-        'observed_cm': tab['Field_Monitoring_Subsidence_cm'].to_numpy(dtype=float),
-        'predicted_cm': tab['RS2_Predicted_Subsidence_cm'].to_numpy(dtype=float),
-    })
-    bundle = ucg_build_appendix_bundle(df, relative_cutoff_cm=0.5,
-                                       enable_iid_bca=False)
-    gci = result.get('gci', {})
+    df = pd.DataFrame({'x_m':tab['Station_Distance_X_m'].to_numpy(dtype=float),
+        'observed_cm':tab['Field_Monitoring_Subsidence_cm'].to_numpy(dtype=float),
+        'predicted_cm':tab['RS2_Predicted_Subsidence_cm'].to_numpy(dtype=float)})
+    cutoff = result['metrics'].get('percentage_zero_tolerance', 0.)
+    bundle = ucg_build_appendix_bundle(df,relative_cutoff_cm=cutoff,enable_iid_bca=False)
+    # Reuse exactly the UI values, including strict cutoff comparison.
+    for row, value in zip(bundle['table_rows'],tab['Abs_Relative_Error_pct']):
+        row['relative_error_percent'] = float(value) if np.isfinite(value) else None
+    bundle['status'] = result.get('provenance','USER_SUPPLIED_UNVERIFIED')
+    bundle['metrics']['data_provenance'] = bundle['status']
+    bundle['bca'] = result.get('inference',{}).get('bca',{})
+    bundle['confidence_level'] = result.get('inference',{}).get('confidence_level',.95)
+    if bundle['bca']:
+        bundle['metrics']['bca_status'] = ', '.join(sorted({c['status'] for c in bundle['bca'].values()})) + '; CONDITIONAL_IID_ONLY'
+    gci = result.get('gci',{})
     if gci.get('status') in ('SCREENING_PASS_UNVERIFIED','SCREENING_NOT_MET','INDETERMINATE'):
-        bundle['gci'] = {k: (v.item() if isinstance(v, np.generic) else v)
-                         for k,v in gci.items()}
+        bundle['gci'] = dict(gci)
         bundle['mesh_sizes_m'] = gci.get('mesh_sizes')
         bundle['mesh_input_sha256'] = gci.get('input_sha256')
-    bundle['notes'].append('Comparison may include interpolation of uploaded RS2 output at the monitoring positions.')
+    bundle['metrics']['mesh_gci_status'] = bundle['gci']['status']
+    bundle['notes'].extend(result.get('notes',[]))
+    bundle['notes'].append('Comparison may interpolate RS2 output at monitoring positions. Station hash is of the derived paired CSV, not original source bytes.')
+    bundle['latex'] = ucg_appendix_latex(bundle)
     return bundle
 
 
