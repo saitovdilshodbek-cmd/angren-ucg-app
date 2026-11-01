@@ -205,7 +205,7 @@
 from __future__ import annotations
 
 # v9.11.45 — focused research-integrity patch (2026-10-29).
-UCG_APP_VERSION = "9.11.57"  # Single source for RUNTIME versioning
+UCG_APP_VERSION = "9.11.58"  # Single source for RUNTIME versioning
 # Project outputs are uncalibrated; analytical THERMAL check != Angren THCM V&V.
 
 # FIX v9.11.23: TYPE_CHECKING — globals().get() ning haddan tashqar ko'pligi
@@ -16297,6 +16297,515 @@ def add_patent_ready_extension_sections(doc: Document, lang: str = 'en', evidenc
 # ============================================================================
 
 
+# ==========================================================================
+# v9.11.58 — V6 FULL SCIENTIFIC DOCX EXPORT (NOT ISO/ISRM CERTIFICATION)
+# Source of truth: chart keys and equations actually implemented in this app.
+# Academic references support the theoretical background, not our uncalibrated
+# UCG-specific coefficients, externally verified field accuracy, or compliance.
+# ==========================================================================
+
+_V6_REPORT_APA_REFERENCES = {
+    'hoek': 'Hoek, E., & Brown, E. T. (2019). The Hoek–Brown failure criterion and GSI – 2018 edition. Journal of Rock Mechanics and Geotechnical Engineering, 11(3), 445–463. https://doi.org/10.1016/j.jrmge.2018.08.001',
+    'bourdin': 'Bourdin, B., Francfort, G. A., & Marigo, J.-J. (2000). Numerical experiments in revisited brittle fracture. Journal of the Mechanics and Physics of Solids, 48(4), 797–826. https://doi.org/10.1016/S0022-5096(99)00028-9',
+    'gum': 'Joint Committee for Guides in Metrology. (2008). Evaluation of measurement data—Guide to the expression of uncertainty in measurement (JCGM 100:2008). https://doi.org/10.59161/JCGM100-2008E',
+    'gum_mc': 'Joint Committee for Guides in Metrology. (2008). Evaluation of measurement data—Supplement 1 to the “Guide to the expression of uncertainty in measurement”—Propagation of distributions using a Monte Carlo method (JCGM 101:2008). https://doi.org/10.59161/JCGM101-2008',
+    'isrm': 'Ulusay, R. (Ed.). (2015). The ISRM suggested methods for rock characterization, testing and monitoring: 2007–2014. Springer. https://doi.org/10.1007/978-3-319-07713-0',
+    'shannon': 'Shannon, C. E. (1948). A mathematical theory of communication. The Bell System Technical Journal, 27(3), 379–423. https://doi.org/10.1002/j.1538-7305.1948.tb01338.x',
+    'peck': 'Peck, R. B. (1969). Deep excavations and tunneling in soft ground. In Proceedings of the 7th International Conference on Soil Mechanics and Foundation Engineering (State-of-the-Art Volume, pp. 225–290).',
+    'lhs': 'McKay, M. D., Beckman, R. J., & Conover, W. J. (1979). A comparison of three methods for selecting values of input variables in the analysis of output from a computer code. Technometrics, 21(2), 239–245. https://doi.org/10.1080/00401706.1979.10489755',
+    'saltelli': 'Saltelli, A., Annoni, P., Azzini, I., Campolongo, F., Ratto, M., & Tarantola, S. (2010). Variance based sensitivity analysis of model output: Design and estimator for the total sensitivity index. Computer Physics Communications, 181(2), 259–270. https://doi.org/10.1016/j.cpc.2009.09.018',
+    'saaty': 'Saaty, T. L. (1980). The analytic hierarchy process. McGraw-Hill.',
+    'kirsch': 'Kirsch, G. (1898). Die Theorie der Elastizität und die Bedürfnisse der Festigkeitslehre. Zeitschrift des Vereines Deutscher Ingenieure, 42, 797–807.',
+}
+
+# Tuple: id, model title, exact mathematical form (as used in this app),
+# explanation incl. derivation/units, bibliographic background refs, evidence status.
+_V6_REPORT_MODELS = (
+    ('M01', 'Layered overburden stress',
+     'σv(z) = Σj [ρj · g · Δzj] / 10⁶  [MPa];   σh = K₀ σv',
+     'Diskret qatlamlar ustidagi jins og‘irligi integralining trapetsiya yaqinlashuvi. ρ [kg/m³], g=9.81 m/s², Δz [m]; K₀ foydalanuvchi taxmini. Suv bosimi va chuqurlik mustaqil maydon sifatida olinadi.',
+     ('isrm',), 'PHYSICAL_BALANCE_WITH_ASSUMED_PROPERTIES'),
+    ('M02', 'Kirsch circular-opening elastic stress',
+     'σrr = (σH+σh)/2·(1−a²/r²) + (σH−σh)/2·(1−4a²/r²+3a⁴/r⁴)cos(2θ) − p;\nσθθ = (σH+σh)/2·(1+a²/r²) − (σH−σh)/2·(1+3a⁴/r⁴)cos(2θ) − p;\nτrθ = −(σH−σh)/2·(1+2a²/r²−3a⁴/r⁴)sin(2θ)',
+     '2D doiraviy bo‘shliq uchun izotrop chiziqli elastik yechim. r=max(√(x²+z²),a); a — shartli bo‘shliq radiusi [m]. p ayirmasi koddagi soddalashtirishdir; g‘ovak bosimi uchun to‘liq Biot THM yechimi emas.',
+     ('kirsch',), 'ANALYTIC_BACKGROUND_MODIFIED_PRESSURE'),
+    ('M03', 'Generalized Hoek–Brown failure envelope',
+     'σ1,f = σ3 + σci(T)·[mb·σ3/σci(T) + s]^a;\nmb=mi·exp[(GSI−100)/(28−14D)]; s=exp[(GSI−100)/(9−3D)];\na=0.5+(exp(−GSI/15)−exp(−20/3))/6',
+     'Hoek–Brown tenglamasiga jinsning GSI, mi, D va temperatura ta’sirida pasaytirilgan UCS kiritilgan. σ1,σ3,σci [MPa]. Harorat koeffitsienti Hoek–Brown maqolasidan olinmagan, dasturning alohida empirik taxminidir.',
+     ('hoek',), 'LITERATURE_CRITERION_PLUS_UNCALIBRATED_THERMAL_LINK'),
+    ('M04', 'Thermal damage and modulus proxies',
+     'Dth(T) = 1−exp[−β·max(T−Tref,0)];\nσci(T) = UCS₀·(1−Dth); E(T)=clip(E₀·exp[−0.0018·max(T−Tref,0)], 0.1E₀, E₀)',
+     'Eksponensial harorat koeffitsientlari dastur taxminlari. β [1/°C], T [°C], E [Pa], UCS [MPa]. Ulardan mustaqil laboratoriya kalibrovkasisiz geologik loyiha qarori chiqarilmaydi.',
+     (), 'APP_SPECIFIC_HEURISTIC_NOT_FROM_CITED_PAPER'),
+    ('M05', 'Heat-transport PDE and prescribed moving sources',
+     'ρcₚ ∂T/∂t = ∇·[k(T)∇T] + Qsrc;\nTtarget(x,z,t)=25+(Tsrc(t)−25)·exp[−((x−xc(t))²+(z−zs)²)/L(t)²];\nQsrc≈ρcₚ·max(Ttarget−T,0)/Δt',
+     'Energiya balansi PDE issiqlik o‘tkazish nazariyasiga asoslangan. Gaussian manba, burn/cooling jadvali, CRIP ko‘chishi va Qsrc relaksatsiyasi dastur taxminlari; real yonish kinetikasi emas. ρ [kg/m³], cp [J/(kg·K)], k [W/(m·K)], Q [W/m³].',
+     (), 'PHYSICAL_HEAT_EQUATION_WITH_PRESCRIBED_DEMO_SOURCE'),
+    ('M06', 'Constrained thermal stress approximation',
+     'σth ≈ η · E(T) · α(T) · ΔT / (1−ν) [Pa];  η = PARAMS.CONFINEMENT',
+     'Cheklangan deformatsiya ostida termoelastiklikka o‘xshash yaqinlashuv. η empirik; shear thermal stress bu hisobda yechilmagan. Bu to‘liq bog‘langan THCM PDE yechimi emas.',
+     (), 'APP_SPECIFIC_PARTIAL_CONFINEMENT_APPROXIMATION'),
+    ('M07', 'Gaussian subsidence trough (adapted)',
+     'S(x,t) = −[Hseam · e · 0.45 · (1−exp(−csubs·t))] · exp[−x²/(2i²)] · (1+Kvoid·mean(void_mask_permanent));\ni = Htotal·tan(θdraw)',
+     'Gaussian botiqlik shakli Peck (1969) uslubidagi yuzaki o‘xshashlikdir. 0.45, csubs, void correction va e—ilova taxminlari; UCG/Angren uchun tasdiqlanmagan. S,H,i [m], t [h], Aproxy shartli o‘lchamsiz kod ko‘rsatkichi. Qiyalikda interpolatsiya va Savitzky–Golay smoothing ishlatilishi mumkin.',
+     ('peck',), 'ADAPTED_EMPIRICAL_MODEL_NOT_UCG_VALIDATED'),
+    ('M08', 'Horizontal displacement closure (not independent physics)',
+     'uh(x,t) = [x/(0.45·Htotal)] · S(x,t);   uh,cm=100·uh,m',
+     'Gorizontal siljish Gaussian cho‘kishdan hosil qilingan kinematik proksi. Kod ishlatadigan 0.45 Htotal va ishora aynan shu; universal O’Reilly–New qonuni deb taqdim etilmaydi.',
+     ('peck',), 'APP_SPECIFIC_KINEMATIC_CLOSURE'),
+    ('M09', 'Spatial stage-dependent FOS',
+     'σ3=K₀σv·[0.6+0.4(1−Dth)]; σ1=σv+σth (near active well);\nσ1,f = Hoek–Brown(σ3,σci(T),GSI(T),mi,D);\nFOSlocal=clip[σ1,f/(σ1+ε),0,50];\nif σ1>0.85σ1,f then FOSlocal=min(FOSlocal,0.8); cavity FOS=0.05;\nFOSstage=min over activated well/layer regions + geometry overrides',
+     '2D har bir faza uchun kod `compute_advanced_fos` da σv, σth, σ3 va HB chegarasini solishtiradi, keyin 0.85-yield cap, geometry/dome va cavity override qo‘llaydi. Bu qo‘shimcha qoidalar maqoladan olingan nazariya emas, dastur proksisi. Pillar capacity/load FOS bilan almashtirilmaydi. FOS >1 daladagi tasdiq emas.',
+     ('hoek',), 'COMPUTED_SPATIAL_PROXY_NOT_A_CERTIFIED_FEM_SOLUTION'),
+    ('M10', 'Unified illustrative pillar capacity and demand',
+     'σ3 = K₀ σv; ΔσHB = σci(T)·(mb·σ3/σci(T)+s)^a;\nwf=c1+c2·(w/H); creep=min(A·tⁿ,cap);\ncapacity=σ3+ΔσHB·wf·(1−creep); demand=σv/(1−e); FOSpillar=capacity/demand',
+     'Pillar-model yagona hisoblash funksiyasidan MC, GUM va trendlar uchun foydalanadi. c1,c2,A,n,cap foydalanuvchi tomonidan berilgan, kalibrlanmagan; σ3 qo‘shilishi to‘liq principal stress bilan solishtirish uchun saqlangan. Bu Bieniawski tajriba qonunining isbotlangan implementatsiyasi deb ta’riflanmaydi.',
+     ('hoek',), 'ILLUSTRATIVE_UNCALIBRATED_CAPACITY_MODEL'),
+    ('M11', 'Monte Carlo distribution / probability of threshold crossing',
+     'FOSj=f(UCSj,GSIj,Tj,...); P̂(FOS<1)=(1/N)Σj 1[FOSj<1];\nq0.025, q0.975 = sample percentiles',
+     'Kiritilgan taqsimotlardan olingan sintetik parametr namunalariga deterministic FOS funksiyasi qo‘llanadi. Pf — faqat ushbu tasavvuriy modeldagi chegara kesish chastotasi; mustaqil real o‘pirilish ehtimoli emas. 2.5–97.5% kvantil tarqalish intervali avtomatik 95% CI bo‘lmaydi.',
+     ('gum_mc',), 'PARAMETRIC_SCENARIO_SIMULATION_NOT_FIELD_PROBABILITY'),
+    ('M12', 'GUM first-order uncertainty propagation',
+     'uc²(y)≈Σi(∂f/∂xi)² u²(xi) + 2Σi<j (∂f/∂xi)(∂f/∂xj)cov(xi,xj); U=k·uc',
+     'Differensialga asoslangan Gauss tarqalish yaqinlashuvi. Koddagi GUM panelda kovariatsiyalar mustaqillik taxmini bilan soddalashtiriladi. Ushbu noaniqlik taqsimotining o‘zi laboratoriya aniqligi dalili emas.',
+     ('gum',), 'THEORETICAL_METHOD_WITH_ASSUMED_INPUT_UNCERTAINTY'),
+    ('M13', 'Composite risk index (heuristic; not AHP-calibrated)',
+     'R=max(0, 0.40·Pcollapse + 0.30·(1−FOSstage/3) + 0.20·k/kmax + 0.10·T/Tmax)',
+     'Og‘irliklar kodda 0.40/0.30/0.20/0.10 tarzida qat’iy yozilgan; foydalanuvchi AHP juft-juft solishtirish matritsasi hamda consistency ratio tasdiqlanmagan. R [–] indikativ indeks, o‘pirilish ehtimoli emas va har doim [0,1] oraliqda emas.',
+     ('saaty',), 'WEIGHTED_HEURISTIC_NOT_VALIDATED_AHP'),
+    ('M14', 'Shannon spatial risk entropy',
+     'pi=Ri/Σk Rk; H=−Σi pi ln(pi); Hnorm=H/ln(N)',
+     'Koddagi risk maydonining normallashgan fazoviy taqsimoti. R nol bo‘lgan kataklar ε bilan himoyalanadi. Entropiya qanchalik tarqalganligini ko‘rsatadi; barqarorlik/halokat chastotasi emas.',
+     ('shannon',), 'INFORMATION_THEORY_APPLIED_TO_HEURISTIC_RISK_FIELD'),
+    ('M15', 'Phase-field damage update (illustrative discretization)',
+     'R=Gc·l·∇²d−(Gc/l)·d+(1−d)H;\nΔtactual=min(Δt,0.9η/[2Gc·l(1/Δx²+1/Δz²)+Gc/l+max(H)]);\ndnew=max[dold,clip(dold+(Δtactual/η)R,0,1)]',
+     'Bourdin va boshqalarning variatsion yoriqlanishiga ilhomlangan explicit Neumann-Laplacian diskret yangilash. η va Gc/l birliklari energiya H bilan mos bo‘lishi shart; kod buni laboratoriyada kalibrlamaydi. Bir demo bosqichi variatsion minimallashtirish teoremasi emas.',
+     ('bourdin',), 'DEMONSTRATIVE_NUMERICAL_UPDATE_NOT_FULL_BOURDIN_SOLVER'),
+    ('M16', 'LHS and logistic collapse proxy',
+     'UCS,T,z ← LHS strata; FOSproxy=clip[UCS(T)/σv(z),0,10];\nPproxy=1/[1+exp(10·(FOSproxy−1))]',
+     'Latin Hypercube namunalaridan foydalangan keyingi logistik funksiya ilova tanlovidir. Pproxy kalibrlangan hodisa ehtimoli emas; grafikka model-hosila tarqalishi sifatida qaraladi.',
+     ('lhs',), 'SAMPLING_METHOD_PLUS_UNCALIBRATED_LOGISTIC_PROXY'),
+    ('M17', 'Statistical profile comparison',
+     'ei=ypred,i−yref,i; RMSE=√[(1/N)Σi ei²]; MAE=(1/N)Σi|ei|;\nR²=1−Σ(yi−ŷi)²/Σ(yi−ȳ)² [when denominator>0]',
+     'Benchmark va bashorat bir xil koordinata va birlikka interpolatsiya qilinishi zarur. CSV ustunlari, tanlab olish tartibi va o‘lchov manbasi mustaqil tasdiqlanmaguncha bu metrikalar faqat USER_SUPPLIED_UNVERIFIED hisoblanadi.',
+     ('gum',), 'STATISTICAL_ESTIMATE_SOURCE_AUTHENTICITY_UNVERIFIED'),
+    ('M18', 'One-at-a-time sensitivity (tornado)',
+     'ΔFOSj,± = f(xj,±; other x fixed)−f(xbase)',
+     'Har bir parametrni belgilangan ±20% yoki maxsus parametr oralig‘ida o‘zgartirish. Bu Sobol global dispersiya analizi emas. Pillar formula ν ga bog‘lanmagani uchun Poisson sezgirligi NOT_MODELLED deb belgilanishi kerak.',
+     ('saltelli',), 'LOCAL_OAT_NOT_SOBOL_GLOBAL_SENSITIVITY'),
+    ('M19', '3D rotational Gaussian subsidence display',
+     'S(x,y,t)=−Hseam·e·0.45·(1−exp(−csubs·t))·exp[−(x²+y²)/(2i²)]',
+     '1D Gaussian yondashuvni radial simmetrik 3D yuzaga kengaytirish. Grafik texnologik ravishda chiqariladi, haqiqiy 3D geodezik kuzatuvlar bilan kalibrlanmagan.',
+     ('peck',), 'RADIAL_ADAPTATION_NOT_FIELD_VALIDATED'),
+    ('M20', 'Normalized scenario comparison',
+     'rj=clip[(xj−xmin)/(xmax−xmin),0,1]  (some axes reversed)',
+     'Radar o‘qlari UCS, GSI, FOS, termal xavfni shkalaga keltiradi. 0–1 ko‘rsatkichlari turli fizik birliklarning tasviriy normallanishidir; qo‘shilma barqarorlik ehtimoli emas.',
+     (), 'DATA_VISUALIZATION_TRANSFORMATION'),
+    ('M21', 'Thermal and gas monitoring demonstrations',
+     'T(t), σeff(t), FOS(t), u(t) = scenario_simulation(inputs, time); alarm=(indicator>threshold)',
+     'Live Monitoring bo‘limi real SCADA ulanishi bo‘lmagan dastur hisoblashlaridan iborat. Dinamik grafiklar oxirgi bajarilgan sessiyadan saqlanadi; chegaralar signal algoritmi, validatsiyalangan uskunaviy threshold emas.',
+     (), 'DEMONSTRATION_NO_REAL_TIME_SENSOR_VALIDATION'),
+    ('M22', 'Biot / pore-pressure diagnostic and Darcy idea',
+     'σ′≈σ−αB·p; q≈−k/μ·∇p  [model-specific approximations]',
+     'Effektiv stress va oqim g‘oyasining konseptual ko‘rinishi. Kodning Biot diagrammasi to‘liq bog‘langan THCM tenglama yechimi yoki kalibrlangan B koeffitsienti emas.',
+     (), 'CONCEPTUAL_MIXED_APPROXIMATIONS'),
+    ('M23', 'Mesh-refinement diagnostic',
+     'Δmesh = |Qfine−Qcoarse|; GCI requires ≥3 qualified refinement levels and observed order',
+     'Nx bo‘yicha o‘rta FOS qiyoslash mustaqil fizik validatsiya emas. Uch to‘rli tartibli yaqinlashuv bo‘lmasa GCI hisoblandi deb da’vo qilish mumkin emas; bu grafik convergence diagnosticdir.',
+     (), 'DIAGNOSTIC_NOT_INDEPENDENT_GRID_VALIDATION'),
+)
+
+# 32 named chart types, including on-demand/live V6 panels. Charts not executed
+# on the current scenario are accounted for but NEVER filled with fake images.
+# key, title, explanation, corresponding model IDs, source classification.
+_V6_REPORT_CHARTS = (
+    ('fig_sub', 'Surface subsidence — 2D profile', 'Cho‘kish S(x) [cm] va foydalanuvchi kiritgan taqqoslash mavjud bo‘lsa, uning ko‘rsatkichlari. Sun’iy n=20 bandlar o‘lchov CI emas.', ('M07','M17'), 'MODEL_OUTPUT'),
+    ('fig_h', 'Horizontal displacement profile', 'x bo‘yicha gorizontal siljish uh [cm]; 0.45H koeffitsienti asosida hosil qilingan proksi.', ('M08',), 'MODEL_OUTPUT'),
+    ('fig_hb', 'Hoek–Brown failure envelopes by layer', 'Har bir qatlam uchun σ1,f–σ3 [MPa] mustahkamlik chegarasi; temperatura bilan kamaygan UCS.', ('M03','M04'), 'MODEL_OUTPUT'),
+    ('fig_diff', 'Benchmark residual versus distance', 'Moslashtirilgan profilning farqi e(x) [cm]; faqat haqiqiy yuklangan benchmark bo‘lsa.', ('M17',), 'USER_UPLOADED_UNVERIFIED'),
+    ('fig_err_heat', 'Residual heatmap of comparison samples', 'Stoxastik qoldiq realizatsiyalari [cm], qator indeksi bo‘yicha; o‘lchovning o‘zi emas.', ('M17',), 'USER_UPLOADED_UNVERIFIED'),
+    ('fig_layers', 'Geological stratigraphy and layer thicknesses', 'Kiritilgan qatlamlar qalinligi [m], rang bilan ajratilgan; real stratigrafik tasdiq yo‘q.', ('M01',), 'USER_SUPPLIED_PROPERTIES'),
+    ('fig_tm', 'Coupled display: thermal field and stage FOS', 'Yuqorida T(x,z) [°C], gaz tezliklari belgisi; pastda FOS(x,z) va chegaralar. To‘liq THCM FEM tasdig‘i emas.', ('M05','M09','M22'), 'MODEL_OUTPUT'),
+    ('fig_stage_1', 'Stage 1 — spatial FOS contour', '1-bosqich uchun aynan hisoblangan fazoviy FOS [–] kesimi.', ('M09',), 'MODEL_OUTPUT'),
+    ('fig_stage_2', 'Stage 2 — spatial FOS contour', '2-bosqich uchun aynan hisoblangan fazoviy FOS [–] kesimi.', ('M09',), 'MODEL_OUTPUT'),
+    ('fig_stage_3', 'Stage 3 — spatial FOS contour', '3-bosqich uchun aynan hisoblangan fazoviy FOS [–] kesimi.', ('M09',), 'MODEL_OUTPUT'),
+    ('fig_pf', 'Phase-field damage after illustrative step', 'd(x,z) [0,1] bir iteratsiyadagi yoriqlanish indikatori. Tugma bosilmaganda grafik mavjud emas.', ('M15',), 'OPTIONAL_DEMONSTRATION'),
+    ('fig_uq', 'Pillar FOS — parametric UQ histogram', '10,000 tanlanma uchun pillar FOS taqsimoti; 2.5 va 97.5% nuqtalar kvantil, field CI emas.', ('M10','M11','M12'), 'SYNTHETIC_PARAMETER_SAMPLES'),
+    ('fig_imp', 'RF/SHAP feature importance', 'Faqat demo label yoki haqiqiy model bajarilganda hosil bo‘ladigan atribut ulushi; mustaqil sifat dalili emas.', ('M21',), 'OPTIONAL_DERIVED_LABEL_DEMO'),
+    ('fig_lhs', 'Latin Hypercube collapse-proxy distribution', 'LHS orqali hisoblangan logistik risk-proksi histogrammasi; ehtimollik kalibrovkasi yo‘q.', ('M16',), 'OPTIONAL_UNCALIBRATED_PROXY'),
+    ('fig_risk_l', 'Sensor CSV risk predictions', 'Yuklangan sensor CSV qatorlariga hisoblangan tavakkal indikatori; fayl manbasi mustaqil tasdiqlanmagan.', ('M21',), 'OPTIONAL_USER_UPLOADED_UNVERIFIED'),
+    ('fig_trend', 'Pillar FOS time trend (illustrative)', 'Prescribed T(t) va creep orqali hisoblangan FOS(t); oldindan bashorat emas.', ('M04','M10'), 'OPTIONAL_UNCALIBRATED_TREND'),
+    ('fig_mc', 'Pillar Monte Carlo FOS histogram', 'Monte Carlo ishlatilganda FOS<1 fraksiyasi va natijalar tarqalishi; geologik failure chance emas.', ('M10','M11'), 'OPTIONAL_PARAMETRIC_SIMULATION'),
+    ('fig_radar', 'Scenario A versus B — radar normalization', 'UCS, GSI, FOS va temperatura xavfi bir xil shkalaga keltirilgan taqqoslash.', ('M10','M20'), 'SCENARIO_COMPARISON'),
+    ('fig_tornado', 'One-at-a-time FOS sensitivity (tornado)', 'Kiritmalardagi o‘zgarish uchun ΔFOS. ν modeli mavjud bo‘lmagan sensitivity sifatida belgilanadi.', ('M18',), 'LOCAL_SENSITIVITY'),
+    ('fig_val', 'Uploaded subsidence versus model prediction', 'Foydalanuvchi CSVdagi y(x) [cm] va hisoblangan s(x); manbasi mustaqil tekshirilmagan.', ('M07','M17'), 'OPTIONAL_USER_UPLOADED_UNVERIFIED'),
+    ('fig_3d_subs', '3D Gaussian surface subsidence', 'S(x,y) [cm] radial Gaussian analitik yuzasi; real 3D kuzatuv emas.', ('M19',), 'MODEL_OUTPUT'),
+    ('fig_live_subs', 'Live demo — 2D subsidence', 'Oxirgi bajarilgan Live monitoring simulyatsiyasi cho‘kish yuzasi.', ('M21',), 'CACHED_LIVE_DEMO'),
+    ('fig_live_temp', 'Live demo — 2D temperature', 'Oxirgi bajarilgan Live monitoring simulyatsiyasi harorat yuzasi.', ('M21',), 'CACHED_LIVE_DEMO'),
+    ('fig_live_trend', 'Live demo — subsidence trend', 'Oxirgi bajarilgan Live monitoring simulyatsiyasining vaqt trendi.', ('M21',), 'CACHED_LIVE_DEMO'),
+    ('surf_fig', 'Live demo — 3D surface with anomaly markers', 'Oxirgi real vaqt emulyatoridagi anomaliya yorliqlari, SCADA emas.', ('M19','M21'), 'CACHED_LIVE_DEMO'),
+    ('fig_3d', 'Interactive 3D Gaussian surface', 'Modeldagi 3D Gaussian cho‘kish yuzasi, interaktiv monitor nusxasi.', ('M19',), 'CACHED_MODEL_OUTPUT'),
+    ('fig_a', 'AI live demo — stress/temperature/gas/anomalies', 'Effektiv kuchlanish va harorat ketma-ketligini emulyatsiya qiladi.', ('M21','M22'), 'CACHED_AI_DEMO'),
+    ('fig_fos_t2', 'AI live demo — FOS history and stress', 'NN/RF tugma bajarilgandagi yaqinlashuv; demo FOS trend va harorat-stress juftligi.', ('M10','M21'), 'CACHED_AI_DEMO'),
+    ('fig_deg', 'Advanced — GSI degradation over time', 'Illyustrativ Arrhenius vaqt-harorat degradatsiyasi GSI(t); aktivatsiya energiyasi mustaqil kalibrlanmagan.', ('M04',), 'CACHED_ADVANCED_MODEL'),
+    ('fig_biot', 'Advanced — Biot/effective stress diagnostic', 'Ichki algoritm nuqtalari va Biot hisoblangan qiymatlarining qiyosi; eksperiment deb belgilangan nuqtalar autentikatsiya qilinmagan.', ('M22',), 'CACHED_ADVANCED_MODEL'),
+    ('fig_conv', 'Advanced — mesh refinement response', 'To‘r zichligi bilan o‘rta FOS o‘zgarishi; to‘liq GCI emas.', ('M23',), 'CACHED_ADVANCED_DIAGNOSTIC'),
+    ('dash_fig', 'V6 integrated interactive dashboard', 'Interaktiv dashboardning eksport paytidagi snapshot grafigi.', ('M05','M07','M09','M13'), 'MODEL_OUTPUT'),
+)
+
+
+def ucg_v6_matplotlib_chart_png(fig, *, width=950, height=620):
+    """Render original Plotly trace *data* when Kaleido is unavailable.
+
+    The plot is a Matplotlib re-visualization, not a pixel-identical Plotly
+    screenshot. Only actual numbers already in fig.data are rendered; no data
+    interpolations, artificial observations, or statistical CI are inserted.
+    Complex decorations, masks and hover-only annotations are not guaranteed.
+    """
+    if fig is None or not getattr(fig, 'data', None):
+        return None
+    import matplotlib.pyplot as _plt
+    import numpy as _np
+    import re as _re
+    import io as _io
+    from matplotlib import colors as _colors
+    traces = list(fig.data)
+    if not traces:
+        return None
+    types = [str(getattr(t, 'type','')) for t in traces]
+    polar_only = all(t in ('scatterpolar','barpolar') for t in types)
+    three_d_only = all(t in ('surface','scatter3d','mesh3d') for t in types)
+    # Matplotlib axes for each actual Plotly subplot reference.
+    if polar_only or three_d_only:
+        f = _plt.figure(figsize=(9.0, 5.8), dpi=140)
+        ax = f.add_subplot(111, projection='polar' if polar_only else '3d')
+        axes = {('x','y'): ax}
+    else:
+        keys=[]
+        for t in traces:
+            key=(str(getattr(t,'xaxis',None) or 'x'),
+                 str(getattr(t,'yaxis',None) or 'y'))
+            if key not in keys: keys.append(key)
+        if len(keys) > 6:
+            return None  # protect report responsiveness and legibility
+        f,axs=_plt.subplots(len(keys),1,figsize=(9.2,max(5.2,len(keys)*3.2)),
+                            dpi=130,squeeze=False)
+        axes={key:axs[i,0] for i,key in enumerate(keys)}
+    rendered=0
+    try:
+        for trace in traces:
+            kind=str(getattr(trace,'type',''))
+            key=(str(getattr(trace,'xaxis',None) or 'x'),
+                 str(getattr(trace,'yaxis',None) or 'y'))
+            ax=axes.get(key, list(axes.values())[0]);name=str(getattr(trace,'name','') or '')
+            if kind in ('scatter','scattergl'):
+                y=getattr(trace,'y',None)
+                if y is None: continue
+                y=_np.asarray(y)
+                x=getattr(trace,'x',None)
+                x=_np.arange(len(y)) if x is None else _np.asarray(x)
+                if len(x)!=len(y) or len(y)==0:continue
+                # categorical x works; numerical series are direct Plotly values
+                mode=str(getattr(trace,'mode',None) or 'lines')
+                if mode=='markers': ax.scatter(x,y,s=8,label=name or None)
+                else: ax.plot(x,y,marker='.' if 'markers' in mode else None,
+                              linewidth=1.3,label=name or None)
+                rendered+=1
+            elif kind=='bar':
+                y=getattr(trace,'y',None)
+                if y is None:continue
+                if str(getattr(trace,'orientation','v') or 'v')=='h':
+                    xvals=getattr(trace,'x',None)
+                    ylabels=getattr(trace,'y',None)
+                    if xvals is not None and ylabels is not None:
+                        ax.barh(_np.asarray(ylabels),_np.asarray(xvals,dtype=float),alpha=.7,label=name or None)
+                else:
+                    y=_np.asarray(y,dtype=float);x=getattr(trace,'x',None)
+                    x=_np.arange(len(y)) if x is None else _np.asarray(x)
+                    ax.bar(x,y,alpha=.65,label=name or None)
+                rendered+=1
+            elif kind=='histogram':
+                x=getattr(trace,'x',None)
+                if x is None: continue
+                a=_np.asarray(x,dtype=float).reshape(-1)
+                a=a[_np.isfinite(a)]
+                if a.size:
+                    bins=getattr(trace,'nbinsx',None) or 30
+                    ax.hist(a,bins=max(5,min(int(bins),100)),alpha=.65,label=name or None)
+                    rendered+=1
+            elif kind in ('heatmap','contour'):
+                data=getattr(trace,'z',None)
+                if data is None:continue
+                z=_np.asarray(data,dtype=float)
+                if z.ndim!=2 or min(z.shape)<2:continue
+                x=getattr(trace,'x',None);y=getattr(trace,'y',None)
+                # Plotly coordinates may be nonuniform; imshow is a pixel view.
+                extent=None
+                if x is not None and y is not None:
+                    xx=_np.asarray(x);yy=_np.asarray(y)
+                    if xx.ndim==1 and yy.ndim==1 and len(xx)>=2 and len(yy)>=2:
+                        try:extent=(float(xx[0]),float(xx[-1]),float(yy[-1]),float(yy[0]))
+                        except (ValueError,TypeError):extent=None
+                if kind=='heatmap':
+                    im=ax.imshow(z,aspect='auto',origin='upper',extent=extent)
+                    f.colorbar(im,ax=ax,shrink=.70)
+                else:
+                    if extent is None:
+                        ax.contourf(z,levels=12)
+                    else:
+                        xx=_np.linspace(extent[0],extent[1],z.shape[1]); yy=_np.linspace(extent[3],extent[2],z.shape[0])
+                        ax.contourf(xx,yy,z,levels=12)
+                    ax.invert_yaxis()
+                rendered+=1
+            elif kind=='surface' and three_d_only:
+                z=_np.asarray(trace.z,dtype=float)
+                if z.ndim!=2:continue
+                xv=getattr(trace,'x',None);yv=getattr(trace,'y',None)
+                if xv is None or yv is None:
+                    yy,xx=_np.indices(z.shape)
+                else:
+                    xx=_np.asarray(xv);yy=_np.asarray(yv)
+                    if xx.ndim==1 and yy.ndim==1:xx,yy=_np.meshgrid(xx,yy)
+                ax.plot_surface(xx,yy,z,cmap='viridis',linewidth=0,antialiased=True,
+                                rcount=min(60,z.shape[0]),ccount=min(60,z.shape[1]))
+                ax.set_zlabel('Z (model units)')
+                rendered+=1
+            elif kind=='scatter3d' and three_d_only:
+                x=_np.asarray(trace.x);y=_np.asarray(trace.y);z=_np.asarray(trace.z)
+                if x.size and y.size==x.size and z.size==x.size:
+                    ax.scatter(x,y,z,s=8,label=name or None)
+                    rendered+=1
+            elif kind=='scatterpolar' and polar_only:
+                r=_np.asarray(trace.r,dtype=float); theta=_np.asarray(trace.theta)
+                if r.size!=theta.size:continue
+                # Categorical angle bins; preserve plotted values, not angle text rotation.
+                labels=list(dict.fromkeys(map(str,theta.tolist())))
+                angmap={v:j*2*_np.pi/max(1,len(labels)) for j,v in enumerate(labels)}
+                th=_np.array([angmap[str(t)] for t in theta]);ax.plot(th,r,label=name or None)
+                ax.fill(th,r,alpha=.10)
+                ax.set_xticks([angmap[x] for x in labels]);ax.set_xticklabels(labels,fontsize=7)
+                rendered+=1
+        if rendered==0:
+            _plt.close(f)
+            return None
+        title_obj=getattr(fig.layout,'title',None)
+        title=getattr(title_obj,'text',None) if title_obj is not None else None
+        if title:
+            title=_re.sub(r'<[^>]+>','',str(title)).strip()[:140]
+            f.suptitle(title,fontsize=12,fontweight='bold')
+        for key,ax in axes.items():
+            if not polar_only and not three_d_only:
+                ax.grid(alpha=.16)
+                ax.set_xlabel('X (see figure description)')
+                ax.set_ylabel('Y (see figure description)')
+            handles,lab=ax.get_legend_handles_labels()
+            if 0<len(lab)<=10:
+                ax.legend(fontsize=7,loc='best')
+        f.tight_layout(rect=(0,0,1,.96))
+        bio=_io.BytesIO();f.savefig(bio,format='png',dpi=130,facecolor='white')
+        _plt.close(f)
+        return bio.getvalue()
+    except Exception as exc:
+        _plt.close(f)
+        logger.warning('Matplotlib fallback failed: %s: %s',type(exc).__name__,exc)
+        return None
+
+def ucg_v6_model_signature(parameters: dict) -> str:
+    """Signature prevents reuse of unrelated live plot snapshots after input changes."""
+    return hashlib.sha256(json.dumps(parameters, ensure_ascii=False,
+                                    sort_keys=True, default=str).encode('utf-8')).hexdigest()
+
+
+def ucg_v6_cache_chart(chart_key: str, fig, signature: str) -> None:
+    """Capture executed post-export widgets for a future v6 DOCX click.
+
+    Streamlit reruns the full script on a click. Thus figures rendered *after*
+    the export control cannot be available to that click unless already saved.
+    Caching is limited to the current source inputs, and each figure is the last
+    executed frame (not the full interactive animation).
+    """
+    if chart_key not in {cfg[0] for cfg in _V6_REPORT_CHARTS} or fig is None:
+        return
+    try:
+        record = st.session_state.get('v6_report_last_charts')
+        if not isinstance(record, dict) or record.get('signature') != signature:
+            record = {'signature': signature, 'figures': {}}
+        record['figures'][chart_key] = fig
+        st.session_state['v6_report_last_charts'] = record
+    except Exception as exc:
+        logger.warning('V6 chart snapshot caching failed (%s): %s', chart_key, exc)
+
+
+def ucg_v6_collect_figure_records(scope: dict, *, signature: str,
+                                   stage_fos=None, x_axis=None, z_axis=None):
+    """Snapshot all defined V6 charts; track every absent/failed visual explicitly."""
+    candidate = {}
+    for cfg in _V6_REPORT_CHARTS:
+        key = cfg[0]
+        if scope.get(key) is not None:
+            candidate[key] = scope[key]
+    try:
+        cache = st.session_state.get('v6_report_last_charts', {})
+        if cache.get('signature') == signature:
+            for name, fig in cache.get('figures', {}).items():
+                if name not in candidate:
+                    candidate[name] = fig
+    except Exception as exc:
+        logger.warning('V6 cached chart lookup failed: %s', exc)
+    if isinstance(stage_fos, dict) and x_axis is not None and z_axis is not None:
+        for s in (1, 2, 3):
+            if s in stage_fos:
+                chart = go.Figure(go.Contour(z=stage_fos[s], x=x_axis, y=z_axis,
+                    colorscale='RdYlGn', zmin=0, zmax=5,
+                    colorbar=dict(title='FOS [–]')))
+                chart.update_layout(title=f'Stage {s} — spatial FOS',
+                                    xaxis_title='X [m]', yaxis_title='Depth [m]',
+                                    yaxis=dict(autorange='reversed'), template='plotly_white')
+                candidate[f'fig_stage_{s}'] = chart
+    records = []
+    for key, title, description, models, source in _V6_REPORT_CHARTS:
+        rec = {'key': key, 'title': title, 'description': description,
+               'models': models, 'source': source, 'image': None,
+               'status': 'NOT_GENERATED_IN_THIS_RUN'}
+        fig = candidate.get(key)
+        if fig is not None:
+            png = plotly_figure_to_png_bytes(fig, width=950, height=620)
+            if png:
+                rec['image'] = png
+                rec['status'] = 'EMBEDDED_PNG'
+            else:
+                fallback_png = ucg_v6_matplotlib_chart_png(fig)
+                if fallback_png:
+                    rec['image'] = fallback_png
+                    rec['status'] = 'EMBEDDED_PNG_FALLBACK (same trace data; static Matplotlib rendering)'
+                else:
+                    rec['status'] = 'PNG_RENDER_FAILED (Kaleido/Chrome or unsupported plot format)'
+        records.append(rec)
+    return records
+
+
+def ucg_v6_append_scientific_report(doc, *, lang='uz', figure_records=None,
+                                    model_inputs=None, fig_bytes=None):
+    """Self-contained V6 scientific annex: all figures, model derivations, APA 7."""
+    from docx.shared import Inches, Pt
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    labels = {
+        'uz': ('7. v6 GRAFIKLARINING TO‘LIQ ILMIY SHARHI', '8. FORMULALAR, MATEMATIK MODELLAR VA KELIB CHIQISHI', '9. FOYDALANILGAN ADABIYOTLAR (APA 7)',
+               'Izoh', 'Bog‘langan model', 'Manba holati', 'Nazariy asos', 'Dasturdagi farazlar va kelib chiqishi', 'Chiqmagan grafiklar holati', 'Model parametrlaridan hisoblangan qiymatlar', 'Eslatma'),
+        'en': ('7. COMPLETE SCIENTIFIC REVIEW OF V6 CHARTS', '8. EQUATIONS, MATHEMATICAL MODELS AND DERIVATION', '9. REFERENCES (APA 7)',
+               'Interpretation', 'Linked model', 'Evidence status', 'Theory', 'Derivation / software assumptions', 'Unavailable plot inventory', 'Model input snapshot', 'Note'),
+        'ru': ('7. НАУЧНОЕ ОПИСАНИЕ ГРАФИКОВ V6', '8. ФОРМУЛЫ, МАТЕМАТИЧЕСКИЕ МОДЕЛИ И ВЫВОД', '9. ЛИТЕРАТУРА (APA 7)',
+               'Пояснение', 'Связанные модели', 'Статус данных', 'Теория', 'Происхождение / допущения модели', 'Отсутствующие графики', 'Исходные параметры модели', 'Примечание'),
+    }
+    (h_fig,h_mod,h_ref,l_desc,l_model,l_status,l_theory,l_deriv,l_missing,l_inputs,l_note) = labels.get(lang, labels['uz'])
+    doc.add_page_break()
+    doc.add_heading(h_fig, level=1)
+    doc.add_paragraph('RESEARCH_STAGE / NOT CERTIFIED / FIELD VALIDATION NOT ESTABLISHED. '
+                      'Published equations support theoretical context only; user-defined coefficients, '
+                      'synthetic scenarios and data files do not become validated observations.')
+    # Reproducibility snapshot: no raw CSV/large arrays or sensitive data by default.
+    inputs = model_inputs if isinstance(model_inputs, dict) else {}
+    doc.add_heading(l_inputs, level=2)
+    if inputs:
+        inp_table = doc.add_table(rows=1, cols=2)
+        inp_table.style = 'Table Grid'
+        inp_table.rows[0].cells[0].text = 'Parameter'
+        inp_table.rows[0].cells[1].text = 'Value / units / provenance'
+        for k, value in sorted(inputs.items()):
+            row = inp_table.add_row().cells
+            row[0].text, row[1].text = str(k), str(value)
+    else:
+        doc.add_paragraph('NOT_SUPPLIED: scenario input snapshot was not available.')
+
+    if isinstance(fig_bytes,(bytes,bytearray)) and bytes(fig_bytes).startswith(b'\x89PNG'):
+        doc.add_heading('Figure R-0: Composite risk map', level=2)
+        _risk_shape = doc.add_picture(io.BytesIO(fig_bytes), width=Inches(5.65))
+        _risk_shape._inline.docPr.set('descr', 'Uncalibrated composite risk index — heuristic, dimensionless, not failure probability')
+        doc.add_paragraph('R(x,z) [dimensionless], software-specific weighted heuristic (M13). '
+                          'NOT an independently calibrated failure probability.')
+    records = figure_records if isinstance(figure_records, (list,tuple)) else []
+    expected_keys = {c[0] for c in _V6_REPORT_CHARTS}
+    status_by_key = {r.get('key'): r for r in records if isinstance(r,dict) and r.get('key') in expected_keys}
+    not_exported = []
+    for idx, (key, title, description, model_ids, provenance) in enumerate(_V6_REPORT_CHARTS,1):
+        rec = status_by_key.get(key,{})
+        status = str(rec.get('status', 'NOT_GENERATED_IN_THIS_RUN'))
+        image_bytes = rec.get('image')
+        if not (isinstance(image_bytes,(bytes,bytearray)) and bytes(image_bytes).startswith(b'\x89PNG')):
+            not_exported.append((key, title, description, model_ids, status))
+            continue
+        p = doc.add_heading(f'Figure V6-{idx:02d}. {title}', level=2)
+        p.keep_with_next = True
+        pic_p = doc.add_paragraph()
+        pic_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        _figure_shape = pic_p.add_run().add_picture(io.BytesIO(image_bytes), width=Inches(5.65))
+        _figure_shape._inline.docPr.set('descr', title + '. ' + description)
+        cap = doc.add_paragraph(style='Caption')
+        cap.add_run(f'{l_desc}: ').bold=True
+        cap.add_run(description)
+        doc.add_paragraph(f'{l_model}: '+', '.join(model_ids))
+        doc.add_paragraph(f'{l_status}: {provenance}; {status}. '
+                          'Source is the current app calculation or last executed UI snapshot, '
+                          'NOT an independently authenticated field measurement.')
+    doc.add_heading(l_missing, level=2)
+    if not_exported:
+        table = doc.add_table(rows=1, cols=3)
+        table.style = 'Table Grid'
+        for cell,name in zip(table.rows[0].cells,('ID','Chart','Reason / status')):
+            cell.text=name
+        for key,title,meaning,model_ids,status in not_exported:
+            cells=table.add_row().cells
+            cells[0].text=key
+            cells[1].text=title + '\n' + meaning + '\nModels: ' + ', '.join(model_ids)
+            cells[2].text=status
+        doc.add_paragraph('NOT_GENERATED means the optional widget was not executed with '
+                          'the matching model inputs. PNG_RENDER_FAILED means image export '
+                          'could not run (install compatible kaleido and Chrome/Chromium). '
+                          'No alternative values or charts have been fabricated.')
+    else:
+        doc.add_paragraph('All chart types embedded from available computations.')
+
+    doc.add_page_break()
+    doc.add_heading(h_mod, level=1)
+    doc.add_paragraph('M01–M23 reproduce implemented mathematical relationships or describe their '
+                      'actual numerical call path. Formula provenance and application-specific '
+                      'assumptions are separated; models are not automatically ISO/ISRM compliant.')
+    source_in_text = {
+       'hoek':'Hoek & Brown, 2019', 'bourdin':'Bourdin et al., 2000',
+       'gum':'JCGM 100:2008', 'gum_mc':'JCGM 101:2008', 'isrm':'Ulusay, 2015',
+       'shannon':'Shannon, 1948', 'peck':'Peck, 1969', 'lhs':'McKay et al., 1979',
+       'saltelli':'Saltelli et al., 2010', 'saaty':'Saaty, 1980', 'kirsch':'Kirsch, 1898',
+    }
+    for key,title,formula,derivation,refs,status in _V6_REPORT_MODELS:
+        doc.add_heading(f'{key} — {title}', level=2)
+        fp=doc.add_paragraph(style='Quote')
+        fp.add_run(formula)
+        doc.add_paragraph(f'{l_deriv}: {derivation}')
+        doc.add_paragraph(f'{l_status}: {status}')
+        if refs:
+            doc.add_paragraph(f'{l_theory}: '+ '; '.join(source_in_text.get(r,r) for r in refs) + ' — full APA citation below.')
+        else:
+            doc.add_paragraph(f'{l_theory}: GENERAL PHYSICS / SOFTWARE-SPECIFIC HEURISTIC; '
+                              'no claim that numerical coefficients come from a named article.')
+    doc.add_heading(h_ref, level=1)
+    doc.add_paragraph('APA 7 bibliographic format. Reference does NOT imply the '
+                      'software-specific parameter values or Angren predictions were validated.')
+    for key,reference in sorted(_V6_REPORT_APA_REFERENCES.items(),
+                                key=lambda item:item[1].casefold()):
+        pp=doc.add_paragraph()
+        pp.style='Normal'
+        pp.paragraph_format.left_indent=Inches(0.35)
+        pp.paragraph_format.first_line_indent=Inches(-0.35)
+        pp.paragraph_format.space_after=Pt(6)
+        pp.add_run(reference)
+    doc.add_heading('Disclosure / cheklovlar', level=2)
+    doc.add_paragraph('ISO/ISRM: NOT_ASSESSED; lab tests: NOT_AUTHENTICATED; '
+                      'Angren THCM model: NOT_INDEPENDENTLY_VALIDATED; '
+                      'external RS2 solver execution: NOT_INFERRED. '
+                      'Stage FOS, pillar FOS and prescribed 3D Gaussian profile are different outputs. '
+                      'No image or formula in this report constitutes a compliance certificate.')
+
+
 def generate_full_iso_report(
     obj_name: str,
     lang: str,
@@ -16316,6 +16825,7 @@ def generate_full_iso_report(
     results: Optional[dict] = None,
     figure_list_2d: Optional[List[bytes]] = None,
     figure_list_3d: Optional[List[bytes]] = None,
+    figure_records: Optional[List[dict]] = None,
 ) -> bytes:
     texts = {
         'uz': {
@@ -16326,7 +16836,7 @@ def generate_full_iso_report(
             'sec4': "4. XAVFNI KAMAYTIRISH CHORALARI",
             'sec5': "5. MUHANDISLIK XULOSASI VA TAVSIYALAR",
             'sec6': "6. MATEMATIK MODELLAR APPENDIKSI",
-            'fos_label': "Xavfsizlik koeffitsienti FOS (Skempton effektiv stress):",
+            'fos_label': "Xavfsizlik koeffitsienti FOS (fazoviy proksi):",
             'ai_label': "Analitik optimallashtirilgan kenglik:",
             'conclusion_title': "Yakuniy qaror:",
             'safe': "MODEL INDIKATORI: FOS 10-persentili 1.5 dan yuqori. Dala xavfsizligi mustaqil tasdiqlanmagan.",
@@ -16365,7 +16875,7 @@ def generate_full_iso_report(
             'sec4': "4. MITIGATION STRATEGY",
             'sec5': "5. ENGINEERING CONCLUSIONS",
             'sec6': "6. MATHEMATICAL MODELS APPENDIX",
-            'fos_label': "Factor of Safety FOS (Skempton effective stress):",
+            'fos_label': "Factor of Safety FOS (spatial proxy, not Skempton certification):",
             'ai_label': "Analytical Optimized Width:",
             'conclusion_title': "Final Decision:",
             'safe': "MODEL INDICATOR: FOS 10th percentile >= 1.5; field stability NOT VERIFIED.",
@@ -16404,7 +16914,7 @@ def generate_full_iso_report(
             'sec4': "4. СТРАТЕГИЯ СНИЖЕНИЯ РИСКОВ",
             'sec5': "5. ИНЖЕНЕРНЫЕ ВЫВОДЫ",
             'sec6': "6. ПРИЛОЖЕНИЕ: МАТЕМАТИЧЕСКИЕ МОДЕЛИ",
-            'fos_label': "Коэффициент безопасности FOS (эффективное напряжение Скемптона):",
+            'fos_label': "Коэффициент безопасности FOS (пространственная модель):",
             'ai_label': "Аналитическая оптимизированная ширина:",
             'conclusion_title': "Окончательное решение:",
             'safe': "ПОКАЗАТЕЛЬ МОДЕЛИ: FOS >= 1.5; устойчивость на местности НЕ ПОДТВЕРЖДЕНА.",
@@ -16573,81 +17083,13 @@ def generate_full_iso_report(
             __import__("logging").getLogger("ucg_platform").debug("Suppressed optional-operation exception", exc_info=True)  # FIX v9.11.36: traceable fallback
         doc.add_paragraph("Extension report generation FAILED. Details are available in the server log; no successful integration is asserted.")
 
-    if figure_list_2d:
-        doc.add_heading(tt['fig_2d'], level=2)
-        for i, img_bytes in enumerate(figure_list_2d, 1):
-            doc.add_paragraph(f"{tt['figure_label']} 2D-{i}")
-            image_stream = io.BytesIO(img_bytes)
-            doc.add_picture(image_stream, width=Inches(5.5))
-            doc.add_paragraph("Source status: MODEL_OUTPUT — source numerical model; measurement validation NOT_EVALUATED")
-            doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
-
-    if figure_list_3d:
-        doc.add_heading(tt['fig_3d'], level=2)
-        for i, img_bytes in enumerate(figure_list_3d, 1):
-            doc.add_paragraph(f"{tt['figure_label']} 3D-{i}")
-            image_stream = io.BytesIO(img_bytes)
-            doc.add_picture(image_stream, width=Inches(5.5))
-            doc.add_paragraph("Source status: MODEL_OUTPUT — source numerical model; measurement validation NOT_EVALUATED")
-            doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
-
-    doc.add_page_break()
-    doc.add_heading(tt['sec6'], level=2)
-    models = [
-        ("1. Hoek-Brown Failure (Hoek & Brown, 2018)",
-         "σ₁ = σ₃ + σci·(mb·σ₃/σci + s)^a\n"
-         "mb = mi·exp((GSI-100)/(28-14D));  s = exp((GSI-100)/(9-3D))\n"
-         "a = 0.5 + (1/6)·(e^(-GSI/15) - e^(-20/3))"),
-        ("2. Thermal Strength Decay (Shao et al., 2003)",
-         "D(T) = 1 - exp(-β·max(T-20,0))\n"
-         "UCS(T) = UCS₀·(1 - D(T)),  β = thermal_damage_beta [1/°C]"),
-        ("3. Thermal Stress — Partial Confinement",
-         "σth = η_c · E(T) · α(T) · ΔT / (1 - ν)\n"
-         "η_c = confinement factor = 0.65 (PARAMS.CONFINEMENT)"),
-        ("4. Bieniawski (1992) Pillar Strength",
-         "σp = UCS(T) · (0.64 + 0.36·w/H)\n"
-         "y = H/2·(√(σv/σp) - 1)  [plastic zone half-width]"),
-        ("5. Peck (1969) Subsidence Trough",
-         "S(x) = Smax·exp(-x²/2i²)\n"
-         "i = 0.45·H (O'Reilly & New, 1982)\n"
-         "Smax = H_seam · extraction_ratio · 0.45"),
-        ("6. O'Reilly & New (1982) Horizontal Displacement",
-         "u_h(x) = -(x/i)·S(x)"),
-        ("7. Darcy Gas Flow with Sutherland Viscosity",
-         "v = -k(T)/μ(T)·∇P\n"
-         "μ(T) = μ_ref·(T/T_ref)^(3/2)·(T_ref+S)/(T+S)  [Sutherland, 1893]"),
-        ("8. FOS with Effective Stress (Skempton, 1954)",
-         "FOS = σp / σv_eff\n"
-         "σv_eff = σv - B·P_pore,  B = Skempton's coefficient ≈ 0.9"),
-        ("9. Uncertainty Propagation (JCGM 100:2008 / GUM)",
-         "Var(FOS) = (∂FOS/∂UCS·σ_UCS)² + (∂FOS/∂GSI·σ_GSI)² + (∂FOS/∂T·σ_T)²"),
-        ("10. Composite Risk Index (AHP, Saaty 1980)",
-         "R = 0.40·P_collapse + 0.30·(1-FOS/3) + 0.20·(k/k_max) + 0.10·(T/T_max)\n"
-         "H_entropy = -Σ p_i·ln(p_i);  H_norm = H / ln(N)  [Shannon, 1948]"),
-    ]
-    for title, formula in models:
-        p_title = doc.add_paragraph()
-        p_title.add_run(title).bold = True
-        doc.add_paragraph(formula, style='Quote')
-
-    doc.add_heading(tt['references_title'], level=2)
-    refs = [
-        "Hoek, E., & Brown, E.T. (2018). The Hoek-Brown failure criterion and GSI – 2018 edition. J. Rock Mech. Geotech. Eng., 11(3), 445-463.",
-        "Yang, D. (2010). Stability of Underground Coal Gasification. PhD Thesis, TU Delft.",
-        "Shao, J.F., Zhu, Q.Z., & Su, K. (2003). Int. J. Rock Mech. Min. Sci., 40(7), 927-937.",
-        "Bieniawski, Z.T. (1992). USBM IC 9315, pp. 158-165.",
-        "Peck, R.B. (1969). 7th ICSMFE, Mexico City, 225-290.",
-        "O'Reilly, M.P., & New, B.M. (1982). Tunnelling '82, IMM London.",
-        "Salamon, M.D.G. (1970). Int. J. Rock Mech. Min. Sci., 7(6), 613-631.",
-        "Bai, T., et al. (2004). Min. Sci. Tech. (China), 14(3), 315-319.",
-        "Saaty, T.L. (1980). The Analytic Hierarchy Process. McGraw-Hill.",
-        "JCGM 100:2008. Evaluation of measurement data — Guide to the expression of uncertainty in measurement (GUM).",
-        "Sutherland, W. (1893). Phil. Mag. 36(223), 507-531.",
-        "Kirsch, G. (1898). Z. Ver. Dtsch. Ing. 42, 797-807.",
-        "Saitov, D.B. (2026). Adaptive Biot coefficient for UCG. In preparation.",
-    ]
-    for ref in refs:
-        doc.add_paragraph(f"• {ref}")
+    # v9.11.58: fully captioned actual figure catalog + verified APA references.
+    # Previous anonymous 2D-1/3D-1 and inaccurate formula bibliography removed.
+    ucg_v6_append_scientific_report(
+        doc, lang=lang, figure_records=figure_records,
+        model_inputs=(results or {}).get('v6_model_inputs'),
+        fig_bytes=fig_bytes,
+    )
 
     # v9.11.50: one evidence annex is reused across UZ/EN/RU full reports.
     ucg_append_docx_evidence(doc, (results or {}).get('academic_validation_appendix'))
@@ -31679,6 +32121,14 @@ def main():
     states_132 = {1: (0,), 2: (0, 2), 3: (0, 1, 2)}
     stage = st.select_slider(t('select_stage'), options=[1, 2, 3], value=1, key="ucg_stage")
     active_wells = states_132[stage]
+    v6_signature = ucg_v6_model_signature({
+        'project': obj_name, 'time_h': time_h, 'max_T': T_source_max,
+        'burn_duration': burn_duration, 'stage': stage,
+        'layers': layers_data, 'D': D_factor, 'nu': nu_poisson,
+        'K0': k_ratio, 'beta': beta_thermal,
+        'extraction': extraction_ratio_slider, 'retreat': crip_retreat_rate,
+        'pillar_assumptions': pillar_coefficient_args,
+    })
 
     fos_all_stages = {}
     grid_x_hash = _array_hash(grid_x, grid_z)
@@ -32824,27 +33274,10 @@ def main():
                     audit = ScientificAuditTrail()
                     audit.log_change("report_generator", "export", "obj_name", None, obj_name, results['sha256'])
 
-                    # v9.11.44: all ISO Plotly images use the safe export wrapper.
-                    # A skipped PNG is never described as an included figure.
-                    figure_list_2d = []
-                    _iso_plotly_missing = []
-                    for _name, _width, _height in (
-                        ('fig_sub', 800, 600),
-                        ('fig_h', 800, 600),
-                        ('fig_hb', 800, 600),
-                        ('fig_tm', 900, 700),
-                    ):
-                        _figure = locals().get(_name)
-                        if _figure is not None:
-                            _png = plotly_figure_to_png_bytes(
-                                _figure, width=_width, height=_height
-                            )
-                            if _png is not None:
-                                figure_list_2d.append(_png)
-                            else:
-                                _iso_plotly_missing.append(_name)
-
-                    figure_list_3d = []
+                    # v9.11.58 — capture ALL V6 chart types from this actual
+                    # scenario; include stages 1/2/3 and executed optional panels.
+                    # Charts executed after the export button are available only
+                    # if a matching earlier rerun cached their last snapshot.
                     X_3d = np.linspace(-200, 200, 60)
                     Y_3d = np.linspace(-200, 200, 60)
                     X3, Y3 = np.meshgrid(X_3d, Y_3d)
@@ -32852,27 +33285,49 @@ def main():
                     Z_3d_subs = -float(Smax) * float(1.0 - np.exp(-float(c_subs) * float(time_h))) * np.exp(
                         -R_3d**2 / (2.0 * float(influence_radius)**2)
                     ) * 100.0
-                    fig_3d_subs = go.Figure(data=[go.Surface(z=Z_3d_subs, x=X_3d, y=Y_3d, colorscale='Viridis')])
-                    fig_3d_subs.update_layout(template='plotly_dark', title='3D Surface Subsidence')
-                    _png_3d = plotly_figure_to_png_bytes(
-                        fig_3d_subs, width=800, height=600
-                    )
-                    if _png_3d is not None:
-                        figure_list_3d.append(_png_3d)
-                    else:
-                        _iso_plotly_missing.append('fig_3d_subs')
-                    results['plotly_static_export'] = {
-                        'status': 'PARTIAL' if _iso_plotly_missing else 'OK',
-                        'included_images': len(figure_list_2d) + len(figure_list_3d),
-                        'not_rendered': list(_iso_plotly_missing),
-                        'note': 'Missing images are NOT_EVALUATED; they are not experimental data.',
+                    fig_3d_subs = go.Figure(go.Surface(z=Z_3d_subs, x=X3, y=Y3, colorscale='Viridis'))
+                    fig_3d_subs.update_layout(title='3D Surface Subsidence (cm)',
+                                               scene=dict(xaxis_title='X (m)', yaxis_title='Y (m)',
+                                                          zaxis_title='Subsidence (cm)'))
+                    _v6_figures = ucg_v6_collect_figure_records(
+                        dict(locals()), signature=v6_signature,
+                        stage_fos=fos_all_stages, x_axis=x_axis, z_axis=z_axis)
+                    results['v6_model_inputs'] = {
+                        'project': obj_name, 'app_version': UCG_APP_VERSION,
+                        'generated_utc': datetime.now(timezone.utc).isoformat(),
+                        'simulation_hour_h': time_h, 'active_stage': stage,
+                        'source_max_temperature_c': T_source_max,
+                        'combustion_duration_h': burn_duration,
+                        'strata_count': len(layers_data), 'total_depth_m': round(total_depth, 4),
+                        'coal_seam_depth_m': round(depth_seam, 4),
+                        'seam_thickness_m': round(H_seam, 4),
+                        'rock_mass_disturbance_D': D_factor,
+                        'poisson_ratio': nu_poisson, 'lateral_stress_ratio_K0': k_ratio,
+                        'thermal_damage_beta_1_per_C': beta_thermal,
+                        'extraction_ratio_assumed': extraction_ratio_slider,
+                        'creep_width_coefficients_assumed': str(pillar_coefficient_args),
+                        'retreat_rate_m_per_h': crip_retreat_rate,
+                        'model_pillar_width_m': rec_width,
+                        'geology_source': 'USER_INPUT_UNVERIFIED',
+                        'field_measurement_status': 'NOT_AUTHENTICATED',
+                        'numerical_validation_status': 'RESEARCH_STAGE',
                     }
-                    if _iso_plotly_missing:
-                        st.warning(
-                            'ISO: some Plotly images could not be exported ('
-                            + ', '.join(_iso_plotly_missing)
-                            + '). DOCX remains available; install Kaleido 1.x and Chrome/Chromium.'
-                        )
+                    results['plotly_static_export'] = {
+                        'status': 'PARTIAL' if any(not r['status'].startswith('EMBEDDED_PNG') for r in _v6_figures) else 'OK',
+                        'included_images': sum(r['status'].startswith('EMBEDDED_PNG') for r in _v6_figures),
+                        'not_rendered': [r['key'] + ': ' + r['status'] for r in _v6_figures if not r['status'].startswith('EMBEDDED_PNG')],
+                        'note': 'All V6 chart types inventoried, but only executed and exported PNGs are embedded.',
+                    }
+                    if results['plotly_static_export']['included_images'] == 0:
+                        st.warning('No Plotly figures exported. Install `kaleido>=1` and Chrome/Chromium; '
+                                   'the report will list missing charts rather than invent images.')
+                    else:
+                        st.info(f"V6 DOCX: {results['plotly_static_export']['included_images']} figures embedded; "
+                                'optional/unrendered figures will be listed with reasons.')
+                    # Legacy bytes lists remain accepted by generator for API
+                    # compatibility, but v9.11.58 uses labelled figure records.
+                    figure_list_2d = []
+                    figure_list_3d = []
 
                     docx_bytes = generate_full_iso_report(
                         obj_name=obj_name, lang=iso_lang, layers_data=layers_data,
@@ -32886,7 +33341,8 @@ def main():
                         fig_bytes=fig_bytes_report,
                         results=results,
                         figure_list_2d=figure_list_2d,
-                        figure_list_3d=figure_list_3d
+                        figure_list_3d=figure_list_3d,
+                        figure_records=_v6_figures
                     )
                     fname = f"{doc_num_input}_Rev{revision_inp}_{pd.Timestamp.now().strftime('%Y%m%d')}_{iso_lang}.docx"
                     st.download_button(
@@ -32927,7 +33383,8 @@ def main():
                                 fig_bytes=fig_bytes_report,
                                 results=results,
                                 figure_list_2d=figure_list_2d,
-                                figure_list_3d=figure_list_3d
+                                figure_list_3d=figure_list_3d,
+                                figure_records=_v6_figures
                             )
                             st.download_button(
                                 label="🇺🇿 O'zbek",
@@ -32952,7 +33409,8 @@ def main():
                                 fig_bytes=fig_bytes_report,
                                 results=results,
                                 figure_list_2d=figure_list_2d,
-                                figure_list_3d=figure_list_3d
+                                figure_list_3d=figure_list_3d,
+                                figure_records=_v6_figures
                             )
                             st.download_button(
                                 label="🇬🇧 English",
@@ -32977,7 +33435,8 @@ def main():
                                 fig_bytes=fig_bytes_report,
                                 results=results,
                                 figure_list_2d=figure_list_2d,
-                                figure_list_3d=figure_list_3d
+                                figure_list_3d=figure_list_3d,
+                                figure_records=_v6_figures
                             )
                             st.download_button(
                                 label="🇷🇺 Русский",
@@ -33081,24 +33540,21 @@ def main():
                     st.session_state.live_history_df = pd.DataFrame(st.session_state.live_data_list)
 
                     with subs_ph.container():
-                        st.plotly_chart(
-                            go.Figure(go.Heatmap(z=Z_subs * 100.0, x=X_live, y=Y_live, colorscale='Viridis'))
-                            .update_layout(title='Surface Subsidence (cm)', height=300, template='plotly_dark'),
-                            width="stretch"
-                        )
+                        fig_live_subs = go.Figure(go.Heatmap(z=Z_subs * 100.0, x=X_live, y=Y_live, colorscale='Viridis'))
+                        fig_live_subs.update_layout(title='Surface Subsidence (cm)', height=300, template='plotly_dark')
+                        st.plotly_chart(fig_live_subs, width="stretch")
+                        ucg_v6_cache_chart('fig_live_subs', fig_live_subs, v6_signature)
                     with temp_ph.container():
-                        st.plotly_chart(
-                            go.Figure(go.Heatmap(z=Z_temp, x=X_live, y=Y_live, colorscale='Hot'))
-                            .update_layout(title='Temperature Field (°C)', height=300, template='plotly_dark'),
-                            width="stretch"
-                        )
+                        fig_live_temp = go.Figure(go.Heatmap(z=Z_temp, x=X_live, y=Y_live, colorscale='Hot'))
+                        fig_live_temp.update_layout(title='Temperature Field (°C)', height=300, template='plotly_dark')
+                        st.plotly_chart(fig_live_temp, width="stretch")
+                        ucg_v6_cache_chart('fig_live_temp', fig_live_temp, v6_signature)
                     pillar_ph.metric("Pillar Width (m)", f"{pillar_w_pred:.2f}", delta=f"FOS={FOS_live:.2f}")
                     with trend_ph.container():
-                        st.plotly_chart(
-                            go.Figure(go.Scatter(y=subs_hist, mode='lines+markers'))
-                            .update_layout(title='Subsidence Trend', height=300, template='plotly_dark'),
-                            width="stretch"
-                        )
+                        fig_live_trend = go.Figure(go.Scatter(y=subs_hist, mode='lines+markers'))
+                        fig_live_trend.update_layout(title='Subsidence Trend', height=300, template='plotly_dark')
+                        st.plotly_chart(fig_live_trend, width="stretch")
+                        ucg_v6_cache_chart('fig_live_trend', fig_live_trend, v6_signature)
                     anom_pts = np.where(anomalies_mask)
                     with surface_ph.container():
                         surf_fig = go.Figure(data=[
@@ -33112,6 +33568,7 @@ def main():
                             ))
                         surf_fig.update_layout(title='3D Surface & Anomalies', height=450)
                         st.plotly_chart(surf_fig, width="stretch")
+                        ucg_v6_cache_chart("surf_fig", surf_fig, v6_signature)
 
                     alerts_list = []
                     if FOS_live < 1.2: alerts_list.append("⚠️ FOS Critical!")
@@ -33173,6 +33630,7 @@ def main():
                 template='plotly_dark', height=600
             )
             st.plotly_chart(fig_3d, width="stretch")
+            ucg_v6_cache_chart("fig_3d", fig_3d, v6_signature)
             st.caption(
                 f"Smax={float(Smax):.2f} m | i={influence_radius:.1f} m | "
                 "Manba: Peck (1969), O'Reilly & New (1982)"
@@ -33280,6 +33738,7 @@ def main():
                                 margin=dict(t=60, b=60)
                             )
                             st.plotly_chart(fig_a, width="stretch")
+                            ucg_v6_cache_chart("fig_a", fig_a, v6_signature)
                             anom_count = sum(1 for a in anomalies_eff if a is not None)
                             if is_anom:
                                 st.error(f"🚨 ANOMALY DETECTED! (Total: {anom_count})")
@@ -33402,6 +33861,7 @@ def main():
                             )
                             fig_fos_t2.update_layout(template="plotly_dark", height=380, showlegend=False)
                             st.plotly_chart(fig_fos_t2, width="stretch")
+                            ucg_v6_cache_chart("fig_fos_t2", fig_fos_t2, v6_signature)
                             st.progress((i_tab2 + 1) / int(ai_steps_2))
                         time.sleep(0.05)
                     except Exception as e:
@@ -33591,6 +34051,7 @@ def main():
                 fig_deg.update_layout(title='GSI Degradation over Time', template='plotly_dark',
                                        xaxis_title='Time (h)', yaxis_title='GSI')
                 st.plotly_chart(fig_deg, width="stretch")
+                ucg_v6_cache_chart("fig_deg", fig_deg, v6_signature)
                 st.caption(f"Final GSI after {time_demo[-1]} h: {gsi_history[-1]:.1f}")
 
         with t3_adv:
@@ -33683,6 +34144,7 @@ def main():
                                    template='plotly_dark', xaxis_title='Saturation ratio (Sr)',
                                    yaxis_title='Biot coefficient α')
             st.plotly_chart(fig_biot, width="stretch")
+            ucg_v6_cache_chart("fig_biot", fig_biot, v6_signature)
             st.caption("Eksperimental ma'lumotlar: Biot (1941) va Terzaghi (1943) asosida. Model RMSE < 0.05 maqbul.")
 
         with st.expander("🧪 Hoek-Brown Validation (FLAC3D benchmark) (FIX #111)"):
@@ -33729,6 +34191,7 @@ def main():
                                        template='plotly_dark', xaxis_title='nx (grid points)',
                                        yaxis_title='Mean FOS')
                 st.plotly_chart(fig_conv, width="stretch")
+                ucg_v6_cache_chart("fig_conv", fig_conv, v6_signature)
             if len(df_valid) >= 2:
                 denominator = df_valid['mean_FOS'].iloc[-2]
                 if abs(denominator) > EPS_GENERAL:
@@ -33843,6 +34306,7 @@ def main():
         t_steps_dash, fos_thresh_dash, disp_cscale
     )
     st.plotly_chart(dash_fig, width="stretch")
+    ucg_v6_cache_chart("dash_fig", dash_fig, v6_signature)
 
     # ── Footer ─────────────────────────────────────────────────────────────────
     st.sidebar.markdown("---")
