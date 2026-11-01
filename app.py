@@ -1,3 +1,5 @@
+# V6 Integrated v9.11.59: shared chart & formula registry; UI/DOCX traceability.
+
 # Audit patch v9.11.56 (2026-10-31): Gauss stress, roller BC, shared GCI/BCa, PDF deps and diagnostics.
 # Audit patch v9.11.55 (2026-10-31): targeted numerical/evidence fixes; see AUDIT_UZ.md.
 # Academic report integration v9.11.54: full Appendix A equations, tables, plots and references.
@@ -205,7 +207,7 @@
 from __future__ import annotations
 
 # v9.11.45 — focused research-integrity patch (2026-10-29).
-UCG_APP_VERSION = "9.11.58"  # Single source for RUNTIME versioning
+UCG_APP_VERSION = "9.11.59"  # Single source for RUNTIME versioning
 # Project outputs are uncalibrated; analytical THERMAL check != Angren THCM V&V.
 
 # FIX v9.11.23: TYPE_CHECKING — globals().get() ning haddan tashqar ko'pligi
@@ -16610,6 +16612,183 @@ def ucg_v6_matplotlib_chart_png(fig, *, width=950, height=620):
         logger.warning('Matplotlib fallback failed: %s: %s',type(exc).__name__,exc)
         return None
 
+# v9.11.59 — V6 shared interface / math / export utilities.
+# UI catalogue and DOCX catalogue intentionally read the SAME tuple registries;
+# no separate hardcoded sidebar equations are maintained.
+
+_V6_WIDGET_FINGERPRINT_KEYS = (
+    'exp_val', 'sensor_ai', 'comparison_mode_toggle', 'ucg_stage',
+    'well_dist_slider', 'dip_angle_slider', 'fos_thresh_dash', 'disp_cscale',
+    'live_steps', 'sobol_full', 'geo_preset', 'v6_num_layers',
+    'v6_source_temperature', 'v6_burn_duration', 'ucg50_iso_station_csv',
+    'ucg50_iso_mesh_csv', 'ucg50_iso_bca', 'ucg50_iso_cutoff',
+)
+
+
+def ucg_v6_widget_state_fingerprints(state) -> dict:
+    """Only known model/view/CSV widget inputs, never report metadata/cached figures.
+
+    Uploaded files are hashed by bytes (not their unstable object repr).
+    """
+    result = {}
+    for key in _V6_WIDGET_FINGERPRINT_KEYS:
+        value = state.get(key)
+        if value is None:
+            continue
+        if hasattr(value, 'getvalue') and callable(value.getvalue):
+            try:
+                data = value.getvalue()
+                result[key] = {'file_sha256': hashlib.sha256(data).hexdigest(),
+                               'length': len(data)}
+            except Exception as exc:
+                result[key] = 'UNREADABLE_UPLOAD:' + type(exc).__name__
+        elif isinstance(value, (str, bool, int, float)):
+            result[key] = value
+        elif isinstance(value, (bytes, bytearray)):
+            result[key] = hashlib.sha256(value).hexdigest()
+        # Non-input mutable cached objects are deliberately excluded.
+    return result
+
+
+def ucg_v6_apply_geological_preset(name: str) -> None:
+    """Set widget values before widgets are built, not after instantiation."""
+    preset = geological_presets().get(name)
+    if not isinstance(preset, dict):
+        raise ValueError('Unknown geological preset')
+    layers = preset.get('layers', [])
+    if not (1 <= len(layers) <= 5):
+        raise ValueError('V6 accepts 1 to 5 layers')
+    st.session_state['v6_num_layers'] = len(layers)
+    st.session_state['v6_source_temperature'] = int(np.clip(float(preset.get('T_max', 1000)), 600, 1400))
+    st.session_state['v6_burn_duration'] = max(1, int(round(float(preset.get('burn_h', 40)))))
+    for i, layer in enumerate(layers):
+        st.session_state[f'lname_{i}'] = str(layer.get('name', f'Layer-{i+1}'))
+        st.session_state[f'lthick_{i}'] = max(0.1, float(layer['thickness']))
+        st.session_state[f'lucs_{i}'] = float(np.clip(float(layer['ucs']), 0.1, 500.0))
+        st.session_state[f'lrho_{i}'] = max(100.0, float(layer['rho']))
+        st.session_state[f'lcolor_{i}'] = str(layer.get('color', '#777777'))
+        st.session_state[f'lgsi_{i}'] = int(np.clip(int(layer['gsi']), 10, 100))
+        st.session_state[f'lmi_{i}'] = max(0.1, float(layer['mi']))
+    st.session_state['_v6_applied_preset'] = name
+
+
+def ucg_v6_build_3d_gaussian_figure(Smax, rate, time_h, radius):
+    """Uses the same M19 radial Gaussian equation in UI and report."""
+    radius = float(radius)
+    if not np.isfinite(radius) or radius <= 0:
+        raise ValueError('3D influence radius must be finite and positive')
+    xx = np.linspace(-200.0, 200.0, 60)
+    gx, gy = np.meshgrid(xx, xx)
+    z_cm = (-float(Smax) * (1.0 - np.exp(-float(rate)*float(time_h)))
+            * np.exp(-(gx*gx+gy*gy)/(2*radius*radius))*100.0)
+    fig = go.Figure(go.Surface(z=z_cm, x=gx, y=gy, colorscale='Viridis'))
+    fig.update_layout(title='3D Gaussian subsidence, illustrative [cm]',
+                      scene=dict(xaxis_title='X [m]', yaxis_title='Y [m]',
+                                 zaxis_title='Subsidence [cm]'))
+    return fig
+
+
+def ucg_v6_stage_chart(s, fos, x_axis, z_axis):
+    """Same plotted stage output as the active FOS model, not a new solver."""
+    fig = go.Figure(go.Contour(z=fos, x=x_axis, y=z_axis,
+                              colorscale='RdYlGn', zmin=0, zmax=5,
+                              colorbar=dict(title='FOS [–]')))
+    fig.update_layout(title=f'Stage {s} — spatial FOS',
+                      xaxis_title='X [m]', yaxis_title='Depth [m]',
+                      yaxis=dict(autorange='reversed'), template='plotly_white')
+    return fig
+
+
+def ucg_v6_fig_trace_sha256(fig):
+    """Hash plotted trace data/metadata for audit; does not establish provenance."""
+    try:
+        from plotly.utils import PlotlyJSONEncoder
+        content = json.dumps(fig.to_plotly_json(), sort_keys=True,
+                             cls=PlotlyJSONEncoder, ensure_ascii=False)
+        return hashlib.sha256(content.encode('utf-8')).hexdigest()
+    except Exception as exc:
+        logger.warning('V6 chart figure hashing failed: %s', exc)
+        return 'NOT_AVAILABLE'
+
+
+def ucg_v6_figure_sources(scope, *, signature, stage_fos=None,
+                          x_axis=None, z_axis=None):
+    """One figure source for BOTH gallery and DOCX; never invent missing plots."""
+    keys = {chart[0] for chart in _V6_REPORT_CHARTS}
+    candidate = {k: scope[k] for k in keys if scope.get(k) is not None}
+    cache = st.session_state.get('v6_report_last_charts', {})
+    if isinstance(cache, dict) and cache.get('signature') == signature:
+        for k, obj in cache.get('figures', {}).items():
+            if k in keys and k not in candidate and obj is not None:
+                candidate[k] = obj
+    if isinstance(stage_fos, dict) and x_axis is not None and z_axis is not None:
+        for stage in (1, 2, 3):
+            if stage in stage_fos:
+                candidate[f'fig_stage_{stage}'] = ucg_v6_stage_chart(
+                    stage, stage_fos[stage], x_axis, z_axis)
+    return candidate
+
+
+def ucg_v6_render_model_library(lang='uz'):
+    """All M01-M23 formulas are inspectable in UI from the DOCX registry."""
+    titles = {
+        'uz': '📚 Matematik modellar va formulalar (M01–M23)',
+        'en': '📚 Mathematical models and formulas (M01–M23)',
+        'ru': '📚 Математические модели и формулы (M01–M23)',
+    }
+    with st.sidebar.expander(titles.get(lang, titles['uz']), expanded=False):
+        options = {f'{row[0]} — {row[1]}': row for row in _V6_REPORT_MODELS}
+        chosen_label = st.selectbox('Model ID / Model', tuple(options),
+                                    key='v6_formula_model_choice')
+        key, title, formula, explanation, refs, evidence = options[chosen_label]
+        st.code(formula, language=None)
+        st.caption('Explanation (UZ): ' + explanation)
+        st.caption('Scientific evidence: ' + evidence)
+        related = [c[0] for c in _V6_REPORT_CHARTS if key in c[3]]
+        st.caption('Associated chart IDs: ' + (', '.join(related) if related else 'NOT_AVAILABLE'))
+        for ref_key in refs:
+            st.caption(_V6_REPORT_APA_REFERENCES.get(ref_key, ref_key))
+        st.caption('Citation describes theoretical background; model-specific coefficients '
+                   'and Angren measurements are NOT independently validated.')
+    with st.expander(titles.get(lang, titles['uz']) + ' — full reference list'):
+        st.info('The SAME registry, formulas, model IDs, and provenance labels are used by DOCX.')
+        rows = [{'ID': r[0], 'Model': r[1], 'Formula': r[2],
+                 'Provenance/status': r[5],
+                 'Charts': ', '.join(c[0] for c in _V6_REPORT_CHARTS if r[0] in c[3])}
+                for r in _V6_REPORT_MODELS]
+        st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
+
+
+def ucg_v6_render_chart_gallery(scope, *, signature, stage_fos=None,
+                                x_axis=None, z_axis=None, language='uz'):
+    """A single navigable chart gallery (32 entries), same figures as DOCX."""
+    charts = ucg_v6_figure_sources(scope, signature=signature,
+                                   stage_fos=stage_fos, x_axis=x_axis, z_axis=z_axis)
+    with st.expander('📊 Complete Scientific Graphs / 32-chart registry', expanded=False):
+        count = sum(k in charts for k, *_ in _V6_REPORT_CHARTS)
+        st.info(f'{count}/{len(_V6_REPORT_CHARTS)} current/matching charts. '
+                'On-demand panels require their own Run button or CSV. '
+                'NOT_GENERATED is never replaced with synthetic evidence.')
+        options = {f'{i:02d}. {r[1]} [{r[0]}]': r for i,r in enumerate(_V6_REPORT_CHARTS, 1)}
+        selected = st.selectbox('Select chart', tuple(options), key='v6_gallery_selected_chart')
+        key, title, description, model_ids, source = options[selected]
+        st.markdown(f'**{title}**')
+        st.caption(description)
+        st.caption('Models: ' + ', '.join(model_ids) + ' | Source: ' + source)
+        if key in charts:
+            st.plotly_chart(charts[key], width='stretch', key='v6_gallery_plot_'+key)
+            st.code('SHA-256 trace: '+ucg_v6_fig_trace_sha256(charts[key]), language=None)
+        else:
+            st.warning('NOT_GENERATED_IN_THIS_RUN: optional analysis not executed for '
+                       'these inputs, or its external data/library is not available.')
+        st.dataframe(pd.DataFrame([
+            {'ID': row[0], 'Graph': row[1],
+             'Display/Export': 'CURRENT_OR_MATCHING_FRAME' if row[0] in charts else 'NOT_GENERATED',
+             'Model IDs': ', '.join(row[3])}
+            for row in _V6_REPORT_CHARTS]), width='stretch', hide_index=True)
+    return charts
+
+
 def ucg_v6_model_signature(parameters: dict) -> str:
     """Signature prevents reuse of unrelated live plot snapshots after input changes."""
     return hashlib.sha256(json.dumps(parameters, ensure_ascii=False,
@@ -16617,12 +16796,10 @@ def ucg_v6_model_signature(parameters: dict) -> str:
 
 
 def ucg_v6_cache_chart(chart_key: str, fig, signature: str) -> None:
-    """Capture executed post-export widgets for a future v6 DOCX click.
+    """Capture last executed on-demand V6 figure under an input fingerprint.
 
-    Streamlit reruns the full script on a click. Thus figures rendered *after*
-    the export control cannot be available to that click unless already saved.
-    Caching is limited to the current source inputs, and each figure is the last
-    executed frame (not the full interactive animation).
+    On a Streamlit rerun optional Run buttons may be inactive; the last matching
+    simulation frame can be reused but only for precisely matching inputs.
     """
     if chart_key not in {cfg[0] for cfg in _V6_REPORT_CHARTS} or fig is None:
         return
@@ -16639,34 +16816,17 @@ def ucg_v6_cache_chart(chart_key: str, fig, signature: str) -> None:
 def ucg_v6_collect_figure_records(scope: dict, *, signature: str,
                                    stage_fos=None, x_axis=None, z_axis=None):
     """Snapshot all defined V6 charts; track every absent/failed visual explicitly."""
-    candidate = {}
-    for cfg in _V6_REPORT_CHARTS:
-        key = cfg[0]
-        if scope.get(key) is not None:
-            candidate[key] = scope[key]
-    try:
-        cache = st.session_state.get('v6_report_last_charts', {})
-        if cache.get('signature') == signature:
-            for name, fig in cache.get('figures', {}).items():
-                if name not in candidate:
-                    candidate[name] = fig
-    except Exception as exc:
-        logger.warning('V6 cached chart lookup failed: %s', exc)
-    if isinstance(stage_fos, dict) and x_axis is not None and z_axis is not None:
-        for s in (1, 2, 3):
-            if s in stage_fos:
-                chart = go.Figure(go.Contour(z=stage_fos[s], x=x_axis, y=z_axis,
-                    colorscale='RdYlGn', zmin=0, zmax=5,
-                    colorbar=dict(title='FOS [–]')))
-                chart.update_layout(title=f'Stage {s} — spatial FOS',
-                                    xaxis_title='X [m]', yaxis_title='Depth [m]',
-                                    yaxis=dict(autorange='reversed'), template='plotly_white')
-                candidate[f'fig_stage_{s}'] = chart
+    candidate = ucg_v6_figure_sources(
+        scope, signature=signature, stage_fos=stage_fos,
+        x_axis=x_axis, z_axis=z_axis)
     records = []
     for key, title, description, models, source in _V6_REPORT_CHARTS:
         rec = {'key': key, 'title': title, 'description': description,
                'models': models, 'source': source, 'image': None,
-               'status': 'NOT_GENERATED_IN_THIS_RUN'}
+               'status': 'NOT_GENERATED_IN_THIS_RUN',
+               'model_signature_sha256': signature,
+               'trace_sha256': ucg_v6_fig_trace_sha256(candidate[key])
+                                 if key in candidate else 'NOT_AVAILABLE'}
         fig = candidate.get(key)
         if fig is not None:
             png = plotly_figure_to_png_bytes(fig, width=950, height=620)
@@ -16700,6 +16860,8 @@ def ucg_v6_append_scientific_report(doc, *, lang='uz', figure_records=None,
     (h_fig,h_mod,h_ref,l_desc,l_model,l_status,l_theory,l_deriv,l_missing,l_inputs,l_note) = labels.get(lang, labels['uz'])
     doc.add_page_break()
     doc.add_heading(h_fig, level=1)
+    doc.add_paragraph('Model/input fingerprint (SHA-256): ' +
+                      str((model_inputs or {}).get('model_signature_sha256', 'NOT_AVAILABLE')))
     doc.add_paragraph('RESEARCH_STAGE / NOT CERTIFIED / FIELD VALIDATION NOT ESTABLISHED. '
                       'Published equations support theoretical context only; user-defined coefficients, '
                       'synthetic scenarios and data files do not become validated observations.')
@@ -16744,6 +16906,7 @@ def ucg_v6_append_scientific_report(doc, *, lang='uz', figure_records=None,
         cap.add_run(f'{l_desc}: ').bold=True
         cap.add_run(description)
         doc.add_paragraph(f'{l_model}: '+', '.join(model_ids))
+        doc.add_paragraph('Chart trace digest (SHA-256): ' + str(rec.get('trace_sha256', 'NOT_AVAILABLE')))
         doc.add_paragraph(f'{l_status}: {provenance}; {status}. '
                           'Source is the current app calculation or last executed UI snapshot, '
                           'NOT an independently authenticated field measurement.')
@@ -31582,6 +31745,10 @@ def main():
     if not _require_streamlit_auth():
         return
     init_db()
+    # Apply pending preset BEFORE relevant widgets are instantiated in this rerun.
+    _pending_v6_preset = st.session_state.pop('_v6_pending_preset', None)
+    if _pending_v6_preset:
+        ucg_v6_apply_geological_preset(_pending_v6_preset)
     # ════════════════════════════════════════════════════════════════════════
     # [MERGE] Top-level mode selector: v6 Geomechanical vs v7 UCG Reactor
     # ════════════════════════════════════════════════════════════════════════
@@ -31705,40 +31872,13 @@ def main():
 
     st.sidebar.header(t('sidebar_header_params'))
 
-    formula_opts = FORMULA_OPTIONS[st.session_state.language]
-    formula_option = st.sidebar.selectbox(
-        t('formula_show'), formula_opts,
-        index=min(st.session_state.formula_idx, len(formula_opts) - 1)
-    )
-    st.session_state.formula_idx = formula_opts.index(formula_option) if formula_option in formula_opts else 0
-
-    if formula_option != formula_opts[0]:
-        with st.expander(f"📚 {formula_option}", expanded=True):
-            if formula_option == formula_opts[1]:
-                st.latex(r"\sigma_1 = \sigma_3 + \sigma_{ci}\left(m_b\frac{\sigma_3}{\sigma_{ci}}+s\right)^a")
-                st.latex(r"m_b = m_i\exp\!\left(\frac{GSI-100}{28-14D}\right);\ s = \exp\!\left(\frac{GSI-100}{9-3D}\right)")
-                st.latex(r"a = \tfrac{1}{2}+\tfrac{1}{6}\left(e^{-GSI/15}-e^{-20/3}\right)")
-                st.caption("Hoek & Brown (2018), JRMGE 11(3), 445-463")
-            elif formula_option == formula_opts[2]:
-                st.latex(r"D(T)=1-\exp\!\left(-\beta(T-T_0)\right)")
-                st.latex(r"\sigma_{ci(T)}=\sigma_{ci}\cdot(1-D(T))")
-                st.latex(r"k=k_0\exp(a_p\cdot D)\cdot(1+\chi\epsilon_v)")
-                st.caption("Shao et al. (2003) | Liu et al. (2011) — a_p ≈ 3.5")
-            elif formula_option == formula_opts[3]:
-                st.latex(r"\sigma_{th}=\eta_c\frac{E\alpha\Delta T}{1-\nu}-\lambda_r\nabla T")
-                st.latex(r"\sigma_{t0}=\frac{\sigma_{ci}}{2}\left(m_b-\sqrt{m_b^2+4s}\right)")
-                st.caption("η_c = 0.65 (PARAMS.CONFINEMENT) | Hoek-Brown (2002) tensile")
-            elif formula_option == formula_opts[4]:
-                st.latex(r"\sigma_p=\sigma_{ci}\left(0.64+0.36\frac{w}{H}\right)")
-                st.caption("Bieniawski-type factor: assumed, not calibrated for Angren (not a design factor)")
-                st.latex(r"y=\frac{H}{2}\left(\sqrt{\frac{\sigma_v}{\sigma_p}}-1\right)")
-                st.latex(r"S(x)=S_{max}\exp\!\left(-\frac{x^2}{2i^2}\right),\quad i=0.45H_{tot}")
-                st.caption("Peck (1969) | O'Reilly & New (1982)")
+    # v9.11.59: the UI and DOCX read the same M01–M23 registry.
+    ucg_v6_render_model_library(st.session_state.language)
 
     # ── Asosiy parametrlar ────────────────────────────────────────────────────
     obj_name = st.sidebar.text_input(t('project_name'), value="Angren-UCG-001")
     time_h = st.sidebar.slider(t('process_time'), 1, 150, 24)
-    num_layers = st.sidebar.number_input(t('num_layers'), min_value=1, max_value=5, value=3)
+    num_layers = st.sidebar.number_input(t('num_layers'), min_value=1, max_value=5, value=3, key="v6_num_layers")
     tensile_mode = st.sidebar.selectbox(
         t('tensile_model'),
         [t('tensile_empirical'), t('tensile_hb'), t('tensile_manual')]
@@ -31756,8 +31896,8 @@ def main():
         value=PARAMS.thermal_damage_beta, step=0.0005
     )
     st.sidebar.subheader(t('combustion'))
-    burn_duration = st.sidebar.number_input(t('burn_duration'), value=40, min_value=1)
-    T_source_max = st.sidebar.slider(t('max_temp'), 600, 1400, value=PARAMS.gas_temp)
+    burn_duration = st.sidebar.number_input(t('burn_duration'), value=40, min_value=1, key="v6_burn_duration")
+    T_source_max = st.sidebar.slider(t('max_temp'), 600, 1400, value=PARAMS.gas_temp, key="v6_source_temperature")
 
     extraction_ratio_slider = st.sidebar.slider(
         "Extraction Ratio (e):", 0.30, 0.80,
@@ -31789,13 +31929,15 @@ def main():
         preset_names = ["— Custom —"] + list(presets.keys())
         selected_preset = st.selectbox("Select location preset:", preset_names, key="geo_preset")
         if selected_preset != "— Custom —":
-            st.info(tr("msg.preset_configure_manually", selected_preset=selected_preset))
             preset_data = presets[selected_preset]
-            st.json({
-                "T_max": preset_data["T_max"],
-                "burn_h": preset_data["burn_h"],
-                "layers": len(preset_data["layers"])
-            })
+            st.json({"T_max": preset_data["T_max"],
+                     "burn_h": preset_data["burn_h"],
+                     "layers": len(preset_data["layers"])})
+            st.warning("Preset property sources have NOT been independently authenticated. "
+                       "Review all inputs before citing or using them.")
+            if st.button("Apply preset values to V6 inputs", key="v6_apply_preset"):
+                st.session_state['_v6_pending_preset'] = selected_preset
+                st.rerun()
 
     with st.sidebar.expander(t('timeline')):
         st.markdown(t('timeline_table'))
@@ -32074,7 +32216,7 @@ def main():
     w_prev = w_sol
     y_zone_calc = 0.0
     for iteration in range(50):
-        p_strength_iter = sigma_cm * (BIENIAWSKI_C1 + BIENIAWSKI_C2 * w_sol / (H_seam + EPS_STRESS))
+        p_strength_iter = sigma_cm * (c1_assumed + c2_assumed * w_sol / (H_seam + EPS_STRESS))
         ratio = sv_seam / (p_strength_iter + EPS_STRESS)
         y_zone_calc = float((H_seam / 2.0) * (safe_sqrt(ratio) - 1.0)) if ratio >= 1.0 else 0.0
         new_w = 2.0 * max(y_zone_calc, 1.5) + E_MIN_CORE
@@ -32084,7 +32226,7 @@ def main():
         w_prev = w_sol
 
     rec_width = float(np.round(w_sol, 1))
-    pillar_strength_val = sigma_cm * (BIENIAWSKI_C1 + BIENIAWSKI_C2 * rec_width / (H_seam + EPS_STRESS))
+    pillar_strength_val = sigma_cm * (c1_assumed + c2_assumed * rec_width / (H_seam + EPS_STRESS))
     y_zone = max(y_zone_calc, 1.5)
 
     rock_factor = (target_layer['gsi'] / 100.0) * (target_layer['mi'] / 20.0) * (1.0 - D_factor)
@@ -32111,7 +32253,9 @@ def main():
     if cavity_width_global <= 1.0:
         st.warning(t('warning_cavity_width'))
 
-    K0_jaky = 1.0 - np.sin(phi_rad)
+    K0_jaky = 1.0 - np.sin(phi_rad)  # reference diagnostic only
+    st.caption(f"Stage and pillar FOS use the user-selected K₀={k_ratio:.2f}. "
+               f"Jaky reference (1−sin φ)={K0_jaky:.2f} is NOT used in FOS computations.")
     sigma_v_coal = sum(l['rho'] * 9.81 * l['thickness'] for l in layers_data[:-1])
     sigma_v_coal += layers_data[-1]['rho'] * 9.81 * (H_seam / 2.0)
     sigma_v_coal /= 1e6
@@ -32125,9 +32269,15 @@ def main():
         'project': obj_name, 'time_h': time_h, 'max_T': T_source_max,
         'burn_duration': burn_duration, 'stage': stage,
         'layers': layers_data, 'D': D_factor, 'nu': nu_poisson,
-        'K0': k_ratio, 'beta': beta_thermal,
+        'K0_used': k_ratio, 'beta': beta_thermal,
         'extraction': extraction_ratio_slider, 'retreat': crip_retreat_rate,
         'pillar_assumptions': pillar_coefficient_args,
+        'well_distance_m': well_distance, 'dip_angle_deg': dip_angle,
+        'influence_radius_m': influence_radius, 'cavity_width_m': cavity_width_global,
+        'temperature_sha256': _array_hash(temp_2d),
+        'vertical_stress_sha256': _array_hash(grid_sigma_v),
+        'subsidence_sha256': _array_hash(sub_p),
+        'optional_widget_inputs': ucg_v6_widget_state_fingerprints(st.session_state),
     })
 
     fos_all_stages = {}
@@ -32154,7 +32304,7 @@ def main():
             layers_tuple=layers_tuple,
             layer_bounds_tuple=layer_bounds_tuple,
             E=PARAMS.E_mass, alpha=PARAMS.alpha_thermal, nu=nu_poisson,
-            K0=K0_jaky,
+            K0=k_ratio,
             Hc=Hc,
             sigma_v_coal_MPa=sigma_v_coal,
             ucs_coal_MPa=ucs_seam,
@@ -32784,19 +32934,22 @@ def main():
                 # Y_sobol, then run sobol.analyze. The model is a simplified
                 # Hoek-Brown FOS function.
                 def _fos_model(params):
-                    """Simplified FOS model for Sobol sensitivity analysis."""
-                    u_val, T_val, d_val, gsi_val = params
-                    mb_v, s_v, a_v = hoek_brown_params(float(gsi_val), float(layers_data[-1]['mi']), D_factor)
-                    ucs_T_v = float(apply_thermal_degradation(u_val, T_val, beta_thermal))
-                    sigma_cm_v = ucs_T_v * (max(float(s_v), 1e-9) ** float(a_v))
-                    sv_v = vertical_stress(float(d_val), 2500.0)
-                    return float(np.clip(sigma_cm_v * (0.64 + 0.36 * 5.0 / 3.0) / (sv_v + 1e-9), 0.0, 50.0))
+                    """Same uncalibrated pillar FOS kernel used by the main UI."""
+                    u_val, T_val, d_val, gsi_val = (float(v) for v in params)
+                    return float(pillar_capacity_demand_model(
+                        u_val, gsi_val, T_val, H_seam, rec_width,
+                        D_factor, beta_thermal, d_val, avg_rho,
+                        mi=float(target_layer['mi']), extraction_ratio=extraction_ratio_slider,
+                        confinement_ratio=k_ratio, time_h=time_h,
+                        **pillar_coefficient_args)['fos'])
 
                 Y_sobol = np.array([_fos_model(p) for p in param_values])
 
             with warnings.catch_warnings():
                 warnings.filterwarnings('ignore')
-                Si = sobol.analyze(problem, Y_sobol, calc_second_order=True)
+                Si = sobol.analyze(problem, Y_sobol, calc_second_order=False)
+            st.caption("Sobol S1/ST indices of the same UNCALIBRATED pillar-FOS model; "
+                       "parameter bounds are assumed. Second-order terms were not sampled.")
             st.write("First-order indices S1:", dict(zip(problem['names'], Si['S1'].round(4))))
             st.write("Total indices ST:", dict(zip(problem['names'], Si['ST'].round(4))))
             if 'S2' in Si:
@@ -32834,7 +32987,7 @@ def main():
             st.plotly_chart(fig_lhs, width="stretch")
             ci_low = float(np.percentile(collapse_prob_lhs, 2.5))
             ci_high = float(np.percentile(collapse_prob_lhs, 97.5))
-            st.write(f"95% CI: [{ci_low:.3f}, {ci_high:.3f}]")
+            st.write(f"95% simulated distribution percentile interval (not a confidence interval): [{ci_low:.3f}, {ci_high:.3f}]")
 
     # ── AI Risk Prediction ────────────────────────────────────────────────────
     risk_model = get_risk_model()
@@ -33129,342 +33282,6 @@ def main():
                     st.error("CSV must contain 'x' and 'subsidence_cm' columns.")
             except Exception as e:
                 st.error(f"Error: {e}")
-
-    # ── ISO Hisobot ─────────────────────────────────────────────────────────────
-    with st.expander("📄 ISRM/ISO Compliance Report (.docx)"):
-        d1, d2 = st.columns(2)
-        with d1:
-            iso_lang = st.selectbox(
-                "Report language",
-                ['uz', 'en', 'ru'],
-                format_func=lambda x: {'uz': "🇺🇿 O'zbek", 'en': "🇬🇧 English", 'ru': "🇷🇺 Русский"}[x],
-                key="iso_lang"
-            )
-            doc_num_input = st.text_input("Document number", value="UCG-2026-001")
-            revision_inp = st.text_input("Revision", value="A")
-        with d2:
-            prepared_inp = st.text_input("Prepared by", value="UCG Engineering Team")
-            approved_inp = st.text_input("Approved by", value="Chief Engineer")
-
-        st.caption('Appendix A: qoʻshimcha monitoring va GCI uchun alohida CSV yuklang. '
-                   'Haqiqiy RS2/Angren manbasi dastur tomonidan mustaqil tasdiqlanmaydi.')
-        _ucg_iso_station_upload = st.file_uploader(
-            'Appendix A — station_data_unverified.csv (x_m, observed_cm, predicted_cm)',
-            type=['csv'], key='ucg50_iso_station_csv')
-        _ucg_iso_mesh_upload = st.file_uploader(
-            'Appendix A — 3-mesh RS2 CSV (h,value), optional',
-            type=['csv'], key='ucg50_iso_mesh_csv')
-        _ucg_iso_bca_enabled = st.checkbox(
-            'Conditional 95% IID BCa (n>=30; spatial independence NOT verified)',
-            value=False, key='ucg50_iso_bca')
-        _ucg_iso_rel_limit = st.number_input(
-            'Relative-error exclusion for |observed| < cutoff (cm)',
-            min_value=0., value=0.5, step=0.1, key='ucg50_iso_cutoff')
-        st.download_button('Blank station CSV template',
-            data=b'x_m,observed_cm,predicted_cm\n',
-            file_name='station_data_unverified_template.csv',mime='text/csv',
-            key='ucg50_iso_station_template')
-        st.download_button('Blank three-mesh CSV template',
-            data=b'h,value\n',file_name='three_mesh_template.csv',
-            mime='text/csv',key='ucg50_iso_mesh_template')
-
-        if st.button("📄 Generate Report", type="primary", width="stretch", key="generate_iso_report"):
-            with st.spinner("Generating ISRM/ISO report..."):
-                try:
-                    fig_r, ax_r = plt.subplots(figsize=(6, 4))
-                    im_r = ax_r.imshow(
-                        risk_index_var,
-                        extent=[x_axis[0], x_axis[-1], z_axis[-1], z_axis[0]],
-                        cmap='hot', aspect='auto'
-                    )
-                    plt.colorbar(im_r, ax=ax_r, label='Risk Index')
-                    ax_r.set_title('Composite Risk Map')
-                    ax_r.set_xlabel('X (m)'); ax_r.set_ylabel('Depth (m)')
-                    buf_img = io.BytesIO()
-                    plt.savefig(buf_img, format='png', dpi=100, bbox_inches='tight')
-                    buf_img.seek(0)
-                    fig_bytes_report = buf_img.getvalue()
-                    plt.close(fig_r)
-
-                    results = {}
-                    _ucg50_bundle = None
-                    if _ucg_iso_station_upload is not None:
-                        _ucg50_bundle = ucg_build_appendix_bundle(
-                            _ucg_iso_station_upload.getvalue(),
-                            _ucg_iso_mesh_upload.getvalue() if _ucg_iso_mesh_upload is not None else None,
-                            enable_iid_bca=bool(_ucg_iso_bca_enabled),
-                            relative_cutoff_cm=float(_ucg_iso_rel_limit))
-                        results['academic_validation_appendix'] = _ucg50_bundle
-                    elif _ucg_iso_mesh_upload is not None:
-                        st.warning('GCI CSV berildi, ammo station CSV yoʻq. Appendix A NOT_EVALUATED.')
-                    if rf_model is not None and len(np.unique(y_test_ai)) > 1:
-                        proba_test = rf_model.predict_proba(X_test_ai)[:, 1]
-                        results['accuracy'] = accuracy_score(y_test_ai, rf_model.predict(X_test_ai))
-                        results['auc'] = roc_auc_score(y_test_ai, proba_test)
-                        results['f1'] = compute_confusion_roc_f1(y_test_ai, proba_test)['f1']
-                        results['ai_status'] = 'DERIVED_LABEL_DEMONSTRATION_NOT_VALIDATED'
-                        results['ai_data_provenance'] = 'Synthetic physics-rule labels; NOT observed failures'
-                    else:
-                        results['accuracy'] = None
-                        results['auc'] = None
-                        results['f1'] = None
-                        results['ai_status'] = 'NOT_EVALUATED'
-                    results['pf'] = pf_mc if 'pf_mc' in locals() else None
-                    # FIX #1 (v9.11.0): FOS min/avg/design values for report
-                    results['fos_min'] = float(np.nanmin(fos_worst_case)) if 'fos_worst_case' in locals() else None
-                    results['fos_avg'] = float(np.nanmean(fos_worst_case)) if 'fos_worst_case' in locals() else None
-                    results['fos_design'] = float(np.nanpercentile(fos_worst_case, 10)) if 'fos_worst_case' in locals() else None
-                    trace_payload = {
-                        "project": obj_name,
-                        "temperature_max": T_source_max,
-                        "burn_duration": burn_duration,
-                        "layers": layers_data,
-                        "fos_mean": float(np.nanmean(fos_worst_case)),
-                        "risk_mean": float(np.nanmean(risk_index_var)),
-                    }
-                    trace_bundle = build_traceability_bundle(trace_payload, object_id=obj_name)
-                    results['sha256'] = trace_bundle.sha256
-                    results['timestamp_utc'] = trace_bundle.timestamp_utc
-                    results['git_commit'] = trace_bundle.git_commit
-                    # v9.11.50: an internally generated ID is NOT a registered DOI.
-                    # Preserve a user-verified registered DOI only via a separate
-                    # publication provenance workflow; never fabricate it here.
-                    results['doi'] = 'NOT_REGISTERED (no DataCite/Crossref registration evidence)' 
-                    results['claims'] = generate_patent_claim_set([
-                        "Adaptive Biot",
-                        "Thermal Degradation",
-                        "3D FEM",
-                        "Digital Twin",
-                        "SHAP Explainability",
-                    ], lang=iso_lang)
-                    connector_specs = build_realtime_connector_specs(obj_name)
-                    results['connectors'] = connector_specs
-                    results['audit_db'] = PATENT_AUDIT_DB
-                    results['compliance_rows'] = generate_compliance_matrix().to_dict(orient='records')
-                    results['regression_suite'] = run_internal_regression_suite()
-                    gpu_count = int(torch.cuda.device_count()) if PT_AVAILABLE and torch.cuda.is_available() else 0
-                    results['multi_gpu_mode'] = f"multi-gpu:{gpu_count}" if gpu_count > 1 else ("single-gpu:1" if gpu_count == 1 else "cpu")
-                    # v9.11.38: Classifier scores are NOT FEM experimental metrics.
-                    # Patentability requires verified prior art and domain validation.
-                    results['patentability_index'] = None
-                    results['novelty_index'] = None
-                    results['inventive_step'] = None
-                    results['industrial_applicability'] = None
-                    results['fto_score'] = None
-                    results['claim_strength'] = None
-                    results['patent_status'] = 'NOT_EVALUATED'
-                    if rf_model is not None:
-                        try:
-                            X_explain = physics_features(
-                                temp_2d.flatten(),
-                                sigma1_act.flatten(),
-                                sigma3_act.flatten(),
-                                grid_z.flatten(),
-                                ucs_seam
-                            )
-                            explain_art = compute_mandatory_explainability_report(
-                                rf_model,
-                                X_explain[: min(200, len(X_explain))],
-                                ["Temperature", "Sigma1", "Sigma3", "Depth", "Damage", "FOS_approx", "Energy"]
-                            )
-                            results['explainability_top_features'] = explain_art.shap_summary.head(5).to_dict(orient='records')
-                        except Exception as explain_exc:
-                            results['explainability_top_features'] = [{"feature": "explainability_error", "mean_abs_shap": 0.0}]
-                            logger.warning(f"Explainability report generation failed: {explain_exc}")
-                    audit = ScientificAuditTrail()
-                    audit.log_change("report_generator", "export", "obj_name", None, obj_name, results['sha256'])
-
-                    # v9.11.58 — capture ALL V6 chart types from this actual
-                    # scenario; include stages 1/2/3 and executed optional panels.
-                    # Charts executed after the export button are available only
-                    # if a matching earlier rerun cached their last snapshot.
-                    X_3d = np.linspace(-200, 200, 60)
-                    Y_3d = np.linspace(-200, 200, 60)
-                    X3, Y3 = np.meshgrid(X_3d, Y_3d)
-                    R_3d = np.sqrt(X3**2 + Y3**2)
-                    Z_3d_subs = -float(Smax) * float(1.0 - np.exp(-float(c_subs) * float(time_h))) * np.exp(
-                        -R_3d**2 / (2.0 * float(influence_radius)**2)
-                    ) * 100.0
-                    fig_3d_subs = go.Figure(go.Surface(z=Z_3d_subs, x=X3, y=Y3, colorscale='Viridis'))
-                    fig_3d_subs.update_layout(title='3D Surface Subsidence (cm)',
-                                               scene=dict(xaxis_title='X (m)', yaxis_title='Y (m)',
-                                                          zaxis_title='Subsidence (cm)'))
-                    _v6_figures = ucg_v6_collect_figure_records(
-                        dict(locals()), signature=v6_signature,
-                        stage_fos=fos_all_stages, x_axis=x_axis, z_axis=z_axis)
-                    results['v6_model_inputs'] = {
-                        'project': obj_name, 'app_version': UCG_APP_VERSION,
-                        'generated_utc': datetime.now(timezone.utc).isoformat(),
-                        'simulation_hour_h': time_h, 'active_stage': stage,
-                        'source_max_temperature_c': T_source_max,
-                        'combustion_duration_h': burn_duration,
-                        'strata_count': len(layers_data), 'total_depth_m': round(total_depth, 4),
-                        'coal_seam_depth_m': round(depth_seam, 4),
-                        'seam_thickness_m': round(H_seam, 4),
-                        'rock_mass_disturbance_D': D_factor,
-                        'poisson_ratio': nu_poisson, 'lateral_stress_ratio_K0': k_ratio,
-                        'thermal_damage_beta_1_per_C': beta_thermal,
-                        'extraction_ratio_assumed': extraction_ratio_slider,
-                        'creep_width_coefficients_assumed': str(pillar_coefficient_args),
-                        'retreat_rate_m_per_h': crip_retreat_rate,
-                        'model_pillar_width_m': rec_width,
-                        'geology_source': 'USER_INPUT_UNVERIFIED',
-                        'field_measurement_status': 'NOT_AUTHENTICATED',
-                        'numerical_validation_status': 'RESEARCH_STAGE',
-                    }
-                    results['plotly_static_export'] = {
-                        'status': 'PARTIAL' if any(not r['status'].startswith('EMBEDDED_PNG') for r in _v6_figures) else 'OK',
-                        'included_images': sum(r['status'].startswith('EMBEDDED_PNG') for r in _v6_figures),
-                        'not_rendered': [r['key'] + ': ' + r['status'] for r in _v6_figures if not r['status'].startswith('EMBEDDED_PNG')],
-                        'note': 'All V6 chart types inventoried, but only executed and exported PNGs are embedded.',
-                    }
-                    if results['plotly_static_export']['included_images'] == 0:
-                        st.warning('No Plotly figures exported. Install `kaleido>=1` and Chrome/Chromium; '
-                                   'the report will list missing charts rather than invent images.')
-                    else:
-                        st.info(f"V6 DOCX: {results['plotly_static_export']['included_images']} figures embedded; "
-                                'optional/unrendered figures will be listed with reasons.')
-                    # Legacy bytes lists remain accepted by generator for API
-                    # compatibility, but v9.11.58 uses labelled figure records.
-                    figure_list_2d = []
-                    figure_list_3d = []
-
-                    docx_bytes = generate_full_iso_report(
-                        obj_name=obj_name, lang=iso_lang, layers_data=layers_data,
-                        T_source_max=T_source_max, burn_duration=float(burn_duration),
-                        pillar_strength=pillar_strength_creep,
-                        analytical_width=analytical_width,
-                        fos_2d=fos_worst_case, risk_map=risk_index_var,
-                        void_volume=void_volume,
-                        prepared_by=prepared_inp, approved_by=approved_inp,
-                        doc_number=doc_num_input, revision=revision_inp,
-                        fig_bytes=fig_bytes_report,
-                        results=results,
-                        figure_list_2d=figure_list_2d,
-                        figure_list_3d=figure_list_3d,
-                        figure_records=_v6_figures
-                    )
-                    fname = f"{doc_num_input}_Rev{revision_inp}_{pd.Timestamp.now().strftime('%Y%m%d')}_{iso_lang}.docx"
-                    st.download_button(
-                        label=f"⬇️ Download ({iso_lang.upper()}) — {fname}",
-                        data=docx_bytes,
-                        file_name=fname,
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                        width="stretch"
-                    )
-
-                    if _ucg50_bundle is not None:
-                        st.download_button('⬇️ Appendix A LaTeX (.tex)',
-                            _ucg50_bundle['latex'].encode('utf-8'),
-                            file_name='UCG_Appendix_A_Expert_Corrected.tex',
-                            mime='text/plain',key='ucg50_iso_tex')
-                        st.download_button('⬇️ Recomputed metrics + provenance (.json)',
-                            ucg_appendix_metrics_json(_ucg50_bundle),
-                            file_name='recomputed_metrics.json',
-                            mime='application/json',key='ucg50_iso_json')
-
-                    # ── FIX: 3-language download buttons (uz/en/ru) ──
-                    # Generate the same report in all 3 languages so the user
-                    # can download whichever they need without re-running the
-                    # simulation.
-                    st.markdown("**📥 3-tilde yuklab olish / Download in 3 languages / Скачать на 3 языках:**")
-                    col_dl1, col_dl2, col_dl3 = st.columns(3)
-                    with col_dl1:
-                        try:
-                            docx_uz = generate_full_iso_report(
-                                obj_name=obj_name, lang='uz', layers_data=layers_data,
-                                T_source_max=T_source_max, burn_duration=float(burn_duration),
-                                pillar_strength=pillar_strength_creep,
-                                analytical_width=analytical_width,
-                                fos_2d=fos_worst_case, risk_map=risk_index_var,
-                                void_volume=void_volume,
-                                prepared_by=prepared_inp, approved_by=approved_inp,
-                                doc_number=doc_num_input, revision=revision_inp,
-                                fig_bytes=fig_bytes_report,
-                                results=results,
-                                figure_list_2d=figure_list_2d,
-                                figure_list_3d=figure_list_3d,
-                                figure_records=_v6_figures
-                            )
-                            st.download_button(
-                                label="🇺🇿 O'zbek",
-                                data=docx_uz,
-                                file_name=f"{doc_num_input}_Rev{revision_inp}_{pd.Timestamp.now().strftime('%Y%m%d')}_uz.docx",
-                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                width="stretch"
-                            )
-                        except Exception as e:
-                            st.error(f"UZ: {e}")
-                    with col_dl2:
-                        try:
-                            docx_en = generate_full_iso_report(
-                                obj_name=obj_name, lang='en', layers_data=layers_data,
-                                T_source_max=T_source_max, burn_duration=float(burn_duration),
-                                pillar_strength=pillar_strength_creep,
-                                analytical_width=analytical_width,
-                                fos_2d=fos_worst_case, risk_map=risk_index_var,
-                                void_volume=void_volume,
-                                prepared_by=prepared_inp, approved_by=approved_inp,
-                                doc_number=doc_num_input, revision=revision_inp,
-                                fig_bytes=fig_bytes_report,
-                                results=results,
-                                figure_list_2d=figure_list_2d,
-                                figure_list_3d=figure_list_3d,
-                                figure_records=_v6_figures
-                            )
-                            st.download_button(
-                                label="🇬🇧 English",
-                                data=docx_en,
-                                file_name=f"{doc_num_input}_Rev{revision_inp}_{pd.Timestamp.now().strftime('%Y%m%d')}_en.docx",
-                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                width="stretch"
-                            )
-                        except Exception as e:
-                            st.error(f"EN: {e}")
-                    with col_dl3:
-                        try:
-                            docx_ru = generate_full_iso_report(
-                                obj_name=obj_name, lang='ru', layers_data=layers_data,
-                                T_source_max=T_source_max, burn_duration=float(burn_duration),
-                                pillar_strength=pillar_strength_creep,
-                                analytical_width=analytical_width,
-                                fos_2d=fos_worst_case, risk_map=risk_index_var,
-                                void_volume=void_volume,
-                                prepared_by=prepared_inp, approved_by=approved_inp,
-                                doc_number=doc_num_input, revision=revision_inp,
-                                fig_bytes=fig_bytes_report,
-                                results=results,
-                                figure_list_2d=figure_list_2d,
-                                figure_list_3d=figure_list_3d,
-                                figure_records=_v6_figures
-                            )
-                            st.download_button(
-                                label="🇷🇺 Русский",
-                                data=docx_ru,
-                                file_name=f"{doc_num_input}_Rev{revision_inp}_{pd.Timestamp.now().strftime('%Y%m%d')}_ru.docx",
-                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                width="stretch"
-                            )
-                        except Exception as e:
-                            st.error(f"RU: {e}")
-                except Exception as e:
-                    # FIX v9.11.20 (DB-path): aniq xato xabari va DB diagnostic
-                    _err_msg = str(e)
-                    if "unable to open database" in _err_msg.lower():
-                        st.error(
-                            f"❌ Database error: unable to open database file.\n"
-                            f"**Sabab:** Ma'lumotlar bazasi katalogi yozish uchun "
-                            f"mavjud emas yoki ruxsat yo'q.\n"
-                            f"**Yechim:** `UCG_DATA_DIR` environment variable ni "
-                            f"yozish mumkin katalogga sozlang (masalan: "
-                            f"`export UCG_DATA_DIR=/tmp/ucg_data`).\n"
-                            f"**Texnik xato:** {_err_msg}"
-                        )
-                        logger.error("[Report Generation] DB error: %s | UCG_DATA_DIR=%s",
-                                     _err_msg, os.getenv("UCG_DATA_DIR", "not set"))
-                    else:
-                        st.error(f"Report generation error: {e}")
-                        logger.error("[Report Generation] error: %s", e, exc_info=True)
 
     # ── Live 3D Monitoring ─────────────────────────────────────────────────────
     st.header("🔄 Live 3D Monitoring")
@@ -33922,7 +33739,7 @@ def main():
         mb_adv, s_adv, a_adv = hoek_brown_params(gsi_val, mi_val_r, D_factor)
         ucs_t_adv = float(apply_thermal_degradation(ucs_0_r, T_source_max, beta_thermal))
         sigma_cm_adv = ucs_t_adv * (float(s_adv) ** float(a_adv))
-        p_str_adv = sigma_cm_adv * (BIENIAWSKI_C1 + BIENIAWSKI_C2 * rec_width / (H_seam + EPS_STRESS))
+        p_str_adv = sigma_cm_adv * (c1_assumed + c2_assumed * rec_width / (H_seam + EPS_STRESS))
         avg_pore_p = float(np.nanmean(pore_pressure[idx_closest, :]))
 
         phi_char_val = float(np.mean(char_formation_porosity(temp_2d[idx_closest, :]))) if 'temp_2d' in locals() else 0.05
@@ -34307,6 +34124,387 @@ def main():
     )
     st.plotly_chart(dash_fig, width="stretch")
     ucg_v6_cache_chart("dash_fig", dash_fig, v6_signature)
+
+    # v9.11.59: the one 3D Gaussian figure is shared by UI and DOCX.
+    fig_3d_subs = ucg_v6_build_3d_gaussian_figure(
+        Smax, c_subs, time_h, influence_radius)
+    ucg_v6_render_chart_gallery(dict(locals()), signature=v6_signature,
+                                stage_fos=fos_all_stages,
+                                x_axis=x_axis, z_axis=z_axis,
+                                language=st.session_state.language)
+
+    # ── ISO Hisobot ─────────────────────────────────────────────────────────────
+    with st.expander("📄 ISRM/ISO Compliance Report (.docx)"):
+        d1, d2 = st.columns(2)
+        with d1:
+            iso_lang = st.selectbox(
+                "Report language",
+                ['uz', 'en', 'ru'],
+                format_func=lambda x: {'uz': "🇺🇿 O'zbek", 'en': "🇬🇧 English", 'ru': "🇷🇺 Русский"}[x],
+                key="iso_lang"
+            )
+            doc_num_input = st.text_input("Document number", value="UCG-2026-001")
+            revision_inp = st.text_input("Revision", value="A")
+        with d2:
+            prepared_inp = st.text_input("Prepared by", value="UCG Engineering Team")
+            approved_inp = st.text_input("Approved by", value="Chief Engineer")
+
+        st.caption('Appendix A: qoʻshimcha monitoring va GCI uchun alohida CSV yuklang. '
+                   'Haqiqiy RS2/Angren manbasi dastur tomonidan mustaqil tasdiqlanmaydi.')
+        _ucg_iso_station_upload = st.file_uploader(
+            'Appendix A — station_data_unverified.csv (x_m, observed_cm, predicted_cm)',
+            type=['csv'], key='ucg50_iso_station_csv')
+        _ucg_iso_mesh_upload = st.file_uploader(
+            'Appendix A — 3-mesh RS2 CSV (h,value), optional',
+            type=['csv'], key='ucg50_iso_mesh_csv')
+        _ucg_iso_bca_enabled = st.checkbox(
+            'Conditional 95% IID BCa (n>=30; spatial independence NOT verified)',
+            value=False, key='ucg50_iso_bca')
+        _ucg_iso_rel_limit = st.number_input(
+            'Relative-error exclusion for |observed| < cutoff (cm)',
+            min_value=0., value=0.5, step=0.1, key='ucg50_iso_cutoff')
+        st.download_button('Blank station CSV template',
+            data=b'x_m,observed_cm,predicted_cm\n',
+            file_name='station_data_unverified_template.csv',mime='text/csv',
+            key='ucg50_iso_station_template')
+        st.download_button('Blank three-mesh CSV template',
+            data=b'h,value\n',file_name='three_mesh_template.csv',
+            mime='text/csv',key='ucg50_iso_mesh_template')
+        _v6_document_fingerprint = ucg_v6_model_signature({
+            'model_sha256': v6_signature, 'doc_number': doc_num_input,
+            'revision': revision_inp, 'prepared': prepared_inp,
+            'approved': approved_inp, 'lang': iso_lang,
+            'station_settings': ucg_v6_widget_state_fingerprints(st.session_state),
+        })
+
+        if st.button("📄 Generate Report", type="primary", width="stretch", key="generate_iso_report"):
+            with st.spinner("Generating ISRM/ISO report..."):
+                try:
+                    fig_r, ax_r = plt.subplots(figsize=(6, 4))
+                    im_r = ax_r.imshow(
+                        risk_index_var,
+                        extent=[x_axis[0], x_axis[-1], z_axis[-1], z_axis[0]],
+                        cmap='hot', aspect='auto'
+                    )
+                    plt.colorbar(im_r, ax=ax_r, label='Risk Index')
+                    ax_r.set_title('Composite Risk Map')
+                    ax_r.set_xlabel('X (m)'); ax_r.set_ylabel('Depth (m)')
+                    buf_img = io.BytesIO()
+                    plt.savefig(buf_img, format='png', dpi=100, bbox_inches='tight')
+                    buf_img.seek(0)
+                    fig_bytes_report = buf_img.getvalue()
+                    plt.close(fig_r)
+
+                    results = {}
+                    _ucg50_bundle = None
+                    if _ucg_iso_station_upload is not None:
+                        _ucg50_bundle = ucg_build_appendix_bundle(
+                            _ucg_iso_station_upload.getvalue(),
+                            _ucg_iso_mesh_upload.getvalue() if _ucg_iso_mesh_upload is not None else None,
+                            enable_iid_bca=bool(_ucg_iso_bca_enabled),
+                            relative_cutoff_cm=float(_ucg_iso_rel_limit))
+                        results['academic_validation_appendix'] = _ucg50_bundle
+                    elif _ucg_iso_mesh_upload is not None:
+                        st.warning('GCI CSV berildi, ammo station CSV yoʻq. Appendix A NOT_EVALUATED.')
+                    if rf_model is not None and len(np.unique(y_test_ai)) > 1:
+                        proba_test = rf_model.predict_proba(X_test_ai)[:, 1]
+                        results['accuracy'] = accuracy_score(y_test_ai, rf_model.predict(X_test_ai))
+                        results['auc'] = roc_auc_score(y_test_ai, proba_test)
+                        results['f1'] = compute_confusion_roc_f1(y_test_ai, proba_test)['f1']
+                        results['ai_status'] = 'DERIVED_LABEL_DEMONSTRATION_NOT_VALIDATED'
+                        results['ai_data_provenance'] = 'Synthetic physics-rule labels; NOT observed failures'
+                    else:
+                        results['accuracy'] = None
+                        results['auc'] = None
+                        results['f1'] = None
+                        results['ai_status'] = 'NOT_EVALUATED'
+                    results['pf'] = pf_mc if 'pf_mc' in locals() else None
+                    # FIX #1 (v9.11.0): FOS min/avg/design values for report
+                    results['fos_min'] = float(np.nanmin(fos_worst_case)) if 'fos_worst_case' in locals() else None
+                    results['fos_avg'] = float(np.nanmean(fos_worst_case)) if 'fos_worst_case' in locals() else None
+                    results['fos_design'] = float(np.nanpercentile(fos_worst_case, 10)) if 'fos_worst_case' in locals() else None
+                    trace_payload = {
+                        "project": obj_name,
+                        "temperature_max": T_source_max,
+                        "burn_duration": burn_duration,
+                        "layers": layers_data,
+                        "fos_mean": float(np.nanmean(fos_worst_case)),
+                        "risk_mean": float(np.nanmean(risk_index_var)),
+                    }
+                    trace_bundle = build_traceability_bundle(trace_payload, object_id=obj_name)
+                    results['sha256'] = trace_bundle.sha256
+                    results['timestamp_utc'] = trace_bundle.timestamp_utc
+                    results['git_commit'] = trace_bundle.git_commit
+                    # v9.11.50: an internally generated ID is NOT a registered DOI.
+                    # Preserve a user-verified registered DOI only via a separate
+                    # publication provenance workflow; never fabricate it here.
+                    results['doi'] = 'NOT_REGISTERED (no DataCite/Crossref registration evidence)' 
+                    results['claims'] = generate_patent_claim_set([
+                        "Adaptive Biot",
+                        "Thermal Degradation",
+                        "3D FEM",
+                        "Digital Twin",
+                        "SHAP Explainability",
+                    ], lang=iso_lang)
+                    connector_specs = build_realtime_connector_specs(obj_name)
+                    results['connectors'] = connector_specs
+                    results['audit_db'] = PATENT_AUDIT_DB
+                    results['compliance_rows'] = generate_compliance_matrix().to_dict(orient='records')
+                    results['regression_suite'] = run_internal_regression_suite()
+                    gpu_count = int(torch.cuda.device_count()) if PT_AVAILABLE and torch.cuda.is_available() else 0
+                    results['multi_gpu_mode'] = f"multi-gpu:{gpu_count}" if gpu_count > 1 else ("single-gpu:1" if gpu_count == 1 else "cpu")
+                    # v9.11.38: Classifier scores are NOT FEM experimental metrics.
+                    # Patentability requires verified prior art and domain validation.
+                    results['patentability_index'] = None
+                    results['novelty_index'] = None
+                    results['inventive_step'] = None
+                    results['industrial_applicability'] = None
+                    results['fto_score'] = None
+                    results['claim_strength'] = None
+                    results['patent_status'] = 'NOT_EVALUATED'
+                    if rf_model is not None:
+                        try:
+                            X_explain = physics_features(
+                                temp_2d.flatten(),
+                                sigma1_act.flatten(),
+                                sigma3_act.flatten(),
+                                grid_z.flatten(),
+                                ucs_seam
+                            )
+                            explain_art = compute_mandatory_explainability_report(
+                                rf_model,
+                                X_explain[: min(200, len(X_explain))],
+                                ["Temperature", "Sigma1", "Sigma3", "Depth", "Damage", "FOS_approx", "Energy"]
+                            )
+                            results['explainability_top_features'] = explain_art.shap_summary.head(5).to_dict(orient='records')
+                        except Exception as explain_exc:
+                            results['explainability_top_features'] = [{"feature": "explainability_error", "mean_abs_shap": 0.0}]
+                            logger.warning(f"Explainability report generation failed: {explain_exc}")
+                    audit = ScientificAuditTrail()
+                    audit.log_change("report_generator", "export", "obj_name", None, obj_name, results['sha256'])
+
+                    # v9.11.59 — inventory current V6 charts from this actual
+                    # scenario; include stages 1/2/3 and executed optional panels.
+                    # On-demand simulations may be cached ONLY under an identical input fingerprint.
+                    # fig_3d_subs was created once from the active model and
+                    # displayed through the same common chart source registry.
+                    _v6_figures = ucg_v6_collect_figure_records(
+                        dict(locals()), signature=v6_signature,
+                        stage_fos=fos_all_stages, x_axis=x_axis, z_axis=z_axis)
+                    results['v6_model_inputs'] = {
+                        'project': obj_name, 'app_version': UCG_APP_VERSION,
+                        'generated_utc': datetime.now(timezone.utc).isoformat(),
+                        'simulation_hour_h': time_h, 'active_stage': stage,
+                        'source_max_temperature_c': T_source_max,
+                        'combustion_duration_h': burn_duration,
+                        'strata_count': len(layers_data), 'total_depth_m': round(total_depth, 4),
+                        'coal_seam_depth_m': round(depth_seam, 4),
+                        'seam_thickness_m': round(H_seam, 4),
+                        'rock_mass_disturbance_D': D_factor,
+                        'poisson_ratio': nu_poisson, 'lateral_stress_ratio_K0': k_ratio,
+                        'thermal_damage_beta_1_per_C': beta_thermal,
+                        'extraction_ratio_assumed': extraction_ratio_slider,
+                        'creep_width_coefficients_assumed': str(pillar_coefficient_args),
+                        'retreat_rate_m_per_h': crip_retreat_rate,
+                        'model_pillar_width_m': rec_width,
+                        'geology_source': 'USER_INPUT_UNVERIFIED',
+                        'field_measurement_status': 'NOT_AUTHENTICATED',
+                        'numerical_validation_status': 'RESEARCH_STAGE',
+                        'model_signature_sha256': v6_signature,
+                        'K0_stage_and_pillar_used': k_ratio,
+                        'K0_jaky_reference_not_used': float(K0_jaky),
+                        'well_distance_m': well_distance,
+                        'dip_angle_deg': dip_angle,
+                        'influence_radius_m': influence_radius,
+                        'pillar_capacity_mpa': pillar_state['capacity_mpa'],
+                        'pillar_demand_mpa': pillar_state['demand_mpa'],
+                        'pillar_FOS': pillar_state['fos'],
+                        'thermal_stress_note': 'sigma_th=eta E alpha max(T-Tref,0)/(1-nu); thermal shear NOT_EVALUATED',
+                        'permeability_note': 'k=clip(1e-15 exp(clip(3.5 overstress + 15 volumetric_strain, -20,20)),1e-16,1e-10) m2',
+                    }
+                    results['plotly_static_export'] = {
+                        'status': 'PARTIAL' if any(not r['status'].startswith('EMBEDDED_PNG') for r in _v6_figures) else 'OK',
+                        'included_images': sum(r['status'].startswith('EMBEDDED_PNG') for r in _v6_figures),
+                        'not_rendered': [r['key'] + ': ' + r['status'] for r in _v6_figures if not r['status'].startswith('EMBEDDED_PNG')],
+                        'note': 'All V6 chart types inventoried, but only executed and exported PNGs are embedded.',
+                    }
+                    if results['plotly_static_export']['included_images'] == 0:
+                        st.warning('No Plotly figures exported. Install `kaleido>=1` and Chrome/Chromium; '
+                                   'the report will list missing charts rather than invent images.')
+                    else:
+                        st.info(f"V6 DOCX: {results['plotly_static_export']['included_images']} figures embedded; "
+                                'optional/unrendered figures will be listed with reasons.')
+                    # Legacy bytes lists remain accepted by generator for API
+                    # compatibility, but v9.11.59 uses labelled figure records.
+                    figure_list_2d = []
+                    figure_list_3d = []
+
+                    docx_bytes = generate_full_iso_report(
+                        obj_name=obj_name, lang=iso_lang, layers_data=layers_data,
+                        T_source_max=T_source_max, burn_duration=float(burn_duration),
+                        pillar_strength=pillar_strength_creep,
+                        analytical_width=analytical_width,
+                        fos_2d=fos_worst_case, risk_map=risk_index_var,
+                        void_volume=void_volume,
+                        prepared_by=prepared_inp, approved_by=approved_inp,
+                        doc_number=doc_num_input, revision=revision_inp,
+                        fig_bytes=fig_bytes_report,
+                        results=results,
+                        figure_list_2d=figure_list_2d,
+                        figure_list_3d=figure_list_3d,
+                        figure_records=_v6_figures
+                    )
+                    fname = f"{doc_num_input}_Rev{revision_inp}_{pd.Timestamp.now().strftime('%Y%m%d')}_{iso_lang}.docx"
+                    st.download_button(
+                        label=f"⬇️ Download ({iso_lang.upper()}) — {fname}",
+                        data=docx_bytes,
+                        file_name=fname,
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        width="stretch"
+                    )
+
+                    if _ucg50_bundle is not None:
+                        st.download_button('⬇️ Appendix A LaTeX (.tex)',
+                            _ucg50_bundle['latex'].encode('utf-8'),
+                            file_name='UCG_Appendix_A_Expert_Corrected.tex',
+                            mime='text/plain',key='ucg50_iso_tex')
+                        st.download_button('⬇️ Recomputed metrics + provenance (.json)',
+                            ucg_appendix_metrics_json(_ucg50_bundle),
+                            file_name='recomputed_metrics.json',
+                            mime='application/json',key='ucg50_iso_json')
+
+                    # ── FIX: 3-language download buttons (uz/en/ru) ──
+                    # Generate the same report in all 3 languages so the user
+                    # can download whichever they need without re-running the
+                    # simulation.
+                    st.markdown("**📥 3-tilde yuklab olish / Download in 3 languages / Скачать на 3 языках:**")
+                    col_dl1, col_dl2, col_dl3 = st.columns(3)
+                    with col_dl1:
+                        try:
+                            docx_uz = generate_full_iso_report(
+                                obj_name=obj_name, lang='uz', layers_data=layers_data,
+                                T_source_max=T_source_max, burn_duration=float(burn_duration),
+                                pillar_strength=pillar_strength_creep,
+                                analytical_width=analytical_width,
+                                fos_2d=fos_worst_case, risk_map=risk_index_var,
+                                void_volume=void_volume,
+                                prepared_by=prepared_inp, approved_by=approved_inp,
+                                doc_number=doc_num_input, revision=revision_inp,
+                                fig_bytes=fig_bytes_report,
+                                results=results,
+                                figure_list_2d=figure_list_2d,
+                                figure_list_3d=figure_list_3d,
+                                figure_records=_v6_figures
+                            )
+                            st.download_button(
+                                label="🇺🇿 O'zbek",
+                                data=docx_uz,
+                                file_name=f"{doc_num_input}_Rev{revision_inp}_{pd.Timestamp.now().strftime('%Y%m%d')}_uz.docx",
+                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                width="stretch"
+                            )
+                        except Exception as e:
+                            st.error(f"UZ: {e}")
+                    with col_dl2:
+                        try:
+                            docx_en = generate_full_iso_report(
+                                obj_name=obj_name, lang='en', layers_data=layers_data,
+                                T_source_max=T_source_max, burn_duration=float(burn_duration),
+                                pillar_strength=pillar_strength_creep,
+                                analytical_width=analytical_width,
+                                fos_2d=fos_worst_case, risk_map=risk_index_var,
+                                void_volume=void_volume,
+                                prepared_by=prepared_inp, approved_by=approved_inp,
+                                doc_number=doc_num_input, revision=revision_inp,
+                                fig_bytes=fig_bytes_report,
+                                results=results,
+                                figure_list_2d=figure_list_2d,
+                                figure_list_3d=figure_list_3d,
+                                figure_records=_v6_figures
+                            )
+                            st.download_button(
+                                label="🇬🇧 English",
+                                data=docx_en,
+                                file_name=f"{doc_num_input}_Rev{revision_inp}_{pd.Timestamp.now().strftime('%Y%m%d')}_en.docx",
+                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                width="stretch"
+                            )
+                        except Exception as e:
+                            st.error(f"EN: {e}")
+                    with col_dl3:
+                        try:
+                            docx_ru = generate_full_iso_report(
+                                obj_name=obj_name, lang='ru', layers_data=layers_data,
+                                T_source_max=T_source_max, burn_duration=float(burn_duration),
+                                pillar_strength=pillar_strength_creep,
+                                analytical_width=analytical_width,
+                                fos_2d=fos_worst_case, risk_map=risk_index_var,
+                                void_volume=void_volume,
+                                prepared_by=prepared_inp, approved_by=approved_inp,
+                                doc_number=doc_num_input, revision=revision_inp,
+                                fig_bytes=fig_bytes_report,
+                                results=results,
+                                figure_list_2d=figure_list_2d,
+                                figure_list_3d=figure_list_3d,
+                                figure_records=_v6_figures
+                            )
+                            st.download_button(
+                                label="🇷🇺 Русский",
+                                data=docx_ru,
+                                file_name=f"{doc_num_input}_Rev{revision_inp}_{pd.Timestamp.now().strftime('%Y%m%d')}_ru.docx",
+                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                width="stretch"
+                            )
+                        except Exception as e:
+                            st.error(f"RU: {e}")
+                    _v6_language_docs = {}
+                    for _lang_code in ('uz', 'en', 'ru'):
+                        _doc_bytes = locals().get('docx_'+_lang_code)
+                        if isinstance(_doc_bytes, bytes) and _doc_bytes[:2] == b'PK':
+                            _v6_language_docs[_lang_code] = _doc_bytes
+                    if _v6_language_docs:
+                        st.session_state['v6_docx_completed'] = {
+                            'document_fingerprint': _v6_document_fingerprint,
+                            'model_signature_sha256': v6_signature,
+                            'documents': _v6_language_docs,
+                            'document_number': doc_num_input,
+                            'revision': revision_inp,
+                        }
+                except Exception as e:
+                    # FIX v9.11.20 (DB-path): aniq xato xabari va DB diagnostic
+                    _err_msg = str(e)
+                    if "unable to open database" in _err_msg.lower():
+                        st.error(
+                            f"❌ Database error: unable to open database file.\n"
+                            f"**Sabab:** Ma'lumotlar bazasi katalogi yozish uchun "
+                            f"mavjud emas yoki ruxsat yo'q.\n"
+                            f"**Yechim:** `UCG_DATA_DIR` environment variable ni "
+                            f"yozish mumkin katalogga sozlang (masalan: "
+                            f"`export UCG_DATA_DIR=/tmp/ucg_data`).\n"
+                            f"**Texnik xato:** {_err_msg}"
+                        )
+                        logger.error("[Report Generation] DB error: %s | UCG_DATA_DIR=%s",
+                                     _err_msg, os.getenv("UCG_DATA_DIR", "not set"))
+                    else:
+                        st.error(f"Report generation error: {e}")
+                        logger.error("[Report Generation] error: %s", e, exc_info=True)
+
+        # Persistent downloads: no stale report after model/document/upload edits.
+        _completed = st.session_state.get('v6_docx_completed', {})
+        if isinstance(_completed, dict) and _completed.get('document_fingerprint') == _v6_document_fingerprint:
+            st.success('DOCX ready for these model inputs. PDF/RS2 certification is NOT implied.')
+            _cols_dl = st.columns(3)
+            for _j, (_lang_dl, _flag) in enumerate((('uz','🇺🇿'),('en','🇬🇧'),('ru','🇷🇺'))):
+                _bytes_dl = _completed.get('documents', {}).get(_lang_dl)
+                if isinstance(_bytes_dl,bytes):
+                    with _cols_dl[_j]:
+                        st.download_button(
+                            f'{_flag} Download {_lang_dl.upper()} DOCX', _bytes_dl,
+                            file_name=f"{doc_num_input}_Rev{revision_inp}_{_lang_dl}_v6.docx",
+                            mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                            key=f'v6_persistent_export_{_lang_dl}', width='stretch')
+        elif isinstance(_completed, dict) and _completed.get('documents'):
+            st.info('Model/report settings have changed. Regenerate the DOCX; old exports are hidden.')
 
     # ── Footer ─────────────────────────────────────────────────────────────────
     st.sidebar.markdown("---")
