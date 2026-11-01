@@ -207,7 +207,7 @@
 from __future__ import annotations
 
 # v9.11.45 — focused research-integrity patch (2026-10-29).
-UCG_APP_VERSION = "9.11.59"  # Single source for RUNTIME versioning
+UCG_APP_VERSION = "9.11.60"  # Single source for RUNTIME versioning
 # Project outputs are uncalibrated; analytical THERMAL check != Angren THCM V&V.
 
 # FIX v9.11.23: TYPE_CHECKING — globals().get() ning haddan tashqar ko'pligi
@@ -16690,7 +16690,14 @@ def ucg_v6_build_3d_gaussian_figure(Smax, rate, time_h, radius):
 
 def ucg_v6_stage_chart(s, fos, x_axis, z_axis):
     """Same plotted stage output as the active FOS model, not a new solver."""
-    fig = go.Figure(go.Contour(z=fos, x=x_axis, y=z_axis,
+    _grid = np.asarray(fos, dtype=float)
+    _x = np.asarray(x_axis, dtype=float).reshape(-1)
+    _z = np.asarray(z_axis, dtype=float).reshape(-1)
+    if _grid.shape != (len(_z), len(_x)):
+        raise ValueError(f'Stage {s} FOS shape {_grid.shape} != axes ({len(_z)}, {len(_x)})')
+    if not (np.all(np.isfinite(_grid)) and np.all(np.isfinite(_x)) and np.all(np.isfinite(_z))):
+        raise ValueError('Non-finite stage FOS/axis data')
+    fig = go.Figure(go.Contour(z=_grid, x=_x, y=_z,
                               colorscale='RdYlGn', zmin=0, zmax=5,
                               colorbar=dict(title='FOS [–]')))
     fig.update_layout(title=f'Stage {s} — spatial FOS',
@@ -16724,8 +16731,11 @@ def ucg_v6_figure_sources(scope, *, signature, stage_fos=None,
     if isinstance(stage_fos, dict) and x_axis is not None and z_axis is not None:
         for stage in (1, 2, 3):
             if stage in stage_fos:
-                candidate[f'fig_stage_{stage}'] = ucg_v6_stage_chart(
-                    stage, stage_fos[stage], x_axis, z_axis)
+                try:
+                    candidate[f'fig_stage_{stage}'] = ucg_v6_stage_chart(
+                        stage, stage_fos[stage], x_axis, z_axis)
+                except (ValueError, TypeError) as exc:
+                    logger.warning('Stage %s V6 plot skipped: %s', stage, exc)
     return candidate
 
 
@@ -16789,10 +16799,65 @@ def ucg_v6_render_chart_gallery(scope, *, signature, stage_fos=None,
     return charts
 
 
+def ucg_v6_canonical_json(value):
+    """Stable JSON conversion for V6 input provenance, including full arrays.
+
+    Never use numpy's abbreviated display strings as scientific fingerprints.
+    Reject NaN/inf rather than accidentally caching nonsensical results.
+    """
+    if isinstance(value, np.ndarray):
+        if value.dtype.kind in 'iufb':
+            if value.dtype.kind == 'f' and not np.all(np.isfinite(value)):
+                raise ValueError('Non-finite numerical values in V6 model signature')
+            v = np.ascontiguousarray(value)
+            # Include dtype and shape, in addition to raw content.
+            return {'__array_sha256__': hashlib.sha256(v.tobytes()).hexdigest(),
+                    'dtype': str(v.dtype), 'shape': list(v.shape)}
+        return [ucg_v6_canonical_json(x) for x in value.tolist()]
+    if isinstance(value, np.generic):
+        return ucg_v6_canonical_json(value.item())
+    if isinstance(value, (bytes, bytearray)):
+        return {'__bytes_sha256__': hashlib.sha256(value).hexdigest(), 'length': len(value)}
+    if isinstance(value, dict):
+        return {str(k): ucg_v6_canonical_json(v) for k, v in sorted(value.items(), key=lambda p: str(p[0]))}
+    if isinstance(value, (list, tuple)):
+        return [ucg_v6_canonical_json(v) for v in value]
+    if isinstance(value, (set, frozenset)):
+        return sorted((ucg_v6_canonical_json(v) for v in value), key=str)
+    if isinstance(value, float):
+        if not np.isfinite(value):
+            raise ValueError('Non-finite value in V6 model signature')
+        return value
+    if value is None or isinstance(value, (bool, int, str)):
+        return value
+    raise TypeError(f'Unsupported V6 fingerprint value: {type(value).__name__}')
+
+
+def ucg_v6_safe_filename(text_value) -> str:
+    """Safe local download filename component, not a filesystem path."""
+    result = re.sub(r'[^A-Za-z0-9_.-]+', '_', str(text_value))[:64].strip('._')
+    return result or 'UCG_Report'
+
+
 def ucg_v6_model_signature(parameters: dict) -> str:
-    """Signature prevents reuse of unrelated live plot snapshots after input changes."""
-    return hashlib.sha256(json.dumps(parameters, ensure_ascii=False,
-                                    sort_keys=True, default=str).encode('utf-8')).hexdigest()
+    """SHA-256 of reproducible input data (not an authenticity certificate)."""
+    payload = ucg_v6_canonical_json(parameters)
+    return hashlib.sha256(json.dumps(payload, ensure_ascii=False,
+                   sort_keys=True, separators=(',', ':'), allow_nan=False).encode('utf-8')).hexdigest()
+
+
+def ucg_v6_benchmark_signature(benchmark) -> str:
+    """Hash the complete uploaded comparison arrays; ignore mutable object identity."""
+    if benchmark is None:
+        return 'NO_COMPARISON_DATA'
+    if not isinstance(benchmark, dict):
+        return 'UNSUPPORTED_BENCHMARK_FORMAT'
+    clean = {}
+    for key in ('x', 'subsidence', 'measured', 'predicted', 'distance', 'x_m', 'observed_cm', 'predicted_cm'):
+        if key in benchmark:
+            val = np.asarray(benchmark[key])
+            clean[key] = val
+    return ucg_v6_model_signature(clean) if clean else 'NO_COMPARISON_ARRAYS'
 
 
 def ucg_v6_cache_chart(chart_key: str, fig, signature: str) -> None:
@@ -16815,31 +16880,38 @@ def ucg_v6_cache_chart(chart_key: str, fig, signature: str) -> None:
 
 def ucg_v6_collect_figure_records(scope: dict, *, signature: str,
                                    stage_fos=None, x_axis=None, z_axis=None):
-    """Snapshot all defined V6 charts; track every absent/failed visual explicitly."""
-    candidate = ucg_v6_figure_sources(
-        scope, signature=signature, stage_fos=stage_fos,
-        x_axis=x_axis, z_axis=z_axis)
+    """Independent image failure handling; one bad plot cannot destroy the report."""
+    candidate = ucg_v6_figure_sources(scope, signature=signature,
+                 stage_fos=stage_fos, x_axis=x_axis, z_axis=z_axis)
     records = []
     for key, title, description, models, source in _V6_REPORT_CHARTS:
         rec = {'key': key, 'title': title, 'description': description,
                'models': models, 'source': source, 'image': None,
                'status': 'NOT_GENERATED_IN_THIS_RUN',
                'model_signature_sha256': signature,
-               'trace_sha256': ucg_v6_fig_trace_sha256(candidate[key])
-                                 if key in candidate else 'NOT_AVAILABLE'}
+               'trace_sha256': 'NOT_AVAILABLE'}
         fig = candidate.get(key)
         if fig is not None:
-            png = plotly_figure_to_png_bytes(fig, width=950, height=620)
-            if png:
-                rec['image'] = png
-                rec['status'] = 'EMBEDDED_PNG'
-            else:
-                fallback_png = ucg_v6_matplotlib_chart_png(fig)
-                if fallback_png:
-                    rec['image'] = fallback_png
-                    rec['status'] = 'EMBEDDED_PNG_FALLBACK (same trace data; static Matplotlib rendering)'
-                else:
-                    rec['status'] = 'PNG_RENDER_FAILED (Kaleido/Chrome or unsupported plot format)'
+            try:
+                rec['trace_sha256'] = ucg_v6_fig_trace_sha256(fig)
+                try:
+                    png = plotly_figure_to_png_bytes(fig, width=950, height=620)
+                    if png and bytes(png).startswith(b'\x89PNG'):
+                        rec['image'] = bytes(png)
+                        rec['status'] = 'EMBEDDED_PNG'
+                    else:
+                        raise RuntimeError('Kaleido image unavailable or invalid')
+                except Exception as plot_exc:
+                    logger.info('V6 Plotly PNG unavailable for %s: %s', key, plot_exc)
+                    png = ucg_v6_matplotlib_chart_png(fig)
+                    if png and bytes(png).startswith(b'\x89PNG'):
+                        rec['image'] = bytes(png)
+                        rec['status'] = 'EMBEDDED_PNG_FALLBACK: static Matplotlib from current traces'
+                    else:
+                        rec['status'] = 'PNG_RENDER_FAILED: no usable renderer'
+            except Exception as exc:
+                rec['status'] = 'CHART_EXPORT_FAILED: ' + type(exc).__name__
+                logger.exception('V6 figure %s failed; other charts continue', key)
         records.append(rec)
     return records
 
@@ -16896,12 +16968,20 @@ def ucg_v6_append_scientific_report(doc, *, lang='uz', figure_records=None,
         if not (isinstance(image_bytes,(bytes,bytearray)) and bytes(image_bytes).startswith(b'\x89PNG')):
             not_exported.append((key, title, description, model_ids, status))
             continue
-        p = doc.add_heading(f'Figure V6-{idx:02d}. {title}', level=2)
-        p.keep_with_next = True
-        pic_p = doc.add_paragraph()
-        pic_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        _figure_shape = pic_p.add_run().add_picture(io.BytesIO(image_bytes), width=Inches(5.65))
-        _figure_shape._inline.docPr.set('descr', title + '. ' + description)
+        try:
+            from docx.image.image import Image as _DocxImage
+            _DocxImage.from_file(io.BytesIO(image_bytes))  # decode before adding headings
+            p = doc.add_heading(f'Figure V6-{idx:02d}. {title}', level=2)
+            p.keep_with_next = True
+            pic_p = doc.add_paragraph()
+            pic_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            _figure_shape = pic_p.add_run().add_picture(io.BytesIO(image_bytes), width=Inches(5.65))
+            _figure_shape._inline.docPr.set('descr', title + '. ' + description)
+        except Exception as exc:
+            logger.warning('DOCX image decode failed for %s: %s', key, exc)
+            not_exported.append((key, title, description, model_ids,
+                                 'IMAGE_DECODE_FAILED:' + type(exc).__name__))
+            continue
         cap = doc.add_paragraph(style='Caption')
         cap.add_run(f'{l_desc}: ').bold=True
         cap.add_run(description)
@@ -32278,6 +32358,9 @@ def main():
         'vertical_stress_sha256': _array_hash(grid_sigma_v),
         'subsidence_sha256': _array_hash(sub_p),
         'optional_widget_inputs': ucg_v6_widget_state_fingerprints(st.session_state),
+        'benchmark_data_sha256': ucg_v6_benchmark_signature(
+            st.session_state.get('benchmark_data')),
+        'tensile_mode': tensile_mode,
     })
 
     fos_all_stages = {}
@@ -34194,6 +34277,7 @@ def main():
                     buf_img.seek(0)
                     fig_bytes_report = buf_img.getvalue()
                     plt.close(fig_r)
+                    plt.close(fig_r)
 
                     results = {}
                     _ucg50_bundle = None
@@ -34339,129 +34423,39 @@ def main():
                     figure_list_2d = []
                     figure_list_3d = []
 
-                    docx_bytes = generate_full_iso_report(
-                        obj_name=obj_name, lang=iso_lang, layers_data=layers_data,
-                        T_source_max=T_source_max, burn_duration=float(burn_duration),
-                        pillar_strength=pillar_strength_creep,
-                        analytical_width=analytical_width,
-                        fos_2d=fos_worst_case, risk_map=risk_index_var,
-                        void_volume=void_volume,
-                        prepared_by=prepared_inp, approved_by=approved_inp,
-                        doc_number=doc_num_input, revision=revision_inp,
-                        fig_bytes=fig_bytes_report,
-                        results=results,
-                        figure_list_2d=figure_list_2d,
-                        figure_list_3d=figure_list_3d,
-                        figure_records=_v6_figures
-                    )
-                    fname = f"{doc_num_input}_Rev{revision_inp}_{pd.Timestamp.now().strftime('%Y%m%d')}_{iso_lang}.docx"
-                    st.download_button(
-                        label=f"⬇️ Download ({iso_lang.upper()}) — {fname}",
-                        data=docx_bytes,
-                        file_name=fname,
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                        width="stretch"
-                    )
-
+                    # v9.11.60: single pass per language, no duplicate first report.
+                    # A failure in one translation must not erase the other languages.
+                    _v6_language_docs = {}
+                    for _lang_code in ('uz', 'en', 'ru'):
+                        try:
+                            _doc_bytes = generate_full_iso_report(
+                                obj_name=obj_name, lang=_lang_code, layers_data=layers_data,
+                                T_source_max=T_source_max, burn_duration=float(burn_duration),
+                                pillar_strength=pillar_strength_creep,
+                                analytical_width=analytical_width,
+                                fos_2d=fos_worst_case, risk_map=risk_index_var,
+                                void_volume=void_volume,
+                                prepared_by=prepared_inp, approved_by=approved_inp,
+                                doc_number=doc_num_input, revision=revision_inp,
+                                fig_bytes=fig_bytes_report, results=results,
+                                figure_list_2d=[], figure_list_3d=[],
+                                figure_records=_v6_figures)
+                            if not (isinstance(_doc_bytes, bytes) and _doc_bytes[:2] == b'PK'):
+                                raise ValueError('Invalid DOCX ZIP header')
+                            _v6_language_docs[_lang_code] = _doc_bytes
+                        except Exception as lang_exc:
+                            logger.exception('V6 DOCX %s creation failed', _lang_code)
+                            st.error('DOCX ' + _lang_code.upper() + ' failed (' +
+                                     type(lang_exc).__name__ + '). Review logs.')
                     if _ucg50_bundle is not None:
                         st.download_button('⬇️ Appendix A LaTeX (.tex)',
                             _ucg50_bundle['latex'].encode('utf-8'),
                             file_name='UCG_Appendix_A_Expert_Corrected.tex',
-                            mime='text/plain',key='ucg50_iso_tex')
+                            mime='text/plain', key='ucg50_iso_tex')
                         st.download_button('⬇️ Recomputed metrics + provenance (.json)',
                             ucg_appendix_metrics_json(_ucg50_bundle),
                             file_name='recomputed_metrics.json',
-                            mime='application/json',key='ucg50_iso_json')
-
-                    # ── FIX: 3-language download buttons (uz/en/ru) ──
-                    # Generate the same report in all 3 languages so the user
-                    # can download whichever they need without re-running the
-                    # simulation.
-                    st.markdown("**📥 3-tilde yuklab olish / Download in 3 languages / Скачать на 3 языках:**")
-                    col_dl1, col_dl2, col_dl3 = st.columns(3)
-                    with col_dl1:
-                        try:
-                            docx_uz = generate_full_iso_report(
-                                obj_name=obj_name, lang='uz', layers_data=layers_data,
-                                T_source_max=T_source_max, burn_duration=float(burn_duration),
-                                pillar_strength=pillar_strength_creep,
-                                analytical_width=analytical_width,
-                                fos_2d=fos_worst_case, risk_map=risk_index_var,
-                                void_volume=void_volume,
-                                prepared_by=prepared_inp, approved_by=approved_inp,
-                                doc_number=doc_num_input, revision=revision_inp,
-                                fig_bytes=fig_bytes_report,
-                                results=results,
-                                figure_list_2d=figure_list_2d,
-                                figure_list_3d=figure_list_3d,
-                                figure_records=_v6_figures
-                            )
-                            st.download_button(
-                                label="🇺🇿 O'zbek",
-                                data=docx_uz,
-                                file_name=f"{doc_num_input}_Rev{revision_inp}_{pd.Timestamp.now().strftime('%Y%m%d')}_uz.docx",
-                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                width="stretch"
-                            )
-                        except Exception as e:
-                            st.error(f"UZ: {e}")
-                    with col_dl2:
-                        try:
-                            docx_en = generate_full_iso_report(
-                                obj_name=obj_name, lang='en', layers_data=layers_data,
-                                T_source_max=T_source_max, burn_duration=float(burn_duration),
-                                pillar_strength=pillar_strength_creep,
-                                analytical_width=analytical_width,
-                                fos_2d=fos_worst_case, risk_map=risk_index_var,
-                                void_volume=void_volume,
-                                prepared_by=prepared_inp, approved_by=approved_inp,
-                                doc_number=doc_num_input, revision=revision_inp,
-                                fig_bytes=fig_bytes_report,
-                                results=results,
-                                figure_list_2d=figure_list_2d,
-                                figure_list_3d=figure_list_3d,
-                                figure_records=_v6_figures
-                            )
-                            st.download_button(
-                                label="🇬🇧 English",
-                                data=docx_en,
-                                file_name=f"{doc_num_input}_Rev{revision_inp}_{pd.Timestamp.now().strftime('%Y%m%d')}_en.docx",
-                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                width="stretch"
-                            )
-                        except Exception as e:
-                            st.error(f"EN: {e}")
-                    with col_dl3:
-                        try:
-                            docx_ru = generate_full_iso_report(
-                                obj_name=obj_name, lang='ru', layers_data=layers_data,
-                                T_source_max=T_source_max, burn_duration=float(burn_duration),
-                                pillar_strength=pillar_strength_creep,
-                                analytical_width=analytical_width,
-                                fos_2d=fos_worst_case, risk_map=risk_index_var,
-                                void_volume=void_volume,
-                                prepared_by=prepared_inp, approved_by=approved_inp,
-                                doc_number=doc_num_input, revision=revision_inp,
-                                fig_bytes=fig_bytes_report,
-                                results=results,
-                                figure_list_2d=figure_list_2d,
-                                figure_list_3d=figure_list_3d,
-                                figure_records=_v6_figures
-                            )
-                            st.download_button(
-                                label="🇷🇺 Русский",
-                                data=docx_ru,
-                                file_name=f"{doc_num_input}_Rev{revision_inp}_{pd.Timestamp.now().strftime('%Y%m%d')}_ru.docx",
-                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                width="stretch"
-                            )
-                        except Exception as e:
-                            st.error(f"RU: {e}")
-                    _v6_language_docs = {}
-                    for _lang_code in ('uz', 'en', 'ru'):
-                        _doc_bytes = locals().get('docx_'+_lang_code)
-                        if isinstance(_doc_bytes, bytes) and _doc_bytes[:2] == b'PK':
-                            _v6_language_docs[_lang_code] = _doc_bytes
+                            mime='application/json', key='ucg50_iso_json')
                     if _v6_language_docs:
                         st.session_state['v6_docx_completed'] = {
                             'document_fingerprint': _v6_document_fingerprint,
@@ -34500,7 +34494,7 @@ def main():
                     with _cols_dl[_j]:
                         st.download_button(
                             f'{_flag} Download {_lang_dl.upper()} DOCX', _bytes_dl,
-                            file_name=f"{doc_num_input}_Rev{revision_inp}_{_lang_dl}_v6.docx",
+                            file_name=f"{ucg_v6_safe_filename(doc_num_input)}_Rev{ucg_v6_safe_filename(revision_inp)}_{_lang_dl}_v6.docx",
                             mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
                             key=f'v6_persistent_export_{_lang_dl}', width='stretch')
         elif isinstance(_completed, dict) and _completed.get('documents'):
