@@ -205,7 +205,7 @@
 from __future__ import annotations
 
 # v9.11.45 — focused research-integrity patch (2026-10-29).
-UCG_APP_VERSION = "9.11.56"  # Single source for RUNTIME versioning
+UCG_APP_VERSION = "9.11.57"  # Single source for RUNTIME versioning
 # Project outputs are uncalibrated; analytical THERMAL check != Angren THCM V&V.
 
 # FIX v9.11.23: TYPE_CHECKING — globals().get() ning haddan tashqar ko'pligi
@@ -3205,9 +3205,9 @@ class AcceptanceCriteria:
     FEM_GCI_THRESHOLD = 0.05     # 5% GCI for mesh independence
 
     # Statistical Validation Criteria
-    PEARSON_R_MIN = 0.85  # FIX v9.11.16 #65: ASME V&V 10-2009 Section 4.2 validation threshold         # Minimum correlation with experiment
+    PEARSON_R_MIN = 0.85  # FIX v9.11.16 #65: Project-selected threshold; not an ASME requirement         # Minimum correlation with experiment
     SPEARMAN_RHO_MIN = 0.80      # Minimum rank correlation
-    WILLMOTT_D_MIN = 0.80  # FIX v9.11.16 #60: Willmott (1981) Bull. Am. Meteorol. Soc. 63(11):1309-1313        # Minimum index of agreement
+    WILLMOTT_D_MIN = 0.80  # FIX v9.11.16 #60: Willmott (1981), Physical Geography 2(2):184-194, doi:10.1080/02723646.1981.10642213        # Minimum index of agreement
     BIAS_MAX_PCT = 10.0          # Maximum allowable bias (%)
     RELATIVE_RMSE_MAX = 0.15     # Maximum relative RMSE
     KGE_MIN = 0.50  # User-requested project acceptance threshold, not universal ASME standard
@@ -3303,7 +3303,7 @@ class AcceptanceCriteria:
                 "passed": n_pass,
                 "failed": n_total - n_pass,
                 "pass_rate": n_pass / max(n_total, 1),
-                "overall": "PASS" if n_pass == n_total else "CONDITIONAL" if n_pass >= 0.8 * n_total else "FAIL"  # FIX v9.11.13 #69: 0.8 = ASME V&V 10 conditional pass threshold (80% criteria met),
+                "overall": "PASS" if n_pass == n_total else "CONDITIONAL" if n_pass >= 0.8 * n_total else "FAIL"  # FIX v9.11.13 #69: 0.8 = project heuristic only; not an ASME certification rule,
             },
             "timestamp": _utc_now_iso() if callable(globals().get("_utc_now_iso")) else "",
         }
@@ -9760,7 +9760,7 @@ def solve_fem_3d_linear_elastic_real(mesh: FEMMesh3D, young_modulus: float, pois
                 fixed_dofs_set.add(3*i+1)       # side y-normal: uy = 0
     fixed_dofs_list = sorted(fixed_dofs_set)
     fixed_dof_count = len(fixed_dofs_list)
-    K, F = _apply_dirichlet_zero(K, F, fixed_dofs_list)
+    # Zero constraints are applied after assembling every external load.
     # FIX v9.11.19 #3: BoundaryConditionValidator ni chaqiramiz (agar mavjud bo'lsa)
     _bcv = globals().get("BoundaryConditionValidator")
     if _bcv is not None:
@@ -9802,9 +9802,29 @@ def solve_fem_3d_linear_elastic_real(mesh: FEMMesh3D, young_modulus: float, pois
         ]
         if not top_node_indices:
             raise FEMMeshError("No nodes found on the top boundary for the applied load.")
-        per_node_force = body_force / len(top_node_indices)
-        for i in top_node_indices:
-            F[i * ndof + 2] += per_node_force
+        # Uniform traction integrated on each top Hex8 face, with geometric area.
+        surface_weights = np.zeros(num_nodes)
+        gp = (-1/np.sqrt(3.), 1/np.sqrt(3.))
+        for elem in elements:
+            face_nodes = elem[[4,5,6,7]]
+            coords = nodes[face_nodes]
+            if not np.all(np.abs(coords[:,2]-z_max) <= z_tolerance):
+                continue
+            for xi in gp:
+                for eta in gp:
+                    N = .25*np.array([(1-xi)*(1-eta),(1+xi)*(1-eta),
+                                      (1+xi)*(1+eta),(1-xi)*(1+eta)])
+                    dxi = .25*np.array([-(1-eta),1-eta,1+eta,-(1+eta)])
+                    deta = .25*np.array([-(1-xi),-(1+xi),1+xi,1-xi])
+                    jac = np.linalg.norm(np.cross(dxi@coords,deta@coords))
+                    np.add.at(surface_weights,face_nodes,N*jac)
+        area = surface_weights.sum()
+        if area <= 0:
+            raise FEMMeshError('No valid top element faces for uniform traction')
+        F[2::3] += body_force * surface_weights / area
+
+    physical_K, physical_F = K.copy(), F.copy()
+    K, F = _apply_dirichlet_zero(K, F, fixed_dofs_list)
 
     # FIX #4 (v9.11.16): Sparse solver fallback to'g'rilangan.
     # v9.11.15 da `K_dense + 1e-12 * I` (Tikhonov regularization) ishlatilgan — bu
@@ -9991,6 +10011,9 @@ def solve_fem_3d_linear_elastic_real(mesh: FEMMesh3D, young_modulus: float, pois
         "mesh_quality_min": float(np.min(mesh_quality)),
         "mesh_quality_max": float(np.max(mesh_quality)),
         # BC audit trail (PhD reproducibility uchun)
+        "physical_load": physical_F,
+        "reaction_force": physical_K @ u - physical_F,
+        "fixed_dofs": np.asarray(fixed_dofs_list, dtype=int),
         "fixed_dof_count": int(fixed_dof_count),
         "boundary_mode": boundary_mode,
         "boundary_assumptions": "Bottom uz=0 and x/y lateral normal rollers; no in-situ prestress or lateral traction."
@@ -13787,13 +13810,20 @@ def thermal_conductivity(T: np.ndarray, k0: float = 2.5) -> np.ndarray:
 def specific_heat(T: np.ndarray) -> np.ndarray:
     return np.clip(960.0 + 0.14 * T, 900.0, 2200.0)
 
-def density_temperature(rho0: float, T: np.ndarray) -> np.ndarray:
-    T_clamped = np.clip(T, T_REF_AMBIENT, 1200.0)
-    alpha_v = 3.6e-5
-    thermal_factor = 1.0 - alpha_v * (T_clamped - T_REF_AMBIENT)
-    combustion_factor = np.clip(1.0 - 0.70 * np.clip((T_clamped - 400.0) / 400.0, 0.0, 1.0), 0.30, 1.0)
-    rho_T = rho0 * thermal_factor * combustion_factor
-    return np.clip(rho_T, 0.10 * rho0, rho0)
+def density_temperature(rho0: float, T: np.ndarray, *, combustible: bool = False) -> np.ndarray:
+    """Illustrative thermal expansion; optional coal-only burn-off, not rock mass loss.
+
+    rho=rho0/(1+alpha_v*dT) conserves mass for volumetric expansion.
+    Burn-off is a separate uncalibrated empirical assumption and defaults off.
+    """
+    T = np.asarray(T, dtype=float)
+    if not np.isfinite(rho0) or rho0 <= 0 or not np.isfinite(T).all():
+        raise ValueError('Density must be positive and temperatures finite')
+    dt = np.maximum(T - T_REF_AMBIENT, 0.0)
+    rho_T = rho0 / (1.0 + 3.6e-5 * dt)
+    if combustible:
+        rho_T *= 1.0 - 0.70 * np.clip((T-400.0)/400.0, 0., 1.)
+    return rho_T
 
 def young_modulus_temperature(T: np.ndarray, E0: Optional[float] = None) -> np.ndarray:
     E0_val = E0 if E0 is not None else PARAMS.E_mass
@@ -13845,8 +13875,13 @@ def solve_heat_equation_dynamic(T: np.ndarray, Q: np.ndarray, rho_field: np.ndar
         return T
     # Conservative safety bound for explicit diffusion, including evolving k/cp.
     def stable_dt(kk, cc):
-        alpha = float(np.max(kk / (rho * cc)))
-        return 0.45 / (alpha * (1.0 / dx**2 + 1.0 / dz**2))
+        center = kk[1:-1,1:-1]
+        def face(other):
+            return 2*center*other/(center+other)
+        row_sum = ((face(kk[1:-1,2:])+face(kk[1:-1,:-2]))/dx**2
+                   +(face(kk[2:,1:-1])+face(kk[:-2,1:-1]))/dz**2)
+        rate = row_sum/(rho[1:-1,1:-1]*cc[1:-1,1:-1])
+        return 0.9/float(np.max(rate))
     dt_limit = stable_dt(k, cp)
     n_steps = max(1, int(np.ceil(total_time / dt_limit)))
     if n_steps > max_steps:
@@ -13908,6 +13943,14 @@ def evolving_cavity_radius(time_h: float, T_field: np.ndarray, beta: float,
     growth_rate = 0.015 * float(np.mean(thermal_dam_local))
     return float(np.clip(5.0 + growth_rate * time_h, 5.0, 40.0))
 
+def polar_stress_to_cartesian(srr, stt, trt, theta):
+    """Tensor rotation, same stress units and sign convention in/out."""
+    c, sn = np.cos(theta), np.sin(theta)
+    return (srr*c*c + stt*sn*sn - 2*trt*sn*c,
+            srr*sn*sn + stt*c*c + 2*trt*sn*c,
+            (srr-stt)*sn*c + trt*(c*c-sn*sn))
+
+
 def kirsch_stress_field(x: np.ndarray, z: np.ndarray, sigma_H: float, sigma_h: float,
                         cavity_radius: float, pore_pressure: float = 0.0) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """FIX v9.11.27 (PhD/Patent audit): Verified against the canonical Kirsch (1898)
@@ -13932,7 +13975,11 @@ def kirsch_stress_field(x: np.ndarray, z: np.ndarray, sigma_H: float, sigma_h: f
     sigma_H = float(np.mean(sigma_H)) if hasattr(sigma_H, '__len__') else float(sigma_H)
     sigma_h = float(np.mean(sigma_h)) if hasattr(sigma_h, '__len__') else float(sigma_h)
 
-    r = np.maximum(np.sqrt(x ** 2 + z ** 2), cavity_radius + GEOM_EPS)
+    if not np.isfinite(cavity_radius) or cavity_radius <= 0:
+        raise ValueError('Kirsch cavity radius must be finite and positive')
+    # Evaluate the exact cavity wall r=a; a length epsilon changes its traction.
+    # Values inside r<a are boundary extensions for display, not a solid solution.
+    r = np.maximum(np.hypot(x, z), cavity_radius)
     theta = np.arctan2(z, x)
     a2_r2 = (cavity_radius ** 2) / (r ** 2)
     a4_r4 = (cavity_radius ** 4) / (r ** 4)
@@ -18907,7 +18954,7 @@ class EnergyBalanceLogger:
         self.records = []
 
     def log_step(self, step: int, t: float, Q_exo: float, Q_endo: float,
-                 Q_loss: float, T: float, dT_actual: float) -> dict:
+                 Q_loss: float, T: float, dT_actual: float, *, energy_change_j=None) -> dict:
         """
         Log energy balance for one time step.
 
@@ -18924,7 +18971,8 @@ class EnergyBalanceLogger:
         record = {
             'step': step, 't': t, 'Q_exo': Q_exo, 'Q_endo': Q_endo,
             'Q_loss': Q_loss, 'Q_net': Q_net, 'T': T, 'dT_actual': dT_actual,
-            'balance_residual': abs(Q_net - dT_actual * 30.0),  # C_p * dT approximation
+            'balance_residual': abs(Q_net-float(energy_change_j)) if energy_change_j is not None else None,
+            'status': 'COMPUTED_J' if energy_change_j is not None else 'NOT_EVALUATED',
         }
         self.records.append(record)
         return record
@@ -18937,11 +18985,11 @@ class EnergyBalanceLogger:
     def summary(self) -> dict:
         if not self.records:
             return {'total_steps': 0}
-        residuals = [r['balance_residual'] for r in self.records]
+        residuals = [r['balance_residual'] for r in self.records if r['balance_residual'] is not None]
         return {
             'total_steps': len(self.records),
-            'mean_residual': float(np.mean(residuals)),
-            'max_residual': float(np.max(residuals)),
+            'mean_residual': float(np.mean(residuals)) if residuals else None,
+            'max_residual': float(np.max(residuals)) if residuals else None,
             'total_Q_exo': sum(r['Q_exo'] for r in self.records),
             'total_Q_endo': sum(r['Q_endo'] for r in self.records),
             'total_Q_loss': sum(r['Q_loss'] for r in self.records),
@@ -19034,6 +19082,12 @@ class ArrheniusParameterSources:
             'confidence': 'low',
         },
     }
+
+    for _entry in SOURCES.values():
+        _entry['historical_attribution_unverified'] = (_entry['A_source'], _entry['Ea_source'])
+        _entry['A_source'] = _entry['Ea_source'] = 'UNVERIFIED_PARAMETER_SOURCE: exact source table not established'
+        _entry['method'] = 'Illustrative input; calibration experiment not supplied'
+        _entry['confidence'] = 'NOT_EVALUATED'
 
     @classmethod
     def get_source_table(cls) -> 'pd.DataFrame':
@@ -22097,7 +22151,7 @@ class FormulaRegressionSuite:
         }
 
     @classmethod
-    def test_ideal_gas(cls, P: float = 1e6, V: float = 0.01,
+    def test_ideal_gas(cls, P: float = 1e6, V: float = 0.008314,
                        n: float = 1.0, R: float = 8.314,
                        T: float = 1000.0) -> dict:
         """Ideal gaz test: PV = nRT."""
@@ -22177,17 +22231,17 @@ class ReactionBibliography:
     Har bir reaksiyada ishlatiladigan kinetik parametrlar (A, Ea) uchun
     bibliografik ma'lumotlarni saqlaydi va hisobotga kiritadi.
 
-    Reference: Perkins & Vairak (2012) "Underground Coal Gasification:
-    A Brief Review of Current Status", Energies, 5, 3260-3282.
+    Historical records below are not evidence of parameter calibration.
+    Verified metadata and excluded entries are explicitly distinguished.
     """
     BIBLIOGRAPHY = {
         'gasification_steam': {
             'name': 'C + H2O -> CO + H2 (steam gasification)',
             'references': [
-                {'authors': 'Perkins G., Sahajwalla V.', 'year': 2007,
+                {'authors': 'Perkins G., Sahajwalla V.', 'year': 2005,
                  'title': 'A Mathematical Model for the Chemical Reaction of a Semi-Infinite Block of Coal in Underground Coal Gasification',
-                 'journal': 'Energy & Fuels', 'volume': '21', 'pages': '2405-2417',
-                 'doi': '10.1021/ef700161q'},
+                 'journal': 'Energy & Fuels', 'volume': '19', 'pages': '1679-1692',
+                 'doi': '10.1021/ef0496808', 'audit_status':'VERIFIED_METADATA_ONLY; NOT_PARAMETER_VALIDATION'},
                 {'authors': 'Dufaux A.', 'year': 1990,
                  'title': 'Modelling of the process of underground coal gasification',
                  'journal': 'In-situ', 'volume': '14', 'pages': '121-137',
@@ -22197,14 +22251,14 @@ class ReactionBibliography:
         'boudouard': {
             'name': 'C + CO2 -> 2CO (Boudouard reaction)',
             'references': [
-                {'authors': 'Roberts D.G., Harris D.J.', 'year': 2012,
+                {'authors': 'Roberts D.G., Harris D.J.', 'year': 2006,
                  'title': 'A Kinetic Analysis of Coal Char Gasification Reactions at High Pressures',
-                 'journal': 'Energy & Fuels', 'volume': '26', 'pages': '176-184',
-                 'doi': '10.1021/ef201188c'},
+                 'journal': 'Energy & Fuels', 'volume': '20(6)', 'pages': '2314-2320',
+                 'doi': '10.1021/ef060270o'},
                 {'authors': 'Laurendeau N.M.', 'year': 1978,
-                 'title': 'Heterogeneous kinetics of coal char gasification',
+                 'title': 'Heterogeneous kinetics of coal char gasification and combustion',
                  'journal': 'Progress in Energy and Combustion Science', 'volume': '4',
-                 'pages': '221-270', 'doi': '10.1016/0360-1285(78)90008-2'},
+                 'pages': '221-270', 'doi': '10.1016/0360-1285(78)90008-4'},
             ],
         },
         'combustion': {
@@ -22217,7 +22271,7 @@ class ReactionBibliography:
                 {'authors': 'Smith I.W.', 'year': 1978,
                  'title': 'The intrinsic reactivity of carbons to oxygen',
                  'journal': 'Fuel', 'volume': '57', 'pages': '409-414',
-                 'doi': '10.1016/0016-2361(78)90209-1'},
+                 'doi': '10.1016/0016-2361(78)90055-8'},
             ],
         },
         'co_oxidation': {
@@ -22226,7 +22280,7 @@ class ReactionBibliography:
                 {'authors': 'Dryer F.L., Glassman I.', 'year': 1973,
                  'title': 'High-temperature oxidation of CO and CH4',
                  'journal': 'Proceedings of the Combustion Institute', 'volume': '14',
-                 'pages': '987-1003', 'doi': '10.1016/S0082-0784(73)80092-4'},
+                 'pages': '987-1003', 'doi': '10.1016/S0082-0784(73)80090-6'},
             ],
         },
         'h2_oxidation': {
@@ -22239,6 +22293,14 @@ class ReactionBibliography:
             ],
         },
     }
+
+    # Metadata checked against publisher records on 2026-11-01.
+    # None of these records authenticates the numeric A/Ea values in this app.
+    for _key in ('boudouard','co_oxidation'):
+        for _ref in BIBLIOGRAPHY[_key]['references']:
+            _ref['audit_status'] = 'VERIFIED_METADATA_ONLY; NOT_PARAMETER_VALIDATION'
+    BIBLIOGRAPHY['combustion']['references'][1]['audit_status'] = 'VERIFIED_METADATA_ONLY; NOT_PARAMETER_VALIDATION'
+    BIBLIOGRAPHY['h2_oxidation']['references'][0]['audit_status'] = 'REJECTED_DOI_TITLE_MISMATCH'
 
     @classmethod
     def get_references(cls, reaction_key: str) -> list:
@@ -22254,8 +22316,11 @@ class ReactionBibliography:
     @classmethod
     def format_reference(cls, ref: dict) -> str:
         """Bitta referenceni formating."""
+        status = ref.get('audit_status','UNVERIFIED_BIBLIOGRAPHY_AND_PARAMETER_LINK')
+        if not status.startswith('VERIFIED_METADATA'):
+            return status + ' — excluded from scientific citations; verified parameter source required.'
         doi_str = f", DOI: {ref['doi']}" if ref.get('doi') else ""
-        return (f"{ref['authors']} ({ref['year']}) \"{ref['title']}\", "
+        return (f"[{ref.get('audit_status', 'UNVERIFIED_BIBLIOGRAPHY_AND_PARAMETER_LINK')}] {ref['authors']} ({ref['year']}) \"{ref['title']}\", "
                 f"{ref['journal']}, Vol.{ref.get('volume', '?')}, "
                 f"pp.{ref.get('pages', '?')}{doi_str}")
 
@@ -22667,11 +22732,12 @@ class EnvironmentSnapshot:
             'plotly', 'sklearn', 'torch', 'tensorflow', 'sympy',
             'docx', 'reportlab', 'openpyxl', 'statsmodels', 'numba',
         ]
+        from importlib.metadata import version, PackageNotFoundError
+        distributions = {'sklearn':'scikit-learn', 'docx':'python-docx'}
         for pkg in key_packages:
             try:
-                mod = __import__(pkg)
-                snapshot['packages'][pkg] = getattr(mod, '__version__', 'unknown')
-            except ImportError:
+                snapshot['packages'][pkg] = version(distributions.get(pkg,pkg))
+            except PackageNotFoundError:
                 snapshot['packages'][pkg] = 'NOT_INSTALLED'
         return snapshot
 
@@ -23997,24 +24063,17 @@ class UCGKineticModel:
     Solves a 7-variable ODE system (C, O2, H2O, CO, CO2, H2, T) with
     5 Arrhenius reactions and dynamic heat balance.
 
-    References:
-        [1] Perkins, G. & Sahajwalla, V. (2006). "A Numerical Study of the
-            Effects of Operating Conditions on Underground Coal Gasification."
-            Energy & Fuels, 20(6), 2359-2372.
-        [2] Yang, L. et al. (2014). "Kinetic Analysis of Underground Coal
-            Gasification with Different Coals." Fuel, 116, 49-55.
-        [3] Dufaux, A. et al. (1990). "Modelling of Underground Coal
-            Gasification." Fuel, 69(5), 632-639.
-        [4] Khadse, A. et al. (2007). "Reactor and Process Design for
-            Underground Coal Gasification." Chemical Engineering Research
-            and Design, 85(2), 221-231.
-        [5] Self, S. et al. (2012). "Review of Underground Coal Gasification
-            Technologies and Carbon Capture." Energy & Environmental Science,
-            5(7), 9119-9137.
+    Background: Perkins & Sahajwalla (2006), Energy & Fuels 20(2), 596-608,
+    doi:10.1021/ef050242q; Self, Reddy & Rosen (2012), Int. J. Energy Environ.
+    Eng. 3,16, doi:10.1186/2251-6832-3-16. These references do NOT verify
+    this file's A/Ea values. Parameter provenance remains unverified.
     """
 
     R_GAS = 8.314    # J/(mol*K) - Universal gas constant
-    C_P = 30.0       # J/(mol*K) - Average heat capacity of gas mixture
+    C_P = 30.0       # J/(mol*K), same illustrative Cp for every modeled species incl. solid C
+    T_REFERENCE = 298.15  # K; reference temperature for tabulated reaction dH and dS
+    REACTION_ORDER = ('gasi','boud','comb','co_ox','h2_ox')
+    DELTA_N = np.array([0., 0., -1., -.5, -.5])  # total modeled molar inventory change per extent
 
     # 5 UCG reaksiyalari: Arrhenius parametrlari + termodinamik ma'lumotlar
     REACTIONS = {
@@ -24041,13 +24100,8 @@ class UCGKineticModel:
     LHV_C  = 393.5
 
     # Adabiyot manbalari
-    LITERATURE_REFS = {
-        'gasi':  "Perkins & Sahajwalla (2006), Energy & Fuels, 20(6), 2359-2372",
-        'boud':  "Yang et al. (2014), Fuel, 116, 49-55",
-        'comb':  "Dufaux et al. (1990), Fuel, 69(5), 632-639",
-        'co_ox': "Khadse et al. (2007), Chem. Eng. Res. Des., 85(2), 221-231",
-        'h2_ox': "Self et al. (2012), Energy Environ. Sci., 5(7), 9119-9137",
-    }
+    LITERATURE_REFS = dict.fromkeys(REACTIONS,
+        'UNVERIFIED_PARAMETER_SOURCE: illustrative A/Ea; no verified table/equation or calibration dataset')
 
     def __init__(self, y0=None, t_span=(0, 60), t_eval_n=300):
         state = np.asarray([500., 50., 100., 5., 5., 5., 700.] if y0 is None else y0, dtype=float)
@@ -24122,7 +24176,10 @@ class UCGKineticModel:
         inventory = C + O2 + H2O + CO + CO2 + H2
         if inventory <= 0:
             raise ValueError("Cannot compute heat balance for zero gas inventory")
-        dT = heat_release / (inventory * UCGKineticModel.C_P)
+        dn_dt = dC + dO2 + dH2O + dCO + dCO2 + dH2
+        # d[n Cp (T-Tref)]/dt = -sum(dH_ref * extent_rate).
+        sensible_composition = UCGKineticModel.C_P * (float(y[6])-UCGKineticModel.T_REFERENCE) * dn_dt
+        dT = (heat_release-sensible_composition) / (inventory * UCGKineticModel.C_P)
         if not np.isfinite(dT):
             raise FloatingPointError("Non-finite thermal derivative")
         return [dC, dO2, dH2O, dCO, dCO2, dH2, dT]
@@ -24182,10 +24239,10 @@ class UCGKineticModel:
             raise RuntimeError(f"UCG ODE VALIDATION_FAILED: elemental balance residual {elemental_error:.6g} mol")
         rates = np.column_stack([self._reaction_rates(sol.y[:, i]) for i in range(len(t))])
         Q = [float(extents[i,-1]*p['dH']/1000.0)
-             for i,p in enumerate(self.REACTIONS.values())]
+             for i,p in enumerate(self.REACTIONS[k] for k in self.REACTION_ORDER)]
         if not np.all(np.isfinite(rates)) or not np.all(np.isfinite(Q)):
             raise RuntimeError("UCG ODE VALIDATION_FAILED: non-finite rates or heat integral")
-        self._sol = sol
+        # Cache the solution only after the independent energy check below.
 
         # v9.2.0: Mass balance audit (#26)
         self._mass_auditor = MassBalanceAuditor()
@@ -24203,13 +24260,23 @@ class UCGKineticModel:
 
         # Interval heat in joules, from integrated extents (not instantaneous J/min).
         self._energy_logger = EnergyBalanceLogger()
-        enthalpies = np.array([p['dH'] for p in self.REACTIONS.values()])
+        enthalpies = np.array([self.REACTIONS[k]['dH'] for k in self.REACTION_ORDER])
         for i in range(len(t)):
             delta_extent = extents[:,i]-extents[:,max(0,i-1)]
             heat = delta_extent*enthalpies
             exo = float(-heat[enthalpies<0].sum())
             endo = float(heat[enthalpies>0].sum())
-            self._energy_logger.log_step(i,t[i],exo,endo,0.0,T[i],T[i]-T[max(0,i-1)])
+            j = max(0,i-1)
+            sensible_change = self.C_P*(sol.y[:6,i].sum()*(T[i]-self.T_REFERENCE)
+                                       -sol.y[:6,j].sum()*(T[j]-self.T_REFERENCE))
+            self._energy_logger.log_step(i,t[i],exo,endo,0.0,T[i],T[i]-T[j],
+                                         energy_change_j=float(sensible_change))
+        sensible = self.C_P*np.sum(sol.y[:6],axis=0)*(T-self.T_REFERENCE)
+        residual = sensible-sensible[0]+enthalpies@extents
+        self._energy_balance_error_j = float(np.max(abs(residual)))
+        self._energy_balance_relative_error = self._energy_balance_error_j/max(1.,float(np.max(abs(enthalpies)@abs(extents))))
+        if self._energy_balance_relative_error > 1e-6:
+            raise RuntimeError('ODE energy conservation tolerance exceeded')
 
         # v9.2.0: Hard physical constraints (#48)
         self._constraint_warnings = []
@@ -24237,8 +24304,13 @@ class UCGKineticModel:
         self._formula_regression = FormulaRegressionSuite.run_all()
 
         # v9.3.0: Applicability domain enforcement (#80)
-        self._applicability_violations = ApplicabilityDomainEnforcer.check_domain({"temperature": T.mean() if hasattr(T, "mean") else 1000.0, "pressure": getattr(self, "P0", 10.0), "coal_type": "bituminous", "ode_method": "Radau"})
+        self._applicability_violations = []
+        for extremum in (float(np.min(T)),float(np.max(T))):
+            self._applicability_violations.extend(ApplicabilityDomainEnforcer.check_domain(
+                {'temperature':extremum, 'ode_method':'Radau'}))
+        # Pressure and coal type were not supplied/solved; no assumed domain pass.
 
+        self._sol = sol
         self._rates = rates
         self._Q = Q
         return sol, rates, Q
@@ -24250,13 +24322,21 @@ class UCGKineticModel:
         return self._sol, self._rates, self._Q
 
     def compute_gibbs(self, T_range=None):
-        if T_range is None:
-            T_range = np.linspace(700, 1300, 100)
+        """Standard-state Gibbs with the SAME constant-species Cp assumption as ODE.
+
+        Not a real-gas equilibrium calculation; activities and pressure omitted.
+        """
+        T = np.asarray(np.linspace(700,1300,100) if T_range is None else T_range,dtype=float)
+        if T.ndim != 1 or not T.size or not np.isfinite(T).all() or np.any(T<=0):
+            raise ValueError('Gibbs temperatures must be a finite positive 1D Kelvin vector')
         gibbs = {}
-        for key, p in self.REACTIONS.items():
-            dG = (p['dH'] - T_range * p['dS']) / 1000
-            gibbs[key] = dG
-        return T_range, gibbs
+        for i,key in enumerate(self.REACTION_ORDER):
+            p = self.REACTIONS[key]
+            dcp = self.DELTA_N[i]*self.C_P
+            dh = p['dH']+dcp*(T-self.T_REFERENCE)
+            ds = p['dS']+dcp*np.log(T/self.T_REFERENCE)
+            gibbs[key] = (dh-T*ds)/1000.
+        return T,gibbs
 
     def compute_syngas_quality(self):
         """Batch inventory diagnostics; not steady-flow plant cold gas efficiency.
@@ -24352,6 +24432,7 @@ class UCGKineticDashboard:
     def render(df=None, engine=None, coal=None):
         """Render the full UCG kinetic/thermodynamic dashboard."""
         st.title("🔥 UCG Kinetik va Termodinamik Modeli (To'liq Dinamik)")
+        st.caption("Soddalashtirilgan adiabatik, bir jinsli, doimiy bosimdagi batch modeli. Barcha moddalar (qattiq C ham) uchun Cp=30 J/(mol·K) faraz qilingan; A/Ea kalibrlanmagan. Gaz oqimi, bosim evolyutsiyasi va real issiqlik yo‘qotishlari bu ODEda yechilmaydi.")
         st.markdown(
             "Ushbu model statik emas: barcha issiqlik oqimlari, samaradorlik va grafiklar "
             "bevosita ODE yechimidan (solve_ivp, Radau usuli) hisoblanadi. "
@@ -24454,21 +24535,22 @@ class UCGKineticDashboard:
         # TAB 3: Gibbs Erkin Energiyasi
         with tab3:
             st.markdown("### 🌡️ Termodinamik Muvozanat (Gibbs Erkin Energiyasi)")
-            st.markdown("Standart holat yaqinlashuvi: **dG°(T) = dH° - T*dS°** (doimiy dH/dS). Haqiqiy yo‘nalish **dG = dG° + RT ln Q** ga bog‘liq; kinetika va gaz tarkibi ham zarur.")
+            st.markdown("Standart holat: **dG°(T) = dH°(T) - T*dS°(T)**; dH°(T)=dH°ref+ΔCp(T−Tref), dS°(T)=dS°ref+ΔCp ln(T/Tref). ΔCp=30·Δn — ODE bilan bir xil soddalashtirilgan faraz. Haqiqiy yo‘nalish **dG = dG° + RT ln Q** ga bog‘liq; kinetika va gaz tarkibi ham zarur.")
             T_range, gibbs = model.compute_gibbs()
             fig_gibbs = go.Figure()
             gibbs_colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
             for idx, (key, dG) in enumerate(gibbs.items()):
                 fig_gibbs.add_trace(go.Scatter(x=T_range, y=dG, mode='lines', name=f"dG {UCGKineticModel.REACTIONS[key]['label']}", line=dict(color=gibbs_colors[idx], width=2)))
-            fig_gibbs.add_hline(y=0, line_dash="dash", line_color="black", annotation_text="dG = 0 (Muvozanat)")
+            fig_gibbs.add_hline(y=0, line_dash="dash", line_color="black", annotation_text="dG° = 0 (K = 1; actual equilibrium also needs Q)")
             fig_gibbs.update_layout(title="Termodinamik Muvozanat (dG vs T)", xaxis_title="Harorat (K)", yaxis_title="dG (kJ/mol)", hovermode='x unified', legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1))
             st.plotly_chart(fig_gibbs, width="stretch")
             st.markdown("#### 📋 Termodinamik Parametrlar va Muvozanat Harorati")
             gibbs_table = []
             for key, p in UCGKineticModel.REACTIONS.items():
-                T_eq = p['dH'] / p['dS'] if abs(p['dS']) > 1e-6 else float('inf')
-                spontan = "Ha" if T_eq > 0 else "Yo'q"
-                gibbs_table.append({"Reaksiya": p['label'], "dH (kJ/mol)": f"{p['dH']/1000:.1f}", "dS (J/mol*K)": f"{p['dS']:.1f}", "T_eq (K)": f"{T_eq:.1f}", f"dG({int(T_range[0])}K)": f"{gibbs[key][0]:.1f} kJ/mol", f"dG({int(T_range[-1])}K)": f"{gibbs[key][-1]:.1f} kJ/mol", "Spontan (T>T_eq)": spontan})
+                gibbs_table.append({"Reaksiya": p['label'], "dH_ref (kJ/mol)": p['dH']/1000,
+                    "dS_ref (J/mol/K)": p['dS'], f"dG°({T_range[0]:g}K), kJ/mol": gibbs[key][0],
+                    f"dG°({T_range[-1]:g}K), kJ/mol": gibbs[key][-1],
+                    "Yo‘nalish": "Actual dG requires RT ln Q; standard-state curve only"})
             st.dataframe(pd.DataFrame(gibbs_table), width="stretch")
             st.markdown("#### 📚 Adabiyot Manbalari")
             for key, ref in UCGKineticModel.LITERATURE_REFS.items():
@@ -24477,7 +24559,7 @@ class UCGKineticDashboard:
         # TAB 4: Syngas & Samaradorlik
         with tab4:
             st.markdown("### ⚡ Syngas Sifati va Samaradorlik Ko'rsatkichlari")
-            st.markdown("**H2/CO nisbati** syngas sifatining asosiy ko'rsatkichi. Fischer-Tropsch uchun H2/CO ~ 2.0, metanol uchun ~ 2.0-2.2, gazlangan oqim uchun ~ 1.0 maqbul. **CGE** = LHV_syngas / LHV_coal * 100%.")
+            st.markdown("**H2/CO nisbati** syngas sifatining asosiy ko'rsatkichi. Fischer-Tropsch uchun H2/CO ~ 2.0, metanol uchun ~ 2.0-2.2, gazlangan oqim uchun ~ 1.0 maqbul. Ko‘rsatilgan ko‘rsatkich — boshlang‘ich CO/H2 energiyasi chiqarilgan batch energiya nisbati; sanoat CGE emas.")
             syngas = model.compute_syngas_quality()
             H2_CO_ratio = syngas['H2_CO_ratio']
             col1, col2 = st.columns(2)
@@ -24555,9 +24637,9 @@ class UCGKineticDashboard:
                 m3.metric("R2", f"{val['r2']:.4f}" if val['r2'] is not None else "NOT_EVALUATED")
                 st.markdown("---")
                 st.markdown("#### 📐 Validatsiya Formulalari")
-                st.latex(r"\\text{RMSE} = \\sqrt{\\frac{1}{n}\\sum_{i=1}^{n}(y_i - \\hat{y}_i)^2}")
-                st.latex(r"\\text{MAE} = \\frac{1}{n}\\sum_{i=1}^{n}|y_i - \\hat{y}_i|")
-                st.latex(r"R^2 = 1 - \\frac{\\sum_{i=1}^{n}(y_i - \\hat{y}_i)^2}{\\sum_{i=1}^{n}(y_i - \\bar{y})^2}")
+                st.latex(r"\mathrm{RMSE} = \sqrt{\frac{1}{n}\sum_{i=1}^{n}(y_i - \hat{y}_i)^2}")
+                st.latex(r"\mathrm{MAE} = \frac{1}{n}\sum_{i=1}^{n}|y_i - \hat{y}_i|")
+                st.latex(r"R^2 = 1 - \frac{\sum_{i=1}^{n}(y_i - \hat{y}_i)^2}{\sum_{i=1}^{n}(y_i - \bar{y})^2}")
 
             # v9.2.0: Mass Balance Audit (#26)
             st.markdown("---")
@@ -31334,7 +31416,7 @@ def main():
 
     # ── Asosiy geometriya ─────────────────────────────────────────────────────
     depth_seam = sum(l['thickness'] for l in layers_data[:-1]) + layers_data[-1]['thickness'] / 2.0
-    avg_rho = float(np.mean([l['rho'] for l in layers_data]))
+    avg_rho = float(sum(l['rho'] * l['thickness'] for l in layers_data) / sum(l['thickness'] for l in layers_data))
     H_seam = float(layers_data[-1]['thickness'])
     source_z = float(total_depth - H_seam / 2.0)
 
@@ -31361,12 +31443,12 @@ def main():
     for z0, z1, layer in layer_bounds_full:
         is_last = (layer is layers_data[-1])
         mask = (grid_z >= z0) & (grid_z < z1 if not is_last else np.ones_like(grid_z, dtype=bool))
-        grid_rho[mask] = density_temperature(layer['rho'], temp_2d[mask])
+        grid_rho[mask] = density_temperature(layer['rho'], temp_2d[mask], combustible=False)
 
     grid_sigma_v = np.zeros((len(z_axis), len(x_axis)))
     for zi in range(1, len(z_axis)):
         dz_i = float(z_axis[zi] - z_axis[zi - 1])
-        grid_sigma_v[zi, :] = grid_sigma_v[zi - 1, :] + grid_rho[zi, :] * 9.81 * dz_i / 1e6
+        grid_sigma_v[zi, :] = grid_sigma_v[zi - 1, :] + .5 * (grid_rho[zi-1, :] + grid_rho[zi, :]) * 9.81 * dz_i / 1e6
     grid_sigma_h = k_ratio * grid_sigma_v
 
     idx_closest = int(np.abs(z_axis - source_z).argmin())
@@ -31397,9 +31479,13 @@ def main():
     # Thermal shear: NOT_EVALUATED (zero omitted term, not a validated prediction).
     # Thermal normal stress above is still an approximation, not independent THCM FE validation.
 
-    sigma_x_total = sigma_rr - sigma_thermal
-    sigma_z_total = sigma_tt - sigma_thermal
-    sigma1_act, sigma3_act = principal_stresses(sigma_x_total, sigma_z_total, tau_rt)
+    # Kirsch is compression-positive and expressed in polar coordinates.
+    theta = np.arctan2(grid_z-source_z, grid_x)
+    sigma_x_k, sigma_z_k, tau_xz = polar_stress_to_cartesian(sigma_rr, sigma_tt, tau_rt, theta)
+    # Restrained heating produces compression; this remains an assumed local restraint.
+    sigma_x_total = sigma_x_k + sigma_thermal
+    sigma_z_total = sigma_z_k + sigma_thermal
+    sigma1_act, sigma3_act = principal_stresses(sigma_x_total, sigma_z_total, tau_xz)
 
     grid_ucs = np.zeros_like(grid_z)
     grid_mb  = np.zeros_like(grid_z)
@@ -32077,7 +32163,7 @@ def main():
         st.caption("Bourdin, B., Francfort, G.A., Marigo, J.J. (2000). J. Mech. Phys. Solids, 48(4), 797-826.")
         if st.button("Run one phase-field step (demo)", key="pf_btn"):
             strain_energy = (
-                von_mises_stress(sigma_x_total, sigma_z_total, tau_rt, nu=nu_poisson) ** 2
+                von_mises_stress(sigma_x_total, sigma_z_total, tau_xz, nu=nu_poisson) ** 2
             ) / (2.0 * (E_field / 1e6) + EPS_GENERAL)
             cfl_ok, cfl_val = check_cfl_condition(dt=0.1, dx=dx_val, dz=dz_val, alpha_max=PARAMS.THERMAL_DIFFUSIVITY)
             if not cfl_ok:
@@ -59642,34 +59728,20 @@ def ucg_calculate_station_metrics(df: pd.DataFrame) -> Dict[str, Any]:
     """Metric definitions are explicit; undefined correlations remain None."""
     o = df['observed_cm'].to_numpy(dtype=float)
     p = df['predicted_cm'].to_numpy(dtype=float)
+    m = AcademicTHCMValidator.compute_extended_metrics(o,p)
     e = p-o
-    tol = 32*np.finfo(float).eps*max(1., abs(o).max(), abs(p).max())
-    om = float(o.mean())
-    so = float(o.std(ddof=1))
-    sp = float(p.std(ddof=1))
-    ss_tot = float(np.sum((o-om)**2))
-    sse = float(np.sum(e**2))
-    r = float(stats.pearsonr(o,p).statistic) if so>tol and sp>tol else None
-    rho = float(stats.spearmanr(o,p).statistic) if r is not None else None
-    kge = (float(1-np.sqrt((r-1)**2+(sp/so-1)**2+(p.mean()/om-1)**2))
-           if r is not None and abs(om)>tol else None)
-    den = float(np.sum((abs(p-om)+abs(o-om))**2))
-    lag1 = (float(np.corrcoef(e[:-1],e[1:])[0,1])
-            if len(e)>3 and e[:-1].std()>tol and e[1:].std()>tol else None)
-    result = {
-        'n':len(o), 'rmse_cm':float(np.sqrt(np.mean(e**2))),
-        'mae_cm':float(np.mean(abs(e))), 'bias_cm':float(np.mean(e)),
-        'nse': float(1-sse/ss_tot) if ss_tot>tol**2 else None,
-        'pearson_r':r, 'pearson_r_squared':r*r if r is not None else None,
-        'spearman_rho':rho, 'kge_original':kge,
-        'willmott_d': float(1-sse/den) if den>tol**2 else None,
-        'relative_rmse_percent':float(np.sqrt(np.mean(e**2))/abs(om)*100) if abs(om)>tol else None,
-        'residual_lag1_corr':lag1,
-        'data_provenance':'USER_SUPPLIED_UNVERIFIED',
-        'bca_status':'NOT_ESTABLISHED (unless explicitly calculated; IID requires justification)',
-        'mesh_gci_status':'NOT_ESTABLISHED (unless 3 distinct mesh outputs supplied)',
-    }
-    return result
+    def finite(v):
+        return float(v) if np.isfinite(v) else None
+    lag = (float(np.corrcoef(e[:-1],e[1:])[0,1])
+           if len(e)>3 and e[:-1].std()>1e-12 and e[1:].std()>1e-12 else None)
+    return {'n':m.n_pairs, 'rmse_cm':m.rmse, 'mae_cm':m.mae, 'bias_cm':m.bias,
+        'nse':finite(m.nse), 'r2_score':finite(m.r2),
+        'pearson_r':finite(m.pearson_r), 'pearson_r_squared':finite(m.pearson_r**2),
+        'spearman_rho':finite(m.spearman_rho), 'kge_original':finite(m.kge),
+        'willmott_d':finite(m.willmott_d), 'relative_rmse_percent':finite(m.relative_rmse*100),
+        'residual_lag1_corr':lag, 'data_provenance':'USER_SUPPLIED_UNVERIFIED',
+        'bca_status':'NOT_ESTABLISHED', 'mesh_gci_status':'NOT_ESTABLISHED'}
+
 
 
 def ucg_build_appendix_bundle(stations_source, mesh_source=None, *,
@@ -59895,12 +59967,19 @@ UCG54_REFERENCES = (
      'https://www.grc.nasa.gov/www/wind/valid/tutorial/spatconv.html'),
     ('[2] SciPy documentation. scipy.stats.bootstrap - BCa method and limitations.',
      'https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.bootstrap.html'),
+    ('[3] Nash and Sutcliffe (1970). River flow forecasting through conceptual models part I. J. Hydrology 10, 282-290.',
+     'https://doi.org/10.1016/0022-1694(70)90255-6'),
+    ('[4] Gupta et al. (2009). Decomposition of the mean squared error and NSE performance criteria. J. Hydrology 377, 80-91.',
+     'https://doi.org/10.1016/j.jhydrol.2009.08.003'),
+    ('[5] Willmott (1981). On the validation of models. Physical Geography 2, 184-194.',
+     'https://doi.org/10.1080/02723646.1981.10642213'),
 )
 UCG54_METRIC_SPEC = (
     ('RMSE', 'rmse_cm', 'cm', '< 1.50 cm', 'lt', 1.50),
     ('MAE', 'mae_cm', 'cm', '< 1.00 cm', 'lt', 1.00),
     ('Mean bias (p - o)', 'bias_cm', 'cm', 'Near zero, no fixed tolerance', 'bias', None),
     ('NSE', 'nse', '', '> 0.70', 'gt', 0.70),
+    ('Predictive R2 (same formula as NSE)', 'r2_score', '', '> 0.85', 'gt', 0.85),
     ('Pearson r', 'pearson_r', '', '> 0.85', 'gt', 0.85),
     ('Pearson r-squared', 'pearson_r_squared', '', 'Not specified; distinct from NSE', None, None),
     ('Spearman rho', 'spearman_rho', '', '> 0.80', 'gt', 0.80),
@@ -59932,7 +60011,7 @@ def ucg54_metrics_table(bundle):
                      'Project target': criterion, 'Finding': decision})
     rows.extend([
         {'Metric':f"{100*bundle.get('confidence_level',.95):g}% BCa confidence interval", 'Calculated':
-         'CONDITIONAL IID only' if bundle.get('bca') else 'NOT_ESTABLISHED',
+         '; '.join(sorted({v.get('status','NOT_COMPUTED') for v in bundle.get('bca',{}).values()})) if bundle.get('bca') else 'NOT_ESTABLISHED',
          'Project target':'Spatial independence not demonstrated',
          'Finding':'Not a spatial uncertainty band'},
         {'Metric':'Three-grid GCI', 'Calculated':str(bundle['gci'].get('status','NOT_ESTABLISHED')),
